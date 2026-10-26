@@ -295,6 +295,25 @@ local clock before consuming changes after that watermark. a corpus alone does
 not establish browser offline readiness: the complete installed shell and durable
 browser storage permission must also be confirmed.
 
+scoped local search reads separate derived inputs, never another authored writer.
+fixed `POST /authored/scope-inputs` metadata/status/final-fence and
+`POST /authored/scope-text` pages reuse foreground sync without taking the account
+head lock or extending the corpus snapshot. metadata hashes authorization,
+membership and publication facts. a device publishes complete inputs atomically;
+raw text and unfinished normalization resume from durable staging. local writing
+remains available during hydration. explicit denial immediately blacklists only
+the affected scope/reading and removes its copied text. readmission waits for a
+complete fenced repair, including when permission changes return the same hash.
+
+authorized pieces supply only body and proved required-note slices. highlights
+follow complete canonical-anchor containment within one reading; saved passages
+resolve normalized quote/context within each piece, while a whole source retains
+its saved literal even when unlocated. local live links supply offline membership.
+peer-highlight membership is metadata only, never peer writing ownership. shared
+query execution applies eligibility and clipped lexical matching before paging;
+its excerpt is separate from canonical content. both sqlite hosts use the same
+fts tokenizer; native compound search rechecks the store revision before returning.
+
 auth/format failures pause transport while local writing remains available.
 permanent sync defects retain pending bytes and show one actionable error. no
 activity list, writing recovery inbox, global undo inventory or age-based causal

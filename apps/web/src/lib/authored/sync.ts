@@ -1,9 +1,12 @@
 /** Foreground replication. Upload and download fail independently. Every retry
- * sends the same durable source bytes; only verified acceptance removes pending. */
+ * sends the same durable source bytes; only verified acceptance removes pending.
+ * Scope hydration advances bounded pages beside writing replication. Its durable
+ * staging and final fence never expand authored snapshot time or local readiness. */
 import { mergeChanges } from "@nexus/authored/merge";
 import { FORMAT_REVISION, type FeedChange, type MergeResult } from "@nexus/authored/types";
 import { Persistence } from "./persistence";
 import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL, type SyncFacts } from "./status";
+import { ScopeTextNormalizer, type ScopeInputsPage, type ScopeTextPage, type ScopeNormalizationInterval, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
 export interface Transport {
   json<T>(path: string, body: unknown | null, signal: AbortSignal): Promise<T>;
@@ -20,9 +23,11 @@ export class Sync {
   private failures = 0;
   private commitError = false;
   private annotationsRevision: string | null = null;
+  private scopeCheckedAt = 0;
+  private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
   last_error: string | null = null;
-  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, cursor: "0", head: null };
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
+  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, scope_pending: true, cursor: "0", head: null };
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
   wake() {
     if (this.retired || !this.foreground) return;
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
@@ -47,7 +52,7 @@ export class Sync {
       if (this.retired) return;
       this.facts.head = registration.data.head_cursor;
       await this.local(() => this.persistence.acknowledge(registration.data.accepted_command_seq));
-      const outcomes = await Promise.allSettled([this.upload(), this.download()]);
+      const outcomes = await Promise.allSettled([this.upload(), this.download(), this.scopeStep().catch(error => { this.normalization = null; throw error; })]);
       for (const outcome of outcomes) if (outcome.status === "rejected") { failed = true; this.failure(outcome.reason); }
       if (!failed) { this.facts.local_error = this.commitError; this.last_error = null; this.facts.sync_error = false; this.facts.admission = "ready"; this.facts.online = true; this.failures = 0; }
     } catch (error) { failed = true; if (!this.retired) this.failure(error); }
@@ -57,7 +62,7 @@ export class Sync {
       if (!this.retired && this.foreground) {
         if (this.rerun) this.wake();
         else if (this.facts.admission === "ready") {
-          const delay = failed ? Math.min(30_000, 1000 * 2 ** Math.min(this.failures++, 5)) * (0.75 + Math.random() * 0.25) : 30_000;
+          const delay = failed ? Math.min(30_000, 1000 * 2 ** Math.min(this.failures++, 5)) * (0.75 + Math.random() * 0.25) : this.facts.scope_pending ? 0 : 30_000;
           this.timer = setTimeout(() => { this.timer = null; this.wake(); }, delay);
         }
       }
@@ -107,6 +112,84 @@ export class Sync {
       });
       if (BigInt(this.facts.cursor) >= BigInt(data.head_cursor)) return;
       if (!data.changes.length) throw new Error("authored feed did not advance");
+    }
+  }
+  /** Bulk reading inputs never extend the authored snapshot or delay its local
+   * admission. One hydration/normalization page shares each upload/pull turn. */
+  private async scopeStep() {
+    let progress = await this.local(() => this.persistence.scopeProgress());
+    const revoke = async (refs: string[]) => {
+      if (!refs.length) return;
+      await this.local(() => this.persistence.scopeRevoke(refs));
+      this.normalization = null;
+      this.changed(true);
+    };
+    if (Date.now() - this.scopeCheckedAt >= 30_000) {
+      let after: string | null = null;
+      let revision = progress.staging_revision ?? progress.active_revision;
+      let repair = false;
+      do {
+        const refs = await this.local(() => this.persistence.scopeRefs(after));
+        const repairRefs = await this.local(() => this.persistence.scopeRepairRefs(refs));
+        const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"status",revision,active_refs:refs}, this.abort.signal);
+        repair ||= repairRefs.some(ref => !data.revoked_refs.includes(ref));
+        await revoke(data.revoked_refs);
+        revision = data.revision;
+        after = refs.length === 100 ? refs.at(-1)! : null;
+      } while (after !== null && !this.retired && this.foreground);
+      if (this.retired || !this.foreground) return;
+      await this.local(() => this.persistence.scopeReset(revision!, repair));
+      this.scopeCheckedAt = Date.now();
+      progress = await this.local(() => this.persistence.scopeProgress());
+    }
+    this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
+    if (progress.staging_revision === null || this.retired || !this.foreground) return;
+    const revision = progress.staging_revision;
+    if (!progress.metadata_complete) {
+      const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"metadata",revision,cursor:progress.metadata_cursor}, this.abort.signal);
+      await revoke(data.revoked_refs);
+      if (data.restart || data.revision !== revision) { this.normalization = null; await this.local(() => this.persistence.scopeReset(data.revision)); return; }
+      await this.local(() => this.persistence.scopeMetadata(data));
+    } else if (progress.reading_ref !== null && !progress.raw_complete) {
+      const {data} = await this.transport.json<{data: ScopeTextPage}>("/api/authored/scope-text", {revision,reading_ref:progress.reading_ref,cursor:progress.text_cursor}, this.abort.signal);
+      await revoke(data.revoked_refs);
+      if (data.revision === revision && data.revoked_refs.includes(progress.reading_ref)) throw new Error("scope reading access changed before refresh completed");
+      if (data.restart || data.revision !== revision) { this.normalization = null; await this.local(() => this.persistence.scopeReset(data.revision)); return; }
+      await this.local(() => this.persistence.scopeText(data));
+    } else if (progress.reading_ref !== null) {
+      const reading = progress.reading_ref;
+      const interval = await this.local(() => this.persistence.scopeNormalizationNext(revision, reading));
+      if (interval === null) { await this.local(() => this.persistence.scopeTextComplete(revision, reading)); return; }
+      let owner = this.normalization;
+      if (!owner || owner.revision !== revision || owner.reading !== reading || owner.interval.interval_key !== interval.interval_key) {
+        await this.local(() => this.persistence.scopeNormalizationReset(revision, reading, interval.interval_key));
+        owner = {revision,reading,interval,normalizer:new ScopeTextNormalizer(),after:null,nextRaw:interval.start_offset};
+        this.normalization = owner;
+      }
+      const chunk = await this.local(() => this.persistence.scopeNormalizationRead(revision, reading, interval.interval_key, owner!.after));
+      if (chunk !== null) {
+        if (chunk.start_offset !== owner.nextRaw) throw new Error("scope text contains a gap or overlap");
+        owner.nextRaw += Array.from(chunk.text).length;
+        owner.after = chunk.start_offset;
+      }
+      if (owner.nextRaw > interval.end_offset || chunk === null && owner.nextRaw !== interval.end_offset) throw new Error("scope text disagrees with its complete interval");
+      const complete = owner.nextRaw === interval.end_offset;
+      const output = owner.normalizer.push(chunk?.text ?? "", complete);
+      const chunks: NormalizedScopeChunk[] = [];
+      let text = "", start = output.start_offset, count = 0;
+      const flush = () => { if (!text) return; chunks.push({start_offset:start,normalized_text:text,edits:output.edits.filter(([at]) => at > start && at <= start + count)}); start += count; text = ""; count = 0; };
+      for (const char of output.normalized_text) { text += char; if (++count === 16_384) flush(); }
+      flush();
+      if (!chunks.length) await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [], complete));
+      for (let at = 0; at < chunks.length; at++) await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [chunks[at]!], complete && at === chunks.length - 1));
+      if (complete) this.normalization = null;
+    } else {
+      const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"finish",revision}, this.abort.signal);
+      await revoke(data.revoked_refs);
+      if (data.restart || data.revision !== revision) { await this.local(() => this.persistence.scopeReset(data.revision)); return; }
+      await this.local(() => this.persistence.scopePublish(revision));
+      this.facts.scope_pending = false;
+      this.changed(true);
     }
   }
   private async provision() {

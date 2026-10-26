@@ -146,7 +146,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         require(pending.size() == transfer.first); uploads.remove(frame.getString("transfer_id"))
                         val request = JSONObject(pending.toString("UTF-8"))
                         val operation = request.getString("op")
-                        remoteOperation = operation in setOf("register", "push", "pull", "snapshot")
+                        remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
                             // The foreground sync retry owns reachability retry too: a server
                             // can recover without Android announcing a network change.
@@ -179,7 +179,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                                 snapshot?.delete(); snapshot = file
                                 JSONObject().put("byte_count", file.length())
                             }
-                            "register", "push", "pull" -> withContext(Dispatchers.IO) { dispatch(null, request, message, account) }
+                            "register", "push", "pull", "scope_inputs", "scope_text_remote" -> withContext(Dispatchers.IO) { dispatch(null, request, message, account) }
                             else -> commands.withLock {
                                 require(current(message, account))
                                 withContext(Dispatchers.IO) { dispatch(bound(context, account), request, message, account) }
@@ -227,6 +227,21 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "read_snapshot" -> store!!.readSnapshot(request.getJSONObject("selection"))
             "states" -> store!!.states(request.getJSONObject("selection"))
             "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("params"), request.getString("plan_key"))
+            "search_read" -> store!!.searchRead(request.getJSONArray("params"), request.getString("plan_key"))
+            "search_match" -> store!!.searchMatch(request.getString("text"), request.getString("expression"))
+            "scope_progress" -> store!!.scopeProgress()
+            "scope_refs" -> store!!.scopeRefs(if (request.isNull("after")) null else request.getString("after"))
+            "scope_repair_refs" -> store!!.scopeRepairRefs(request.getJSONArray("refs"))
+            "scope_reset" -> { store!!.scopeReset(request.getString("revision"), request.getBoolean("repair")); JSONObject() }
+            "scope_revoke" -> { store!!.scopeRevoke(request.getJSONArray("refs")); JSONObject() }
+            "scope_metadata" -> { store!!.scopeMetadata(request.getJSONObject("page")); JSONObject() }
+            "scope_text" -> { store!!.scopeText(request.getJSONObject("page")); JSONObject() }
+            "scope_normalization_next" -> store!!.scopeNormalizationNext(request.getString("revision"), request.getString("reading_ref"))
+            "scope_normalization_read" -> store!!.scopeNormalizationRead(request)
+            "scope_normalization_reset" -> { store!!.scopeNormalizationReset(request); JSONObject() }
+            "scope_normalized" -> { store!!.scopeNormalized(request); JSONObject() }
+            "scope_text_complete" -> { store!!.scopeTextComplete(request.getString("revision"), request.getString("reading_ref")); JSONObject() }
+            "scope_publish" -> { store!!.scopePublish(request.getString("revision")); JSONObject() }
             "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame")) }
             "uploaded" -> JSONObject().put("uploaded", store!!.uploaded(request.getString("command_seq")))
             "pending" -> JSONObject().put("changes", store!!.pending())
@@ -238,6 +253,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "register" -> JSONObject().put("data", origin.authoredRegister(account, request.getJSONObject("body")))
             "push" -> JSONObject().put("data", origin.authoredPush(account, request.getJSONObject("body")))
             "pull" -> JSONObject().put("data", origin.authoredPull(account, request.getString("after")))
+            "scope_inputs" -> JSONObject().put("data", origin.authoredScopeInputs(account, request.getJSONObject("body")))
+            "scope_text_remote" -> JSONObject().put("data", origin.authoredScopeText(account, request.getJSONObject("body")))
             else -> error("unknown authored operation")
         }
     }

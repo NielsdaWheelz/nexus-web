@@ -263,6 +263,16 @@ not a hard resident-memory ceiling.
 fts5 and indexed endpoint tables supply local queries. tokenization/query
 construction belongs to the shared query owner, including literal escaping.
 
+scoped search also retains current authorized reading intervals/text, library
+membership and automatic conversation facts as derived inputs. hydrate them in
+bounded resumable pages outside the authored snapshot; publish one complete
+revision atomically. existing local links supply pending offline membership.
+scope refresh never blocks local writing. a piece admits only its body and proved
+required-note slices; it confers no whole-source text access. explicit revocation
+withdraws affected inputs on reconnect. unhydrated scopes are unavailable rather
+than guessed. these search inputs spend storage and transfer time without adding
+reader/media downloads.
+
 ## storage and synchronization protocol
 
 device sql tables: `replica_state`, `resources`, `links`, `passages`,

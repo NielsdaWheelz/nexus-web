@@ -1,11 +1,12 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries } from "@nexus/authored/queries";
+import { bindingQueries, searchQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import type { AuthoredStore, Change, FeedChange, ReplicaState, StateSelection, QueryResult, SyncStatus } from "@nexus/authored/types";
+import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
-import { nativeQueryPlan } from "./nativeQuery";
+import { nativeQueryPlan, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
 import { syncStatus } from "./status";
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: string }) => void) | null };
@@ -83,7 +84,16 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
   const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(corpusChanged); };
-  const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => call("query", { query, ...await nativeQueryPlan(query) });
+  const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
+    if (query.kind !== "search") return call("query", {query,...await nativeQueryPlan(query)});
+    for (;;) {
+      const before = await call<ReplicaState>("replica");
+      const result = await searchQuery(async plan => (await call<{rows: Record<string, unknown>[]}>("search_read", await nativeSearchPlan(plan))).rows,
+        query, async (text, expression) => (await call<{matched: boolean}>("search_match", {text,expression})).matched);
+      const after = await call<ReplicaState>("replica");
+      if (before.store_revision === after.store_revision) return {store_revision:after.store_revision,...result};
+    }
+  };
   const changeStates = async (changes: Change[]) => {
     const selection: StateSelection = { refs: [], link_ids: [], anchor_ids: [], source_refs: [] };
     for (const change of changes) {
@@ -116,9 +126,30 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     resetProvisioning: async () => { await call("reset_provisioning"); },
     stage: async (states: Parameters<typeof mergeChanges>[0] & { projections: unknown[] }) => { await call("stage", { states }); },
     finishProvisioning: async (cursor: string, counts: Record<string, number>, lamport: string) => { await call("finish_provisioning", { cursor, counts, lamport }); },
+    scopeProgress: () => call<ScopeProgress>("scope_progress"),
+    scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
+    scopeRepairRefs: async (refs: string[]) => (await call<{refs: string[]}>("scope_repair_refs", {refs})).refs,
+    scopeReset: async (revision: string, repair = false) => { await call("scope_reset", {revision,repair}); },
+    scopeRevoke: async (refs: string[]) => { await call("scope_revoke", {refs}); },
+    scopeMetadata: async (page: ScopeInputsPage) => { await call("scope_metadata", {page}); },
+    scopeText: async (page: ScopeTextPage) => { await call("scope_text", {page}); },
+    scopeNormalizationNext: async (revision: string, readingRef: string) => (await call<{interval: ScopeNormalizationInterval | null}>("scope_normalization_next", {revision,reading_ref:readingRef})).interval,
+    scopeNormalizationRead: async (revision: string, readingRef: string, intervalKey: string, after: number | null) => (await call<{chunk: ScopeRawChunk | null}>("scope_normalization_read", {revision,reading_ref:readingRef,interval_key:intervalKey,after})).chunk,
+    scopeNormalizationReset: async (revision: string, readingRef: string, intervalKey: string) => { await call("scope_normalization_reset", {revision,reading_ref:readingRef,interval_key:intervalKey}); },
+    scopeNormalized: async (revision: string, readingRef: string, intervalKey: string, chunks: NormalizedScopeChunk[], complete: boolean) => { await call("scope_normalized", {revision,reading_ref:readingRef,interval_key:intervalKey,chunks,complete}); },
+    scopeTextComplete: async (revision: string, readingRef: string) => { await call("scope_text_complete", {revision,reading_ref:readingRef}); },
+    scopePublish: async (revision: string) => { await call("scope_publish", {revision}); },
   };
   const sync = new Sync(persistence, {
-    json: <T,>(path: string, body: unknown | null, signal: AbortSignal): Promise<T> => path.includes("replicas") ? call<T>("register", { body }, signal) : body !== null ? call<T>("push", { body }, signal) : call<T>("pull", { after: new URL(path, location.origin).searchParams.get("after") }, signal),
+    json: <T,>(path: string, body: unknown | null, signal: AbortSignal): Promise<T> => {
+      if (path === "/api/authored/scope-inputs") return call<T>("scope_inputs", {body}, signal);
+      if (path === "/api/authored/scope-text") return call<T>("scope_text_remote", {body}, signal);
+      if (path === "/api/authored/replicas") return call<T>("register", {body}, signal);
+      if (path === "/api/authored/changes" && body !== null) return call<T>("push", {body}, signal);
+      const url = new URL(path, location.origin);
+      if (url.pathname === "/api/authored/changes" && body === null) return call<T>("pull", {after:url.searchParams.get("after")}, signal);
+      return Promise.reject(new Error("unknown native authored transport operation"));
+    },
     snapshot: async signal => {
       await call("snapshot", {}, signal);
       let offset = 0;

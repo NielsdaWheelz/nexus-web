@@ -243,3 +243,126 @@ class SnapshotFooter(Closed):
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts
+
+
+class ScopeStatus(Closed):
+    kind: Literal["status"]
+    revision: str | None
+    active_refs: list[str] = Field(max_length=100)
+
+
+class ScopeMetadata(Closed):
+    kind: Literal["metadata"]
+    revision: str | None
+    cursor: str | None
+
+
+class ScopeFinish(Closed):
+    kind: Literal["finish"]
+    revision: str
+
+
+ScopeInputsRequest = Annotated[
+    ScopeStatus | ScopeMetadata | ScopeFinish, Field(discriminator="kind")
+]
+
+
+class ScopeIdentity(Closed):
+    kind: Literal["scope"]
+    scope_ref: str
+
+
+class ScopeMediaMember(Closed):
+    kind: Literal["media_member"]
+    root_ref: str
+    reading_ref: str
+
+
+class ScopeLibraryMember(Closed):
+    kind: Literal["library_member"]
+    library_ref: str
+    reading_ref: str
+
+
+class ScopeConversationFact(Closed):
+    kind: Literal["conversation_fact"]
+    conversation_ref: str
+    target_ref: str
+
+
+class ScopeSourceAlias(Closed):
+    kind: Literal["source_alias"]
+    reading_ref: str
+    source_ref: str
+
+
+class ScopeHighlightMember(Closed):
+    kind: Literal["highlight_member"]
+    highlight_ref: str
+    reading_ref: str
+
+
+class ScopeReading(Closed):
+    kind: Literal["reading"]
+    reading_ref: str
+    source_ref: str
+    source_kind: str
+    body_generation: int | None
+    source_generation: int | None
+
+
+class ScopeInterval(Closed):
+    kind: Literal["interval"]
+    interval_key: str
+    reading_ref: str
+    fragment_id: UUID
+    fragment_idx: int
+    start_offset: int
+    end_offset: int
+    purpose: Literal["body", "required_note"]
+    start_cut: bool
+    end_cut: bool
+
+
+ScopeInput = Annotated[
+    ScopeIdentity
+    | ScopeMediaMember
+    | ScopeLibraryMember
+    | ScopeConversationFact
+    | ScopeSourceAlias
+    | ScopeHighlightMember
+    | ScopeReading
+    | ScopeInterval,
+    Field(discriminator="kind"),
+]
+
+
+class ScopeInputsPage(Closed):
+    revision: str
+    restart: bool
+    revoked_refs: list[str]
+    records: list[ScopeInput]
+    next_cursor: str | None
+
+
+class ScopeTextRequest(Closed):
+    revision: str
+    reading_ref: str
+    cursor: str | None
+
+
+class ScopeTextChunk(Closed):
+    interval_key: str
+    fragment_id: UUID
+    fragment_idx: int
+    start_offset: int
+    text: str
+
+
+class ScopeTextPage(Closed):
+    revision: str
+    restart: bool
+    revoked_refs: list[str]
+    reading_ref: str
+    chunks: list[ScopeTextChunk]
+    next_cursor: str | None

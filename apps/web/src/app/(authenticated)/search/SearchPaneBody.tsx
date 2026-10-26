@@ -2,8 +2,9 @@
 
 // Two complete server-ranked lists. Hidden generations own page one; adoption
 // freezes their key/stamp, then ordinary invalidation rereads the selected prefix.
-// The account database owns authored results (notes, pages, highlights) online and
-// offline; server lists never repeat or replace an authored row.
+// The account database owns notes, pages, highlights and saved passages online and
+// offline, including scope membership and clipped evidence. Unavailable local scope
+// inputs stay explicit; only readable peers retain their remote search owner.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
@@ -140,7 +141,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row);
   const localApplies = localSearchApplies(query);
   const [localPages, setLocalPages] = useState(1);
-  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages);
+  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages, query.scope);
   const remoteOffline = [lexical.failure, hybrid.failure].some(failure => failure !== null && TRANSPORT_CODES.includes(failure.error.code));
   const list = selected;
   const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
@@ -273,11 +274,12 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     return () => clearTimeout(timer);
   }, [pending]);
   const progressText = local.matches?.length && progress.text === "no results found." ? "no other results found." : progress.text;
-  const message = unfixable !== undefined ? unfixable.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available"
+  const message = local.scopeAvailable === false ? "scope unavailable on this device. connect to refresh its access and reading data."
+    : unfixable !== undefined ? unfixable.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available"
     : remoteOffline && visit.adopted === null ? "other results aren’t available offline. your notes on this device are still searchable."
     : rejectedCursor ? "results need refreshing." : prefixFailure ? failure.op === "More" ? "more results couldn’t be loaded. your results are still here." : "results couldn’t be refreshed. your results are still here."
     : blank ? "ready to search." : unsupported ? query.view === "passages" ? "no passages for these content types" : "no results found." : !pending || revealed || progress.action !== null ? progressText : "";
-  const action = rejectedCursor ? "refresh" : prefixFailure ? failure.op !== "More" ? "refresh" : null : progress.action;
+  const action = local.scopeAvailable === false ? null : rejectedCursor ? "refresh" : prefixFailure ? failure.op !== "More" ? "refresh" : null : progress.action;
   const count = results.length;
   const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
   const statusAction = unfixable !== undefined || prefixFailure && failure.op === "More" ? undefined
@@ -335,6 +337,7 @@ const LOCAL_KIND_LABELS: Record<LocalMatch["kind"], string> = {
  * yields to the server's own row for the same ref; authored rows are only ever local. */
 function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
   const runtime = usePaneRuntime();
+  if (local.scopeAvailable === false) return <FeedbackNotice content={{ tone: "Info", title: "scope unavailable on this device", message: "connect to refresh its access and reading data." }} announcement="Polite" />;
   if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search this device" }} announcement="Polite"
     actions={[{ label: "retry", onClick: local.retry }]} />;
   const remoteRefs = new Set(remote.map(row => row.item.ref));

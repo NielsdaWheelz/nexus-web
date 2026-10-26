@@ -1,11 +1,14 @@
 // Complete installed application closure. The APK serves these bytes locally;
 // shared CSP generation remains the owner of executable-content policy.
+// Authored reads and scope hydration use a fixed packaged SQL allowlist; renderer
+// requests carry statement identities and values, never executable SQL.
 import path from "node:path";
 import { cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "../../node/authored/src/queries";
+import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
+import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA } from "../../node/authored/src/schema";
@@ -52,13 +55,14 @@ export default defineConfig({
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
           annotation_notes: [{ kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
-          search: [{ kind: "search", text: "", cursor: null, limit: 100 }],
+          search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
           adjacency: [null, cursor].map(cursor => ({ kind: "adjacency", ref: "", cursor, limit: 100 })),
           adjacency_window: [null, cursor].map(cursor => ({ kind: "adjacency_window", ref: "", link_id: "", cursor, limit: 100 })),
           positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
           resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),
         };
-        const statements: Record<string, string> = { search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL };
+        const statements: Record<string, string> = { search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
+        for (const sql of SEARCH_READ_SQL) statements[`search_read:${createHash("sha256").update(sql).digest("hex")}`] = sql;
         for (const query of Object.values(samples).flat()) {
           const { plan_key } = await nativeQueryPlan(query);
           const sql = compileQuery(query).sql;

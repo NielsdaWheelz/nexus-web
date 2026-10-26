@@ -171,6 +171,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/authored/scope-inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scope Inputs */
+        post: operations["scope_inputs_authored_scope_inputs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/authored/scope-text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scope Text */
+        post: operations["scope_text_authored_scope_text_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/authored/snapshot": {
         parameters: {
             query?: never;
@@ -5205,6 +5239,14 @@ export interface components {
         /** Data[ResourceTargetSearchResponse] */
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
+        };
+        /** Data[ScopeInputsPage] */
+        Data_ScopeInputsPage_: {
+            data: components["schemas"]["ScopeInputsPage"];
+        };
+        /** Data[ScopeTextPage] */
+        Data_ScopeTextPage_: {
+            data: components["schemas"]["ScopeTextPage"];
         };
         /** Data[SearchRepairAdmission] */
         Data_SearchRepairAdmission_: {
@@ -11394,6 +11436,213 @@ export interface components {
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
+        /** ScopeConversationFact */
+        ScopeConversationFact: {
+            /** Conversation Ref */
+            conversation_ref: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation_fact";
+            /** Target Ref */
+            target_ref: string;
+        };
+        /** ScopeFinish */
+        ScopeFinish: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "finish";
+            /** Revision */
+            revision: string;
+        };
+        /** ScopeHighlightMember */
+        ScopeHighlightMember: {
+            /** Highlight Ref */
+            highlight_ref: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "highlight_member";
+            /** Reading Ref */
+            reading_ref: string;
+        };
+        /** ScopeIdentity */
+        ScopeIdentity: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "scope";
+            /** Scope Ref */
+            scope_ref: string;
+        };
+        /** ScopeInputsPage */
+        ScopeInputsPage: {
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Records */
+            records: (components["schemas"]["ScopeIdentity"] | components["schemas"]["ScopeMediaMember"] | components["schemas"]["ScopeLibraryMember"] | components["schemas"]["ScopeConversationFact"] | components["schemas"]["ScopeSourceAlias"] | components["schemas"]["ScopeHighlightMember"] | components["schemas"]["ScopeReading"] | components["schemas"]["ScopeInterval"])[];
+            /** Restart */
+            restart: boolean;
+            /** Revision */
+            revision: string;
+            /** Revoked Refs */
+            revoked_refs: string[];
+        };
+        /** ScopeInterval */
+        ScopeInterval: {
+            /** End Cut */
+            end_cut: boolean;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Fragment Idx */
+            fragment_idx: number;
+            /** Interval Key */
+            interval_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "interval";
+            /**
+             * Purpose
+             * @enum {string}
+             */
+            purpose: "body" | "required_note";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Start Cut */
+            start_cut: boolean;
+            /** Start Offset */
+            start_offset: number;
+        };
+        /** ScopeLibraryMember */
+        ScopeLibraryMember: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "library_member";
+            /** Library Ref */
+            library_ref: string;
+            /** Reading Ref */
+            reading_ref: string;
+        };
+        /** ScopeMediaMember */
+        ScopeMediaMember: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media_member";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Root Ref */
+            root_ref: string;
+        };
+        /** ScopeMetadata */
+        ScopeMetadata: {
+            /** Cursor */
+            cursor: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "metadata";
+            /** Revision */
+            revision: string | null;
+        };
+        /** ScopeReading */
+        ScopeReading: {
+            /** Body Generation */
+            body_generation: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "reading";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Source Generation */
+            source_generation: number | null;
+            /** Source Kind */
+            source_kind: string;
+            /** Source Ref */
+            source_ref: string;
+        };
+        /** ScopeSourceAlias */
+        ScopeSourceAlias: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source_alias";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Source Ref */
+            source_ref: string;
+        };
+        /** ScopeStatus */
+        ScopeStatus: {
+            /** Active Refs */
+            active_refs: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "status";
+            /** Revision */
+            revision: string | null;
+        };
+        /** ScopeTextChunk */
+        ScopeTextChunk: {
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Fragment Idx */
+            fragment_idx: number;
+            /** Interval Key */
+            interval_key: string;
+            /** Start Offset */
+            start_offset: number;
+            /** Text */
+            text: string;
+        };
+        /** ScopeTextPage */
+        ScopeTextPage: {
+            /** Chunks */
+            chunks: components["schemas"]["ScopeTextChunk"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Reading Ref */
+            reading_ref: string;
+            /** Restart */
+            restart: boolean;
+            /** Revision */
+            revision: string;
+            /** Revoked Refs */
+            revoked_refs: string[];
+        };
+        /** ScopeTextRequest */
+        ScopeTextRequest: {
+            /** Cursor */
+            cursor: string | null;
+            /** Reading Ref */
+            reading_ref: string;
+            /** Revision */
+            revision: string;
+        };
         /** SearchMatchOut */
         SearchMatchOut: {
             excerpt: components["schemas"]["ExcerptOut"];
@@ -13517,6 +13766,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_AcceptedChanges_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scope_inputs_authored_scope_inputs_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Nexus-Account": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeStatus"] | components["schemas"]["ScopeMetadata"] | components["schemas"]["ScopeFinish"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ScopeInputsPage_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scope_text_authored_scope_text_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Nexus-Account": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeTextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ScopeTextPage_"];
                 };
             };
             /** @description Validation Error */

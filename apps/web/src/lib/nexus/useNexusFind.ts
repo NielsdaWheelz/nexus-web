@@ -1,8 +1,9 @@
 "use client";
 
 // Launcher phases settle independently; interaction holds a later complete response.
-// Notes, pages and highlights come only from the account database: local matches lead
-// and remote preview rows for them are dropped. Exact authored refs resolve locally;
+// Owned writing, including scoped saved passages, comes from the account database;
+// local matches lead and readable peer previews retain their remote owner. Unavailable
+// local scope inputs are explicit. Exact authored refs resolve locally;
 // other exact refs use the existing resource resolver and never enter textual discovery.
 import { remoteReady } from "@/lib/native/admission";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -69,7 +70,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const localRow = localRead.data?.rows[0]?.resource ?? null;
   // stable while its row is unchanged; the launcher merges rows on identity.
   const localReference = useMemo(() => localRow?.authored_by_viewer ? localResult(localRow, "") : null, [localRow]);
-  const local = useLocalSearch(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, LOCAL_PAGES);
+  const local = useLocalSearch(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, LOCAL_PAGES, query.searchQuery.scope);
   const reference = usePaneFreeServerValue<ResourceItem>({
     key: open && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
     stale: "",
@@ -229,8 +230,8 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     localReferenceMissing: localRef !== null && localRead.data !== null && !localRow?.authored_by_viewer && reference.status === "ready" && reference.data.authored_by_viewer,
     searchUnavailable,
     progress: {
-      text: searchUnavailable ? "search is unavailable for this input. shorten the search or ask nexus with the full text." : identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : localReference !== null ? "" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
-      action: searchUnavailable ? null : identityKey === null && referenceRef === null ? null : blockedError ? null : referenceRef !== null ? reference.status === "failed" ? "search" as const : null : progress.action,
+      text: local.scopeAvailable === false ? "scope unavailable on this device. connect to refresh its access and reading data." : local.error ? "couldn’t search this device" : searchUnavailable ? "search is unavailable for this input. shorten the search or ask nexus with the full text." : identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : localReference !== null ? "" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
+      action: local.scopeAvailable === false || local.error ? null : searchUnavailable ? null : identityKey === null && referenceRef === null ? null : blockedError ? null : referenceRef !== null ? reference.status === "failed" ? "search" as const : null : progress.action,
     },
     interact,
     refresh,

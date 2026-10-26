@@ -4,9 +4,12 @@
 // and saved passages online and offline; remote search never supplies or replaces those
 // rows. It also finds retained source labels (a stub's literal capture, no reading
 // authority), which yield to the server's own row for the same ref when it has one.
-// Excerpts are literal slices of canonical text; matching never rewrites it.
+// Scoped queries use the last complete local membership/text revision plus current
+// authored links. Missing scope inputs are explicit, never a remote-writing fallback.
+// Excerpts use separate literal matching text; canonical labels/captures stay intact.
 import { useCallback, useEffect, useState } from "react";
 import type { QueryResult, ResourceProjection } from "@nexus/authored/types";
+import type { SearchFamily, SearchScope } from "@nexus/authored/scope";
 import { capturedHighlightText } from "@nexus/authored/queries";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
@@ -26,11 +29,12 @@ const kindOf = (resource: ResourceProjection): SearchKind | null => FAMILIES[par
 const PAGE = 50;
 const CONTEXT = 60;
 
-/** Local rows carry no format, author, role or library scope; those filters exclude them. */
+/** Format and credit filters exclude authored families on both search owners. */
 export function localSearchApplies(query: SearchQuery): boolean {
   const kinds = query.requestedKinds;
-  return query.text.trim() !== "" && query.formats.length + query.authors.length + query.roles.length === 0 && query.scope === "all" &&
-    (kinds === null || Object.values(FAMILIES).some(kind => kind !== undefined && kinds.has(kind)));
+  return query.text.trim() !== "" && query.formats.length + query.authors.length + query.roles.length === 0 &&
+    (kinds === null || (query.scope === "all" ? Object.values(FAMILIES) : ["notes", "highlights", "saved_passages"] as const)
+      .some(kind => kind !== undefined && kinds.has(kind)));
 }
 
 export interface LocalMatch {
@@ -49,9 +53,9 @@ export function localResult(resource: ResourceProjection, text: string): LocalMa
   return kind === null ? null : localMatch(resource, kind, text);
 }
 
-export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string): LocalMatch {
-  const body = resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
-    : resource.title ?? resource.local_date ?? "";
+export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string, matchText: string | null = null): LocalMatch {
+  const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
+    : resource.title ?? resource.local_date ?? "");
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
@@ -71,18 +75,27 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
 
 /** Every local match of the requested authored kinds, a page at a time, re-read whenever
  * local state commits. Showing more keeps the current matches until the longer read lands. */
-export function useLocalSearch(text: string | null, kinds: SearchQuery["requestedKinds"], pages = 1): {
+export function useLocalSearch(text: string | null, kinds: SearchQuery["requestedKinds"], pages: number, scope: string): {
   readonly matches: readonly LocalMatch[] | null;
   readonly complete: boolean;
+  readonly scopeAvailable: boolean | null;
   readonly error: unknown;
   readonly retry: () => void;
 } {
   const store = useAuthoredStore();
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string; matches: LocalMatch[] | null; complete: boolean; error: unknown }>({ key: "", matches: null, complete: false, error: null });
-  const key = text === null ? "" : JSON.stringify([text, kinds === null ? null : [...kinds].sort(), attempt]);
+  const [state, setState] = useState<{ key: string; matches: LocalMatch[] | null; complete: boolean; scopeAvailable: boolean | null; error: unknown }>({ key: "", matches: null, complete: false, scopeAvailable: null, error: null });
+  const key = text === null ? "" : JSON.stringify([text, kinds === null ? null : [...kinds].sort(), scope, attempt]);
   useEffect(() => {
     if (text === null) return;
+    const parsed = scope === "all" ? null : parseResourceRef(scope);
+    if (scope !== "all" && (!parsed || parsed.scheme !== "media" && parsed.scheme !== "library" && parsed.scheme !== "conversation")) {
+      setState({ key, matches: [], complete: true, scopeAvailable: false, error: null });
+      return;
+    }
+    const scopes: SearchScope[] = parsed && (parsed.scheme === "media" || parsed.scheme === "library" || parsed.scheme === "conversation")
+      ? [{ kind: parsed.scheme, id: parsed.id }] : [{ kind: "all", id: null }];
+    const families: SearchFamily[] | null = kinds === null ? null : [...kinds].filter(kind => kind !== "web");
     let live = true, reading = false, again = false;
     const read = async () => {
       if (reading) { again = true; return; }
@@ -91,28 +104,32 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
         const rows: QueryResult["rows"] = [];
         let cursor: string | null = null;
         for (let page = 0; page < pages; page++) {
-          const result: QueryResult = await store.query({ kind: "search", text, cursor, limit: PAGE });
+          const result: QueryResult = await store.query({ kind: "search", text, cursor, limit: PAGE, scopes, families });
+          if (result.scope_available === false) {
+            if (live) setState({ key, matches: [], complete: true, scopeAvailable: false, error: null });
+            return;
+          }
           rows.push(...result.rows);
           cursor = result.next_cursor;
           if (cursor === null) break;
         }
-        const matches = rows.flatMap(({ resource }) => {
+        const matches = rows.flatMap(({ resource, match_text }) => {
           const kind = kindOf(resource);
-          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text)] : [];
+          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text, match_text)] : [];
         });
-        if (live) setState({ key, matches, complete: cursor === null, error: null });
+        if (live) setState({ key, matches, complete: cursor === null, scopeAvailable: true, error: null });
       } catch (error) {
-        if (live) setState(current => ({ ...current, key, error }));
+        if (live) setState(current => ({ ...current, key, matches: current.key === key ? current.matches : null, scopeAvailable: null, error }));
       } finally {
         reading = false;
         if (again && live) { again = false; void read(); }
       }
     };
-    const stop = store.subscribe({ kind: "search", text, cursor: null, limit: 1 }, () => void read());
+    const stop = store.subscribe({ kind: "search", text, cursor: null, limit: 1, scopes, families }, () => void read());
     return () => { live = false; stop(); };
-    // the serialized query (text, kinds, attempt) is the read identity; pages only extend it.
+    // the serialized query is the read identity; pages only extend it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, pages, store]);
   const retry = useCallback(() => setAttempt(value => value + 1), []);
-  return state.key === key ? { matches: state.matches, complete: state.complete, error: state.error, retry } : { matches: null, complete: false, error: null, retry };
+  return state.key === key ? { matches: state.matches, complete: state.complete, scopeAvailable: state.scopeAvailable, error: state.error, retry } : { matches: null, complete: false, scopeAvailable: null, error: null, retry };
 }

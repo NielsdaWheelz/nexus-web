@@ -204,6 +204,8 @@ internal class NexusOriginClient(
         require(after.toLong() >= 0)
         return data(Request.Builder().url(api("authored", "changes").newBuilder().addQueryParameter("after", after).build()).header("X-Nexus-Account", account.toString()).get())
     }
+    suspend fun authoredScopeInputs(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-inputs")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
+    suspend fun authoredScopeText(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-text")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
     suspend fun authoredHints(account: UUID, onHint: () -> Unit) {
         var lineBytes = 0
         val sink = object : OutputStream() {

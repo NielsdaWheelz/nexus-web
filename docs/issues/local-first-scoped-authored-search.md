@@ -30,12 +30,11 @@ cutover is implemented; lab35 (`20261025-170315-6cc86ca6581e`, source `597`)
 passes the real own-before-feed, readable-peer and hidden-owned identity checks.
 scoped local retrieval remains unresolved.
 
-owner selected full offline parity with replicated scope metadata. one material
-boundary remains open: metadata alone cannot locate a new offline capture from
-an older saved publication inside the current publication's parts. the pending
-choice is replicating current searchable text for referenced sources, or using
-publication-specific results until reconnect. no image/pdf download expansion
-or source-byte permission is implied.
+owner selected full offline parity with replicated scope metadata. implementation
+therefore also replicates necessary current authorized reading text as search
+input. this spends disk and transfer time; it does not add reader/media downloads
+or grant access to a whole source through a piece. publication-specific search
+would weaken the approved contract.
 
 the proposed refresh reuses foreground pull/provision and the existing 30-second
 sync cadence, with a coherent source snapshot and durable input revision. broad
@@ -92,5 +91,25 @@ while refreshing, but explicit revocation must withdraw the affected scope;
 unknown scopes remain explicitly unavailable. no new source admission or reader
 get mutation follows from this delivery change. qualify a supported large source,
 multiple-source aggregate, interrupted hydration and publication/revocation races
-within unchanged per-response budgets. the source-text product choice remains
-pending; no dependent production code is authorized.
+within unchanged per-response budgets. this implementation is now in progress.
+
+source review establishes two distinct existing laws. highlights require every
+canonical anchor to fit one admitted reading identity. saved passages instead
+resolve normalized quote/context uniquely inside each authorized reading's body
+and permitted required-note slices (`locator_resolver.py:read_passage_sources`,
+`text_quote.py:match_quote_in_sources`). repeated text outside a piece cannot make
+its quote ambiguous. do not hydrate unauthorized neighboring text or substitute
+the reader's full-source literal relocation algorithm for scoped admission.
+
+current-source red `20261026-094749-152c47333939` on `c929fe940` proves the
+owned stale highlight visible under all-scope local search, then missing under
+its root-media scope for sixty seconds. offline continuation and part-context
+checks are not reached. this isolates missing local scope admission from
+provisioning failure.
+
+one source-only performance concern remains to measure: the metadata digest
+reuses `media_text_scope.py:text_scope_rows_sql`, whose full-fragment end uses
+`char_length(f.canonical_text)`. bounded wire records do not prevent postgres
+rescanning large text for successive pages. qualify supported large-source and
+aggregate hydration; add cached canonical lengths only if actual proof requires
+that owner change. no failed latency measurement is established yet.

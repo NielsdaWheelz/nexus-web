@@ -20,8 +20,18 @@ from nexus.db.session import (
 )
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas.authored import AcceptedChanges, DownloadChanges, ProvisionReplica, UploadChanges
+from nexus.schemas.authored import (
+    AcceptedChanges,
+    DownloadChanges,
+    ProvisionReplica,
+    ScopeInputsPage,
+    ScopeInputsRequest,
+    ScopeTextPage,
+    ScopeTextRequest,
+    UploadChanges,
+)
 from nexus.services import authored
+from nexus.services.authored import scope as search_scope
 
 
 class AuthoredRoute(APIRoute):
@@ -101,6 +111,20 @@ def download(
     after: Annotated[int, Query(ge=0, le=9223372036854775807)] = 0,
 ) -> Data[DownloadChanges]:
     return Data(data=authored.download(db, viewer.user_id, after))
+
+
+@router.post("/scope-inputs")
+def scope_inputs(
+    request: ScopeInputsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ScopeInputsPage]:
+    return Data(data=search_scope.inputs(db, viewer.user_id, request))
+
+
+@router.post("/scope-text")
+def scope_text(
+    request: ScopeTextRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ScopeTextPage]:
+    return Data(data=search_scope.source_text(db, viewer.user_id, request))
 
 
 @router.get("/snapshot")
