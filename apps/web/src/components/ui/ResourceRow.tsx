@@ -55,7 +55,7 @@ export default function ResourceRow({
   let activation: ReactNode;
   switch (primary.kind) {
     case "link": activation = <a
-      ref={primary.ref} className={styles.primary} data-row-focusable=""
+      ref={primary.ref} className={cx(styles.primary, styles.titleLine)} data-row-focusable=""
       href={primary.href ?? undefined} data-pane-label-hint={primary.paneLabelHint}
       role={primary.href === null ? "link" : undefined} tabIndex={primary.href === null ? 0 : undefined}
       aria-label={primary.label}
@@ -64,14 +64,14 @@ export default function ResourceRow({
       target={primary.target} rel={primary.rel}
     >{label}</a>; break;
     case "button": activation = <button
-      type="button" className={styles.primary} data-row-focusable=""
+      type="button" className={cx(styles.primary, styles.titleLine)} data-row-focusable=""
       disabled={primary.disabled || primary.busy} aria-busy={primary.busy || undefined}
       aria-label={primary.label}
       onClick={(event) => {
         if (!isInteractiveTarget(event.target, event.currentTarget)) void primary.onActivate(event.currentTarget);
       }}
     >{label}</button>; break;
-    case "static": activation = <div className={styles.primary}>{label}</div>; break;
+    case "static": activation = <div className={cx(styles.primary, styles.titleLine)}>{label}</div>; break;
     default: assertNever(primary);
   }
   let secondary: ReactNode;
@@ -88,7 +88,7 @@ export default function ResourceRow({
     <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details)}>
       {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
       <div className={styles.content}>
-        <div className={styles.titleLine}>{activation}</div>
+        {activation}
         {secondary}
       </div>
       {controls ? <div className={styles.controls}>{controls}</div> : null}

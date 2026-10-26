@@ -9,7 +9,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.contributors import (
     ContributorDetailOut,
     ContributorSearchPageOut,
@@ -65,15 +65,13 @@ def list_contributor_works(
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> Data[CollectionPage[ContributorWorkItemOut]]:
+) -> Data[CollectionIndex[ContributorWorkItemOut]]:
     handle = _handle(contributor_handle)
-    plan, query = contributors.parse_contributor_works_query(request.query_params.multi_items())
+    plan = contributors.parse_contributor_works_query(request.query_params.multi_items())
     page = contributors.list_contributor_works(
         db,
         viewer_id=viewer.user_id,
         contributor_handle=handle,
         plan=plan,
-        cursor=query.cursor,
-        limit=query.limit,
     )
     return Data(data=page)

@@ -187,7 +187,7 @@ derive the next later start only from confirmed absence, never lost provenance.
 ## wire and presentation
 
 library podcast section/detail reads provide relationships and guards in one
-snapshot; ordinary media counts/sort/paging exclude that section. api routes use
+snapshot; ordinary media counts and order exclude that section. api routes use
 client-minted ids, typed snake_case envelopes and nullable fields. source resolution
 uses `POST /podcasts/resolve` and `POST /podcast-episodes/resolve`; neither acquires a
 holding or rule. directory opening resolves identity before canonical navigation;
@@ -195,7 +195,7 @@ the subsequent live show visit separately admits its source check. library
 subscription/import routes retain their guards and exact ids. ordinary item
 placement accepts media; no standalone finite-import action remains.
 
-`PodcastEpisodeCountsOut.known_count` and show keyset pages enumerate known catalogue
+`PodcastEpisodeCountsOut.known_count` and complete show indexes enumerate known catalogue
 episodes. requested-media authority admits workspace-readable media or canonical
 episodes outside teardown; document and annotation authority remain scoped. episode
 `add to all` uses the real default-library placement route with frozen removal/order
@@ -301,7 +301,12 @@ episode lists and retained summaries observe `PodcastEpisodes`. an active visibl
 pane polls queued/running transcripts; each changed current id/transcript-state
 signature invalidates retained summaries after that observation. stale in-flight
 summary replies are discarded. unchanged observations end the refresh chain;
-settings/head-only writes do not invalidate episode pages.
+one complete episode response owns show detail and episodes under the same
+repeatable-read snapshot. one active/visible observation lane rereads that
+aggregate:3 seconds while work or transcript provisioning runs,60 seconds while
+followed and idle, otherwise off. refresh transfers the complete index.
+publication notifications compare accepted observations within one account/query;
+there is no head-to-episode fingerprint reconciliation.
 
 The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` view
 is URL-owned (defaults omitted) and sent to the API as given, defaults included;

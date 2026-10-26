@@ -245,7 +245,7 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
       returnScope={`Browse.${section.kind}.${section.source}`}
       rows={rows}
       status="ready"
-      rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: readKey }}
+      anchorKey={readKey}
       ariaLabel={`${label} results`}
       empty={null}
       surface={false}

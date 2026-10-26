@@ -25,7 +25,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationOut,
@@ -34,7 +34,7 @@ from nexus.schemas.library import (
     LibraryRole,
     RenameLibraryRequest,
 )
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.search import projection
 
 _COLUMNS = "l.id, l.name, l.owner_user_id, l.is_default, l.system_key, l.order_revision, m.role"
@@ -465,30 +465,22 @@ def library_index_rows_sql() -> str:
 
 def list_libraries(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
-) -> CollectionPage[LibraryOut]:
-    """One keyset page of the viewer's libraries in the `sort` view."""
-    query = parse_collection_query(items, domain_keys={"sort"})
-    sort = query.parameters.get("sort")
+) -> CollectionIndex[LibraryOut]:
+    """Every member library, in the canonical `sort` order."""
+    query = parse_index_query(items, domain_keys={"sort"})
+    sort = query.get("sort")
     if sort not in INDEX_PLANS:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported libraries view")
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "Libraries", "viewer": viewer_id, "sort": sort},
-        plan=INDEX_PLANS[sort],
-        cursor=query.cursor,
-        limit=query.limit,
-        params={"viewer_id": viewer_id},
-        sql=lambda keyset, order: f"""
-            WITH facts AS ({library_index_rows_sql()})
-            SELECT * FROM facts WHERE true {keyset} ORDER BY {order} LIMIT :limit
-        """,
-    )
-    return CollectionPage[LibraryOut](
+    order = order_by_sql(INDEX_PLANS[sort], alias="facts")
+    rows = db.execute(
+        text(f"SELECT * FROM ({library_index_rows_sql()}) facts ORDER BY {order}"),
+        {"viewer_id": viewer_id},
+    ).mappings()
+    return CollectionIndex[LibraryOut](
         items=[
             LibraryAccess(**{key: row[key] for key in LibraryAccess.__slots__}).out(viewer_id)
             for row in rows
         ],
-        next_cursor=next_cursor,
     )
 
 

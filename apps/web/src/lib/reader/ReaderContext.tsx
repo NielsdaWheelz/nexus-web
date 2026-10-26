@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -27,6 +28,7 @@ export interface ReaderProfileCapability {
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
     | { readonly state: "SaveFailed"; readonly failure: unknown };
+  readonly editable: boolean;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
   setFocusMode(value: ReaderProfile["focus_mode"]): void;
@@ -49,6 +51,7 @@ export function ReaderProvider({
 }) {
   const refreshSettings = useSettingsRefresh();
   const feedback = useFeedback();
+  const editable = useRemoteAdmission() === "Ready";
   const failureReport = useRef<(() => void) | null>(null);
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
@@ -99,14 +102,17 @@ export function ReaderProvider({
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
-      if (!remoteReady()) return;
+      if (!remoteReady()) {
+        feedback.receipt({ tone: "Neutral", title: "changing reader settings requires a connection" });
+        return;
+      }
       setProfile((current) => ({ ...current, ...patch }));
       unsent.current = { ...unsent.current, ...patch };
       setPersistence((current) => current.state === "SaveFailed" ? current : { state: "Pending" });
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
-    [send],
+    [feedback, send],
   );
 
   useEffect(() => {
@@ -124,6 +130,7 @@ export function ReaderProvider({
     () => ({
       profile,
       persistence,
+      editable,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
       setFocusMode: (focus_mode) => intend({ focus_mode }),
@@ -133,7 +140,7 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [intend, persistence, profile, send],
+    [editable, intend, persistence, profile, send],
   );
   if (defect) throw defect.error;
   return (

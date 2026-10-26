@@ -2,7 +2,7 @@
 // and one resolver that derives every identity (routeKey, resource, mount key).
 // Isomorphic: the server bootstrap and the client resolve alike.
 import {
-  BookOpen,
+  ALargeSmall,
   ChartColumn,
   Compass,
   Download,
@@ -64,7 +64,7 @@ const ROUTES = {
   stats: ["stats", "Stats", ChartColumn],
   settings: ["settings", "Settings", Settings],
   settingsAccount: ["settings/account", "Account", UserCog],
-  settingsReader: ["settings/reader", "Reader settings", BookOpen],
+  settingsReader: ["settings/reader", "Reader settings", ALargeSmall],
   settingsAppearance: ["settings/appearance", "Appearance", Palette],
   settingsIdentities: ["settings/identities", "Linked identities", Link2],
   settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],

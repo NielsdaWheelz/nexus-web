@@ -5,10 +5,9 @@ import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PickerSurface from "@/components/ui/PickerSurface";
-import { useSettled } from "@/lib/api/serverState";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { useSettled, usePaneFreeServerValue } from "@/lib/api/serverState";
+import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
-import { pageQuery, usePaneFreeServerList } from "@/lib/api/useServerList";
 import { fetchConversationIndex, presentConversationListItem, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { useChatAgeClock } from "@/lib/chat/useChatAgeClock";
 import ConversationMetadata from "./ConversationMetadata";
@@ -62,23 +61,27 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   if (search && !initializing) params.set("title_search", search);
   const queryKey = params.toString();
   const key = `conversation-destination:${queryKey}`;
-  const page = usePaneFreeServerList({ key, stale: "", pageSize: 25, active: paneActive && settled === query,
-    id: (item: ConversationListItem) => item.id,
-    fetchPage: (cursor, limit, signal) => fetchConversationIndex(pageQuery(queryKey, cursor, limit), signal),
+  const readKey = paneActive && settled === query ? key : null;
+  const page = usePaneFreeServerValue({ key: readKey, stale: "",
+    load: signal => fetchConversationIndex(new URLSearchParams(queryKey), signal),
   });
-  const nowMs = useChatAgeClock({ initialInstant: env.currentInstant, items: page.items, visible: usePaneIsVisible() });
-  const selectable = page.current && (!initializing || !search) && settled === query;
-  const items = selectable ? page.items : [];
+  const pageItems = page.status === "ready" ? page.data.items : [];
+  const pageFailure = page.status === "loading" ? null : page.error;
+  const busy = page.status === "loading" || (page.status === "ready" ? page.refreshing : page.retrying);
+  const retry = () => { void page.refetch().catch(() => {}); };
+  const nowMs = useChatAgeClock({ initialInstant: env.currentInstant, items: pageItems, visible: usePaneIsVisible() });
+  const selectable = (page.status === "ready") && (!initializing || !search) && settled === query;
+  const items = selectable ? pageItems : [];
   useEffect(() => {
     if (initializing && hasSourceChats !== null) {
       setInitializing(false); setView(hasSourceChats ? "Source" : "All"); setActive(null); return;
     }
-    if (!page.current || settled !== query) return;
+    if (!(page.status === "ready") || settled !== query) return;
     if (initializing && page.status === "ready") {
       setInitializing(false);
-      if (page.complete && !page.items.length) { setView("All"); setActive(null); return; }
+      if (!pageItems.length) { setView("All"); setActive(null); return; }
     }
-  }, [hasSourceChats, initializing, page, query, settled]);
+  }, [hasSourceChats, initializing, page, pageItems.length, query, settled]);
   const context = JSON.stringify([id, mediaId, view, query]);
   const options = items.map(item => ({ key: item.id, disabledReason: null }));
   const reconciled = reconcileSearchActive({ context, admitted: selectable, options,
@@ -89,11 +92,11 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     onActiveChange: key => setActive({ context, key }),
     onActivate(key) { const item = selectable ? items.find(item => item.id === key) : null; if (item) onSelect(item); },
   });
-  const failure = settled !== query || page.failure?.op === "More" ? null : page.failure;
-  const emptyTitle = !page.complete ? "no matching chats found so far." : search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet";
+  const failure = settled !== query ? null : pageFailure;
+  const emptyTitle = search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet";
   const waiting = !selectable && failure === null;
-  const readFeedback = useCollectionReadFeedback({
-    list: page, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !page.current && failure === null,
+  const readFeedback = useIndexReadFeedback({
+    value: page, requestedKey: readKey, active: paneActive, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !(page.status === "ready") && failure === null,
     outcome: items.length > 0 ? "results updated." : emptyTitle,
     returnFocus: () => input.current,
   });
@@ -108,8 +111,8 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       onChange={event => setQuery(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load chats", requestId: failure.error.requestId }} announcement="Polite"
-      actions={[{ label: "retry", onClick: page.retry, busy: page.running !== null }]} returnFocus={() => input.current} />
+    {failure ? <FeedbackNotice content={{ tone: "Warning", title: page.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats", requestId: failure.requestId }} announcement={page.status === "ready" ? "None" : "Polite"}
+      actions={[{ label: "try again", onClick: retry, busy }]} returnFocus={() => input.current} />
       : waiting ? <FeedbackStatus content={{ tone: "Neutral", title: "searching…" }} announcement={paneActive ? "Polite" : "None"} />
       : selectable && items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
@@ -125,7 +128,6 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
         </div>;
       })}
     </div>
-    {settled === query ? readFeedback.notice : null}
     {readFeedback.announcement}
   </div>;
 }

@@ -92,7 +92,7 @@ export default function NotesPaneBody() {
     returnScope="Notes.Pages" rows={visible} ariaLabel="Notes"
     status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
     collectionBusy={read.data === null && read.error === null}
-    rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: filter.query.trim() }}
+    anchorKey={filter.query.trim()}
     notice={<>{read.data === null ? null : failure}{filter.query.trim() && !complete ? <p>filter applies to loaded pages.</p> : null}</>}
     error={read.data === null ? failure : undefined}
     empty={<FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />}

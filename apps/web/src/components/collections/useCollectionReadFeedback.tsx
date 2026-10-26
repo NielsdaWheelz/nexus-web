@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import type { ServerValue } from "@/lib/api/serverState";
 import type { ServerList } from "@/lib/api/useServerList";
 import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
 
@@ -20,6 +21,37 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
   readonly returnFocus: () => HTMLElement | null;
 }): { notice: ReactNode | null; announcement: ReactNode } {
   const { requestedKey, active, current, failure } = list;
+  const announcement = useReadOutcome({ requestedKey, active, current, failed: failure !== null, waiting, outcome });
+
+  const continuationFailure = failure?.op === "More" ? failure : null;
+  const rejected = continuationFailure?.error.code === "E_INVALID_CURSOR";
+  const notice = continuationFailure === null ? null : <FeedbackNotice
+    content={{
+      tone: "Warning",
+      title: rejected ? `couldn’t continue loading ${unit.plural}` : `couldn’t load remaining ${unit.plural}`,
+      message: `the ${unit.plural} already loaded are still available.`,
+      requestId: continuationFailure.error.requestId,
+    }}
+    announcement={active ? "Polite" : "None"}
+    actions={[{ label: rejected ? "refresh list" : "try again", busy: list.running !== null, onClick: list.retry }]}
+    returnFocus={returnFocus}
+  />;
+  return {
+    notice,
+    announcement,
+  };
+}
+
+
+/** One foreground wait/outcome; preparation, returns and passive reads are silent. */
+function useReadOutcome({ requestedKey, active, current, failed, waiting, outcome }: {
+  readonly requestedKey: string | null;
+  readonly active: boolean;
+  readonly current: boolean;
+  readonly failed: boolean;
+  readonly waiting: boolean;
+  readonly outcome: string | null;
+}): ReactNode {
   const episode = useRef({ key: requestedKey, waiting: false, armed: false });
   const [spoken, setSpoken] = useState<string | null>(null);
   useEffect(() => {
@@ -31,7 +63,7 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
       episode.current.armed = false;
       setSpoken(null);
     }
-    if (requestedKey === null || !active || failure !== null) {
+    if (requestedKey === null || !active || failed) {
       episode.current.armed = false;
       setSpoken(null);
       return;
@@ -52,23 +84,28 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
       episode.current.armed = true;
       setSpoken(null);
     }
-  }, [requestedKey, waiting, active, current, failure, outcome]);
+  }, [requestedKey, waiting, active, current, failed, outcome]);
 
-  const continuationFailure = failure?.op === "More" ? failure : null;
-  const rejected = continuationFailure?.error.code === "E_INVALID_CURSOR";
-  const notice = continuationFailure === null ? null : <FeedbackNotice
-    content={{
-      tone: "Warning",
-      title: rejected ? `couldn’t continue loading ${unit.plural}` : `couldn’t load remaining ${unit.plural}`,
-      message: `the ${unit.plural} already loaded are still available.`,
-      requestId: continuationFailure.error.requestId,
-    }}
-    announcement={active ? "Polite" : "None"}
-    actions={[{ label: rejected ? "refresh list" : "try again", busy: list.running !== null, onClick: list.retry }]}
+  return <span className="sr-only" role="status" aria-live={active ? "polite" : "off"} aria-atomic="true">{spoken}</span>;
+}
+
+/** Complete-value feedback carries no continuation or prefix semantics. */
+export function useIndexReadFeedback({ value, requestedKey, active, unit, waiting, outcome, returnFocus }: {
+  readonly value: ServerValue<unknown>;
+  readonly requestedKey: string | null;
+  readonly active: boolean;
+  readonly unit: PaneFilterRowsUnit;
+  readonly waiting: boolean;
+  readonly outcome: string | null;
+  readonly returnFocus: () => HTMLElement | null;
+}): { notice: ReactNode | null; announcement: ReactNode } {
+  const error = value.status === "loading" ? null : value.error;
+  const announcement = useReadOutcome({ requestedKey, active, current: value.status === "ready", failed: error !== null, waiting, outcome });
+  const notice = value.status !== "ready" || error === null ? null : <FeedbackNotice
+    content={{ tone: "Warning", title: `couldn’t refresh ${unit.plural}`, requestId: error.requestId }}
+    announcement="None"
+    actions={[{ label: "try again", busy: value.refreshing, onClick: () => { void value.refetch().catch(() => {}); } }]}
     returnFocus={returnFocus}
   />;
-  return {
-    notice,
-    announcement: <span className="sr-only" role="status" aria-live={active ? "polite" : "off"} aria-atomic="true">{spoken}</span>,
-  };
+  return { notice, announcement };
 }

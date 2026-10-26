@@ -7,10 +7,6 @@
   min-width: 0;
 }
 
-.control {
-  display: inline-flex;
-}
-
 .button {
   flex: none;
 }

@@ -1,0 +1,33 @@
+# complete index activation
+
+complete-index wire cutover is being implemented on `codex/index-readiness`.
+selected finite endpoints remove cursors and limits; podcast and library indexes
+return atomic aggregates. old clients cannot read the new representation.
+
+the paired search release shipped wire 16 on 2026-10-25 at `3d81ef45ef28`
+(schema 0317, android 0.3.8/code 29; `release-search.md`). this branch builds on
+`51d458ebc` and shares the catalogue cutover's unreleased wire 17.
+recheck the release boundary before merge; later breaking changes before the
+next release share this bump.
+
+ship api/web and installed clients together under the existing release owner.
+this change adds no migration or compatibility path and does not deploy.
+the integrated head is 0319: coordinate the existing
+[catalogue](release-podcast-architecture.md) and [queue](release-playback-queue.md)
+migration/installed-state obligations with the same paired release.
+the existing wire fence rejects saved wire-16 catalogs after the paired upgrade;
+obtain a wire-17 catalog online before qualifying disconnected use.
+isolated android qa qualifies saved-catalog cold offline browsing, complete live
+promotion, retained-media observations and trusted adb scrolling/dragging. it
+preserves the installed release/debug apps and does not qualify production
+activation. repeat the relevant checks on the paired production binaries and
+deployed data. measured opening, input and sustained refresh proof belongs in
+the pr body.
+
+the owner waived safari qualification on 2026-10-25 (`skip safari`); no safari
+automation or trust settings were changed. this is a waiver, not browser proof.
+the owner also waived human-finger and spoken-screen-reader qualification;
+trusted adb input and live-region mutations do not establish either.
+
+resolve after exact wire/source pairing and these owner checks; retain any
+failed performance or browser qualification as a separate issue.

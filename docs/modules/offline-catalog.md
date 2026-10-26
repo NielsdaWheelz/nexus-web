@@ -108,7 +108,9 @@ saved projection; afterwards it promotes only when every part is a complete live
 read, no relevant (unfiltered saved membership) local delivery is pending, and
 every part's stamped `consumption_revision` covers the highest relevant observed
 revision, all checked against current facts at commit. a promoted connected group
-stays live. live list pages each carry their stamp; a traversal covers its oldest.
+stays live. each complete live index or aggregate carries its snapshot's stamp;
+library heading/entries/subscriptions and podcast heading/episodes each share one
+capture.
 `PaneChrome.displayTitle` belongs to the shown body, so an independently refreshed
 workspace title cannot put a new heading above a saved group. navigation labels
 retain their existing best-known presentation policy.

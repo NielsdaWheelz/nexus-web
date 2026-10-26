@@ -8,11 +8,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import type { QueueManifest } from "@/lib/player/queue";
-
-function rangeAt(top: number, viewport: number, height: number, count: number) {
-  return { start: Math.max(0, Math.min(count, Math.floor((top - viewport) / height))),
-    end: Math.max(0, Math.min(count, Math.ceil((top + 2 * viewport) / height))) };
-}
+import { windowRange, windowRanks } from "@/lib/collections/collectionWindow";
 
 export function useQueueWindow({ manifest, root, scrollport, openingEntryId, focusedEntryId, menuEntryId, recoveryEntryIds }: {
   readonly manifest: QueueManifest | null;
@@ -43,24 +39,13 @@ export function useQueueWindow({ manifest, root, scrollport, openingEntryId, foc
   // A reordered anchor must be mounted in the very commit that changes its rank.
   if (view.height !== null && previous?.manifest !== manifest && saved !== null && saved.queueId === manifest?.queue_id) {
     const position = byId.get(saved.id)?.index;
-    if (position !== undefined) ({ start, end } = rangeAt(position * view.height - saved.offset, previous?.viewport ?? 0, view.height, count));
+    if (position !== undefined) ({ start, end } = windowRange({ top: position * view.height - saved.offset, viewport: previous?.viewport ?? 0, height: view.height, count }));
   }
-  const demand = new Set<number>();
-  for (let index = start; index < end; index += 1) demand.add(index);
-  const pin = (id: string | null) => {
-    if (id === null) return;
-    const index = byId.get(id)?.index;
-    if (index === undefined) return;
-    for (let rank = Math.max(0, index - 1); rank <= Math.min(count - 1, index + 1); rank += 1) demand.add(rank);
-  };
-  pin(openingEntryId); pin(focusedEntryId); pin(menuEntryId);
-  for (const id of recoveryEntryIds) pin(id);
-  if (view.height === null && count > 0 && demand.size === 0) demand.add(0);
-  const mounted = new Set(demand);
-  if (count > 0) { mounted.add(0); mounted.add(count - 1); }
-  const ranks = [...mounted].sort((left, right) => left - right);
-  const rows = ranks.map((index, position) => ({ entry: manifest!.entries[index], index,
-    gap: index - (position === 0 ? 0 : ranks[position - 1] + 1) }));
+  const pinnedRanks = [openingEntryId, focusedEntryId, menuEntryId, ...recoveryEntryIds]
+    .flatMap(id => { const index = id === null ? undefined : byId.get(id)?.index; return index === undefined ? [] : [index]; });
+  const { rows: ranks, demand } = windowRanks({ start, end, count, pinnedRanks,
+    retainedRanks: view.height === null && count > 0 && pinnedRanks.length === 0 && start === end ? [0] : [] });
+  const rows = ranks.map(({ index, gap }) => ({ entry: manifest!.entries[index], index, gap }));
 
   useLayoutEffect(() => {
     const section = root.current;
@@ -98,7 +83,7 @@ export function useQueueWindow({ manifest, root, scrollport, openingEntryId, foc
         const index = byId.get(openingEntryId)?.index;
         if (index !== undefined) top = Math.max(0, listTop + index * height - (port.clientHeight - height) / 2);
       }
-      const bounds = rangeAt(top - listTop, port.clientHeight, height, count);
+      const bounds = windowRange({ top: top - listTop, viewport: port.clientHeight, height, count });
       measured.current = { manifest, height, width: port.clientWidth, viewport: port.clientHeight, listTop };
       if (height !== view.height || bounds.start !== view.start || bounds.end !== view.end) {
         pendingScroll.current = top;
@@ -146,6 +131,6 @@ export function useQueueWindow({ manifest, root, scrollport, openingEntryId, foc
     };
   }, [root]);
 
-  return { byId, rows, demand: [...demand].map(index => manifest!.entries[index]),
+  return { byId, rows, demand: demand.map(index => manifest!.entries[index]),
     height: view.height, geometryReady: view.height !== null || count === 0, rowElement };
 }

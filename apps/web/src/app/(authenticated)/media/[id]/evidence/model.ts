@@ -1,7 +1,7 @@
 // Remote reader roots: identity, facets and canonical source context. Local authored
 // annotations and links never pass through these helpers.
 import type { Schema } from "@/lib/api/wire";
-import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
+import type { MarkAnchor, TextRange } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import { targetOfResolution } from "../hostedReader";
 
@@ -72,26 +72,36 @@ export function rootCounts(roots: readonly EvidenceRoot[]): Schema<"ReaderEviden
   return counts;
 }
 
-/** One own extent for rail and alignment; time ranges use intersecting units only. */
-export function rootExtent(resolution: EvidenceRoot["resolution"], doc: ReaderDocument): {
-  start: ReaderPoint; end: ReaderPoint; anchor: MarkAnchor;
-} | null {
+/** Text extents carry reading points; PDF anchors retain page-space quads.
+ * Time ranges use intersecting units only. */
+export function rootExtent(resolution: EvidenceRoot["resolution"], doc: ReaderDocument):
+  | {
+    readonly kind: "text";
+    readonly start: Extract<ReaderPoint, { kind: "text" }>;
+    readonly end: Extract<ReaderPoint, { kind: "text" }>;
+    readonly anchor: TextRange;
+  }
+  | {
+    readonly kind: "pdf";
+    readonly anchor: Extract<MarkAnchor, { kind: "pdf" }>;
+  }
+  | null {
   if (!resolution) return null;
   const target = targetOfResolution(resolution,doc);
   if (!target) return null;
   if (target.kind === "range") return {
+    kind: "text",
     start: { kind: "text", unit: target.unit, offset: target.start },
     end: { kind: "text", unit: target.unit, offset: target.end },
     anchor: { kind: "text", unit: target.unit, start: target.start, end: target.end },
   };
-  if (target.kind === "quads") {
-    const ys = target.quads.flatMap((quad) => [quad.y1, quad.y2, quad.y3, quad.y4]);
-    return { start: { kind: "pdf", page: target.page, y: Math.min(...ys) }, end: { kind: "pdf", page: target.page, y: Math.max(...ys) }, anchor: { kind: "pdf", page: target.page, quads: target.quads } };
-  }
-  if (target.kind === "point" && target.point.kind === "pdf") return {
-    start: target.point, end: target.point,
+  if (target.kind === "quads") return doc.kind === "pdf" ? {
+    kind: "pdf", anchor: { kind: "pdf", page: target.page, quads: target.quads },
+  } : null;
+  if (target.kind === "point" && target.point.kind === "pdf") return doc.kind === "pdf" ? {
+    kind: "pdf",
     anchor: { kind: "pdf", page: target.point.page, quads: [{ x1: 0, y1: 0, x2: 1, y2: 0, x3: 0, y3: 0.01, x4: 1, y4: 0.01 }] },
-  };
+  } : null;
   const locator = resolution.kind === "Resolved" ? resolution.anchor.locator : null;
   if (target.kind !== "time" || doc.kind !== "text" || !locator || !("t_end_ms" in locator)) return null;
   const units = doc.units.filter((unit) => unit.time && unit.time.endMs > locator.t_start_ms && unit.time.startMs < locator.t_end_ms);
@@ -101,6 +111,7 @@ export function rootExtent(resolution: EvidenceRoot["resolution"], doc: ReaderDo
   const start = offset(first, Math.max(locator.t_start_ms, first.time.startMs));
   const end = offset(last, Math.min(locator.t_end_ms, last.time.endMs));
   return {
+    kind: "text",
     start: { kind: "text", unit: first.id, offset: start },
     end: { kind: "text", unit: last.id, offset: end },
     anchor: { kind: "text", unit: first.id, start: Math.floor(start), end: Math.ceil(offset(first, Math.min(locator.t_end_ms, first.time.endMs))) },
