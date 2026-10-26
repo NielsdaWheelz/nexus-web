@@ -1099,7 +1099,27 @@ to another route never restores stale data; a list's snapshot carries the change
 stamp it was read under. complete value readers paint the visit snapshot and
 reread; paged readers retain their stamp-based return policy (architecture §8.12).
 `PaneRefreshAnchor` captures same-query row replacement before mutation and
-restores one shared pane eye-line after layout, unless newer input intent wins. `usePaneVisitDataWriter` records an immutable snapshot
+restores one shared pane eye-line after layout, unless newer input intent wins.
+large eligible indices register their complete ordered ids and measured row
+geometry through `usePaneCollectionGeometry`. the same memento owns return,
+refresh and measurement-change scroll writes; the row window owns measurement
+and mounted demand only. restoration waits for affected descendants to finish
+measurement, including sibling lists sharing this scrollport. logical ranks
+locate unmounted anchors and choose the next full-order survivor after removal;
+bounded row demand mounts a needed target before focus recovery. a connected
+unrelated focus destination wins over a pending return.
+
+`CollectionView` keeps the most recently interacted row and its neighbours
+mounted in a large index; an active menu or drag adds scoped demand. this preserves
+the source through menu/dialog handoff without a second overlay lifecycle. a
+menu's existing geometry guard may retire it when geometry changes. the
+collection's focus owner retains the logical source through its own portal and
+recovers that source after remount, or the next survivor after removal. lists
+through 200 stay fully mounted. larger windows retain complete data and filter
+scope, while native find, selection and accessibility traversal inspect mounted
+content only; see [resource presentation](resource-references.md#presentation-contract).
+
+`usePaneVisitDataWriter` records an immutable snapshot
 synchronously before a write or navigation can outlive its presentation. its
 stable function uses the mounted visit's latest committed route key; callers
 own delivery lifetime and stop writing after departure. it adds no task owner

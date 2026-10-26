@@ -259,12 +259,31 @@ resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
 
+### index rows
+
 index rows use the shared `ResourceRow` shell. its `indexRow` container owns
 author and shortcut demotion, metadata spacing and tight-row adaptation; see the
 [resource presentation contract](resource-references.md#presentation-contract).
 hosts hide whole `data-action-control-key` wrappers; action components do not
 infer placement from density. standalone preview controls retain their own layout.
 external media rows expose the same more trigger at every width.
+
+`CollectionView` callers explicitly declare `UniformIndex` capability before a
+list larger than 200 can window. its two text lines share a measured vertical
+slot across media, artwork and independent controls. rows without artwork or
+controls reserve the same minimum height, and all rows use one narrow-width
+fold threshold. width, font and control-size changes remeasure the actual
+fractional border box; the full extent is count × measured height. a hidden,
+inert canonical row supplies measurement while the existing loading state is
+visible. ready rows are never clipped to enforce an estimated height.
+
+`measuredIndexWindow.ts` owns the visible band, overscan and bounded interaction
+pins; `collectionWindow.ts` shares pure rank arithmetic with the queue. the
+complete source still owns matching, counts, summaries and commands. mounted
+rows expose their full logical positions and set size; native browser find,
+selection and accessibility traversal reach only mounted content. small lists
+and intrinsic search, details and outline presentations keep their own layout.
+the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
 44×44px with any coarse pointer, and 2px gaps. outline indentation and creation

@@ -1756,13 +1756,24 @@ pane is introduced. returns paint visit snapshots and reread under the ordinary
 value policy. saved catalog projections remain complete and promote only after
 a complete current live stamp covers their listening facts.
 
-rows use actual intrinsic layout; revealing a row does not replace guessed
-geometry. browser scrolling, find and selection cover the complete index.
-refresh anchoring captures the eye-line before mutation and restores it once
-after layout, unless newer input intent wins. deleted anchors choose the next
-surviving row. media-summary membership retains only additions, releases removals
-and preserves unchanged references; complete seeded rows remain usable while
-summaries refresh.
+read completeness is independent of mounted rows. `CollectionView` mounts all
+rows through 200. eligible indices that declare `UniformIndex` geometry above
+that threshold use `measuredIndexWindow.ts` for the visible range, overscan and bounded
+interaction pins. actual equal row measurement supplies the complete scroll
+extent; the measurement probe stays hidden behind loading until that extent is
+ready. filtering, counts, playback capture and media-summary membership still
+consume the complete ordered data. native find, text selection and the
+accessibility tree cover mounted rows only in a windowed index; the app filter
+searches the complete index. wrapping details, search and outlines retain their
+own intrinsic layout. [resource presentation](modules/resource-references.md#presentation-contract)
+owns the row contract.
+
+the existing pane memento is the sole index scroll-restoration owner. it combines
+full-order logical geometry with native anchors, captures the eye-line before
+mutation and restores after the affected sections are ready, unless newer input
+intent wins. deleted anchors choose the next surviving row. media-summary
+membership retains only additions, releases removals and preserves unchanged
+references; complete seeded rows remain usable while summaries refresh.
 
 truly paged capabilities retain `CollectionPage`, `keyset_page` and
 `useServerList`: discovery/search, members/invitations, imports/history and chat
