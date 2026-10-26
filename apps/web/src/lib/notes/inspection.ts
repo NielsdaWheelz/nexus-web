@@ -5,7 +5,7 @@ import { codepointToUtf16 } from "@/lib/canonicalText/codepoints";
 /** Decorations over stored-text codepoint offsets (a passage anchor or a citation). */
 export function inspectionDecorations(
   doc: PMNode,
-  target: { startOffset: number; endOffset: number },
+  target: { text: string; startOffset: number; endOffset: number },
 ): DecorationSet {
   const start = Math.max(0, Math.floor(target.startOffset));
   const end = Math.max(start, Math.floor(target.endOffset));
@@ -16,8 +16,10 @@ export function inspectionDecorations(
     class: "nexus-note-inspection",
     "data-note-inspection-range": "true",
   };
+  const projection = projectBody(block);
+  if (projection.text !== target.text) return DecorationSet.empty;
   const decorations: Decoration[] = [];
-  for (const span of projectBody(block).spans) {
+  for (const span of projection.spans) {
     if (span.end <= start || span.start >= end) continue;
     const from = offset + (
       span.exact === null

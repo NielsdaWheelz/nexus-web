@@ -93,6 +93,7 @@ import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
 
 export interface NoteInspection {
+  readonly text: string;
   readonly startOffset: number;
   readonly endOffset: number;
   readonly activationId: string;
@@ -1366,6 +1367,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    if (inspection && view.composing) return;
     const clear = () => {
       if (!view.isDestroyed)
         view.dispatch(view.state.tr.setMeta(inspectionKey, null));
@@ -1375,6 +1377,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       return;
     }
     view.dispatch(view.state.tr.setMeta(inspectionKey, inspection));
+    if (!inspectionKey.getState(view.state)?.find().length) return;
     if (!inspection.restored) {
       view.dom
         .querySelector("[data-note-inspection-range]")

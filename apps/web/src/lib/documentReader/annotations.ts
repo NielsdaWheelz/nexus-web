@@ -13,11 +13,12 @@
 import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import type { NoteBody } from "@nexus/authored/body";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
-import type { AuthoredStore, HighlightColor, LinkState, Locator, QueryResult, SelectionCapture } from "@nexus/authored/types";
+import type { AuthoredStore, HighlightColor, LinkState, Locator, PassageState, QueryResult, SelectionCapture } from "@nexus/authored/types";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
 import { prepareLink } from "@/lib/resourceGraph/links";
-import type { DraftAnchor, Mark, MarkAnchor } from "./DocumentReader";
-import type { ReaderDocument, TextDocument, TextUnit } from "./model";
+import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
+import type { DraftAnchor, Inspection, Mark, MarkAnchor } from "./DocumentReader";
+import type { ReaderDocument, ReaderTarget, TextDocument, TextUnit } from "./model";
 
 const CONTEXT = 64;
 const PAGE = 100;
@@ -201,6 +202,50 @@ export function placeSelection(doc: ReaderDocument, mediaId: string, selection: 
   };
   const unique = found.length === 1 ? found : found.filter(anchor => anchor.kind === "text" && fits(anchor));
   return unique.length === 1 ? { kind: "placed", anchor: unique[0]! } : { kind: "unlocated" };
+}
+
+/** A saved passage uses only this mounted source. Capture hints stay immutable;
+ * missing or changed provenance needs one normalized quote in its owned units. */
+export function locatePassage(doc: ReaderDocument, mediaId: string, passage: PassageState, canonicalSourceRef: string | null): {
+  target: ReaderTarget; inspection: Inspection;
+} | null {
+  const ownReading = passage.source_ref === mediaRef(mediaId);
+  const { locator, publication, quote_exact } = passage.capture.value;
+  const source = locator && "media_id" in locator ? mediaRef(locator.media_id) : canonicalSourceRef ?? passage.source_ref;
+  if (!ownReading && !annotationSources(doc, mediaId).includes(source)) return null;
+  const capturedGeneration = locator?.type === "pdf_page_geometry" && doc.kind === "pdf" ? doc.generation
+    : locator && "fragment_id" in locator && doc.kind === "text"
+      ? sourceUnits(doc, mediaId, locator.media_id).find(entry => entry.fragment === locator.fragment_id)?.generation ?? null : null;
+  if (publication?.kind === "reader" && capturedGeneration !== null && publication.generation === capturedGeneration &&
+      locator && (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets" || locator.type === "pdf_page_geometry")) {
+    const placed = placeSelection(doc, mediaId, { locator, publication, quote_exact,
+      prefix: passage.prefix, suffix: passage.suffix, passage_ref: `passage_anchor:${passage.anchor_id}` });
+    if (placed?.kind === "placed") {
+      const anchor = placed.anchor;
+      return { target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end }
+        : { kind: "quads", page: anchor.page, quads: anchor.quads },
+        inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
+    }
+  }
+  if (doc.kind !== "text") return null;
+  const units = doc.units.filter(unit => {
+    const owner = ownerOf(doc, mediaId, unit);
+    return owner !== null && (ownReading && source === passage.source_ref || mediaRef(owner.mediaId) === source);
+  });
+  const scanner = new ScopeQuoteScanner(passage.normalized_exact, passage.prefix, passage.suffix);
+  for (const unit of units) {
+    const normalized = normalizeScopeText(unit.text);
+    scanner.add({ fragment_id: unit.id, start_offset: 0, normalized_text: normalized.normalized_text,
+      normalized_start_offset: 0, edits: normalized.edits, start_cut: unit.sourceStartOffset > 0, end_cut: doc.part !== null });
+    if (scanner.ambiguous) return null;
+  }
+  const match = scanner.result;
+  if (!match) return null;
+  const unit = units.find(unit => unit.id === match.fragment_id)!;
+  if (normalizeQuote(chars(unit.text).slice(match.start_offset, match.end_offset).join("")) !== passage.normalized_exact) return null;
+  const anchor = { kind: "text" as const, unit: unit.id, start: match.start_offset, end: match.end_offset };
+  return { target: { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end },
+    inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
 }
 
 interface Loaded {

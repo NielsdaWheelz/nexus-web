@@ -748,6 +748,9 @@ export default function PdfSurface({
       async restorePdfFind(target, signal) {
         return Boolean(await live.current?.find.replay(target, signal, signal));
       },
+      async locatePdfPassage(passage, signal) {
+        return await live.current?.find.locatePassage(passage, signal) ?? null;
+      },
     };
 
     /** Ends this open: Retry shows, and every read stops. */

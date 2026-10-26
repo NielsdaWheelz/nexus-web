@@ -86,7 +86,7 @@ import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
 import { createMediaAnnotations } from "./annotations";
-import { createReaderAnnotations, type ReaderAnnotation } from "@/lib/documentReader/annotations";
+import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@/lib/documentReader/annotations";
 import { AnnotationList, LocalWritingError, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
@@ -593,6 +593,36 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       if (context.signal.aborted) return "Cancelled";
       if (result.kind === "chat_destination") return "Unavailable";
       if (result.kind === "highlight") return deliverHighlight(result.highlight_id, context);
+      if (result.kind === "passage") {
+        if (!doc) return "Unavailable";
+        let location = locatePassage(doc, id, result.passage, result.canonical_source_ref);
+        if (!location && doc.kind === "pdf" && result.passage.source_ref === `media:${id}`) {
+          const page = await reader.locatePdfPassage(result.passage, context.signal);
+          if (page !== null) location = { target: { kind: "point", point: { kind: "pdf", page, y: 0 } },
+            inspection: { identity: doc.identity, anchors: [], pages: [page], precision: "page" } };
+        }
+        if (context.signal.aborted) return "Cancelled";
+        if (!location) return "Unavailable";
+        if (!context.restored) {
+          const outcome = await reader.inspect({ target: location.target, signal: context.signal });
+          switch (outcome.kind) {
+            case "Unavailable": return "FailureHandled";
+            case "Cancelled": return "Cancelled";
+            case "Arrived":
+            case "Unchanged": break;
+            default: assertNever(outcome);
+          }
+        }
+        const current = reader.getState().document;
+        if (context.signal.aborted) return "Cancelled";
+        if (current.status !== "ready" || current.doc.identity !== doc.identity) return "Unavailable";
+        setInspection({ ...location.inspection, activationId: context.activationId });
+        context.signal.addEventListener("abort", () => {
+          setInspection(current => current?.activationId === context.activationId ? null : current);
+        }, { once: true });
+        if (context.mayFocus()) reader.focusSource();
+        return "Applied";
+      }
       if (result.kind === "reader_destination") {
         if (!doc) return "Unavailable";
         const { destination } = result;

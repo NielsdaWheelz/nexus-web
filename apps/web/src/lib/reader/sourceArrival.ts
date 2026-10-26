@@ -4,9 +4,12 @@
 // intent before claiming its delivery, so mobile unmount cannot consume it.
 // Acknowledgement retires replay, never the mounted inspection's signal. Failure
 // occurrences stay out of the visit; current status separates waiting work from
-// a settled refusal that reading input must preserve. A highlight is local authored
-// state: a media destination resolves it from the device, never the server.
+// a settled refusal that reading input must preserve. Highlights and saved passages
+// resolve their account-owned captures on the device, never the server.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { PassageState } from "@nexus/authored/types";
+import { useAuthoredStore } from "@/lib/authored/provider";
+import { selectStates } from "@/lib/notes/runtime";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -41,6 +44,7 @@ export interface SourceArrivalContext {
 export type SourceArrivalApplyTarget =
   | { readonly kind: "source"; readonly source: SourceTarget }
   | { readonly kind: "highlight"; readonly highlight_id: string }
+  | { readonly kind: "passage"; readonly passage: PassageState; readonly canonical_source_ref: string | null }
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
   | { readonly kind: "chat_destination"; readonly destination: ChatFindDestination; readonly leaf_id: string };
 
@@ -71,6 +75,7 @@ export function useSourceArrival(input: {
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "useSourceArrival");
   const active = usePaneIsActive();
+  const authored = useAuthoredStore();
   const mobile = useIsMobileViewport();
   const workspace = useLatestWorkspace();
   const captured = useRef<ArrivalIntent | null>(null);
@@ -236,6 +241,20 @@ export function useSourceArrival(input: {
           intent.target.resource_ref.startsWith("highlight:") ? intent.target.resource_ref.slice("highlight:".length) : null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
         else if (local !== null) target = { kind: "highlight", highlight_id: local };
+        else if (intent.target.kind === "resource" && intent.target.resource_ref.startsWith("passage_anchor:") &&
+            (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "note")) {
+          const anchor = intent.target.resource_ref.slice("passage_anchor:".length);
+          const states = await authored.readStates(selectStates({ anchor_ids: [anchor] }));
+          if (!current()) return;
+          const passage = states.passages.find(passage => passage.anchor_id === anchor);
+          let canonical_source_ref: string | null = null;
+          if (passage?.capture.value.locator === null && passage.source_ref.startsWith("media:") &&
+              latest.current.runtime.routeId === "media" && passage.source_ref !== latest.current.runtime.resourceRef) {
+            canonical_source_ref = (await authored.query({ kind: "source_alias", ref: passage.source_ref })).canonical_source_ref;
+            if (!current()) return;
+          }
+          target = passage ? { kind: "passage", passage, canonical_source_ref } : null;
+        }
         else {
           const destination = latest.current.runtime;
           const readingMediaId = destination.routeId === "media" && destination.resourceRef?.startsWith("media:")
@@ -306,7 +325,7 @@ export function useSourceArrival(input: {
     // The stable activation id owns one operation. apply reads current host
     // callbacks; acknowledging the same intent does not create another arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: activation, visit and source identity own the operation
-  }, [activationId, ready, restoreOutcome, runtime.visitId, sourceIdentity, workspace, publishStatus, remember]);
+  }, [activationId, ready, restoreOutcome, runtime.visitId, sourceIdentity, workspace, publishStatus, remember, authored]);
 
   useEffect(() => {
     if (!active || intent?.phase !== "Applied") return;

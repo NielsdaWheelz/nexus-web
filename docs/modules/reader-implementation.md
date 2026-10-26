@@ -90,14 +90,17 @@ focus transfer or owner unmount releases recovery.
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
 | `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
-| `POST /media/{id}/highlights` | `{anchor: {kind: text, unit_id, start_offset, end_offset} \| {kind: pdf, page_number, quads, exact}, color}` → `201 Data[TypedHighlightOut]`. the unit must belong to the media. |
-| `GET/PATCH/DELETE /highlights/{id}` | read, recolour or rebound (`anchor: fragment_offsets`), delete. |
 | `GET /public/resource-share/document` | the public reader's one read (token header). |
 
 the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
 `/evidence/{span}`, fragment and pdf highlight lists and creates, the highlight
 reader-target route) are gone. a text highlight whose fragment cache is gone is
 listed in Evidence as unavailable (`Stale`), never painted.
+
+owned highlights and saved passages use the account's local authored store.
+creation, resize, color and deletion use its durable commands and replication;
+the old highlight write routes are absent. server tools use that same authored
+owner. the highlight module owns the capture and merge contract.
 
 ### source-backed pieces
 
@@ -217,6 +220,15 @@ and saves nothing until genuine input. genuine input during that source load
 skips restoration; earlier reading does not cancel a later publication's restore.
 late layout follows the same geometry fence as ordinary reflow; it cannot emit
 reading activity or retreat host chrome as though the user had scrolled.
+
+owned passage arrivals resolve the immutable capture locally. the mounted source
+owns permission and bounds; a published source alias proves only the part's
+physical provenance. current-generation hints reuse annotation placement.
+unknown or changed provenance requires one normalized quote/context match in the
+mounted text; ambiguity remains unavailable. pdf extraction uses that same unique
+quote rule and yields coarse page inspection when geometry is absent. arrival
+never rewrites the capture or changes find state. note inspection maps canonical
+projection offsets and paints only while its expected text still matches.
 
 replacement retires prior viewport intent and queued old-coordinate saves, drains
 an already-dispatched save, then reads the authoritative cursor. reports during

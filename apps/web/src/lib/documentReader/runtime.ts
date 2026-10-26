@@ -3,6 +3,7 @@
 // and keeps the viewport and placement from one surface measurement. A plain
 // object; React reads it through subscribe/getState. Explicit navigation and
 // reading announce intent before work; automatic restore and reflow remain local.
+import type { PassageState } from "@nexus/authored/types";
 import {
   clampZoom,
   locatorAt,
@@ -106,6 +107,8 @@ export interface Reader {
   restoreView(snapshot: ReaderViewSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
   /** Revalidate retained PDF inspection paint without replaying its movement. */
   restorePdfFind(target: PdfFindDestination, signal: AbortSignal): Promise<boolean>;
+  /** Resolve a saved quote through the mounted pdf owner, without changing find. */
+  locatePdfPassage(passage: PassageState, signal: AbortSignal): Promise<number | null>;
   inspect(input: {
     readonly target: ReaderTarget | ((signal: AbortSignal) => ReaderTarget | null | Promise<ReaderTarget | null>);
     readonly signal?: AbortSignal;
@@ -140,6 +143,7 @@ export interface SurfaceHandle extends Positioner {
   retireReflow(): void;
   setZoom?(zoom: number | null): void;
   restorePdfFind?(target: PdfFindDestination, signal: AbortSignal): Promise<boolean>;
+  locatePdfPassage?(passage: PassageState, signal: AbortSignal): Promise<number | null>;
 }
 export interface ReaderRuntime extends Reader {
   readonly source: ReaderSource;
@@ -442,6 +446,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     restorePdfFind(target, signal) {
       if (signal.aborted || !surface || surface.identity !== ready()?.doc.identity || !surface.restorePdfFind) return Promise.resolve(false);
       return surface.restorePdfFind(target, signal);
+    },
+    locatePdfPassage(passage, signal) {
+      if (signal.aborted || !surface || surface.identity !== ready()?.doc.identity || !surface.locatePdfPassage) return Promise.resolve(null);
+      return surface.locatePdfPassage(passage, signal);
     },
     mount() {
       void load({ recoverPosition: false });
