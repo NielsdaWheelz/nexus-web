@@ -37,6 +37,15 @@ real held-writer run `20261026-070915-23d0f9169d20` also fails at the third
 outdent after outdent/undo: two occurrences of the same child exist while sql
 is still blocked. later cross-parent movement and typing are not reached.
 
+unchanged withdrawn-target control `bd49ffce5`, root run
+`20261026-075925-dd803fd38d62` on pre-placement `85cfeeff2`, also fails after
+all canonical premises: an independent public unlink removes the parent from
+root while own reparent/body writes are held; after release, `childx`, the new
+parent-child relation, both resource identities and untouched control are
+durable. real root focus succeeds, but the old parent row remains for ten
+seconds. subsequent child-row/host assertions are not reached. this proves
+stale visible projection, not hidden-pin or memory behavior.
+
 whole-window source gating also has a cycle: move c from a to b and d from b to
 a before either fresh window arrives. qualify an atomic smallest compatible
 source-proof closure from existing proposals, with one revision and budget.
