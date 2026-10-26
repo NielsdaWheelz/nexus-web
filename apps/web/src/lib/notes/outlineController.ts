@@ -843,8 +843,10 @@ export class OutlineController {
       if (row.ref) dom.dataset.resourceRef = row.ref; else delete dom.dataset.resourceRef;
       if (row.parent_id) dom.dataset.parentRow = row.parent_id;
       if (row.root) dom.dataset.outlineRoot = "true";
-      if (row.tail) {dom.dataset.outlineInput = "true"; dom.dataset.outlineTail = "true";}
-      else {delete dom.dataset.outlineInput; delete dom.dataset.outlineTail;}
+      if (row.tail) {
+        dom.dataset.outlineInput = "true"; dom.dataset.outlineTail = "true";
+        content.dataset.empty = String(node.firstChild?.content.size === 0); content.dataset.placeholder = "write or @ to link";
+      } else {delete dom.dataset.outlineInput; delete dom.dataset.outlineTail; delete content.dataset.empty; delete content.dataset.placeholder;}
       if (this.pending.fields.get(id)?.raw) dom.dataset.outlinePending = "true"; else delete dom.dataset.outlinePending;
       if (this.selected.has(id)) dom.dataset.selected = "true"; else delete dom.dataset.selected;
       if (row.gap && content.dataset.gap !== row.gap) {

@@ -8,10 +8,10 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile editor against local-first `c20ebe7b6`: +2,549 authored runtime lines
-(3,553 added, 1,004 deleted) under the historical classifier, plus 33 shared
+mobile editor against local-first `c20ebe7b6`: +2,561 authored runtime lines
+(3,568 added, 1,007 deleted) under the historical classifier, plus 33 shared
 `node/authored` runtime lines (37 added, four deleted). the combined runtime
-change is +2,582: web +2,522, android +27 and shared authored +33. one flat native
+change is +2,594: web +2,534, android +27 and shared authored +33. one flat native
 editing host, occurrence baselines and bounded prepared windows replace
 insertion/finish controls, duplicate row reads and disposable input handoffs.
 the existing retained input owns ordered structure and writing; receipt and

@@ -183,6 +183,10 @@ embedded targets render rich read-only previews; editing opens their resource.
 their disclosed descendants enter the containing flat session rather than
 constructing nested editors.
 
+reserved blank inputs use the editor's existing placeholder treatment. the hint
+is generated presentation, clears with field content, and never enters authored
+writing or clipboard data.
+
 one session admits at most 64 unique document identities and 16 mib of encoded
 state across root, disclosed branches, neighbors, tail, pending input and history.
 provisional fields reserve capacity before they become editable. this is a

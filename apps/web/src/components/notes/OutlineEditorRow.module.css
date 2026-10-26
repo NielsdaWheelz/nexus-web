@@ -21,6 +21,10 @@
   overflow-wrap: anywhere;
 }
 
+.row[data-outline-tail="true"] .content {
+  min-height: var(--outline-control-size);
+}
+
 .leading,
 .trailing {
   display: flex;
