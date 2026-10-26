@@ -327,10 +327,10 @@ export class OutlineController {
     return held.document.capture().then(() => {}).finally(() => {held.captureBytes -= bytes;});
   }
   private capturedBytes(): number {return [...this.documents.values()].reduce((bytes, held) => bytes + held.captureBytes, this.pending.encodedBytes());}
-  private bytes(wanted = this.refs(), historyBytes = this.history.retainedBytes()): number {
+  private bytes(wanted = this.refs(), historyBytes = this.history.retainedBytes(), baselines?: ReadonlyMap<string, number>): number {
     const captured = this.binding.capturedDocuments();
     return [...wanted].reduce((bytes, ref) => {const document = this.writing(ref) ?? captured.find(document => document.ref === ref); return bytes + (document ? Y.encodeStateAsUpdate(document.doc).byteLength : 0);},
-      this.reservedBytes + this.binding.encodedBytes() + this.capturedBytes() + historyBytes);
+      this.reservedBytes + this.binding.encodedBytes(baselines) + this.capturedBytes() + historyBytes);
   }
   private denied(parent: string, message: string): void {if (this.attempted.has(parent)) {this.error = new Error(message); this.notify();}}
   private navigationValid(parent: string): boolean {
@@ -343,7 +343,10 @@ export class OutlineController {
     if (this.slots() + count <= MAX_REFS && this.bytes() <= MAX_BYTES) {this.error = null; return true;}
     const windows = this.reservedWindows ?? this.windows;
     const withoutHistory = new Set<string>();
-    if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0) > MAX_BYTES) {
+    // The hypothetical estimate drops only baselines owned solely by history.
+    // Outstanding captures remain protected; actual admission still checks all charge.
+    const visibleBaselines = new Map([...this.baselineRefs(windows).keys()].map(id => [id, 0]));
+    if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0, visibleBaselines) > MAX_BYTES) {
       this.error = new Error("close a branch or load a smaller window before adding more writing"); this.notify(); return false;
     }
     while ((this.slots(windows) + count > MAX_REFS || this.bytes(this.refs(windows)) > MAX_BYTES) && this.history.releaseOldest()) {}
@@ -623,7 +626,7 @@ export class OutlineController {
     if (start === null) return;
     const end = this.view.state.doc.content.findDiffEnd(next.content)!, overlap = Math.max(0, start - Math.min(end.a, end.b));
     const active = this.selectionRow, selection = this.selection;
-    const tr = this.view.state.tr.replaceWith(start, end.a + overlap, next.content.cut(start, end.b + overlap)).setMeta(outlineTransactionSource, semantic ? "semantic" : "projection");
+    const tr = this.view.state.tr.replace(start, end.a + overlap, next.slice(start, end.b + overlap)).setMeta(outlineTransactionSource, semantic ? "semantic" : "projection");
     const field = active ? fieldById(tr.doc, active) : null;
     if (active && this.selected.size) {
       tr.doc.forEach((node, at) => {if (node.attrs.row_id === active) tr.setSelection(NodeSelection.create(tr.doc, at));});
