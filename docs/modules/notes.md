@@ -153,7 +153,9 @@ acquiring a newer unrelated frontier.
 native packets, composition and reference queries retain their field and
 baseline together. incoming projection changes cannot withdraw an owner while
 its dom remains protected. commands reconcile prosemirror's own dom observer and
-native selection before choosing a field. deferred composition completion cannot
+native selection before choosing a field. a composition handoff finishes its
+previous owner, then synchronizes the native range before capturing the next.
+deferred composition completion cannot
 release a newer packet or record another field's edit. the packet fence
 distinguishes a consumed, reconciled semantic key from permission to
 refresh or adopt remote state. a field without an admitted document stays

@@ -1040,6 +1040,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         compositionstart(current) {
           const previous = compositionBase.current;
           if (previous) finishComposition(current, previous, null);
+          syncNativeSelection(current);
           const field = editingField(current.state), block = field?.node;
           if (block && field && compositionBase.current === null)
             compositionBase.current = {
