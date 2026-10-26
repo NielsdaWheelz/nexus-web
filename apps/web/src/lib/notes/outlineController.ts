@@ -38,6 +38,7 @@ interface Held {document: WritingDocument; captureBytes: number; release(): void
 interface EmbeddedBranch {owner: string; projection: {ref: string; branch: OutlineBranch} | null}
 export interface RootField {label: string; placeholder?: string; initialTitle?: string; inspection?: import("@/components/notes/NoteEditor").NoteInspection | null}
 type Arrangement = Exclude<OutlineCommand, "undo" | "redo">;
+type ProjectionReason = "initial" | "projection" | "semantic";
 type ArrangementPlan = {kind: "move"; row: OutlineRow; peer: OutlineRow | OutlineEdge; direction: "up" | "down"}
   | {kind: "indent"; row: OutlineRow; peer: OutlineRow | OutlineEdge}
   | {kind: "outdent"; row: OutlineRow; parent: OutlineRow};
@@ -140,7 +141,7 @@ export class OutlineController {
     this.view = view;
     if (view) {
       if (!this.disconnect) this.connect();
-      this.project(true);
+      this.project("initial");
       if (this.selectionRow === null && !this.selected.size) {
         const tr = view.state.tr.setMeta(outlineTransactionSource, "projection");
         if (this.setNativeEntry(tr)) view.dispatch(tr);
@@ -161,7 +162,7 @@ export class OutlineController {
     }
     this.focused = this.view?.hasFocus() ?? false; this.syncMetadata(); this.notify(); if (this.deferred) this.refresh(); else this.project();
   };
-  private changed(semantic = false): void {this.rebuild(semantic); this.notify();}
+  private changed(reason: ProjectionReason = "projection"): void {this.rebuild(reason); this.notify();}
   refresh(): void {
     this.rebuild();
     if (this.handle?.canArrange()) {this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.accept(id, window);}
@@ -221,7 +222,7 @@ export class OutlineController {
         origin: row.origin, settledRevision: undefined, receiptOwner});
       this.protectField(row.row_id);
       this.selected.delete(row.row_id); if (moveSelection) this.selectionRow = null;
-      this.changed(true);
+      this.changed("semantic");
       if (moveSelection && mayFocus()) {
         const next = [...this.rows.values()].find(candidate => candidate.tail && candidate.parent_id === row.parent_id)
           ?? [...this.rows.values()].find(candidate => candidate.tail || candidate.root);
@@ -252,7 +253,7 @@ export class OutlineController {
     this.protectField(row.row_id);
     if (relationship) this.pending.restoreRelationship(row.row_id, relationship);
     if (parent_id !== this.pending.root_id && !this.opened.has(parent_id)) this.toggle(parent_id, true);
-    this.changed(true);
+    this.changed("semantic");
     if (!this.documents.has(bookmark.ref)) {const owner = this.windows.has(parent_id) ? parent_id : this.pending.root_id; const window = this.windows.get(owner); if (window) this.accept(owner, window);}
     return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
   }
@@ -285,7 +286,7 @@ export class OutlineController {
       const end = docFromBody(this.binding.body(active.row_id)).firstChild!.content.size + 1;
       this.selection = at === "end" ? {anchor: end, head: end} : at;
     }
-    this.changed(true);
+    this.changed("semantic");
     if (target && mayFocus()) {
       const selected = [...this.selected];
       void this.focus(target.key, target.resolve ?? target.selection, mayFocus);
@@ -563,7 +564,7 @@ export class OutlineController {
           this.attempted.delete(part.id);
         }
         installed = true;
-        this.blockedRows.clear(); this.error = null; this.changed(initial); this.pending.resume();
+        this.blockedRows.clear(); this.error = null; this.changed(initial ? "initial" : "projection"); this.pending.resume();
       } finally {for (const [, held] of acquired) held.release(); this.blockedRows.clear(); if (this.active) this.rebuild(); this.syncReadOnly();}
     }).catch(error => {failed = true; if (this.active) {this.error = error; this.notify();}}).finally(() => {
       this.scheduled.delete(parent_id);
@@ -616,9 +617,9 @@ export class OutlineController {
       this.pending.fields.set(id, {...field, relocating: undefined, previousParent: undefined, previousParentRef: undefined});
     }
   }
-  private rebuild(semantic = false): void {
+  private rebuild(reason: ProjectionReason = "projection"): void {
     this.retireWithdrawnPlacements();
-    if (this.view && this.windows.size > 0 && !semantic && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.deferred = true; this.syncMetadata(); return;}
+    if (this.view && this.windows.size > 0 && reason === "projection" && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.deferred = true; this.syncMetadata(); return;}
     this.deferred = false;
     for (const row of this.rows.values()) this.occurrences.set(row.row_id, row);
     const protectedRows = this.protectedRows(), previousRows = new Map(this.rows), historyOccurrences = this.history.retainedOccurrences();
@@ -693,7 +694,7 @@ export class OutlineController {
     };
     collect(root, this.rootRef, this.rootBranch, 0);
     for (const [id, embedded] of this.embedded) if (embedded.projection !== null && embedded.owner === root) collect(id, embedded.projection.ref, embedded.projection.branch, 1);
-    if (!semantic && [...protectedRows].some(id => previousRows.has(id) && !this.rows.has(id))) {
+    if (reason === "projection" && [...protectedRows].some(id => previousRows.has(id) && !this.rows.has(id))) {
       this.rows.clear(); for (const [id, row] of previousRows) this.rows.set(id, row);
       this.deferred = true; return;
     }
@@ -722,7 +723,7 @@ export class OutlineController {
     for (const id of this.occurrences.keys()) if (!keepRows.has(id)) this.occurrences.delete(id);
     for (const row of this.rows.values()) if (row.ref && this.documents.has(row.ref) && !this.historyLeases.has(row.ref))
       this.historyLeases.set(row.ref, this.history.editor(this.documents.get(row.ref)!.document).retain());
-    this.project(semantic); this.syncMetadata(); this.tryFocus();
+    this.project(reason); this.syncMetadata(); this.tryFocus();
   }
   private bodyMatches(row: OutlineRow): boolean {return [row.resource?.title, row.resource?.body_text, row.resource?.selection?.quote_exact].some(text => text?.toLocaleLowerCase().includes(this.filter.trim().toLocaleLowerCase()));}
   private doc(): PMNode {
@@ -753,8 +754,10 @@ export class OutlineController {
     const tr = this.view.state.tr.setMeta(outlineTransactionSource, "projection");
     if (this.setNativeEntry(tr)) {this.view.dispatch(tr); this.armNativeEntry();}
   }
-  private project(semantic = false): void {
-    if (!this.view || !semantic && !this.handle?.canArrange()) return;
+  /** initial view population bypasses input admission without being an edit.
+   * semantic commands have already reconciled input; refresh must wait. */
+  private project(reason: ProjectionReason = "projection"): void {
+    if (!this.view || reason === "projection" && !this.handle?.canArrange()) return;
     const next = this.doc();
     const start = this.view.state.doc.content.findDiffStart(next.content);
     if (start === null) return;
@@ -766,7 +769,7 @@ export class OutlineController {
     const to = oldEnd.depth ? oldEnd.after(1) : end.a + overlap;
     const contentEnd = newEnd.depth ? newEnd.after(1) : end.b + overlap;
     const active = this.selectionRow, selection = this.selection;
-    const tr = this.view.state.tr.replaceWith(from, to, next.content.cut(from, contentEnd)).setMeta(outlineTransactionSource, semantic ? "semantic" : "projection");
+    const tr = this.view.state.tr.replaceWith(from, to, next.content.cut(from, contentEnd)).setMeta(outlineTransactionSource, reason === "semantic" ? "semantic" : "projection");
     const field = active ? fieldById(tr.doc, active) : null;
     if (active && this.selected.size) {
       tr.doc.forEach((node, at) => {if (node.attrs.row_id === active) tr.setSelection(NodeSelection.create(tr.doc, at));});
@@ -824,7 +827,7 @@ export class OutlineController {
         row.root ? {parent_id: this.pending.root_id, parent_ref: this.rootRef, after_id: null} : undefined);
       const window = this.windows.get(this.pending.root_id);
       if (row.root && window?.afterEdge && window.tailEdge) this.request({...this.requests.get(this.pending.root_id)!, cursor: null, anchor: window.tailEdge.link.link_id});
-      this.changed(true); void this.focus(successor, {anchor: 1, head: 1});
+      this.changed("semantic"); void this.focus(successor, {anchor: 1, head: 1});
     }, enter: () => {if (row.root && row.kind === "title") this.focusFirst(); else void this.appendAfter(row);}, emptyEnter: () => {
       if (row.parent_id === this.pending.root_id || row.root) return;
       this.arrangePrepared(row_id, "outdent", {anchor: 1, head: 1});
@@ -836,7 +839,7 @@ export class OutlineController {
     const id = crypto.randomUUID();
     this.pending.create({row_id: id, parent_id: row.root ? this.pending.root_id : row.parent_id, parent_ref: row.root ? this.rootRef : row.parent_ref,
       after_id: row.root ? null : row.row_id, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, pending: true, origin: this.origin(id)});
-    this.changed(true); await this.focus(id, {anchor: 1, head: 1});
+    this.changed("semantic"); await this.focus(id, {anchor: 1, head: 1});
   }
   private peer(row: OutlineRow, direction: "before" | "after"): OutlineRow | OutlineEdge | null {
     const siblings = [...this.rows.values()].filter(item => item.parent_id === row.parent_id && !item.gap && !item.tail && !item.root), at = siblings.findIndex(item => item.row_id === row.row_id);
@@ -849,7 +852,7 @@ export class OutlineController {
     const id = this.id(row.parent_id!, peer.link.link_id);
     this.pending.fields.set(id, {row_id: id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: direction === "after" ? row.row_id : null,
       ...(direction === "before" ? {before_id: row.row_id} : {}), ref: peer.resource.ref, link: peer.link, kind: "body", body: emptyBody(), hidden: false, pending: false, origin: this.origin(id)});
-    this.rebuild(true); return this.rows.get(id) ?? null;
+    this.rebuild("semantic"); return this.rows.get(id) ?? null;
   }
   private join(row_id: string, direction: "backward" | "forward"): void {
     const row = this.rows.get(row_id); if (!row || row.kind !== "body") return;
@@ -858,7 +861,7 @@ export class OutlineController {
     const destination = direction === "backward" ? peer : row, source = direction === "backward" ? row : peer;
     const displayed = {destination: this.captureField(destination), source: this.captureField(source)};
     const selection = this.pending.join(destination.row_id, source.row_id, this.capture(), displayed);
-    this.changed(true); void this.focus(destination.row_id, selection);
+    this.changed("semantic"); void this.focus(destination.row_id, selection);
   }
   select(row_id: string, extend = false): void {
     const order = [...this.rows.keys()].filter(id => !this.rows.get(id)!.gap), anchor = [...this.selected][0] ?? row_id;
@@ -892,7 +895,7 @@ export class OutlineController {
     const movesFocus = candidates.some(candidate => candidate.row_id === this.selectionRow);
     if (movesFocus) {this.selected.clear(); this.selectionRow = null;}
     for (const candidate of candidates) if (candidate.kind !== "reference") this.retainField(candidate);
-    this.pending.unlink(candidates.map(candidate => candidate.row_id)); this.changed(true);
+    this.pending.unlink(candidates.map(candidate => candidate.row_id)); this.changed("semantic");
     if (movesFocus && next) void this.focus(next.row_id, direction === "forward" && next === following ? {anchor: 1, head: 1} : "end");
   }
 
@@ -934,7 +937,7 @@ export class OutlineController {
           ref: other.resource.ref, link: other.link, kind: terminal || other.resource.kind !== "note" && other.resource.kind !== "page" ? "reference" : other.resource.kind === "page" ? "title" : "body",
           resource: other.resource, body: emptyBody(), hidden: false, pending: false, origin: this.origin(id)});
       }
-      retain(); this.pending.move(row_id, {row_id: id, link: other.link}, plan.direction, selection); this.changed(true); return;
+      retain(); this.pending.move(row_id, {row_id: id, link: other.link}, plan.direction, selection); this.changed("semantic"); return;
     }
     const parent = plan.kind === "outdent" ? plan.parent : "row_id" in plan.peer ? plan.peer : this.visiblePeer(row, "before");
     if (!parent) return;
@@ -942,7 +945,7 @@ export class OutlineController {
     retain();
     if (plan.kind === "indent") this.opened.add(parent_id);
     this.pending.relink(row_id, parent_id, destination, plan.kind === "indent" ? null : parent.row_id, selection);
-    this.changed(true);
+    this.changed("semantic");
   }
   toggle(row_id: string, force?: boolean): void {
     const row = this.rows.get(row_id); if (!row?.ref || row.terminal) return;
@@ -1054,7 +1057,7 @@ export class OutlineController {
     if (!request) return;
     if (!window) {await this.focus(this.tailId(parent_id), {anchor: 1, head: 1}, lease); return;}
     if (window.afterEdge && window.tailEdge) {this.request({...request, cursor: null, anchor: window.tailEdge.link.link_id}, true); this.notify();}
-    if (!this.rows.has(this.tailId(parent_id)) && !window.afterEdge) {if (!this.admitNew()) return; this.changed(true);}
+    if (!this.rows.has(this.tailId(parent_id)) && !window.afterEdge) {if (!this.admitNew()) return; this.changed("semantic");}
     await this.focus(this.tailId(parent_id), {anchor: 1, head: 1}, lease);
   }
   async focusNote(ref: string, signal?: AbortSignal): Promise<boolean> {
