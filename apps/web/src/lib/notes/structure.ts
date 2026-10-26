@@ -4,7 +4,7 @@
 import * as Y from "yjs";
 import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody, sliceInline } from "@nexus/authored/documents";
 import { emptyBody, parseBody } from "@nexus/authored/body";
-import { insertionPositions, type Intent } from "@nexus/authored/commands";
+import { createNoteIntent, insertionPositions, type Intent } from "@nexus/authored/commands";
 import { linkId } from "@nexus/authored/identity";
 import {advanceCoverage} from "@nexus/authored/merge";
 import type { ClipItem } from "./clipboard";
@@ -204,8 +204,9 @@ export class OutlineHistory {
   async create(parent_ref: string, after: string | null = null, body = emptyBody(), prelude: readonly Intent[] = []): Promise<CreatedOutlineNote> {
     this.stopTyping();
     const ref = `note_block:${crypto.randomUUID()}`;
+    const initializer = createNoteIntent(ref,body);
     const placement = await prepareLink(this.runtime, { source_ref: parent_ref, target_ref: ref, source_label: null, target_label: null, after });
-    const saved = await this.commit({ kind: "batch", intents: [...prelude, { kind: "create_note", ref, body }, ...placement.intents] });
+    const saved = await this.commit({ kind: "batch", intents: [...prelude, initializer, ...placement.intents] });
     const created = saved.change.resources.find(resource => resource.ref === ref);
     if (created?.kind !== "note" || created.body_update === null) throw new Error("created note receipt has no body");
     const creation = created.touch_vv;
@@ -219,8 +220,9 @@ export class OutlineHistory {
   }
   async paste(parent_ref:string,after:string|null,items:readonly ClipItem[],prelude:readonly Intent[]=[]):Promise<string[]> {
     this.stopTyping();
-    const accountId=(await (await this.runtime.store).readReplica()).account_id;
     const refs=items.map(item=>item.kind==="note"?`note_block:${crypto.randomUUID()}`:item.ref);
+    const initializers=items.map((item,index)=>item.kind==="note"?createNoteIntent(refs[index]!,item.body):null);
+    const accountId=(await (await this.runtime.store).readReplica()).account_id;
     const positions=new Map<string,{last:string;upper:string|null}>();
     const moved=new Map<string,{link:LinkState;endpoint:string}>();
     const intents:Intent[]=[...prelude];
@@ -229,7 +231,7 @@ export class OutlineHistory {
       const parent=item.parent===null?parent_ref:refs[item.parent]!;
       if(item.parent!==null&&items[item.parent]!.kind!=="note"&&endpointForResource(parent)?.kind!=="resource")throw new Error("Only copied notes can hold copied children");
       const ref=refs[index]!;
-      if(item.kind==="note")intents.push({kind:"create_note",ref,body:item.body});
+      const initializer=initializers[index];if(initializer)intents.push(initializer);
       const id=linkId(accountId,parent,ref);
       const previous=positions.get(parent);
       let placement:{value:string;moves:Intent[]};
@@ -285,8 +287,9 @@ export class OutlineHistory {
     applyBodyEdits(clone, [{ kind: "replace", from: offset, to: inline.length, content: [] }], origin);
     const update = encodeBytes(Y.encodeStateAsUpdate(clone, baseline));
     const new_ref = `note_block:${crypto.randomUUID()}`;
+    const initializer = createNoteIntent(new_ref,suffix);
     const placement = await prepareLink(this.runtime, { source_ref: parent_ref, target_ref: new_ref, source_label: null, target_label: null, after: occurrence_link });
-    const saved = await this.commit({ kind: "batch", intents: [{ kind: "edit_body", ref: source_ref, body_update: update }, { kind: "create_note", ref: new_ref, body: suffix }, ...placement.intents] });
+    const saved = await this.commit({ kind: "batch", intents: [{ kind: "edit_body", ref: source_ref, body_update: update }, initializer, ...placement.intents] });
     const created = saved.change.resources.find(resource => resource.ref === new_ref);
     if (created?.kind !== "note" || created.body_update === null) throw new Error("split note receipt has no body");
     const creation = created.touch_vv;

@@ -28,3 +28,11 @@ writing and order oracles pass.
 
 the source correction publishes after that cleanup; the retry uses the unchanged
 fixture and budget, with the second gesture still required to focus and write.
+
+run `20261026-005823-9ce4f189235a` on `413043e4f` passes that unchanged case:
+48 exact uploaded edits, bounded final 16-row window, retirement feedback,
+unfocused tail after cleanup, then a deliberate second gesture creates the 65th
+note at the absolute end with prior writing/order and the same editing host.
+the originally identified empty-outline variant still depends on immediate undo
+admission and remains unproved. this is neither a heap nor a 100,000-note client
+capacity result.

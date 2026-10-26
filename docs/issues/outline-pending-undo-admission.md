@@ -33,5 +33,19 @@ runtime needs one bounded synchronous command admission that captures the actual
 canonical yjs mutations and persists them with their graph intents. callbacks
 must await only predecessor proofs captured before their own reservation, never
 their own pending frontier. history must seal the actual group at admission,
-rather than select the latest group after waiting. the exact api and exception
-ownership remain under review; runtime code is unchanged.
+rather than select the latest group after waiting.
+
+the approved runtime boundary is one synchronous `admitWriting` call declaring
+existing document/origin pairs and new-note bodies, a synchronous canonical
+mutation, and asynchronous graph-only preparation. it reserves the existing
+command order before publication, seals initializers and deltas once, and keeps
+participants pinned through the existing eventual commit/retry owner. partial
+mutation failure retains unsaved writing and blocks later commands; retry never
+reruns that mutation. implementation and adversarial review are in progress.
+
+ordering barriers, displayed forward-delete identities, and history-owned inverse
+coverage are distinct. awaiting a broad capture cannot authorize deleting its
+foreign touches. a consumed inverse must publish its causally complete actual
+post-undo body before subsequent input; it cannot install inverse-only bytes into
+an obsolete displayed clone. the consumer rewrite and unchanged immediate-undo
+journey remain required after the runtime boundary is qualified.

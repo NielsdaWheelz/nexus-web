@@ -11,7 +11,7 @@ import NoteEditor from "@/components/notes/NoteEditor";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import { bodyHasContent, emptyBody, type NoteBody } from "@nexus/authored/body";
-import type { Intent } from "@nexus/authored/commands";
+import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import { emptyNoteBodyHistory, recordNoteBodyEdit, type NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import type { NoteEdit } from "@/lib/notes/editorTypes";
@@ -99,11 +99,12 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
     const retry = submitted.failure?.retry;
     if (retry) { void commit(retry.kind, () => retry.attempt(), retry); return; }
     if (submitted.searching || !bodyHasContent(submitted.body)) return;
+    const creation = createNoteIntent(submitted.noteRef, submitted.body);
     void commit("save", async target => {
       target.ref = submitted.noteRef;
       return createLink(writing, {
         source_ref: destinationRef, target_ref: submitted.noteRef, source_label: await sourceLabel(), target_label: null,
-        after: null, prelude: [...prelude, { kind: "create_note", ref: submitted.noteRef, body: submitted.body }],
+        after: null, prelude: [...prelude, creation],
       });
     });
   };

@@ -10,7 +10,7 @@
 // saved offsets places a mark; otherwise a unique literal occurrence places a derived
 // mark; otherwise the annotation stays unlocated beside its literal quote. A host
 // without source text still lists every annotation with editable notes.
-import type { Intent } from "@nexus/authored/commands";
+import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import type { NoteBody } from "@nexus/authored/body";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
 import type { AuthoredStore, HighlightColor, LinkState, Locator, QueryResult, SelectionCapture } from "@nexus/authored/types";
@@ -352,8 +352,9 @@ async function boundCapture(store: AuthoredStore, accountId: string, capture: Ca
 /** An independent note appended after the highlight's notes, with its first link. */
 async function noteIntents(runtime: WritingRuntime, highlight: string, body: NoteBody): Promise<Intent[]> {
   const ref = `note_block:${crypto.randomUUID()}`;
+  const initializer = createNoteIntent(ref, body);
   const link = await prepareLink(runtime, { source_ref: highlight, target_ref: ref, source_label: null, target_label: null, after: null });
-  return [{ kind: "create_note", ref, body }, ...link.intents];
+  return [initializer, ...link.intents];
 }
 
 /** Commits one new highlight, its passage, its source stub and an optional first note atomically. */

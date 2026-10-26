@@ -1,6 +1,8 @@
-/** Commands freeze observed causal coverage and Yjs deltas once. Retrying remerges
- * identical bytes; it never rereads delete coverage or allocates another touch.
- * Creating an already-owned identity does nothing; revival is an explicit restore. */
+/** Commands freeze observed causal coverage and Yjs deltas once. A note create
+ * carries its frozen initializer as body_update; preparation never remints it.
+ * Retrying remerges identical bytes, never rereading delete coverage or
+ * allocating another touch. An owned identity is not recreated; revival is an
+ * explicit restore. */
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
 import { createNote, createTitle } from "./documents.ts";
@@ -10,7 +12,7 @@ import { sortedEndpoints } from "./identity.ts";
 import type { NoteBody } from "./body.ts";
 export interface CommandContext { replica_id:string; command_seq:string; lamport:string }
 export type Intent =
-  | { kind:"create_note"; ref:string; body:NoteBody }
+  | { kind:"create_note"; ref:string; body_update:string }
   | { kind:"create_page"; ref:string; title:string; local_date:string|null }
   | { kind:"edit_body"; ref:string; body_update:string }
   | { kind:"edit_title"; ref:string; title_update:string }
@@ -26,6 +28,10 @@ export type Intent =
   | { kind:"capture_passage"; anchor_id:string; source_ref:string; normalized_exact:string; prefix:string; suffix:string; capture:PassageCapture }
   | { kind:"capture_source"; source_ref:string; capture:SourceCapture }
   | { kind:"batch"; intents:Intent[] };
+/** Freeze a note initializer before any asynchronous command preparation. */
+export function createNoteIntent(ref:string, body:NoteBody): Extract<Intent,{kind:"create_note"}> {
+  return {kind:"create_note",ref,body_update:createNote(body)};
+}
 function patchOf(r:ResourceState):ResourcePatch {
   switch(r.kind) {
     case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null};
@@ -50,7 +56,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "create_note": {
         const known=knownResource(action.ref);
         if(known){if(known.kind!=="note")throw new TypeError("Resource kind is immutable");return;}
-        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:createNote(action.body)});return;
+        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;
       }
       case "create_page": {
         const known=knownResource(action.ref);

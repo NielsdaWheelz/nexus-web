@@ -68,6 +68,17 @@ already open writing documents. subsequent edits therefore see the shared-text
 identities they reference; subscription delivery is not a commit barrier. incoming
 receipt state does not create another write or text-history item.
 
+`WritingRuntime.admitWriting` reserves one command before publishing canonical
+new notes or synchronously changing existing documents. callers declare each
+document's origin; the runtime captures those actual yjs mutations and freezes
+each new initializer once. asynchronous preparation supplies graph intents only,
+using store reads and previously sealed proofs. it must not capture its own
+pending documents or submit another writer. graph preparation may retry;
+canonical mutation never does. participant captures and pins follow eventual
+settlement, while the returned result reports the first failure. a partial
+mutation fault retains unsaved writing for copy or deliberate discard and blocks
+later commands. unsaved-copy includes open documents queued behind that fault.
+
 local receipts also retain `before`: touch/delete or add/remove vectors per
 changed resource or relationship from the successful compare-and-swap prestate. a stale result
 replaces that certificate before remerge; an uncertain committed retry retains

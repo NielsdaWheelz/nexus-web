@@ -1,6 +1,6 @@
 /** One-shot semantic process. The platform owns admission and SQL publication. */
 import { mergeChanges, isVisible } from "./src/merge.ts";
-import { prepareChange, type Intent } from "./src/commands.ts";
+import { createNoteIntent, prepareChange, type Intent } from "./src/commands.ts";
 import { parseBody } from "./src/body.ts";
 import { dailyId, linkId, normalizeQuote, passageId, passageKey, validateBindings } from "./src/identity.ts";
 import { generateKeyBetween } from "fractional-indexing";
@@ -23,7 +23,7 @@ async function serverIntent(command: Record<string, unknown>, states: Corpus, ac
     }
     return { kind: "batch", intents };
   }
-  if (command.kind === "create_note") return { kind: "create_note", ref: String(command.ref), body: parseBody(command.body_pm_json ?? (command.body as { body_pm_json: unknown }).body_pm_json) };
+  if (command.kind === "create_note") return createNoteIntent(String(command.ref), parseBody(command.body_pm_json ?? (command.body as { body_pm_json: unknown }).body_pm_json));
   if (command.kind === "add_link") {
     const a = String(command.endpoint_a), b = String(command.endpoint_b);
     const known = states.links.find(link => link.endpoint_a === a && link.endpoint_b === b);

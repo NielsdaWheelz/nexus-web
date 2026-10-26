@@ -4,7 +4,7 @@
 import { bodyText } from "@nexus/authored/body";
 import { isVisible } from "@nexus/authored/merge";
 import { dailyId } from "@nexus/authored/identity";
-import type { Intent } from "@nexus/authored/commands";
+import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 import { createLink, deleteResource } from "@/lib/resourceGraph/links";
 import type { WritingRuntime } from "./runtime";
@@ -26,7 +26,7 @@ export async function dailyPage(runtime: WritingRuntime, local_date: string): Pr
 export async function captureToday(runtime: WritingRuntime, localDate: string, noteId: string, text: string): Promise<string> {
   const page = await dailyPage(runtime, localDate);
   const ref = `note_block:${noteId}`;
-  await createLink(runtime, { source_ref: page.ref, target_ref: ref, source_label: null, target_label: null, after: null, prelude: [...page.prelude, { kind: "create_note", ref, body: bodyText(text) }] });
+  await createLink(runtime, { source_ref: page.ref, target_ref: ref, source_label: null, target_label: null, after: null, prelude: [...page.prelude, createNoteIntent(ref, bodyText(text))] });
   return page.ref.slice("page:".length);
 }
 export type DailyLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };

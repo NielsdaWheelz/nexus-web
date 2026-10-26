@@ -20,8 +20,7 @@ ones; removals made by the command itself cannot authorize its coverage.
 the runtime now carries exact per-identity pre-cas certificates and the shared
 `advanceCoverage` helper checks removed as well as covered predecessors. the
 incoming flat editor uses those certificates; yjs inclusion is additional byte
-protection, never a substitute for touch-only restore/no-op causality. consumer
-integration and its live qualification remain pending.
+protection, never a substitute for touch-only restore/no-op causality.
 
 resolve at the shared capture/receipt/history boundary: only extend a replica
 prefix when every intervening relevant touch is covered. retain the last safe
@@ -36,3 +35,12 @@ edit and public resource deletion, then creation undo/redo/undo preserve exact
 text and expected visibility, coverage, ordinary relation and unrelated rows.
 this validates the control fixture before qualifying the guarded candidate; it
 does not exercise a higher foreign link-add removal.
+
+the guarded flat candidate passes both unchanged public-ui cases in run
+`20261026-010502-eca4d6fd6006` on `482d5d119` (product `413043e4f`, runtime
+`2453d1a36`). case 40 preserves foreign `B` through own text and creation undo:
+canonical `AB` remains visible while the creation scope is unlinked. case 41
+passes the removed-resource predecessor control. both prove one same-replica
+actor clock and unchanged unrelated rows. the compound-admission/history change
+must retain these results; explicit join/delete, touch-only restore and higher
+foreign link-add removal remain separate qualification obligations.
