@@ -6,7 +6,7 @@
 import * as Y from "yjs";
 import { prepareChange, type Intent } from "@nexus/authored/commands";
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
-import { noteBodySchema, projectBody, type NoteBody } from "@nexus/authored/body";
+import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
 import type { AuthoredStore, Change, CommitFrame, Corpus, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
@@ -211,7 +211,7 @@ export class WritingRuntime {
    * canonical text for copying. It keeps no history and recovers nothing. */
   async uncommittedText(): Promise<string> {
     const texts = new Map<string, string>();
-    const text = (body: NoteBody) => projectBody(noteBodySchema.nodeFromJSON(body.body_pm_json)).text;
+    const text = (body: NoteBody) => rawBodyText(noteBodySchema.nodeFromJSON(body.body_pm_json));
     const creation = (intent: Intent): void => {
       if (intent.kind === "batch") intent.intents.forEach(creation);
       else if (intent.kind === "create_note") texts.set(intent.ref, text(intent.body));
@@ -224,7 +224,7 @@ export class WritingRuntime {
       const { doc } = await pending.promise;
       texts.set(ref, doc.share.has("title") ? doc.getText("title").toString() : text(readBody(doc)));
     }
-    return [...texts.values()].filter(text => text.trim() !== "").join("\n\n");
+    return [...texts.values()].filter(text => text !== "").join("\n\n");
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
     if (this.retired) throw new Error("Writing account is closed");

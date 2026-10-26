@@ -1,7 +1,7 @@
 # qualify peer annotations and remote admission
 
 browser refresh is repaired and proved. account terminal-admission and
-retired-response races pass; wire-reload and installed-client checks remain.
+retired-response and wire-reload races pass; installed-client checks remain.
 
 own highlights belong to the local authored corpus. readable peers belong to the
 server document map and never enter that corpus. previously the browser hint
@@ -32,8 +32,11 @@ then peer deletion across reconnect without losing committed offline writing.
 the account terminal-admission race passes in
 `20261025-212216-4c293cc5ee65`. run `20261025-214933-7baa03b29f90`
 on `509c47d69` passes real retirement with logout still pending: a held old
-response rejects with `AbortError`. the genuine wire-reload race remains tracked
-in [its issue](local-first-wire-reload-admission.md).
+response rejects with `AbortError`. run `20261025-215552-e4d90ab07c7d`
+on `6f9e41b48` passes the genuine wire race: a real 426 cannot navigate or emit
+beforeunload while a local command is pending; late old success/failure cannot
+reopen admission. after the retained command commits, explicit reload preserves
+the exact text and uploads it.
 
-resolve after that check and installed-client peer create/edit/delete/reconnect.
+resolve after installed-client peer create/edit/delete/reconnect.
 the browser results do not substitute for the installed-client check.

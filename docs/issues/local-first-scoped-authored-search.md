@@ -67,5 +67,5 @@ only the whole-paragraph control highlight; the original exact-quote highlight
 was absent. the shared index now covers captured prefix/exact/suffix fields and
 the local excerpt uses the same shared ordered fields as literal captured text.
 labels and navigation remain the exact quote, and saved passages remain
-exact-only. this two-file repair awaits static and actual mounted green; it does
+exact-only. the canonical static gate passes; actual mounted green remains pending. it does
 not implement the pending scoped-source metadata contract.
