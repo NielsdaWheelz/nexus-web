@@ -72,10 +72,86 @@ export const PANE_STRIP_SHORTCUTS = [
   },
 ] as const;
 
+// These keys belong to the outline's editors and selection, not the app-wide matcher.
+export function outlineShortcuts(platform: PlatformKind): readonly {
+  id: string; title: string; description: string; meta: string;
+}[] {
+  const apple = usesMeta(platform);
+  return [
+    {
+      id: "Outline.Select",
+      title: "Select the item",
+      description: "From an item's text, selects that item. On a focused item, Space selects it.",
+      meta: "Esc / Space",
+    },
+    {
+      id: "Outline.Browse",
+      title: "Browse items",
+      description: "Moves the selection to the previous or next item. Shift extends it.",
+      meta: "↑ / ↓",
+    },
+    {
+      id: "Outline.Edit",
+      title: "Edit the item's text",
+      description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.",
+      meta: "F2",
+    },
+    {
+      id: "Outline.Insert",
+      title: "Insert item",
+      description: "In note text, splits the note at the caret. On a selected item or an item's title, inserts an item after it.",
+      meta: "Enter",
+    },
+    {
+      id: "Outline.Indent",
+      title: "Indent or outdent",
+      description: "Nests the item under the one above it, or moves it out a level. Does nothing when there is no such place.",
+      meta: "Tab / Shift+Tab",
+    },
+    {
+      id: "Outline.Move",
+      title: "Move item up or down",
+      description: "Moves the item past its neighbour. In text, the caret stays where it was.",
+      meta: apple ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓",
+    },
+    {
+      id: "Outline.History",
+      title: "Undo or redo",
+      description: "Undoes or redoes the last change in this outline, text included.",
+      meta: apple ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z",
+    },
+    {
+      id: "Outline.Unlink",
+      title: "Unlink the item",
+      description: "Removes the selected item from this outline. The item itself remains.",
+      meta: "Delete / Backspace",
+    },
+    {
+      id: "Outline.Clear",
+      title: "Clear the selection",
+      description: "From a selected item, clears the selection and moves focus to its bullet. Tab then moves on.",
+      meta: "Esc",
+    },
+  ];
+}
+
 type Shortcut = (typeof SHORTCUTS)[keyof typeof SHORTCUTS];
 
-function usesMeta(platform: PlatformKind): boolean {
+export function usesMeta(platform: PlatformKind): boolean {
   return platform === "mac" || platform === "ios";
+}
+
+/** Tab/Shift+Tab and the move chord. Any extra modifier disqualifies. */
+export function outlineStructuralCommand(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "altKey" | "ctrlKey">,
+  platform: PlatformKind,
+): "indent" | "outdent" | "move_up" | "move_down" | null {
+  if (event.key === "Tab")
+    return event.metaKey || event.ctrlKey || event.altKey ? null : event.shiftKey ? "outdent" : "indent";
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return null;
+  const chord = usesMeta(platform) ? event.metaKey && !event.altKey : event.altKey && !event.metaKey;
+  if (!chord || !event.shiftKey || event.ctrlKey) return null;
+  return event.key === "ArrowUp" ? "move_up" : "move_down";
 }
 
 export function matchesShortcut(

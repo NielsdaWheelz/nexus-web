@@ -1096,6 +1096,7 @@ export function useOutlineSession({
     destination(row: model.Row): OutlineDestination | null;
     publication?: DailyPublication;
   }>());
+  const surfaceOf = (key: string) => [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
   const composerDraft = useResourceDraft<{
     destination: OutlineDestination; publication?: DailyPublication; serial: number;
     displayAfter: string | null;
@@ -2968,7 +2969,7 @@ export function useOutlineSession({
     },
     occurrenceCommandState(key: string, command: Exclude<OutlineCommand, "undo" | "redo">): OutlineCommandState {
       if (activeReference !== null) return {enabled: false, reason: "finish linking or return to prose first"};
-      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const surface = surfaceOf(key);
       const row = surface?.rows.find(row => row.key === key);
       if (!surface || !row) {
         const direct = directOccurrences.current.get(key);
@@ -2997,7 +2998,7 @@ export function useOutlineSession({
     },
     executeOccurrenceCommand(key: string, command: Exclude<OutlineCommand, "undo" | "redo">) {
       if (!session.occurrenceCommandState(key, command).enabled) return;
-      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const surface = surfaceOf(key);
       const row = surface?.rows.find(row => row.key === key);
       if (!surface || !row) {
         const direct = directOccurrences.current.get(key);
@@ -3019,7 +3020,7 @@ export function useOutlineSession({
       setSelection({kind: "text", key, ...at});
     },
     selectOccurrence(key: string, extend = false, siblingKeys: readonly string[] = [key]) {
-      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const surface = surfaceOf(key);
       if (surface) session.select({key, rows: surface.rows, extend});
       else if (directOccurrences.current.has(key)) {
         const prior = selection?.kind === "blocks" ? selection : null;

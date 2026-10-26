@@ -82,7 +82,7 @@ selection scope while execution keeps the same catalog command ids.
   exact unlink/details retain the incoming edge's authority; missing navigation
   does not erase an authorized relationship.
 - structural insertion/rearrangement/history use the outline session's direct
-  command interface and mobile accessory, never row/header menu shortcuts.
+  command interface, its keys and the touch accessory, never row/header menu shortcuts.
   independent chat/message admission retains its own composer. no canonical
   `LinkResource` verb or global picker is added. action refs never supply missing
   insertion identity.

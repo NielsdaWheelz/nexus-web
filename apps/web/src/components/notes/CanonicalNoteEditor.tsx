@@ -27,6 +27,7 @@ export default function CanonicalNoteEditor({
   structuralKeys,
   atomicEmbeds = false,
   publication,
+  itemText,
 }: {
   session: OutlineSession;
   occurrence: BodyOccurrence;
@@ -38,6 +39,7 @@ export default function CanonicalNoteEditor({
   structuralKeys?: StructuralKeys;
   atomicEmbeds?: boolean;
   publication?: DailyPublication;
+  itemText?: boolean;
 }) {
   const text = useText(occurrence.noteRef);
   if (!text || typeof text.value === "string") return null;
@@ -56,6 +58,7 @@ export default function CanonicalNoteEditor({
     <>
       <NoteEditor
         outlineSession={session}
+        itemText={itemText}
         editorKey={`${occurrence.noteRef}@${occurrence.key}`}
         occurrenceKey={occurrence.key}
         containingNoteRef={text.acked === null ? null : occurrence.noteRef}

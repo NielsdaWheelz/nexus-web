@@ -28,7 +28,7 @@ conversation messages retain their message layout.
 | `ResourceComposer.tsx` | independent chat/message context admission using existing insertion primitives |
 | `OutlineInsertionLine.tsx` | one session-owned insertion draft and captured destination |
 | `PageTitleEditor.tsx` | canonical root/inline title editing and text history |
-| `OutlineCommands.tsx` | accessible icon accessory for the session command interface |
+| `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |
 | `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
 | `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
@@ -203,7 +203,7 @@ native title/bullet click and enter follow canonical activation; shift-click and
 shift-enter create one fresh pane. other browser modifiers and title context menus
 remain native. immutable references have no editor. unused primary space selects
 the exact occurrence without a soft keyboard. [notes](notes.md) owns structural
-keys, canonical page-title history and the pane command accessory.
+keys, item-text focus, canonical page-title history and the pane's touch command accessory.
 
 the resource ellipsis has the same canonical `action_ref` actions in either family.
 loaded open/fork actions are omitted; `any-pointer: coarse` adds one local fork
