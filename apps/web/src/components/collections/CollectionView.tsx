@@ -81,6 +81,8 @@ export default function CollectionView({
     rowId: string;
     controlSelector: string | null;
     orderedIds: readonly string[];
+    portal: HTMLElement | null;
+    departing: boolean;
   } | null>(null);
   const orderedIds = useMemo(() => rows.map(row => row.id), [rows]);
   const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
@@ -109,7 +111,14 @@ export default function CollectionView({
     const fallback = fallbackTarget();
     if (next && root && windowed) {
       pendingFocus.current?.release();
-      pendingFocus.current = { id: next, selector, fallback, release: pin(next) };
+      const unpin = pin(next);
+      const cancel = () => {
+        release();
+        if (pendingFocus.current?.release === release) pendingFocus.current = null;
+      };
+      const release = () => { unpin(); fallback?.removeEventListener("blur", cancel); };
+      pendingFocus.current = { id: next, selector, fallback, release };
+      fallback?.addEventListener("blur", cancel);
     }
     return fallback;
   }, [rowElement, pin, windowed, fallbackTarget]);
@@ -127,7 +136,7 @@ export default function CollectionView({
     }
     const focus = ownedFocusRef.current;
     const root = returnScopeRef.current;
-    if (focus === null || root === null) return;
+    if (focus === null || root === null || focus.departing) return;
     if (focus.target.isConnected) {
       focus.orderedIds = orderedIds;
       return;
@@ -215,8 +224,21 @@ export default function CollectionView({
       }}
       onFocusCapture={(event) => {
         const target = event.target as HTMLElement;
+        const pending = pendingFocus.current;
+        if (pending && target !== pending.fallback) { pending.release(); pendingFocus.current = null; }
         const row = target.closest<HTMLElement>("[data-collection-row-id]");
-        if (!row) return;
+        if (!row || !event.currentTarget.contains(row)) {
+          // React portal focus still belongs to the row whose menu opened it.
+          // A control inside the collection, outside that row, takes ownership.
+          const focus = ownedFocusRef.current;
+          const previous = event.relatedTarget;
+          if (focus && !event.currentTarget.contains(target) && previous instanceof Node &&
+              (previous === focus.target || focus.portal?.contains(previous))) {
+            focus.portal = target.closest<HTMLElement>('[role="menu"], [role="dialog"]') ?? target;
+            focus.departing = false;
+          } else ownedFocusRef.current = null;
+          return;
+        }
         window.interact(row.dataset.collectionRowId!);
         const href = target.getAttribute("href");
         let controlSelector: string | null = null;
@@ -230,11 +252,23 @@ export default function CollectionView({
           controlSelector = `a[href="${CSS.escape(href)}"]`;
         }
         ownedFocusRef.current = { target, rowId: row.dataset.collectionRowId!, controlSelector,
-          orderedIds };
+          orderedIds, portal: null, departing: false };
       }}
       onBlurCapture={(event) => {
-        if (event.target.isConnected && (event.relatedTarget === null ||
-          !event.currentTarget.contains(event.relatedTarget as Node))) ownedFocusRef.current = null;
+        const root = event.currentTarget;
+        const focus = ownedFocusRef.current;
+        if (event.target.isConnected && (event.relatedTarget === null || !root.contains(event.relatedTarget as Node))) {
+          // Departure wins before a synchronous publication can detach its new
+          // destination. Only this row's matching portal focus may re-adopt it.
+          if (focus) focus.departing = true;
+          pendingFocus.current?.release(); pendingFocus.current = null;
+          // The matching focus event identifies an owned portal before this
+          // check. A real transfer elsewhere relinquishes the old row capture.
+          queueMicrotask(() => {
+            if (ownedFocusRef.current !== focus) return;
+            if (focus?.departing) ownedFocusRef.current = null;
+          });
+        }
       }}
       style={{ display: "contents" }}
     >
