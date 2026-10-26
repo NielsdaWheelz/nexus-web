@@ -18,6 +18,8 @@ import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { usesMeta } from "@/lib/shortcuts";
 import { prepareActionSelect, type ActionDescriptor, type ActionSelectDetail, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -300,6 +302,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
   const { composer, menu } = verbs;
+  const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
   const feedback = useFeedback();
   const { draft, opening } = composer;
@@ -359,7 +362,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       ? "this chat is still responding" : "this chat can’t accept a reply here"
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
       : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
-    const shortcut = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "cmd" : "ctrl";
+    const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
     const command = (id: string, label: string, icon: ActionDescriptor["icon"], onSelect: (detail: ActionSelectDetail) => void, reason: string | null): Extract<ActionDescriptor, { kind: "command" }> => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });

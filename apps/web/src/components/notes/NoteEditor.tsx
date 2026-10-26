@@ -79,6 +79,8 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import { usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
+import { getBrowserTouchCapable, useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
 import {
   bodyFromNode,
   docFromBody,
@@ -107,14 +109,14 @@ export interface StructuralKeys {
   split?(left: NoteBody, right: NoteBody): void;
   emptyBackspace?(): void;
   join?(direction: "backward" | "forward"): void;
-  indent?(at: { anchor: number; head: number }): void;
-  outdent?(at: { anchor: number; head: number }): void;
   selectBlock?(): void;
 }
 
 export interface NoteEditorProps {
   reference?: ReferenceInputHost | null;
   outlineSession?: OutlineSession;
+  /** This text is an outline row's own text: structural keys belong to the outline, and it is not a sequential tab stop. */
+  itemText?: boolean;
   editorKey: string;
   occurrenceKey?: string;
   /** The acknowledged note identity; drafts supply null. */
@@ -200,8 +202,9 @@ export default function NoteEditor(props: NoteEditorProps) {
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const consumedFocus = useRef<number | null>(null);
-  const latest = useRef(props);
-  latest.current = { ...props, editable: props.editable && !paused };
+  const { platform } = useRenderEnvironment();
+  const latest = useRef({ ...props, platform });
+  latest.current = { ...props, platform, editable: props.editable && !paused };
   const busy = useRef(false);
   const guard = useWorkGuard();
   const { ctx } = useActionRuntime();
@@ -247,7 +250,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [referenceVisible, setReferenceVisible] = useState(true);
   const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
   const referenceReady = reference.isReady();
-  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
+  latest.current = { ...props, platform, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const suspended = useRef(false);
@@ -639,7 +642,9 @@ export default function NoteEditor(props: NoteEditorProps) {
               "aria-autocomplete": "list",
               "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
             }
-          : {}),
+          // Editable item text is not a tab stop (pointer, F2 and focus requests enter it); an open
+          // @ query keeps its combobox tab stop above, and read-only text is not focusable.
+          : latest.current.itemText && latest.current.editable && !busy.current ? { tabindex: "-1" } : {}),
         "aria-label": latest.current.label,
         "aria-multiline": "true",
         "data-placeholder":
@@ -747,6 +752,17 @@ export default function NoteEditor(props: NoteEditorProps) {
           // Without an outline command, Escape belongs to the containing overlay.
           if (event.key === "Escape" && !latest.current.keys) return true;
           if (!latest.current.editable || busy.current) return true;
+          // Structural keys are consumed, refused included, only in item text that is editable and idle;
+          // otherwise native.
+          const command = outlineStructuralCommand(event, latest.current.platform);
+          if (command && !intent && latest.current.itemText && latest.current.outlineSession) {
+            event.preventDefault();
+            if (!event.repeat) {
+              syncNativeSelection(current);
+              latest.current.outlineSession.executeCommand(command);
+            }
+            return true;
+          }
           return false;
         },
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
@@ -883,8 +899,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           return true;
         };
         if (event.key === "Enter" && !event.altKey) {
-          const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-          const modifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+          const modifier = usesMeta(latest.current.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
           const command = modifier
             ? event.shiftKey ? latest.current.onContinueChat : latest.current.onNewChat
             : !event.metaKey && !event.ctrlKey && !event.shiftKey ? latest.current.onSave : null;
@@ -897,9 +912,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             return true;
           }
         }
-        const allowBoundaryDeletion = !window.matchMedia(
-          "(any-pointer: coarse)",
-        ).matches;
+        const allowBoundaryDeletion = !getBrowserTouchCapable();
         if (
           allowBoundaryDeletion &&
           event.key === "Backspace" &&
@@ -939,18 +952,10 @@ export default function NoteEditor(props: NoteEditorProps) {
           return false;
         if (event.key === "Escape")
           return keys.selectBlock ? act(keys.selectBlock) : false;
-        if (!["Tab", "Backspace", "Delete", "Enter"].includes(event.key))
+        if (!["Backspace", "Delete", "Enter"].includes(event.key))
           return false;
         syncNativeSelection(current);
         const { selection } = current.state;
-        const at = { anchor: selection.anchor, head: selection.head };
-        if (event.key === "Tab") {
-          const command = event.shiftKey ? "outdent" : "indent";
-          if (latest.current.outlineSession) return latest.current.outlineSession.commandState(command).enabled
-            ? act(() => latest.current.outlineSession!.executeCommand(command)) : false;
-          const arrange = event.shiftKey ? keys.outdent : keys.indent;
-          return arrange ? act(() => arrange(at)) : false;
-        }
         if (event.shiftKey) return false;
         const { $from } = selection;
         const paragraph = $from.parent.type === schema.nodes.paragraph;

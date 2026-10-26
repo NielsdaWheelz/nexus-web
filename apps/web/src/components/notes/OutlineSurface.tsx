@@ -11,13 +11,15 @@ import OutlineInsertionLine from "./OutlineInsertionLine";
 import {outlineFilterFields} from "./outlineFilterFields";
 import {UnavailableTexts} from "./NoteNotices";
 import {hasUnsavedText, useText} from "@/lib/notes/texts";
-import {indentParent, readClipboard, structuralRow, type Row} from "@/lib/notes/outline";
+import {readClipboard, structuralRow, type Row} from "@/lib/notes/outline";
 import {insertionSourceRef, type DailyPublication, type OutlineDestination, type OutlineSession} from "@/lib/notes/useOutlineSession";
 import {endpointForResource, type InsertionSource} from "@/lib/resourceGraph/links";
 import {matchesPaneFilterQuery} from "@/lib/panes/paneFilterRows";
+import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {isApiError} from "@/lib/api/client";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
+import {outlineStructuralCommand, usesMeta} from "@/lib/shortcuts";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import styles from "./OutlineEditor.module.css";
 export interface OutlineSurfaceProps {
@@ -61,6 +63,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
   const section = useRef<HTMLElement>(null);
   const owner = useRef({});
   const feedback = useFeedback();
+  const {platform} = useRenderEnvironment();
   const selected = session.selection?.kind === "blocks" ? session.selection.keys : [];
   const filtering = filter.trim() !== "";
   const writable = editable && !filtering;
@@ -89,22 +92,18 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
       event.preventDefault(); session.clearSelection();
       event.currentTarget.querySelector<HTMLElement>("[data-outline-bullet]")?.focus(); return;
     }
-    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-    const mod = mac ? event.metaKey : event.ctrlKey;
-    if (mod && event.key.toLowerCase() === "z") {
+    if ((usesMeta(platform) ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "z") {
       event.preventDefault(); session.executeCommand(event.shiftKey ? "redo" : "undo"); return;
     }
     if (event.key === "Enter" && !event.repeat && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault(); session.executeCommand("insert"); return;
     }
-    if (event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      event.preventDefault(); session.executeCommand(event.shiftKey ? "outdent" : "indent"); return;
-    }
+    const command = outlineStructuralCommand(event, platform);
+    if (command) {event.preventDefault(); if (!event.repeat) session.executeCommand(command); return;}
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       event.preventDefault();
       const direction = event.key === "ArrowUp" ? -1 : 1;
-      if (event.shiftKey && (mac ? event.metaKey : event.altKey)) session.executeCommand(direction < 0 ? "move_up" : "move_down");
-      else {const next = rows[rows.indexOf(row)+direction]; if (next) select(next.key, event.shiftKey);}
+      const next = rows[rows.indexOf(row)+direction]; if (next) select(next.key, event.shiftKey);
       return;
     }
     if (writable && ["Backspace", "Delete"].includes(event.key) && !event.repeat &&
@@ -182,8 +181,6 @@ function SurfaceRow({row, rows, session, rootEndpoint, destination, editable, hi
   const terminal = row.terminal !== null;
   const pending = session.pendingUnlinks.has(row.link.link_id);
   const placement = session.placement(row);
-  const movable = editable && placement !== null && !pending && !terminal && session.activeReference === null;
-  const indentTarget = movable ? indentParent(rows,row) : null;
   const parentTitle = session.node(row.endpoint)?.item.label ?? "parent";
   const unlink: Extract<ActionDescriptor,{kind: "command"}> | null = row.link.connection?.origin === "user" &&
     row.link.connection.mutation?.kind === "unlink" && ((editable && session.canUnlink(row)) || pending)
@@ -201,8 +198,6 @@ function SurfaceRow({row, rows, session, rootEndpoint, destination, editable, hi
       noteAuthority={row.noteAuthority ?? undefined} noteEditable={editable && !pending} notePublication={publication}
       noteEmbeddedItem={node.content.kind === "note" ? node.content.embedded_item : null}
       noteKeys={!terminal && editable ? {selectBlock: () => onSelect(false),
-        ...(movable && indentTarget ? {indent: () => session.executeCommand("indent")} : {}),
-        ...(movable && row.path.length > 1 ? {outdent: () => session.executeCommand("outdent")} : {}),
         ...(structuralRow(row) ? {emptyBackspace: () => session.consume(row),
           join: (direction) => session.join({row,rows,direction})} : {})} : undefined}
       historical={historical} historicalBranch={historicalBranch} continuation={editable ? destination : null}

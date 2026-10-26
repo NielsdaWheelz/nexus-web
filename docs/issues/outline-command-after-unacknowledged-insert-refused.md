@@ -1,4 +1,21 @@
-# `@` right after Enter makes a row whose resource link is refused
+# a command sent before the previous insert is acknowledged is refused
+
+two observed forms share one mechanism: a write built while an insert is in flight
+carries the links version from before that insert, and the server answers 409.
+
+## structural move after a fresh row
+
+origin: 2026-10-25 outline touch accessory lab (case c7), base `a09557224`.
+on a page item's title, enter, type, then move the item at once (the bar's
+"move item down", or ⌘⇧↓ in item text). the trace shows `insert_note` succeeding
+at links version 3, then the move sent with `expected_links_version: 3` and
+answered `409 E_RESOURCE_CONFLICT "Outline version changed"`. the tab shows
+"this change was refused. your drafts are kept." and the order reverts. with the
+insert acknowledged first, the move succeeds. keyboard users reach this faster
+than bar users. key repeats do not execute structural commands partly for this
+reason (held chords would hit it every time).
+
+## `@` right after Enter makes a row whose resource link is refused
 
 status: open · origin: notes re-slice harness (outline/O31, overlay/O-7f, consumers/Q4h;
 defect D5), 2026-10-21; fixed only by the dropped web engine (P2) · area: notes outline
@@ -39,4 +56,5 @@ clone), so sealing advances through the acknowledged insert.
 
 the owner's durable-writing work may supersede this; recheck after it merges.
 
-resolved when: outline/O31, overlay/O-7f and consumers/Q4h pass.
+resolved when: outline/O31, overlay/O-7f and consumers/Q4h pass, and enter, type,
+then an immediate move (bar or key) lands without a refusal.

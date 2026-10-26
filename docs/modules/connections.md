@@ -15,7 +15,7 @@ chat context uses index rows with aggregate versioned removal; exploring ordinar
 connections never admits context or changes its version. reader roots use exact
 media adjacency; membership facts do not enter the outline's traversal history.
 
-keyboard and the pane accessory own structural insertion and rearrangement.
+keyboard and the touch accessory own structural insertion and rearrangement.
 external resource/file admission keeps its existing owner. source text is primary,
 attribution secondary, and relationship rationale remains separate.
 

@@ -6,6 +6,8 @@ import Textarea from "@/components/ui/Textarea";
 import { NoteConflict, useWriting, WritingRefreshNotice } from "./NoteNotices";
 import { adoptText, flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
 import { readWriting } from "@/lib/notes/writes";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { outlineStructuralCommand } from "@/lib/shortcuts";
 import type { Schema } from "@/lib/api/wire";
 import type {
   BodyOccurrence,
@@ -36,6 +38,7 @@ export default function PageTitleEditor({
   inputRef,
   write,
   rootEnter,
+  itemText,
 }: {
   session: OutlineSession;
   occurrence: BodyOccurrence;
@@ -46,9 +49,12 @@ export default function PageTitleEditor({
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   write?: (value: string, editBase?: TextEditBase) => void;
   rootEnter?: { label: string; execute(): void };
+  /** This text is an outline row's own text: structural keys belong to the outline, and it is not a sequential tab stop. */
+  itemText?: boolean;
 }) {
   const ownRef = useRef<HTMLTextAreaElement | null>(null);
   const ref = inputRef ?? ownRef;
+  const { platform } = useRenderEnvironment();
   const writing = useWriting();
   const text = useText(occurrence.noteRef);
   const [preedit, setPreedit] = useState<string | null>(null);
@@ -137,6 +143,7 @@ export default function PageTitleEditor({
         ref={ref}
         className={occurrence.key === "" ? styles.title : styles.inlineTitle}
         aria-label={label}
+        tabIndex={itemText ? -1 : undefined}
         maxLength={200}
         value={value}
         readOnly={!canEdit}
@@ -174,13 +181,24 @@ export default function PageTitleEditor({
           else commit(event.currentTarget.value, selection(event.currentTarget));
         }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || composing.current !== null || event.repeat) return;
+          if (event.nativeEvent.isComposing || composing.current !== null) return;
+          // Structural keys are consumed, refused included, only in item text that is editable and idle;
+          // otherwise native.
+          const command = outlineStructuralCommand(event, platform);
+          if (command && canEdit && itemText) {
+            event.preventDefault();
+            if (!event.repeat) session.executeCommand(command);
+            return;
+          }
+          if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            event.preventDefault();
+            if (!event.repeat) session.executeCommand("insert");
+            return;
+          }
+          if (event.repeat) return;
           if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
             event.preventDefault();
             session.executeCommand(event.shiftKey ? "redo" : "undo");
-          } else if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
-            event.preventDefault();
-            session.executeCommand("insert");
           } else if (event.key === "Escape") {
             event.preventDefault();
             if (occurrence.key === "") session.revokeCommands();

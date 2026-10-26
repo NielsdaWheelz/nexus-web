@@ -154,18 +154,27 @@ structural note operations and removal retain explicit capabilities.
 
 immutable outline references have no editor. their native title/bullet opens;
 unused primary space selects the occurrence. the labelled occurrence target owns
-space-to-select, enter-to-insert, tab/shift-tab, supported navigation, sibling move
-and preserving unlink. nested native links/buttons/editors retain their own keys;
-ordinary tab can leave the outline. escape from text selects its occurrence; the
-next escape clears selection and returns to the bullet. no focus/zoom, reference
-token editor, internal structural drag or add-item button/menu remains.
+space-to-select, enter-to-insert, tab/shift-tab, supported navigation, sibling move,
+preserving unlink and f2 into its item text. item text is a row's own note body or
+inline page title (`itemText`, set only by `ResourceOutlineRow`). it is not a
+sequential tab stop: pointer, f2 and programmatic focus reach it. in editable, idle
+item text, tab/shift-tab and the move chord (`outlineStructuralCommand`) belong to
+the outline: executed when enabled, silent when refused, never on key repeat. root
+text, the insertion line and annotation bodies keep native keys. escape from item
+text selects its occurrence; the next escape clears selection and focuses the
+bullet, from which tab moves on, so keyboard traversal passes every row. nested
+native links/buttons retain their own keys. no focus/zoom, reference token editor,
+internal structural drag or add-item button/menu remains.
 
 every composing transaction stays editor-local until commitment; the final rich
 body and selection then checkpoint together. acknowledgement projection waits
 for that composition boundary. failed continuation input remains copyable in its live writing owner.
 
 one session interface, `commandState` / `executeCommand`, serves hardware and the
-pane accessory: insert, indent/outdent, sibling up/down, undo/redo. execution checks
+touch accessory: insert, indent/outdent, sibling up/down, undo/redo. the pane shell
+renders the accessory only where touch is possible (`useTouchCapable`,
+`any-pointer: coarse`), in any layout; keyboard devices use the keys that settings
+→ keybindings lists (`outlineShortcuts`). execution checks
 the current exact target, source version and capability. note insert keeps split at
 caret; page insert flushes the canonical title and inserts after it without
 splitting the title. root title enter focuses/inserts the first child. composition,

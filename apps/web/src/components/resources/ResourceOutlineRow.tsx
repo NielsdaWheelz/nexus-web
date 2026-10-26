@@ -24,6 +24,7 @@ import type {Schema} from "@/lib/api/wire";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
+import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {connectionMutationErrorMessage, mutateConnection, type ConnectionCommand,
  type ConnectionMutation, type ConnectionOut, type InsertionSource} from "@/lib/resourceGraph/links";
 import {useResourceDraft} from "@/lib/resourceGraph/useResourceDraft";
@@ -31,6 +32,7 @@ import {classifyOutlineOccurrence, enterOutlineOccurrence} from "@/lib/resources
 import {resourceMetadata} from "@/lib/resources/metadata";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
+import {outlineStructuralCommand, usesMeta} from "@/lib/shortcuts";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {cx} from "@/lib/ui/cx";
@@ -99,6 +101,7 @@ export default function ResourceOutlineRow(props: {
   const noteAuthority = props.noteAuthority ?? (!historical && !item.missing && item.ref.startsWith("note_block:") ? "current" : undefined);
   const runtime = usePaneRuntime();
   const feedback = useFeedback();
+  const {platform} = useRenderEnvironment();
   const session = useContext(OutlineSessionContext);
   const outline = useContext(ResourceOutlineContext);
   const branch = useContext(ResourceBranch);
@@ -139,6 +142,8 @@ export default function ResourceOutlineRow(props: {
     if (typeof rowRef === "function") rowRef(node); else if (rowRef) rowRef.current = node;
   }, [rowRef]);
   const arrow = useRef<HTMLButtonElement | null>(null);
+  const head = useRef<HTMLDivElement | null>(null);
+  const content = useRef<HTMLDivElement | null>(null);
   const lostArrowFocus = useRef(false);
   const attachArrow = useCallback((node: HTMLButtonElement | null) => {
     if (node === null && arrow.current === document.activeElement) lostArrowFocus.current = true;
@@ -323,13 +328,18 @@ export default function ResourceOutlineRow(props: {
     : <button {...context} type="button" disabled={commands.length === 0} data-outline-bullet="true" className={cx(styles.control, styles.bullet)}
       aria-label={unavailable ?? `actions for unavailable ${item.label}`} data-row-focusable="true">•</button>;
   const page = props.pageContent ?? null;
-  const primaryBody = body ?? (noteAuthority && !historical && session ? <LiveNoteBody
+  // The row's own note body or inline page title; a caller-supplied body is never item text.
+  const itemText = body == null && !historical && session !== null &&
+    (noteAuthority !== undefined || (!terminal && item.ref.startsWith("page:")));
+  // F2 is announced and acts only on item text the row lets its editor edit, with no @ reference open.
+  const editableText = itemText && noteEditable && !terminal && session?.activeReference === null;
+  const primaryBody = body ?? (itemText && session ? noteAuthority ? <LiveNoteBody
     item={item} occurrenceKey={occurrenceKey} authority={noteAuthority} editable={noteEditable}
     structuralKeys={noteKeys} publication={notePublication} embeddedItem={noteEmbeddedItem}
     terminal={terminal} continuation={continuation} session={session}/>
-    : !historical && !terminal && session && item.ref.startsWith("page:") ? page ? <PageTitleEditor session={session}
+    : page ? <PageTitleEditor session={session}
       occurrence={{key: occurrenceKey, noteRef: item.ref}} content={page} editable={noteEditable}
-      continuation={continuation} label={`edit page title: ${item.label}`}/>
+      continuation={continuation} label={`edit page title: ${item.label}`} itemText/>
       : <LivePageTitle item={item} session={session} occurrenceKey={occurrenceKey} continuation={continuation} editable={noteEditable}/>
     : null);
   if (defect) throw defect.error;
@@ -338,6 +348,7 @@ export default function ResourceOutlineRow(props: {
     <li {...rootProps} ref={attachRow} className={cx(styles.row, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${item.label}`}
       data-selected={selected || undefined} data-outline-occurrence={occurrenceKey} data-resource-ref={item.ref}
+      aria-keyshortcuts={editableText ? "F2" : undefined}
       onClick={event => {
         rootProps?.onClick?.(event);
         if (!rootProps?.onClick && event.target instanceof Element && !event.target.closest("a,button,input,textarea,select,[contenteditable=true]"))
@@ -345,29 +356,35 @@ export default function ResourceOutlineRow(props: {
       }}
       onKeyDown={event => {
         rootProps?.onKeyDown?.(event);
-        if (event.defaultPrevented || event.target !== event.currentTarget || event.nativeEvent.isComposing || !session) return;
+        if (event.defaultPrevented || event.nativeEvent.isComposing || !session) return;
+        // F2 acts from the row target and its head controls (disclosure, bullet, menus: the head minus its
+        // content), never from text, content or children.
+        const headControl = event.target instanceof Node && head.current?.contains(event.target) && !content.current?.contains(event.target);
+        if (event.key === "F2" && editableText && (event.target === event.currentTarget || headControl)) {
+          event.preventDefault(); session.focusRow(occurrenceKey); return;
+        }
+        if (event.target !== event.currentTarget) return;
         if (event.key === " " && !selected) {event.preventDefault(); session.selectOccurrence(occurrenceKey); return;}
         if (!selected) return;
-        const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-        if ((mac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "z") {
+        const command = outlineStructuralCommand(event, platform);
+        if ((usesMeta(platform) ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "z") {
           event.preventDefault(); session.executeCommand(event.shiftKey ? "redo" : "undo");
         } else if (event.key === "Escape") {
           event.preventDefault(); session.clearSelection();
           element.current?.querySelector<HTMLElement>("[data-outline-bullet]")?.focus();
         } else if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !event.repeat) {
           event.preventDefault(); session.executeCommand("insert");
-        } else if (event.key === "Tab" && !event.altKey && !event.metaKey && !event.ctrlKey) {
-          event.preventDefault(); session.executeCommand(event.shiftKey ? "outdent" : "indent");
+        } else if (command) {
+          event.preventDefault(); if (!event.repeat) session.executeCommand(command);
         } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
           event.preventDefault(); const direction = event.key === "ArrowUp" ? -1 : 1;
-          if (event.shiftKey && (mac ? event.metaKey : event.altKey)) session.executeCommand(direction < 0 ? "move_up" : "move_down");
-          else {const keys = siblings(), next = keys[keys.indexOf(occurrenceKey)+direction];
-            if (next) session.selectOccurrence(next,event.shiftKey,keys);}
+          const keys = siblings(), next = keys[keys.indexOf(occurrenceKey)+direction];
+          if (next) session.selectOccurrence(next,event.shiftKey,keys);
         } else if (["Delete","Backspace"].includes(event.key) && !event.repeat && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
           event.preventDefault(); session.unlinkSelectedOccurrence();
         }
       }}>
-      <div className={styles.head}>
+      <div ref={head} className={styles.head}>
         {projection.kind === "reference" ? <button ref={attachArrow} type="button" className={styles.control}
           disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${item.label}`}
           onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
@@ -379,7 +396,7 @@ export default function ResourceOutlineRow(props: {
         {commands.length ? <ContextualActionMenu title={item.label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]} commandDisabledReason={commandDisabledReason}
           label={`relationship actions for ${item.label}`} renderContextAnchor={bullet}/> : bullet({})}
-        <div className={styles.content}>
+        <div ref={content} className={styles.content}>
           {primaryBody ?? <div className={styles.reference}>
             {activation.href ? <a ref={primaryLinkRef} className={styles.primaryLink} href={activation.href}
               aria-label={`open ${item.label}`} data-workspace-rich-target="true"
@@ -433,7 +450,7 @@ function LivePageTitle({item, session, occurrenceKey, continuation, editable}: {
     [adopt, source, items, version, complete, generation, status, insertionSource]);
   const content = read.source?.content;
   if (content?.kind === "page") return <PageTitleEditor session={session} occurrence={{key: occurrenceKey, noteRef: item.ref}}
-    content={content} continuation={continuation} editable={editable} label={`edit page title: ${item.label}`}/>;
+    content={content} continuation={continuation} editable={editable} label={`edit page title: ${item.label}`} itemText/>;
   return read.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t load page title", requestId: read.error.requestId}}
     announcement="Polite" actions={[{label: "retry", onClick: read.retry}]}/> : <p role="status">loading page title…</p>;
 }
@@ -521,6 +538,7 @@ function LiveNoteBody({
           embeddedItem={embeddedItem ?? loaded?.embedded_item ?? null}
           publication={publication}
           structuralKeys={structuralKeys}
+          itemText
         />
       )}
     </div>
