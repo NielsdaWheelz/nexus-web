@@ -368,23 +368,13 @@ function NoteEditorContent(props: NoteEditorProps) {
   };
   const literal = (view: EditorView) => {
     const intent = referenceRef.current.getState();
-    if (!intent) return;
-    const consumed = referenceRef.current.literal();
-    if (consumed === false) return;
+    if (!intent) return false;
     const field = intent.row_id === null ? editingField(view.state) : editingRow(view.state.doc, intent.row_id);
-    if (!field) return;
-    literalSuppressed.current = {row_id: field.row_id};
+    if (!field) return false;
     const selection = editingField(view.state)?.row_id === field.row_id ? fieldSelection(view.state, field) : {anchor: 1, head: 1};
     const after = fieldBody(field);
     // Query undo was local. Conversion enters prose history as one edit.
-    view.updateState(
-      EditorState.create({
-        doc: view.state.doc,
-        selection: view.state.selection,
-        plugins: view.state.plugins,
-      }),
-    );
-    reportEdit({
+    if (!reportEdit({
       before: intent.base,
       after,
       selectionBefore: { anchor: 1, head: 1 },
@@ -394,7 +384,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         value: intent.base,
         acknowledged: intent.editBase?.acknowledged ?? null,
       },
-    }, field.row_id);
+    }, field.row_id)) return false;
+    if (referenceRef.current.getState() === intent) {
+      referenceRef.current.literal();
+      literalSuppressed.current = {row_id: field.row_id};
+      view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
+    }
+    return true;
   };
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   const warn = useCallback(
@@ -403,7 +399,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     [feedback],
   );
 
-  const reportEdit = useCallback((edit: NoteEdit, row_id?: string | null) => {
+  const reportEdit = useCallback((edit: NoteEdit, row_id?: string | null): boolean => {
     try {
       const view = viewRef.current;
       const field = view && editingField(view.state);
@@ -412,7 +408,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       if (target !== null && target !== undefined) latest.current.projection?.onEdit(target, edit);
       else latest.current.onEdit(edit);
       queueMicrotask(() => bindingRef.current?.refresh());
-    } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
+      return true;
+    } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); return false; }
   }, [warn]);
   const refreshMarks = useCallback((state: EditorState) => {
     const field = editingField(state);
@@ -790,11 +787,9 @@ function NoteEditorContent(props: NoteEditorProps) {
       if (current.isDestroyed || compositionBase.current !== original) return;
       flushNativeDOM(current);
       if (current.isDestroyed || compositionBase.current !== original) return;
-      compositionBase.current = null;
-      if (packet !== null && packet === nativePacket) nativeInputOpen.current = false;
-      notifySelection(current.state);
+      let transferred = false;
       try {
-        if (!latest.current.editable) return;
+        if (!latest.current.editable) { transferred = true; return; }
         const field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
         if (!field) throw new Error("a composing outline field was withdrawn");
         const block = field.node, committed = fieldBody(field);
@@ -802,22 +797,35 @@ function NoteEditorContent(props: NoteEditorProps) {
         if (query !== null && query.row_id === original.row_id) {
           const raw = clipboardPlainText(block.content);
           referenceRef.current.edit(raw);
-          if (!raw.startsWith("@")) literal(current);
+          if (raw.startsWith("@")) {
+            if (referenceRef.current.getState()?.raw !== raw) throw new Error("the reference query could not be retained");
+            transferred = true;
+          } else transferred = literal(current);
           return;
         }
         if (original.reference && query === null && block.type === schema.nodes.body && block.textContent === "@" && block.childCount === 1 && block.firstChild?.isText) {
           referenceRef.current.begin(original.body, original.row_id, referenceFor(field));
+          if (referenceRef.current.getState()?.row_id !== original.row_id) throw new Error("the reference query could not be started");
           replaceDoc(current, docFromBody(original.body), original.row_id ?? undefined);
           current.updateState(EditorState.create({doc: current.state.doc, selection: current.state.selection, plugins: current.state.plugins}));
           current.dispatch(current.state.tr.insertText("@", field.from));
-        } else if (!sameBody(original.body, committed)) reportEdit({
+          transferred = true;
+        } else if (!sameBody(original.body, committed)) transferred = reportEdit({
           before: original.body, after: committed, source: "composition",
           ...(original.editBase ? {editBase: original.editBase} : {}),
           selectionBefore: original.selection,
           selectionAfter: original.row_id === editingField(current.state)?.row_id ? fieldSelection(current.state, field) : original.selection,
         }, original.row_id);
-        else if (!binding) replaceDoc(current, docFromBody(latest.current.body));
-      } finally { binding?.refresh(); }
+        else { if (!binding) replaceDoc(current, docFromBody(latest.current.body)); transferred = true; }
+      } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
+      finally {
+        if (transferred && !current.isDestroyed && compositionBase.current === original) {
+          compositionBase.current = null;
+          if (packet !== null && packet === nativePacket) nativeInputOpen.current = false;
+          notifySelection(current.state);
+          binding?.refresh();
+        }
+      }
     };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {

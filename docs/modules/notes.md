@@ -155,10 +155,13 @@ baseline together. incoming projection changes cannot withdraw an owner while
 its dom remains protected. commands reconcile prosemirror's own dom observer and
 native selection before choosing a field. a composition handoff finishes its
 previous owner, then synchronizes the native range before capturing the next.
-deferred composition completion cannot
-release a newer packet or record another field's edit. the packet fence
-distinguishes a consumed, reconciled semantic key from permission to
-refresh or adopt remote state. a field without an admitted document stays
+deferred composition completion cannot release a newer packet or record another
+field's edit. the packet fence stays held through canonical handoff or
+query-draft admission; only then may
+selection notification refresh from canonical data. a failed literal handoff
+retains the existing query draft and its canonical base.
+consuming a reconciled semantic key grants no permission to refresh or adopt
+remote state. a field without an admitted document stays
 read-only until synchronous admission binds its real initializer.
 the narrow observer adapter depends on the locked prosemirror-view version and must be requalified
 when it changes. a query consumes its transient text synchronously on acceptance;

@@ -20,8 +20,18 @@ second paragraph, then disappears without a canonical second-field write.
 `compositionstart` captures `editingField(current.state)` although the native
 selection can precede `selectionchange`. the candidate synchronizes that range
 through the existing helper after prior composition completion and before
-capturing the next owner. live discrimination from synthetic parsing behavior
-remains required; the trace does not identify the exact discard callback.
+capturing the next owner. that candidate does not fix the target in
+`20261026-072835-07f706ef765f`.
+
+passive diagnostic `20261026-073919-3d30c8c06827` shows trusted `insertText`
+placing `Q` in the second field, still present at synthetic composition end,
+then removed about five milliseconds later. its input is noncomposing; this
+remains a semantic hybrid, not physical ime proof. source review establishes
+`finishComposition` releases the fence and notifies selection before body
+handoff. selection notification synchronously projects the empty canonical
+baseline over this reference-candidate text. keep ownership through handoff,
+then release and notify. a failed literal handoff must also retain its existing
+query draft and canonical base. the ordering repair awaits live qualification.
 
 trace: that run's `mobile-editor-older-compos-98d97-ir-original-field-ownership`.
 resolve with a verified field-local selection premise, unchanged exact canonical
