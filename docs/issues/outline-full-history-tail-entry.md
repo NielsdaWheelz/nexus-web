@@ -36,3 +36,8 @@ note at the absolute end with prior writing/order and the same editing host.
 the originally identified empty-outline variant still depends on immediate undo
 admission and remains unproved. this is neither a heap nor a 100,000-note client
 capacity result.
+
+canonical-consumer replacement `671837d36` also passes the unchanged 48-edit
+control (`20261026-040739-aa1f8f7f61d5`, 10 seconds), including actual retirement
+feedback, unfocused tail, second gesture, exact 65th-note body and prior order.
+the empty-outline variant remains required after the pending-undo owner settles.

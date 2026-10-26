@@ -61,6 +61,11 @@ without a loss warning. this is a baseline control; the transient owner-null
 early return was found in the consumer rewrite, not in `ec33256fa`. rerun this
 unchanged control on the integrated replacement.
 
+replacement run `20261026-040739-aa1f8f7f61d5` on `671837d36` passes that
+unchanged offscreen control, including canonical body/link and zero beforeunload
+dialogs. the same run passes alias byte admission/writing/release/retry and the
+48-edit manual-tail control. those controls are no longer open here.
+
 the replacement consumers are integrated from `f8c2b2ed3`. that checkpoint's
 text redo duplicates occurrence nodes; the projection repair in `671837d36`
 passes the unchanged full firefox journey, including undo/redo, joins and exact
