@@ -129,6 +129,8 @@ export interface PaneLayout {
 /** Only the interacting outline publishes commands; route chrome keeps its owner. */
 export interface PaneOutlineCommands {
   readonly session: string;
+  /** Touch presentation is independent of keyboard command capability. */
+  readonly touchVisible: boolean;
   commandState(command: OutlineCommand): OutlineCommandState;
   executeCommand(command: OutlineCommand): void;
 }

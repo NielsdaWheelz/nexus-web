@@ -15,6 +15,7 @@ import type {NoteEditorHandle, NoteEditorProjection, StructuralKeys} from "@/com
 import type {OutlineRowChrome, OutlineRowMount} from "@/components/notes/OutlineEditorRow";
 import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {buttonClassName} from "@/components/ui/control";
+import {isTextEntryTarget} from "@/lib/ui/eventTarget";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
 import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
 import {OutlinePendingInput, type PendingOutlineField} from "./outlinePending";
@@ -70,6 +71,7 @@ export class OutlineController {
   private active = true;
   private intent = 0;
   private focused = false;
+  private touchCommandsDismissed = true;
   private selectionRow: string | null = null;
   private selection = {anchor: 1, head: 1};
   private view: EditorView | null = null;
@@ -150,7 +152,7 @@ export class OutlineController {
     }
     else {this.disconnect?.(); this.disconnect = null; this.unbindFocus?.(); this.unbindFocus = null;}
   }
-  setFocused(value: boolean): void {this.focused = value; if (!value) this.refresh(); this.notify();}
+  setFocused(value: boolean): void {this.focused = value; if (value) this.touchCommandsDismissed = false; else this.refresh(); this.notify();}
   withdraw(): void {this.focused = false; this.selected.clear(); this.refresh(); this.syncMetadata(); this.notify();}
   onSelectionChange = (row_id: string, at: {anchor: number; head: number}) => {
     // Keyup and composition/query release retry the same certified entry. Its
@@ -180,7 +182,21 @@ export class OutlineController {
         {key: this.pending.root_id, ref: this.rootRef, selection: {anchor: text.length + 1, head: text.length + 1}});
     } finally {release();}
   }
-  dismissKeyboard(): void {this.revoke(); if (!this.selected.size && this.view?.hasFocus()) {this.view.dom.blur(); this.focused = false; this.refresh(); this.notify();}}
+  /** IME visibility controls presentation, never DOM focus or input authority. */
+  setTouchCommandsVisible(visible: boolean): void {
+    if (this.touchCommandsDismissed === !visible) return;
+    this.touchCommandsDismissed = !visible; this.notify();
+  }
+  revealTouchCommands(event: Event): void {
+    if (event instanceof KeyboardEvent && ["Alt", "AltGraph", "Control", "Meta", "Shift", "Tab"].includes(event.key)) return;
+    const target = event.target, host = this.view?.dom;
+    if (!(target instanceof Element) || !host || target.closest(".ProseMirror") !== host || !isTextEntryTarget(target)) return;
+    if (target !== host) {
+      const field = target.closest<HTMLElement>("[data-outline-field]");
+      if (!field?.isContentEditable || target.closest("button, input, textarea, select, a[href]")) return;
+    }
+    this.setTouchCommandsVisible(true);
+  }
   private id(parent: string, link: string): string {
     const key = `${parent}/${link}`;
     let row = this.identities.get(key); if (!row) {row = {id: crypto.randomUUID(), origin: this.history.typingOrigin()}; this.identities.set(key, row);} return row.id;
@@ -1121,7 +1137,7 @@ export class OutlineController {
     const enabled = this.arrangementPlan(row.row_id, command) !== null;
     return {enabled, reason: enabled ? null : "no item available"};
   }
-  publication() {return this.focused || this.selected.size ? {session: `outline:${this.pending.root_id}`, commandState: (command: OutlineCommand) => this.commandState(command), executeCommand: (command: OutlineCommand) => {
+  publication() {return this.focused || this.selected.size ? {session: `outline:${this.pending.root_id}`, touchVisible: this.selected.size > 0 || !this.touchCommandsDismissed, commandState: (command: OutlineCommand) => this.commandState(command), executeCommand: (command: OutlineCommand) => {
     if (!this.commandState(command).enabled) return;
     if (command === "undo" || command === "redo") {const local = this.handle?.localHistory(command); if (local) local.execute(); else if (command === "undo") this.history.undo(); else this.history.redo();}
     else if (this.selectionRow) this.arrange(this.selectionRow, command); this.notify();

@@ -87,6 +87,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
     const intent = (event: Event) => {
       if (!event.isTrusted) return;
       controller.revoke();
+      controller.revealTouchCommands(event);
       if (event instanceof KeyboardEvent && event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing)
         controller.armNativeEntry();
       if (event.type === "pointerdown" && event.target instanceof Element && !event.target.closest(`[data-outline-session="${pending.value.input.root_id}"]`) && !event.target.closest("[data-outline-commands]")) controller.withdraw();
@@ -96,7 +97,11 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
   }, [controller, pending.value.input.root_id]);
   const keyboard = useNativeKeyboardVisibility();
   const previousKeyboard = useRef(keyboard);
-  useEffect(() => {const before = previousKeyboard.current; previousKeyboard.current = keyboard; if (before === true && keyboard === false) controller.dismissKeyboard();}, [controller, keyboard]);
+  useEffect(() => {
+    const before = previousKeyboard.current; previousKeyboard.current = keyboard;
+    if (keyboard === true) controller.setTouchCommandsVisible(true);
+    else if (before === true && keyboard === false) controller.setTouchCommandsVisible(false);
+  }, [controller, keyboard]);
   usePaneOutlineCommands(controller.publication());
   const error = saved.error ?? failure ?? controller.error ?? pending.value.input.error;
   const pendingCopyAvailable = error !== null && guard.readCopyText({scopes: [], ownerIds: [pending.owner]}) !== null;

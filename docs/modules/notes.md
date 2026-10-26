@@ -241,12 +241,18 @@ touch-capable panes expose six fixed actions: outdent, indent, move up, move dow
 undo and redo. the shared render-environment owner detects touch capability with
 `any-pointer: coarse`, independently of layout. hardware keyboards use the
 outline shortcuts listed in settings; platform modifiers share `usesMeta`. no insert or finish-editing control is
-needed: return inserts and normal focus/keyboard dismissal ends text editing.
+needed: return inserts and moving focus ends text editing.
 window navigation uses the same native-control recipe and comfortable touch size
 as other commands. noneditable islands remain interactive without being treated
 as soft-keyboard entry through the surrounding editor.
 android reports actual keyboard visibility through its existing bridge; an inset
-of zero alone does not imply dismissal.
+of zero alone does not imply dismissal. hiding the keyboard hides the touch
+accessory without blurring the editor, changing its caret or revoking input.
+actual focus entry, trusted editing intent inside the editor, or keyboard show
+reveals the accessory again; projection and selection updates do not. selected
+blocks always retain their touch commands. native keyboard hiding also restores
+the mobile player without changing focus; browsers retain their focus-based
+player suppression.
 
 writing rows keep a leading bullet link and a trailing disclosure only for
 projected parents. retaining an open empty input does not establish child
