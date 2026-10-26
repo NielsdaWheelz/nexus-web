@@ -58,6 +58,24 @@ class ConnectionQueryRequest(Model):
     cursor: str | None = None
 
 
+class RemoteChildrenOccurrenceRequest(Model):
+    resource_ref: str
+    excluded_edge_ids: list[UUID]
+
+
+class RemoteChildrenRequest(Model):
+    occurrences: list[RemoteChildrenOccurrenceRequest] = Field(min_length=1, max_length=100)
+
+
+class RemoteChildrenItem(Model):
+    has_children: bool | None
+    local_ref: str | None
+
+
+class RemoteChildrenOut(Model):
+    items: list[RemoteChildrenItem]
+
+
 class ConnectionCreationOut(Model):
     """Who created an assistant link: its tool call, and the answer while the chat exists."""
 

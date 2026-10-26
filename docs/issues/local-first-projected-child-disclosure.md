@@ -1,0 +1,11 @@
+# projected child disclosure
+
+the local-first resource row always renders an expand control, even with no projected children. main #823 corrected this behavior in its deleted online outline owner; the cutover must carry the behavior through the local graph and separately failable remote facts.
+
+`ResourceOutlineRow.tsx` at checkpoint `4942b5ec` renders the control unconditionally. adjacency prefixes cannot prove emptiness. availability and rendered children must share exact traversed-link and annotation-attachment exclusions; parallel relationships survive. passage candidates may include their proven durable anchor's children.
+
+resolve with one mounted-outline batch of complete indexed local existence probes and a separate remote-fact batch. removing the last child must preserve open writing, selection, and destination; a disappearing focused arrow transfers focus to the same row's bullet. prove empty/excluded-only, beyond-prefix, parallel, passage-owner, offline unlink, live composer, and terminal cycle behavior in an actual mounted disposable case. the old containing-note exclusion concerned removed `note_body` server facts; remote `document_embed` facts only connect media. an independent local user link to a containing note must remain visible.
+
+main-merge adaptation now has a typed local existence batch and a separate remote-fact batch. proven alias owners are retained only for the same displayed capture/activation descriptor across refresh failure; canonical local passage refs do not depend on that proof. the resource item does not expose a source publication/capture identity, so a noncanonical candidate cannot reconstruct its durable anchor after a cold offline reopen. no quote-only alias lookup is acceptable. this remains a metadata-input limitation pending the scoped-source contract; do not count it as proved cold-offline alias behavior.
+
+actual mounted red on `db398213`: empty note still rendered one expand button (expected zero), disposable run `20261025-175709-9975a6c3eece`. pending green: the same case now also holds the real source lock during an offline unlink to test arrow-focus transfer and retained composer. the production-sqlite harness now tests a real 101-child graph after excluding its first 100 rows; execution on both real targets remains pending.

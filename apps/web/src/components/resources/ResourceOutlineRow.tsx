@@ -7,7 +7,7 @@
 // The occurrence owns only its relationship menu (its outline's unlink, server-fact
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Expanded, it shows its local links beside its separately failable server facts.
-import {useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
+import {useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp} from "lucide-react";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
@@ -77,7 +77,9 @@ type Shared = {
   placement?: PlacementBranch;
   rootProps?: HTMLAttributes<HTMLElement> & {"data-active"?: boolean; "data-selected"?: boolean};
   rowRef?: Ref<HTMLLIElement>;
+  authoredByViewer?: boolean;
   historical?: boolean;
+  suppressedEdgeIds?: readonly string[];
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
   annotationFocusRequest?: number | null;
@@ -97,7 +99,7 @@ interface Presentation {
   status: ReactNode;
 }
 
-const AUTHORED = /^(note_block|page|highlight):/u;
+const AUTHORED = /^(note_block|page|highlight|passage_anchor):/u;
 /** A server fact's removal, when its owner offers one; local links unlink through their outline. */
 function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: WritingRuntime): {id: string; label: string; run(): Promise<unknown>} | null {
   const mutation = incoming.mutation;
@@ -111,9 +113,18 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
 }
 
 export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props) {
-  if (item !== undefined && !AUTHORED.test(item.ref)) return <RemoteRow {...shared} item={item}/>;
-  const ref = item?.ref ?? resourceRef!;
-  return AUTHORED.test(ref) ? <AuthoredRow {...shared} subject={ref}/> : <ReferenceRow {...shared} subject={ref}/>;
+  if(item!==undefined)return item.authored_by_viewer&&AUTHORED.test(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
+  return <LocalRow {...shared} subject={resourceRef!}/>;
+}
+
+function LocalRow(props:Shared&{subject:string}){
+  const read=useAuthoredQuery({kind:"resource",ref:props.subject});
+  const resource=read.data?.rows[0]?.resource;
+  const [ownedRef,setOwnedRef]=useState<string|null>(null);
+  useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
+  if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
+  if(read.data)return <ReferenceRow {...props}/>;
+  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,identity:"resource",href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:read.error?<FeedbackNotice content={{tone:"Warning",title:"couldn’t read this on this device"}} announcement="Polite" actions={[{label:"retry",onClick:read.retry}]}/>:null}}/>;
 }
 
 /** A server item's presentation; shared so a by-ref row keeps one Occurrence while its item arrives. */
@@ -159,6 +170,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
   // Absent locally and still being read remotely is not yet "unavailable": show the literal ref.
   const settled = props.historical || remote.status === "failed";
   const label = stub ? localResourceLabel(stub) : settled ? "unavailable resource" : props.subject;
+  if(remote.status==="ready"&&remote.data.authored_by_viewer&&AUTHORED.test(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props, runtime), ref: props.subject} : {
     ref: props.subject, label, identity: parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "resource",
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
@@ -169,8 +181,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
   }}/>;
 }
 
-function AuthoredRow(props: Shared & {subject: string}) {
-  const read = useAuthoredQuery({kind: "resource", ref: props.subject});
+function AuthoredRow({read,...props}: Shared & {subject: string;read:ReturnType<typeof useAuthoredQuery>}) {
   const resource = read.data?.rows[0]?.resource ?? null;
   const source = useAuthoredQuery(resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const runtime = usePaneRuntime();
@@ -216,7 +227,7 @@ function AuthoredRow(props: Shared & {subject: string}) {
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, representedEdgeIds = [], onChanged,
   body, sourceContent, resourceDetails, nestedContent, details, placement, rootProps, rowRef,
-  historical = false, editable = true, annotationFocusRequest = null, onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
+  historical = false, editable = true, suppressedEdgeIds=[], annotationFocusRequest = null, onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
   const {ref, label, identity, href, item, highlightId} = presentation;
   const runtime = usePaneRuntime();
   const writing = useWritingRuntime();
@@ -244,6 +255,31 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     if (typeof rowRef === "function") rowRef(node); else if (rowRef) rowRef.current = node;
   }, [rowRef]);
   const arrow = useRef<HTMLButtonElement | null>(null);
+  const lostArrowFocus=useRef(false);
+  const attachArrow=useCallback((node:HTMLButtonElement|null)=>{
+    if(node===null&&arrow.current===document.activeElement)lostArrowFocus.current=true;
+    arrow.current=node;
+  },[]);
+  const excludedEdgeIds=[...new Set([...childrenBranch.traversedEdgeIds,...suppressedEdgeIds])].sort();
+  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.prefix,item.preview.body.exact,item.preview.body.suffix,item.activation]:null;
+  const descriptor=projection.kind==="resource"&&item?.missing!==true?{
+    resource_ref:ref,excluded_edge_ids:excludedEdgeIds,
+    identity:JSON.stringify([ref,excludedEdgeIds,aliasMeaning]),
+  }:null;
+  const latestDescriptor=useRef(descriptor);latestDescriptor.current=descriptor;
+  const descriptorIdentity=descriptor?.identity??null;
+  const registerChildren=outline?.registerChildren;
+  useLayoutEffect(()=>{
+    if(registerChildren&&latestDescriptor.current!==null)return registerChildren(occurrenceKey,latestDescriptor.current);
+  },[registerChildren,occurrenceKey,descriptorIdentity]);
+  const proof=outline?.childAvailability.get(occurrenceKey);
+  const compatible=descriptor!==null&&proof?.identity===descriptor.identity?proof:null;
+  const hasChildren=compatible?.value===true;
+  const hasControl=terminal||hasChildren;
+  useLayoutEffect(()=>{
+    if(!hasControl&&lostArrowFocus.current){const row=element.current,bullet=row?.querySelector<HTMLElement>("[data-outline-bullet]");(bullet&&!bullet.matches(":disabled")?bullet:row)?.focus({preventScroll:true});}
+    lostArrowFocus.current=false;
+  },[hasControl]);
   const childrenId = useId();
   const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming, writing) : null;
   function toggle() {
@@ -305,6 +341,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     }
     const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
     onChanged?.();
+    outline?.refreshChildren();
     if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
       neighbours.find(node => node.isConnected)?.focus({preventScroll: true});
   }
@@ -328,18 +365,19 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     : <button {...context} type="button" disabled={commands.length === 0} data-outline-bullet="true"
       className={cx(styles.control, styles.bullet)} aria-label={`actions for unavailable ${label}`} data-row-focusable="true">•</button>;
   if (projection.kind === "omit") return null;
-  return <ResourceBranch value={childrenBranch}>
+  const renderedBranch={...childrenBranch,traversedEdgeIds:new Set(excludedEdgeIds)};
+  return <ResourceBranch value={renderedBranch}>
     <li {...rootProps} ref={attachRow} className={cx(styles.row, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${label}`}
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref}>
       <div className={styles.head}>
-        {terminal ? <button ref={arrow} type="button" className={styles.control}
+        {terminal ? <button ref={attachArrow} type="button" className={styles.control}
           disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${label}`}
           onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
-          : <button ref={arrow} type="button" className={styles.control}
+          : hasChildren ? <button ref={attachArrow} type="button" className={styles.control}
             aria-label={`expand linked resources for ${label}`} aria-expanded={open}
             aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
-            onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>}
+            onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button> : <span className={styles.spacer} aria-hidden="true"/>}
         {commands.length ? <ContextualActionMenu title={label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]} commandDisabledReason={commandDisabledReason}
           label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({})}
@@ -364,16 +402,18 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       </div>
       {nestedContent || open ? <div className={styles.children} data-outline-children="true">{nestedContent}{open ?
         <section ref={childrenSection} id={childrenId} aria-label="linked resources">{placement?.children ??
-          <Children ownerRef={ref} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>}</section> : null}</div> : null}
+          <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>}</section> : null}</div> : null}
     </li>
   </ResourceBranch>;
 }
 
 /** An expanded occurrence: its local links, then its separately failable server facts. */
-function Children({ownerRef, occurrenceKey, ancestors}: {ownerRef: string; occurrenceKey: string; ancestors: readonly string[]}) {
+function Children({ownerRef, localOwnerRef, occurrenceKey, ancestors}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string; ancestors: readonly string[]}) {
+  const branch=useContext(ResourceBranch);
   const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
   return <>
     <LocalOutline rootRef={ownerRef} ancestors={ancestors} occurrencePrefix={occurrenceKey}/>
+    {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} ancestors={[...ancestors,localOwnerRef]} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
     <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
       onChanged={() => void remote.refetch().catch(() => undefined)}/>
   </>;

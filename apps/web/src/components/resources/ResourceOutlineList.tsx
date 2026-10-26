@@ -2,7 +2,10 @@
 
 // Native lists share one host visit's folds and reveal scope; ancestry follows occurrences.
 // Structure, selection and editing belong to the outline that renders the rows.
-import {createContext, useCallback, useContext, useRef, type ReactNode} from "react";
+import {createContext, useCallback, useContext, useRef, useState, type ReactNode} from "react";
+import {FeedbackNotice} from "@/components/feedback/Feedback";
+import {remoteConnectionsError} from "@/components/connections/RemoteConnections";
+import {useOutlineChildren,type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import type {OutlineBranch, OutlineTarget} from "@/lib/resources/outlineProjection";
 import {useEditorDraft} from "@/lib/notes/editorHost";
@@ -12,6 +15,9 @@ export const ResourceOutlineContext = createContext<{
   scope: string;
   view: { folds: ReadonlyMap<string, boolean> };
   viewLocked: boolean;
+  refreshChildren():void;
+  childAvailability: ReturnType<typeof useOutlineChildren>["items"];
+  registerChildren(key:string,descriptor:OutlineChildrenDescriptor):()=>void;
   toggle(key: string, open: boolean): void;
   reveal(target: OutlineTarget): void;
 } | null>(null);
@@ -66,7 +72,14 @@ function RootList({
       `[data-outline-occurrence="${CSS.escape(target.key)}"] [data-row-focusable]`,
     )?.focus();
   }, [onRevealRoot]);
+  const [descriptors,setDescriptors]=useState<ReadonlyMap<string,OutlineChildrenDescriptor>>(()=>new Map());
+  const registerChildren=useCallback((key:string,descriptor:OutlineChildrenDescriptor)=>{
+    setDescriptors(current=>new Map(current).set(key,descriptor));
+    return()=>setDescriptors(current=>{if(current.get(key)!==descriptor)return current;const next=new Map(current);next.delete(key);return next;});
+  },[]);
+  const availability=useOutlineChildren(scope,descriptors);
   const context = {
+    childAvailability:availability.items,registerChildren,refreshChildren:availability.retry,
     scope, view: {folds: folds.value}, viewLocked,
     toggle(key: string, open: boolean) {
       if (!viewLocked) folds.set(current => new Map(current).set(key, open));
@@ -83,6 +96,8 @@ function RootList({
         <ul ref={list} className={styles.list} aria-label={ariaLabel} aria-busy={busy} tabIndex={-1}>
           {children}
         </ul>
+        {availability.error?<FeedbackNotice content={{tone:"Warning",title:"couldn’t read linked resources on this device"}} announcement="Polite" actions={[{label:"retry",onClick:availability.retry}]}/>:null}
+        {availability.remoteError?<FeedbackNotice content={remoteConnectionsError(availability.remoteError)} announcement="Polite" actions={[{label:"retry connections",onClick:availability.retry}]}/>:null}
         {after}
       </div>
     </ResourceBranch>

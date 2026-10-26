@@ -7,12 +7,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ContextOut,
+    RemoteChildrenOut,
+    RemoteChildrenRequest,
 )
 from nexus.services.resource_graph import connections, context, links
 from nexus.services.resource_graph.refs import require_ref
@@ -28,6 +30,13 @@ def query_connections(
     body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ConnectionPageOut]:
     return Data(data=connections.query_connections(db, viewer_id=viewer.user_id, query=body))
+
+
+@router.post("/resource-graph/connections/children/query")
+def query_remote_children(
+    body: RemoteChildrenRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[RemoteChildrenOut]:
+    return Data(data=connections.query_remote_children(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/resource-graph/facts/{edge_id}", status_code=204)

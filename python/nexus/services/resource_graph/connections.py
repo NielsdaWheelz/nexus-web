@@ -1,7 +1,9 @@
 """The connections read model: the viewer's live edges around a set of refs, hydrated
 once per page into ``ConnectionOut``. An authored link is undirected and matches either
 way; ``other`` is always the far endpoint and ``mutation`` names the one server command
-that may remove a machine fact."""
+that may remove a machine fact. Remote child availability shares this exact
+predicate and tests complete server-owned facts without hydrating children.
+Authored child existence belongs exclusively to the device's canonical graph."""
 
 from __future__ import annotations
 
@@ -11,8 +13,9 @@ from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import UUID as SqlUUID
-from sqlalchemy import String, and_, or_, select, text
+from sqlalchemy import String, and_, bindparam, literal, or_, select, text, union_all
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
@@ -21,12 +24,16 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
     ConnectionDirection,
+    ConnectionFiltersRequest,
     ConnectionOut,
     ConnectionPageOut,
     ConnectionQueryRequest,
     DetachContextMutation,
     EdgeKind,
     EdgeOrigin,
+    RemoteChildrenItem,
+    RemoteChildrenOut,
+    RemoteChildrenRequest,
     RemoveFactMutation,
 )
 from nexus.schemas.resource_items import CitationSourceTargetKey
@@ -34,31 +41,42 @@ from nexus.services.resource_graph.edges import Pair
 from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import assert_resource_ref, require_ref
-from nexus.services.resource_items.capabilities import expand_owned_child_refs
+from nexus.services.resource_items.capabilities import (
+    PAGE_NOTE_BLOCKS_SQL,
+    capability,
+    expand_owned_child_refs,
+)
 from nexus.services.resource_items.evidence import evidence_items
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.items import resource_items_out, visible_refs
 from nexus.services.tools import assistant_writes
 
 
-def query_connections(
-    db: Session, *, viewer_id: UUID, query: ConnectionQueryRequest
-) -> ConnectionPageOut:
-    """One page, newest first; the cursor is ``"<created_at iso>|<edge id>"``. Unknown
-    or invisible refs simply match nothing."""
+def _connection_statement(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    query: ConnectionQueryRequest,
+    visible: set[str] | None = None,
+) -> Select[tuple[ResourceEdge, bool, bool]] | None:
     refs = {ref.uri: ref for ref in map(require_ref, query.refs)}
-    visible = {
-        item.ref
-        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
-        if not item.missing
-    }
+    if visible is None:
+        visible = {
+            item.ref
+            for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
+            if not item.missing
+        }
     refs = {uri: ref for uri, ref in refs.items() if uri in visible}
     if not refs:
-        return ConnectionPageOut(items=[], next_cursor=None)
+        return None
     owner_ids: dict[str, list[UUID]] = {}
+    page_ids: list[UUID] = []
     if query.rollup == "owner":
         for ref in list(refs.values()):
             if ref.scheme in ("media", "note_block"):
                 owner_ids.setdefault(ref.scheme, []).append(ref.id)
+                continue
+            if ref.scheme == "page":
+                page_ids.append(ref.id)
                 continue
             # Page graph closure has its own expansion semantics, distinct
             # from an endpoint-to-work mapping.
@@ -72,6 +90,20 @@ def query_connections(
         scheme = getattr(ResourceEdge, f"{side}_scheme")
         id_ = getattr(ResourceEdge, f"{side}_id")
         exact = or_(*(and_(scheme == s, id_.in_(ids)) for s, ids in ids_by_scheme.items()))
+        if page_ids:
+            page_children = []
+            for page_id in page_ids:
+                children = (
+                    text(PAGE_NOTE_BLOCKS_SQL)
+                    .bindparams(
+                        bindparam("id", page_id, unique=True),
+                        bindparam("viewer_id", viewer_id, unique=True),
+                    )
+                    .columns(id=SqlUUID)
+                    .subquery()
+                )
+                page_children.append(id_.in_(select(children.c.id)))
+            exact = or_(exact, and_(scheme == "note_block", or_(*page_children)))
         if not owner_ids:
             return exact
         # Resolve only graph endpoints, never enumerate an owner's entire
@@ -158,6 +190,16 @@ def query_connections(
                 and_(ResourceEdge.created_at == created_at, ResourceEdge.id < edge_id),
             )
         )
+    return stmt
+
+
+def query_connections(
+    db: Session, *, viewer_id: UUID, query: ConnectionQueryRequest
+) -> ConnectionPageOut:
+    """One page, newest first; unknown or invisible refs match nothing."""
+    stmt = _connection_statement(db, viewer_id=viewer_id, query=query)
+    if stmt is None:
+        return ConnectionPageOut(items=[], next_cursor=None)
     rows = db.execute(
         stmt.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc()).limit(query.limit + 1)
     ).all()
@@ -175,6 +217,58 @@ def query_connections(
         items=hydrate_connections(db, viewer_id, page, matched, query.direction),
         next_cursor=next_cursor,
     )
+
+
+def query_remote_children(
+    db: Session, *, viewer_id: UUID, request: RemoteChildrenRequest
+) -> RemoteChildrenOut:
+    """Complete server-fact existence, sharing connection admission and owner rollup.
+
+    Canonical authored links are excluded. One repeatable snapshot pairs batched
+    endpoint visibility with EXISTS probes; no child bodies or prefixes are read.
+    """
+    from nexus.services.search.pickers import source_identities
+
+    refs = list({require_ref(item.resource_ref) for item in request.occurrences})
+    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
+
+    candidates = [
+        ref
+        for ref in refs
+        if ref.uri in visible and capability(ref.scheme).link_mode == "materialize_passage"
+    ]
+    identities = source_identities(db, viewer_id=viewer_id, refs=candidates)
+    items = []
+    for item in request.occurrences:
+        identity = identities.get(item.resource_ref)
+        local_ref = None
+        if isinstance(identity, tuple):
+            _, anchor = identity
+            if anchor is not None and anchor.uri != item.resource_ref:
+                local_ref = anchor.uri
+        items.append(RemoteChildrenItem(has_children=None, local_ref=local_ref))
+    probes = []
+    for index, item in enumerate(request.occurrences):
+        query = ConnectionQueryRequest(
+            refs=[item.resource_ref],
+            direction="both",
+            rollup="owner",
+            filters=ConnectionFiltersRequest(
+                origins=["citation", "discovery", "assistant", "system", "document_embed"]
+            ),
+            limit=1,
+            cursor=None,
+        )
+        stmt = _connection_statement(db, viewer_id=viewer_id, query=query, visible=visible)
+        if stmt is None:
+            continue
+        if item.excluded_edge_ids:
+            stmt = stmt.where(ResourceEdge.id.not_in(item.excluded_edge_ids))
+        probes.append(select(literal(index).label("index"), stmt.exists().label("present")))
+    if probes:
+        for index, present in db.execute(union_all(*probes)):
+            items[index].has_children = present
+    return RemoteChildrenOut(items=items)
 
 
 def hydrate_connections(

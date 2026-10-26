@@ -52,10 +52,11 @@ export class Persistence {
   async query(query: AuthoredQuery): Promise<QueryResult> {
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null };
+    if(query.kind==="children")return {store_revision:(await this.replica()).store_revision,rows:[],positions:[],child_keys:raw.map(row=>String(row.child_key)),next_cursor:null,previous_cursor:null,binding_id:null};
+    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null, previous_cursor: null, positions: [], child_keys: [], binding_id: raw[0] ? String(raw[0].binding_id) : null };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision: (await this.replica()).store_revision, rows: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null };
+      return { store_revision: (await this.replica()).store_revision, rows: [], positions, child_keys: [], next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null };
     }
     const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)) }));
     const last = rows.at(-1);
@@ -64,7 +65,7 @@ export class Persistence {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, positions: [] };
+    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, positions: [], child_keys: [] };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {

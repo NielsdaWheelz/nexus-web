@@ -181,7 +181,7 @@ def expand_owned_child_refs(
                 *_children(db, "passage_anchor", _MEDIA_ANCHORS, ref.id, viewer_id=viewer_id),
             )
         case "page_note_blocks":
-            return _children(db, "note_block", _PAGE_NOTE_BLOCKS, ref.id, viewer_id=viewer_id)
+            return _children(db, "note_block", PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id)
         case "note_block_owned_evidence":
             return (
                 *_children(
@@ -208,7 +208,7 @@ _MEDIA_ANCHORS = (
     " WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id"
 )
 # Live authored links only: a deleted note, page or unlinked link breaks the closure.
-_PAGE_NOTE_BLOCKS = f"""
+PAGE_NOTE_BLOCKS_SQL = f"""
 WITH RECURSIVE links AS (
     SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
     FROM resource_edges e

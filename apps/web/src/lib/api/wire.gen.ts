@@ -2803,6 +2803,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resource-graph/connections/children/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Remote Children */
+        post: operations["query_remote_children_resource_graph_connections_children_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/resource-graph/connections/query": {
         parameters: {
             query?: never;
@@ -5163,6 +5180,10 @@ export interface components {
         /** Data[ReadingCopyOut] */
         Data_ReadingCopyOut_: {
             data: components["schemas"]["ReadingCopyOut"];
+        };
+        /** Data[RemoteChildrenOut] */
+        Data_RemoteChildrenOut_: {
+            data: components["schemas"]["RemoteChildrenOut"];
         };
         /** Data[ResolvedMediaSummariesOut] */
         Data_ResolvedMediaSummariesOut_: {
@@ -10949,6 +10970,30 @@ export interface components {
              * @enum {string}
              */
             relation: "article" | "thread";
+        };
+        /** RemoteChildrenItem */
+        RemoteChildrenItem: {
+            /** Has Children */
+            has_children: boolean | null;
+            /** Local Ref */
+            local_ref: string | null;
+        };
+        /** RemoteChildrenOccurrenceRequest */
+        RemoteChildrenOccurrenceRequest: {
+            /** Excluded Edge Ids */
+            excluded_edge_ids: string[];
+            /** Resource Ref */
+            resource_ref: string;
+        };
+        /** RemoteChildrenOut */
+        RemoteChildrenOut: {
+            /** Items */
+            items: components["schemas"]["RemoteChildrenItem"][];
+        };
+        /** RemoteChildrenRequest */
+        RemoteChildrenRequest: {
+            /** Occurrences */
+            occurrences: components["schemas"]["RemoteChildrenOccurrenceRequest"][];
         };
         /**
          * RemoveFactMutation
@@ -18645,6 +18690,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    query_remote_children_resource_graph_connections_children_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteChildrenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_RemoteChildrenOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

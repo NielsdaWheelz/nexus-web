@@ -221,6 +221,15 @@ facts, occurrence paths identify folds. no branch-focus/zoom or internal structu
 drag state remains. one outline-level horizontal scroll owner accommodates extreme
 depth; the command accessory lives outside it.
 
+disclosure tests the complete projected child graph with exact occurrence exclusions,
+independently of loaded adjacency pages. canonical authored children are read from
+local indexed state; server-owned facts have separate bounded, batched availability.
+saved passage-owner adjacency counts too. empty or unconfirmed rows reserve inert
+control slots; confirmed nonempty rows alone have expand/collapse buttons. terminal
+return controls remain navigation. availability never closes a branch or unmounts
+writing. removing a focused chevron returns focus to the same occurrence's bullet.
+ordinary insertion and nesting keep their existing local command owners.
+
 highlight annotations remain full canonical bodies before disclosure. suppress
 only the selected annotation's exact attachment edge; parallel facts survive.
 terminal annotation repeats retain read-only rich bodies and atomic embed links.

@@ -15,15 +15,17 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
+from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import reader_locations, text_quote
 from nexus.services.media_text_scope import (
     MediaTextScope,
-    read_media_text_scope,
+    apparatus_scope_rows_sql,
     text_scope_rows_sql,
 )
+from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.text_quote import QuoteStatus
 
 
@@ -142,11 +144,52 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
                     end < len(words),
                 )
             )
-    notes_of = {
-        id_: sorted(set(permitted_note_ranges(db, read_media_text_scope(db, id_)).values()))
-        for id_, kind, _ in media
-        if kind == "text_part"
-    }
+    parts = [id for id, kind, _ in media if kind == "text_part"]
+    notes_of: dict[UUID, list[tuple[UUID, int, int]]] = {id: [] for id in parts}
+    if parts:
+        # Preserve the reader's publication admission before using its setwise
+        # interval/apparatus relations. One batch checks every piece generation.
+        for row in db.execute(
+            text(f"""
+                SELECT p.media_id,p.source_generation,source.kind,own.generation,
+                       current.generation AS current_generation
+                FROM media_parts p JOIN media source ON source.id=p.source_media_id
+                LEFT JOIN ({ready_publication_rows_sql()}) own ON own.media_id=p.media_id
+                LEFT JOIN ({ready_publication_rows_sql()}) current ON current.media_id=p.source_media_id
+                WHERE p.media_id=ANY(:ids)
+            """),
+            {"ids": parts},
+        ):
+            if row.generation is None:
+                raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "media is not ready for reading")
+            if row.kind not in ("epub", "web_article"):
+                raise ApiError(ApiErrorCode.E_INVALID_KIND, "media has no ordinary text scope")
+            if row.current_generation != row.source_generation:
+                raise ConflictError(
+                    ApiErrorCode.E_READER_CONTENT_CHANGED, "source publication changed"
+                )
+        permitted = apparatus_scope_rows_sql("SELECT unnest(CAST(:ids AS uuid[])) AS media_id")
+        for row in db.execute(
+            text(f"""
+                SELECT DISTINCT admitted.reading_media_id,item.locator
+                FROM ({permitted}) admitted
+                JOIN media_parts part ON part.media_id=admitted.reading_media_id
+                JOIN reader_apparatus_items item ON item.id=admitted.apparatus_item_id
+                WHERE item.locator_status='exact'
+                  AND item.locator->>'type' IN ('web_text_offsets','epub_fragment_offsets')
+                  AND item.locator->>'media_id'=part.source_media_id::text
+            """),
+            {"ids": parts},
+        ):
+            locator = row.locator
+            fragment = UUID(str(locator["fragment_id"]))
+            start, end = int(locator["start_offset"]), int(locator["end_offset"])
+            if start < end and not any(
+                id == fragment and lo <= start and end <= hi
+                for id, lo, hi in ranges.get(row.reading_media_id, [])
+            ):
+                notes_of[row.reading_media_id].append((fragment, start, end))
+        notes_of = {owner: sorted(set(owned)) for owner, owned in notes_of.items()}
     note_fragment_ids = list({fragment for owned in notes_of.values() for fragment, _, _ in owned})
     if note_fragment_ids:
         fragments = {

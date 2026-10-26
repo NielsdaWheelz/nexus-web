@@ -83,7 +83,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
         <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>
-          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resourceRef={resource.ref}
+          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resourceRef={resource.ref} authoredByViewer={resource.authored_by_viewer}
             occurrenceKey={`connections:${selfRef}/mention:${resource.ref}`} incoming={null} />)}
         </ResourceOutlineList>
         {mentions.data.next_cursor !== null ? <Button type="button" onClick={mentions.more}>show more</Button> : null}

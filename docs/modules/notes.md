@@ -121,3 +121,9 @@ permanent sync defects retain pending bytes and show one actionable error. no
 activity list, writing recovery inbox, global undo inventory or age-based causal
 state pruning exists. [release steps](../issues/release-local-first-writing.md)
 own coordinated format changes and device draining.
+
+child disclosure is independent of fold and composer lifetime. removing the last
+projected child removes its chevron without discarding writing, reference intent,
+selection or the exact insertion destination. existence reads inspect the complete
+local graph with the same occurrence exclusions as rendering, never a loaded page.
+server facts remain a separate read; their availability cannot replace local state.

@@ -1,0 +1,7 @@
+# composing occurrence does not resume canonical updates
+
+installed mixed-device run `20261025-174655-b90ad5dc6e69` received remote text, italic formatting and atom deletion in the phone's canonical document while a real composition remained open (one start, no end). committing the composition emitted its end and merged the korean text with those edits on the server and both firefox tabs. the mounted phone still showed its old atom and `leftright한글`, missing the remote text/format for 120 seconds.
+
+the canonical writing survived; the occurrence failed to resume canonical rendering after composition. inspect `InlineBinding`'s composition-end scheduling and `NoteEditor`'s composition baseline cleanup. resolution requires the same actual renderer case to retain the live composition baseline, then display the complete merged canonical body/marks/atom absence after its real end, without duplicating provisional input.
+
+source cause: refreshes queued by composing transactions defer while `compositionBase` is present. composition end clears it, but the local handoff is already reflected in the binding baseline and returns without scheduling a refresh. the finish owner now always refreshes after its handoff; bound occurrences also leave canonical rendering to that binding rather than replacing their displayed baseline from a prop snapshot. installed regression qualification remains pending.

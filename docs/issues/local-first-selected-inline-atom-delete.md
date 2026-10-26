@@ -1,5 +1,0 @@
-# selected inline atom consumes delete without deleting
-
-mixed-device run `20261025-173712-f045d202ea3f` on the installed samsung/webview155 editor selected an inline image, hid the oem keyboard and retained editor focus. trusted Backspace (key code8, not composing) reached the editor and was prevented; no input event followed and the image remained. the retained `cross-device-localfirst/phone-atom-*.json` records these positive premises.
-
-`NoteEditor` only handles deletion of an obsolete outer resource embed. its custom keymap omits selected-node deletion, while prosemirror's native horizontal-delete capture prevents the browser default for non-text selections without dispatching a deletion. replace the obsolete handler with selected inline atom deletion through the normal editor transaction, before native-selection synchronization. keep composition/modifier gates and the permanent body. the same installed mixed-device case must delete the atom and converge its absence across both firefox tabs, phone and server.

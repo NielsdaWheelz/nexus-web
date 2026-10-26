@@ -220,7 +220,7 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
         const move = (direction: number) => act(history.moveAdjacent(link,rootRef,direction<0?"before":"after"));
         const join = (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => act((async()=>{const [neighbor,shown]=await Promise.all([adjacentNote(link,direction==="backward"?"before":"after"),displayed]);if(neighbor&&neighbor!==ref){const destination=direction==="backward"?neighbor:ref;await history.join(destination,direction==="backward"?ref:neighbor,direction==="backward"?{source:shown}:{destination:shown});await focus(destination);}})());
         if(filter.trim() && ![row.resource.title,row.resource.body_text,row.resource.selection?.quote_exact].some(value=>value?.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())))return null;
-        return <ResourceOutlineRow key={link.link_id} resourceRef={ref} occurrenceKey={`${occurrencePrefix}/${link.link_id}`}
+        return <ResourceOutlineRow key={link.link_id} resourceRef={ref} authoredByViewer={row.resource.authored_by_viewer} occurrenceKey={`${occurrencePrefix}/${link.link_id}`}
           incoming={{ kind: "link", linkId:link.link_id,parentLabel:rootLabel,unlink:()=>act(history.unlink(link)) }} editable={!filter.trim()}
           body={row.resource.kind === "note" ? <BoundNoteEditor noteRef={ref} session={history} editable={!filter.trim()} onSplit={position => act(history.split(ref, position, rootRef, link.link_id).then(focus))} onJoin={join}
             reference={{source_ref:rootRef,label:rootRef,onSelected:(target,item)=>{

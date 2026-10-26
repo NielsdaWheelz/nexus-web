@@ -760,44 +760,48 @@ function NoteEditorContent(props: NoteEditorProps) {
             if (current.isDestroyed || current.composing) return;
             const original = compositionBase.current;
             compositionBase.current = null;
-            if (!latest.current.editable) return;
-            if (original) {
-              const block = current.state.doc.firstChild!;
-              const committed = bodyFromNode(block);
-              if (referenceRef.current.getState() !== null) {
-                const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
-                referenceRef.current.edit(raw);
-                if (!raw.startsWith("@")) literal(current);
+            try {
+              if (!latest.current.editable) return;
+              if (original) {
+                const block = current.state.doc.firstChild!;
+                const committed = bodyFromNode(block);
+                if (referenceRef.current.getState() !== null) {
+                  const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
+                  referenceRef.current.edit(raw);
+                  if (!raw.startsWith("@")) literal(current);
+                  return;
+                }
+                if (
+                  original.reference &&
+                  block.type === schema.nodes.body &&
+                  block.textContent === "@" &&
+                  block.childCount === 1 &&
+                  block.firstChild?.isText
+                ) {
+                  referenceRef.current.begin(original.body);
+                  current.updateState(EditorState.create({doc:docFromBody(original.body),plugins:current.state.plugins}));
+                  current.dispatch(current.state.tr.insertText("@",1));
+                }
+                else if (!sameBody(original.body, committed))
+                  reportEdit({
+                    before: original.body,
+                    after: committed,
+                    source: "composition",
+                    ...(original.editBase ? { editBase: original.editBase } : {}),
+                    selectionBefore: original.selection,
+                    selectionAfter: {
+                      anchor: current.state.selection.anchor,
+                      head: current.state.selection.head,
+                    },
+                  });
+                else if (!binding) replaceDoc(current, docFromBody(latest.current.body));
                 return;
               }
-              if (
-                original.reference &&
-                block.type === schema.nodes.body &&
-                block.textContent === "@" &&
-                block.childCount === 1 &&
-                block.firstChild?.isText
-              ) {
-                referenceRef.current.begin(original.body);
-                current.updateState(EditorState.create({doc:docFromBody(original.body),plugins:current.state.plugins}));
-                current.dispatch(current.state.tr.insertText("@",1));
-              }
-              else if (!sameBody(original.body, committed))
-                reportEdit({
-                  before: original.body,
-                  after: committed,
-                  source: "composition",
-                  ...(original.editBase ? { editBase: original.editBase } : {}),
-                  selectionBefore: original.selection,
-                  selectionAfter: {
-                    anchor: current.state.selection.anchor,
-                    head: current.state.selection.head,
-                  },
-                });
-              else replaceDoc(current, docFromBody(latest.current.body));
-              return;
+              if (referenceRef.current.getState() !== null) return;
+              if (!binding) replaceDoc(current, docFromBody(latest.current.body));
+            } finally {
+              binding?.refresh();
             }
-            if (referenceRef.current.getState() !== null) return;
-            replaceDoc(current, docFromBody(latest.current.body));
           }, 0);
           return false;
         },
