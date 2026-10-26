@@ -203,8 +203,11 @@ composition and incoming growth remain protected and stop additional loads when
 over budget. inactive windows and whole old history groups release through their
 existing owners first. manual paging replaces a bounded window, exposes earlier
 items and retains “write at end” beside show-more. a failed admission explains the
-limit at the requested action. if history retirement needs settlement, a new
-gesture requests insertion after it finishes; a delayed split is not replayed.
+limit at the requested action. absolute-tail input resolves the current tail at
+command preparation, rather than retaining a relationship that an earlier
+accepted unlink may remove. explicit insert-after retains its chosen anchor.
+if history retirement needs settlement, a new gesture requests insertion after
+it finishes; a delayed split is not replayed.
 the proven tail retains a manual entry even when it cannot reserve a blank field.
 no account-wide status or recovery inventory is
 introduced. the runtime's unpinned document cache remains a separate owner.

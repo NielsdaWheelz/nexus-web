@@ -534,9 +534,8 @@ export class OutlineController {
     const row = this.rows.get(row_id); if (!row) throw new Error("edited occurrence is not owned by this outline");
     if (row.root && row.kind === "title") this.titleEdited = true;
     if (row.tail && !this.pending.fields.has(row_id)) {
-      const window = this.windows.get(row.parent_id!)!;
-      this.pending.create({row_id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: window.tailEdge ? this.id(row.parent_id!, window.tailEdge.link.link_id) : null,
-        ref: null, link: null, kind: "body", body: edit.after, hidden: false, raw: true, origin: row.origin}, window.tailEdge?.link.link_id ?? null, this.prelude);
+      this.pending.create({row_id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null,
+        ref: null, link: null, kind: "body", body: edit.after, hidden: false, raw: true, origin: row.origin}, null, this.prelude);
       this.tailIds.delete(row.parent_id!);
       return;
     }
@@ -574,7 +573,7 @@ export class OutlineController {
     if (!this.admitNew()) return;
     const id = crypto.randomUUID();
     this.pending.create({row_id: id, parent_id: row.root ? this.pending.root_id : row.parent_id, parent_ref: row.root ? this.rootRef : row.parent_ref,
-      after_id: row.root ? null : row.row_id, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, raw: true, origin: this.origin(id)}, row.root ? this.windows.get(this.pending.root_id)?.tailEdge?.link.link_id ?? null : row.link?.link_id ?? null, this.prelude);
+      after_id: row.root ? null : row.row_id, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, raw: true, origin: this.origin(id)}, row.root ? null : row.link?.link_id ?? null, this.prelude);
     this.changed(true); await this.focus(id, {anchor: 1, head: 1});
   }
   private peer(row: OutlineRow, direction: "before" | "after"): OutlineRow | OutlineEdge | null {

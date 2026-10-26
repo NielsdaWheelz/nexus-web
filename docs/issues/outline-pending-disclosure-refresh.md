@@ -24,4 +24,9 @@ relocation carries the revision watermark with unknown availability until a
 compatible proof reaches it; returning to an older admitted context cannot
 resurrect its stale arrow.
 only the disappearing disclosure's actual focus moves to its existing bullet.
-the raw field/window admission fence is unchanged. behavioral proof remains open.
+the raw field/window admission fence is unchanged.
+
+run `20261026-004448-59e397bf4432` on `292018f8c` passes arrow removal,
+same rich field and host identity, own-bullet focus and local unlink-only
+membership. the later local creation oracle fails with a stale insertion anchor;
+see `outline-pending-insertion-anchor.md`. the complete journey remains open.
