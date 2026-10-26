@@ -35,9 +35,14 @@ routes set `[data-theme="oracle"]`, a manuscript palette that ignores the room.
 a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
-oracle and atlas routes. rooms redefine colour, shadow, grain, hairline, body
-size, tracking and the section-title font role only. text on an 18% tint of its
-own tone (`Pill`) reads the tone's `--*-ink` step, which holds 4.5:1 over that tint.
+oracle and atlas routes. shared defaults for scales, sans and mono faces,
+spacing, motion, dimensions, focus metrics, scrims, highlights and shell geometry
+live in a `:root`-only block before reduced-motion overrides. nested rooms inherit
+them from the nearest ancestor, including overrides supplied by context owners.
+the press block (`:root, [data-theme="dark"]`) declares only tokens another room
+overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
+the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
+the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
 
