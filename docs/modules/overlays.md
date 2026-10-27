@@ -448,6 +448,9 @@ unavailable. `(placed, anchorState)` lets desktop editor focus wait for visible
 placement without a timer or duplicate host state. other element/rect and chat
 strategies retain their contracts.
 
+positioned interactive surfaces appear by opacity only; their entrance never
+moves or scales available controls or a nested menu's trigger geometry.
+
 `mobile-selection-actions` is explicit opt-in with a stable `selectionSession`.
 it intersects live reader bounds, visual viewport, safe areas and the existing
 player/keyboard clearance. first/last source rectangles define endpoint
