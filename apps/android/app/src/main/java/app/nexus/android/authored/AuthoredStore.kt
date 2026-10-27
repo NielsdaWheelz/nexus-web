@@ -3,6 +3,7 @@ package app.nexus.android.authored
 import android.content.Context
 import android.util.Base64
 import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,7 +20,10 @@ import java.util.UUID
  * Pages compare their requested durable cursor; effective withdrawal discards
  * staging and the final read's store revision fences atomic publication. */
 internal class AuthoredStore(private val context: Context, val account: UUID) {
-    private val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() })
+    private class Plan(val sql: String, var statement: SQLiteStatement? = null)
+    private val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() }).let { source ->
+        source.keys().asSequence().associateWith { Plan(source.getString(it)) }
+    }
     private val connection: SQLiteConnection
     init {
         val directory = context.filesDir.resolve("authored").also { check(it.exists() || it.mkdirs()) }
@@ -32,30 +36,43 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         check(replica().getString("account_id") == account.toString())
     }
     private fun run(sql: String, vararg values: Any?) { rows(sql, *values) }
-    private fun rows(sql: String, vararg values: Any?): JSONArray {
-        connection.prepare(sql).use { statement ->
-            values.forEachIndexed { index, value -> when (value) {
-                null, JSONObject.NULL -> statement.bindNull(index + 1)
-                is ByteArray -> statement.bindBlob(index + 1, value)
-                is Long -> statement.bindLong(index + 1, value)
-                is Int -> statement.bindLong(index + 1, value.toLong())
-                is Boolean -> statement.bindLong(index + 1, if (value) 1 else 0)
-                else -> statement.bindText(index + 1, value.toString())
-            } }
-            val result = JSONArray()
-            while (statement.step()) {
-                val row = JSONObject()
-                for (index in 0 until statement.getColumnCount()) {
-                    val name = statement.getColumnName(index)
-                    row.put(name, when {
-                        statement.isNull(index) -> JSONObject.NULL
-                        name == "merge_bytes" -> Base64.encodeToString(statement.getBlob(index), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-                        else -> statement.getText(index)
-                    })
-                }
-                result.put(row)
+    private fun rows(sql: String, vararg values: Any?): JSONArray = connection.prepare(sql).use { readRows(it, *values) }
+    private fun readRows(statement: SQLiteStatement, vararg values: Any?): JSONArray {
+        values.forEachIndexed { index, value -> when (value) {
+            null, JSONObject.NULL -> statement.bindNull(index + 1)
+            is ByteArray -> statement.bindBlob(index + 1, value)
+            is Long -> statement.bindLong(index + 1, value)
+            is Int -> statement.bindLong(index + 1, value.toLong())
+            is Boolean -> statement.bindLong(index + 1, if (value) 1 else 0)
+            else -> statement.bindText(index + 1, value.toString())
+        } }
+        val result = JSONArray()
+        while (statement.step()) {
+            val row = JSONObject()
+            for (index in 0 until statement.getColumnCount()) {
+                val name = statement.getColumnName(index)
+                row.put(name, when {
+                    statement.isNull(index) -> JSONObject.NULL
+                    name == "merge_bytes" -> Base64.encodeToString(statement.getBlob(index), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                    else -> statement.getText(index)
+                })
             }
+            result.put(row)
+        }
+        return result
+    }
+    private fun readPlan(planKey: String, vararg values: Any?): JSONArray {
+        val plan = queries.getValue(planKey)
+        val statement = plan.statement ?: connection.prepare(plan.sql).also { plan.statement = it }
+        try {
+            val result = readRows(statement, *values)
+            statement.reset()
+            statement.clearBindings()
             return result
+        } catch (error: Throwable) {
+            plan.statement = null
+            try { statement.close() } catch (closeError: Throwable) { error.addSuppressed(closeError) }
+            throw error
         }
     }
     private fun <T> transaction(work: () -> T): T {
@@ -123,8 +140,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until resources.length()) indexed.add(resources.getJSONObject(index).getString("ref"))
         for (index in 0 until passages.length()) indexed.add("passage_anchor:${passages.getJSONObject(index).getString("anchor_id")}")
         for (index in 0 until stubs.length()) indexed.add(stubs.getJSONObject(index).getString("source_ref"))
-        val searchSql = queries.getString("search_index")
-        val removeSql = queries.getString("search_remove")
+        val searchSql = sql("search_index")
+        val removeSql = sql("search_remove")
         for (ref in indexed) { run(removeSql, ref); run(searchSql, ref) }
     }
     fun commit(frame: JSONObject): JSONObject = transaction {
@@ -147,7 +164,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         return rows("SELECT command_seq FROM pending_changes WHERE command_seq=?", sequence.toLong()).length() == 0
     }
     fun pending(): JSONArray {
-        val records = rows(queries.getString("pending_changes"))
+        val records = rows(sql("pending_changes"))
         val changes = JSONArray(); var bytes = 256
         for (index in 0 until records.length()) { val row = records.getJSONObject(index); val size = row.getString("byte_length").toInt(); if (bytes + size > 3 * 1024 * 1024 - 1024) break; bytes += size + 1; changes.put(JSONObject(row.getString("change_json"))) }
         return changes
@@ -172,39 +189,39 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (table in listOf("resources", "links", "passages", "source_stubs")) require(rows("SELECT COUNT(*) AS count FROM $table").getJSONObject(0).getString("count").toLong() == counts.getLong(table))
         run("UPDATE replica_state SET provisioning_complete=1,server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", cursor.toLong(), lamport.toLong())
     }
-    private fun scopeSql(name: String): String = queries.getString(name)
+    private fun sql(name: String): String = queries.getValue(name).sql
     fun scopeProgress(): JSONObject {
-        val state = rows(scopeSql("scope_state")).getJSONObject(0)
-        val pending = if (state.getInt("metadata_complete") == 1) rows(scopeSql("scope_pending_reading")) else JSONArray()
+        val state = rows(sql("scope_state")).getJSONObject(0)
+        val pending = if (state.getInt("metadata_complete") == 1) rows(sql("scope_pending_reading")) else JSONArray()
         return state.put("metadata_complete", state.getInt("metadata_complete") == 1)
             .put("reading_ref", if (pending.length() > 0) pending.getJSONObject(0).getString("reading_ref") else JSONObject.NULL)
             .put("text_cursor", if (pending.length() > 0) pending.getJSONObject(0).opt("cursor") else JSONObject.NULL)
             .put("raw_complete", pending.length() > 0 && pending.getJSONObject(0).getInt("raw_complete") == 1)
     }
     fun scopeRefs(after: String?): JSONObject {
-        val records = rows(scopeSql("scope_active_refs"), after, after)
+        val records = rows(sql("scope_active_refs"), after, after)
         return JSONObject().put("refs", JSONArray().apply { for (index in 0 until records.length()) put(records.getJSONObject(index).getString("scope_ref")) })
     }
     fun scopeRepairRefs(refs: JSONArray): JSONObject {
-        val records = rows(scopeSql("scope_repair_refs"), refs.toString())
+        val records = rows(sql("scope_repair_refs"), refs.toString())
         return JSONObject().put("refs", JSONArray().apply { for (index in 0 until records.length()) put(records.getJSONObject(index).getString("scope_ref")) })
     }
     private fun pruneScope() {
-        for (table in listOf("scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress")) run(scopeSql("${table}_prune"))
+        for (table in listOf("scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress")) run(sql("${table}_prune"))
     }
     fun scopeReset(revision: String, repair: Boolean) = transaction {
         val state = scopeProgress()
         if (state.optString("staging_revision") != revision) {
             pruneScope()
-            if (state.optString("active_revision") == revision && !repair) run(scopeSql("scope_discard")) else run(scopeSql("scope_begin"), revision)
+            if (state.optString("active_revision") == revision && !repair) run(sql("scope_discard")) else run(sql("scope_begin"), revision)
         }
     }
     fun scopeRevoke(refs: JSONArray): Boolean = transaction {
         if (refs.length() == 0) return@transaction false
         val input = refs.toString()
-        if (rows(scopeSql("scope_revoke_effective"), input).getJSONObject(0).getInt("effective") != 1) return@transaction false
-        for (name in listOf("scope_revoke", "scope_revoke_text", "scope_revoke_complete", "scope_revoke_progress", "scope_revoke_intervals", "scope_revoke_normalized", "scope_revoke_normalized_complete")) run(scopeSql(name), input)
-        run(scopeSql("scope_discard")); run(scopeSql("scope_changed"))
+        if (rows(sql("scope_revoke_effective"), input).getJSONObject(0).getInt("effective") != 1) return@transaction false
+        for (name in listOf("scope_revoke", "scope_revoke_text", "scope_revoke_complete", "scope_revoke_progress", "scope_revoke_intervals", "scope_revoke_normalized", "scope_revoke_normalized_complete")) run(sql(name), input)
+        run(sql("scope_discard")); run(sql("scope_changed"))
         true
     }
     fun scopeMetadata(page: JSONObject, requestedCursor: String?): Boolean = transaction {
@@ -213,8 +230,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val cursor = if (state.isNull("metadata_cursor")) null else state.getString("metadata_cursor")
         if (state.optString("staging_revision") != revision || state.getBoolean("metadata_complete") || cursor != requestedCursor) return@transaction false
         val input = page.getJSONArray("records").toString()
-        for (name in listOf("scope_metadata_facts", "scope_metadata_readings", "scope_metadata_intervals")) run(scopeSql(name), revision, input)
-        run(scopeSql("scope_metadata_cursor"), page.opt("next_cursor"), page.isNull("next_cursor"), revision)
+        for (name in listOf("scope_metadata_facts", "scope_metadata_readings", "scope_metadata_intervals")) run(sql(name), revision, input)
+        run(sql("scope_metadata_cursor"), page.opt("next_cursor"), page.isNull("next_cursor"), revision)
         true
     }
     fun scopeText(page: JSONObject, requestedCursor: String?): Boolean = transaction {
@@ -222,19 +239,19 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val state = scopeProgress()
         val cursor = if (state.isNull("text_cursor")) null else state.getString("text_cursor")
         if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || state.optString("reading_ref") != reading || state.getBoolean("raw_complete") || cursor != requestedCursor) return@transaction false
-        run(scopeSql("scope_text_chunks"), revision, reading, page.getJSONArray("chunks").toString())
-        run(scopeSql("scope_text_cursor"), revision, reading, page.opt("next_cursor"), page.isNull("next_cursor"))
+        run(sql("scope_text_chunks"), revision, reading, page.getJSONArray("chunks").toString())
+        run(sql("scope_text_cursor"), revision, reading, page.opt("next_cursor"), page.isNull("next_cursor"))
         true
     }
     fun scopeNormalizationNext(revision: String, reading: String): JSONObject {
-        val records = rows(scopeSql("scope_normalization_next"), revision, reading)
+        val records = rows(sql("scope_normalization_next"), revision, reading)
         return JSONObject().put("interval", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).apply {
             put("start_offset", getLong("start_offset")); put("end_offset", getLong("end_offset"))
         })
     }
     fun scopeNormalizationRead(request: JSONObject): JSONObject {
         val after = request.opt("after")
-        val records = rows(scopeSql("scope_normalization_raw"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"), after, after)
+        val records = rows(sql("scope_normalization_raw"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"), after, after)
         return JSONObject().put("chunk", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).apply { put("start_offset", getLong("start_offset")) })
     }
     fun scopeNormalizationObservation(request: JSONObject): JSONObject = transaction {
@@ -244,25 +261,25 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
     }
     fun scopeNormalizationReset(request: JSONObject) = transaction {
         if (scopeProgress().optString("staging_revision") == request.getString("revision"))
-            run(scopeSql("scope_normalization_reset"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"))
+            run(sql("scope_normalization_reset"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"))
     }
     fun scopeNormalized(request: JSONObject): Boolean = transaction {
         val revision = request.getString("revision"); val reading = request.getString("reading_ref"); val interval = request.getString("interval_key")
         val state = scopeProgress()
         if (state.optString("staging_revision") != revision) return@transaction state.optString("active_revision") == revision
-        if (rows(scopeSql("scope_normalized_is_complete"), revision, reading, interval).length() > 0) return@transaction true
-        run(scopeSql("scope_normalized_chunks"), revision, reading, interval, request.getJSONArray("chunks").toString())
+        if (rows(sql("scope_normalized_is_complete"), revision, reading, interval).length() > 0) return@transaction true
+        run(sql("scope_normalized_chunks"), revision, reading, interval, request.getJSONArray("chunks").toString())
         if (!request.isNull("normalized_length")) {
-            val coverage = rows(scopeSql("scope_normalized_coverage"), revision, reading, interval, request.getLong("normalized_length"))
+            val coverage = rows(sql("scope_normalized_coverage"), revision, reading, interval, request.getLong("normalized_length"))
             if (coverage.getJSONObject(0).getInt("accepted") != 1) return@transaction false
-            run(scopeSql("scope_normalized_done"), revision, reading, interval)
+            run(sql("scope_normalized_done"), revision, reading, interval)
         }
         true
     }
     fun scopeTextComplete(revision: String, reading: String): Boolean = transaction {
         val state = scopeProgress()
         if (state.optString("staging_revision") != revision || state.optString("reading_ref") != reading || !state.getBoolean("raw_complete") || !scopeNormalizationNext(revision, reading).isNull("interval")) return@transaction false
-        run(scopeSql("scope_text_done"), revision, reading)
+        run(sql("scope_text_done"), revision, reading)
         true
     }
     fun scopePublish(revision: String, expectedStoreRevision: String): Boolean = transaction {
@@ -270,27 +287,26 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val state = scopeProgress()
         if (state.optString("active_revision") == revision && state.isNull("staging_revision")) return@transaction true
         if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || !state.isNull("reading_ref")) return@transaction false
-        run(scopeSql("scope_publish")); run(scopeSql("scope_readmitted")); pruneScope(); run(scopeSql("scope_changed"))
+        run(sql("scope_publish")); run(sql("scope_readmitted")); pruneScope(); run(sql("scope_changed"))
         true
     }
     fun searchRead(params: JSONArray, planKey: String): JSONObject {
         require(replica().getBoolean("provisioning_complete"))
-        require(planKey.startsWith("search_read:") && queries.has(planKey) && params.length() <= 100)
-        return JSONObject().put("rows", rows(queries.getString(planKey), *Array(params.length()) { params.opt(it) }))
+        require(planKey.startsWith("search_read:") && queries.containsKey(planKey) && params.length() <= 100)
+        return JSONObject().put("rows", readPlan(planKey, *Array(params.length()) { params.opt(it) }))
     }
     fun searchMatch(text: String, expression: String): JSONObject {
-        run(queries.getString("search_match_create")); run(queries.getString("search_match_clear"))
+        run(sql("search_match_create")); run(sql("search_match_clear"))
         return try {
-            run(queries.getString("search_match_insert"), text)
-            JSONObject().put("matched", rows(queries.getString("search_match_read"), expression).length() > 0)
-        } finally { run(queries.getString("search_match_clear")) }
+            run(sql("search_match_insert"), text)
+            JSONObject().put("matched", rows(sql("search_match_read"), expression).length() > 0)
+        } finally { run(sql("search_match_clear")) }
     }
     fun query(query: JSONObject, params: JSONArray, planKey: String): JSONObject {
         require(replica().getBoolean("provisioning_complete"))
         val kind = query.getString("kind")
-        require(planKey.startsWith("$kind:") && queries.has(planKey) && params.length() <= 100)
-        val sql = queries.getString(planKey)
-        val records = rows(sql, *Array(params.length()) { params.opt(it) })
+        require(planKey.startsWith("$kind:") && queries.containsKey(planKey) && params.length() <= 100)
+        val records = readPlan(planKey, *Array(params.length()) { params.opt(it) })
         if (kind == "outline_window") {
             val resources = linkedMapOf<String, JSONObject>()
             var metadata: JSONObject? = null
@@ -354,7 +370,20 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         }
         return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("children", JSONArray()).put("next_cursor", cursor).put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL).put("positions", JSONArray()).put("binding_id", JSONObject.NULL).put("scope_available", true).put("outline_window", JSONObject.NULL)
     }
-    fun close() { connection.close() }
+    fun close() {
+        var failure: Throwable? = null
+        for (plan in queries.values) {
+            val statement = plan.statement ?: continue
+            plan.statement = null
+            try { statement.close() } catch (error: Throwable) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
+        }
+        try { connection.close() } catch (error: Throwable) {
+            if (failure == null) failure = error else failure.addSuppressed(error)
+        }
+        failure?.let { throw it }
+    }
     companion object {
         fun selection(change: JSONObject): JSONObject = JSONObject().apply {
             for ((table, key, selector) in listOf(Triple("resources", "ref", "refs"), Triple("links", "link_id", "link_ids"), Triple("passages", "anchor_id", "anchor_ids"), Triple("source_stubs", "source_ref", "source_refs"))) {

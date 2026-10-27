@@ -1,36 +1,28 @@
 # handset 100,000-block cold and warm opening exceed their budgets
 
-latest installed samsung sm-s906w/android16/webview156.0.8078.47 campaign,
-`20261027-133910-aaf0a3bd6ff3` (source `5f5232c72`), misses cold10 p90
+latest full installed samsung sm-s906w/android16/webview156.0.8078.47 campaign,
+`20261027-133910-aaf0a3bd6ff3` (source5f5232c72), misses cold10 p90
 3,108.2ms against3,000ms and warm50 p95 241.4ms against150ms. search50
 p95 192.8ms and typing300 p95 40ms pass. all eleven os premises and ten
 local appends pass; the budget stop precedes final upload-prefix and canonical
 append assertions. canonical and hardware cleanup completed.
 
-preceding `f5d7` measured cold3,064ms/warm150.4ms. the new atomic outline
-read preserves semantic parity and42 affected browser controls, but worsens warm
-opening. its12–17kb sql contains121–179 selects. native bundled sqlite3.50.1
-prepares each request anew; exact plans refuse host sqlite3.54.1 explain with
-“views and/or subqueries nested too deep”. that host result is planner evidence,
-not attribution of handset time. distinguish planning, execution/json and bridge
-cost before choosing the repair; preserve full projections and native16mib cap.
+linear sql in367 reduces host preparation;9f reuses admission's actual state
+instead of rereading each new document.1989 shares identical reads still waiting
+to start. actual metadata trace `20261027-162345-ae3485e12d5d` witnesses two
+registrations sharing exactly one initial native resource query per warm open.
+its separate debugger-free retained-corpus50-target diagnostic measures p95
+220.8ms. all targets render, and account/replica/sequence310/first64 pending
+commands remain unchanged. this is not full fresh-campaign acceptance.
 
-the linear-record query in `367caf70f` cuts host preparation about75%, but two
-retained-corpus trusted-pointer diagnostics still measured179.1/189.4ms, not a
-capacity verdict. ref-attributed trace `20261027-151324-19cbb8a5377a` confirms
-admission reads bulk note/page state, then both new documents reread singleton
-snapshots. reuse may hydrate only missing documents from the already-read actual
-state; preserve existing owners, revision catch-up and actual byte checks.
-
-`9f07d3694` reuses actual present states from that bulk snapshot while preserving
-existing document owners and revision catch-up. static102 and46 functional/race/
-build targets pass. paired retained-corpus diagnostic `20261027-154538-c573378d0877`
-measures trusted-pointer warm opens163/166.6ms (callback delays2.8/3.0ms), not
-50-sample p95 acceptance. account, replica, sequence310 and the first64 pending
-commands remain unchanged across the pilot; cleanup completed. the remaining
-same-ref projection reads have independent pane-body, title and document owners.
-check their registration/execution order before introducing read sharing.
+the native connection still prepares every packaged statement afresh. prior
+transport trace `20261027-151324-19cbb8a5377a` measures outline invocation
+22–29ms, including execution and transport; it does not isolate preparation.
+connection-owned reuse of finite packaged read plans is the current hypothesis,
+with full reset/binding cleanup and no query-result cache. measure the installed
+candidate before keeping it or changing another owner.
 
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
-order. retain temporary inputs until actual qualification and owned cleanup.
+order. preserve full projections and the native16mib packet cap. retain temporary
+inputs until actual qualification and owned cleanup.

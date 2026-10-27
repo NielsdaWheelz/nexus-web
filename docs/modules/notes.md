@@ -359,6 +359,11 @@ uncertain commit settlement; an ephemeral port lease fences a late message from 
 retired or crashed owner. compatible shells reuse one account/format owner.
 
 android uses bundled sqlite 2.7.1 on one serialized connection off the main thread.
+that connection lazily reuses compiled statements only for validated packaged
+query and search-read plans. each read drains, resets and clears bindings before
+returning; any failure discards its statement and preserves the original error.
+connection retirement closes all compiled statements before the connection.
+dynamic reads and writes retain transient statements; no query results are cached.
 the preparation mutex spans its javascript baseline read and native transaction.
 fixed bridge chunks retain existing generation/account admission. both hosts keep
 committed merge bytes and causal state independently of mounted editor objects.
