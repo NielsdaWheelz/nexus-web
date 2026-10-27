@@ -294,7 +294,12 @@ the native bridge's existing 16 mib aggregate output cap also applies to this
 complete window. an extreme window may fail where separate reads previously
 fit; the existing read error and explicit retry retain writing without truncating,
 shrinking or partially publishing the proof. the root admits and retains all
-note/title documents together. graph proofs share a store revision; unknown data
+note/title documents together. its admission snapshot also supplies the actual
+initial note/page state for missing runtime documents. the existing per-ref
+reservation wins for live, loading and prepared documents; supplied state never
+replaces them. absent states retain ordinary loading and latent-page preludes.
+newer subscriptions merge through the existing initial-revision catch-up.
+graph proofs share a store revision; unknown data
 never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 a cold append keeps its existing focus intent through initial prefix admission,

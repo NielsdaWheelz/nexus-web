@@ -376,10 +376,18 @@ export class WritingRuntime {
     return [...texts.values()].filter(text => text !== "").join("\n\n");
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
+    return this.getOrOpenDocument(ref, () => this.loadDocument(ref, prelude));
+  }
+  /** Actual state from this account's atomic snapshot; an existing owner wins. */
+  async openDocumentFromState(resource: Exclude<ResourceState, {kind:"highlight"}>, loadedRevision: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
+    return this.getOrOpenDocument(resource.ref, async () => this.hydrateDocument(resource, prelude, await this.store, loadedRevision));
+  }
+  private getOrOpenDocument(ref: string, load: () => Promise<CachedDocument>): Promise<CachedDocument> {
     if (this.retired) throw new Error("Writing account is closed");
     let entry = this.documents.get(ref);
     if (!entry) {
-      entry={promise:this.loadDocument(ref,prelude),value:null};
+      // Reserve the owner before either loader can await or hydrate a document.
+      entry={promise:Promise.resolve().then(load),value:null};
       this.documents.set(ref,entry);
       const owner=entry;
       void owner.promise.then(value=>{owner.value=value;},()=>{if(this.documents.get(ref)===owner)this.documents.delete(ref);});
@@ -398,9 +406,12 @@ export class WritingRuntime {
     const creation = prelude.find((intent): intent is Extract<Intent,{kind:"create_page"}> => intent.kind === "create_page" && intent.ref === ref);
     const resource = existing ?? (creation ? {kind:"page" as const,ref,touch_vv:{},delete_vv:{},local_date:creation.local_date,title_state:createTitle("")} : null);
     if (!resource || resource.kind === "highlight") throw new Error("Writing document is unavailable");
+    return this.hydrateDocument(resource, prelude, store, existing ? replica.store_revision : null);
+  }
+  private hydrateDocument(resource: Exclude<ResourceState, {kind:"highlight"}>, prelude: readonly Intent[], store: AuthoredStore, loadedRevision: string | null): CachedDocument {
     const doc = resource.kind === "note" ? hydrateNote(resource.body_state) : new Y.Doc();
     if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
-    return this.cacheDocument(ref, resource, doc, prelude, store, existing ? replica.store_revision : null);
+    return this.cacheDocument(resource.ref, resource, doc, prelude, store, loadedRevision);
   }
   private cacheDocument(ref: string, resource: Exclude<ResourceState, {kind:"highlight"}>, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null, loadedRevision: string | null): CachedDocument {
     let observed_touch = resource.touch_vv;

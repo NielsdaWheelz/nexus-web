@@ -15,6 +15,13 @@ prepares each request anew; exact plans refuse host sqlite3.54.1 explain with
 not attribution of handset time. distinguish planning, execution/json and bridge
 cost before choosing the repair; preserve full projections and native16mib cap.
 
+the linear-record query in `367caf70f` cuts host preparation about75%, but two
+retained-corpus trusted-pointer diagnostics still measured179.1/189.4ms, not a
+capacity verdict. ref-attributed trace `20261027-151324-19cbb8a5377a` confirms
+admission reads bulk note/page state, then both new documents reread singleton
+snapshots. reuse may hydrate only missing documents from the already-read actual
+state; preserve existing owners, revision catch-up and actual byte checks.
+
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
 order. retain temporary inputs until actual qualification and owned cleanup.

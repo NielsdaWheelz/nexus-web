@@ -559,7 +559,11 @@ export class OutlineController {
         const editable = this.refs(next);
         for (const ref of editable) if (!this.documents.has(ref)) {
           if (this.slots(next) > MAX_REFS) {this.denied(parent_id, "this editing window is full; close a branch before loading more writing"); return;}
-          const document = await this.runtime.openDocument(ref, ref === this.rootRef ? this.prelude : []);
+          const resource = snapshot.states.resources.find(resource => resource.ref === ref);
+          const prelude = ref === this.rootRef ? this.prelude : [];
+          const document = await (resource && resource.kind !== "highlight"
+            ? this.runtime.openDocumentFromState(resource, snapshot.replica.store_revision, prelude)
+            : this.runtime.openDocument(ref, prelude));
           acquired.push([ref, {document, captureBytes: 0, release: document.retain()}]);
         }
         if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canArrange())) return;
