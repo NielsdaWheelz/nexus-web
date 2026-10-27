@@ -7,6 +7,7 @@
 import { useEffect, useRef } from "react";
 import { Check, CircleAlert, CloudOff, LoaderCircle } from "lucide-react";
 import type { SyncStatus } from "@nexus/authored/types";
+import Button from "@/components/ui/Button";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
 import { STATUS_COPY } from "@/lib/authored/status";
@@ -36,19 +37,25 @@ export function syncStatusText(status: SyncStatus, cause: string | null): string
   return lines.length === 0 ? STATUS_COPY[status] : `${STATUS_COPY[status]}. ${lines.join(" ")}`;
 }
 
-/** The account menu's first row: a status, not a command. Its label is constant, so a
- * changing status never reads as changed menu meaning and closes an open menu. */
-export function syncStatusOption(status: SyncStatus, cause: string | null): ActionDescriptor {
+/** The account menu's fixed status row. Credential repair belongs inside this
+ * status, so saving and auth transitions never change the menu's membership. */
+export function syncStatusOption(status: SyncStatus, cause: string | null, auth: { onSignIn: () => void; busy: boolean }): ActionDescriptor {
   const Icon = ICONS[status];
   return {
     kind: "custom",
     id: "sync-status",
     label: "sync status",
-    render: () => <div className={styles.status} data-failed={Icon === CircleAlert || undefined}>
+    render: ({ closeMenu, presentation }) => <div className={styles.status} data-failed={Icon === CircleAlert || undefined}>
       <Icon size={16} className={styles.statusIcon} aria-hidden="true" />
       <span className={styles.statusText}>
         <span>{STATUS_COPY[status]}</span>
         {details(status, cause).map(line => <span key={line} className={styles.statusDetail}>{line}</span>)}
+        {status === "sign_in_required" ? <Button
+          role={presentation === "menu" ? "menuitem" : undefined}
+          tabIndex={presentation === "menu" ? -1 : 0}
+          disabled={auth.busy}
+          onClick={() => { closeMenu(); auth.onSignIn(); }}
+        >sign in</Button> : null}
       </span>
     </div>,
   };

@@ -199,7 +199,7 @@ export default function AccountMenu(props: {
   };
 
   const options: ActionDescriptor[] = [
-    syncStatusOption(status, cause),
+    syncStatusOption(status, cause, { onSignIn: () => void signIn(), busy: signingIn || signOut.busy }),
     link(NAV_STATS, props.activeId === "stats"),
     link(NAV_IMPORTS, props.activeId === "imports"),
     link(NAV_SETTINGS, props.activeId === "settings"),
@@ -230,11 +230,6 @@ export default function AccountMenu(props: {
       }),
     });
   }
-
-  if (status === "sign_in_required") options.splice(1, 0, {
-    kind: "command", id: "signin", label: "sign in",
-    onSelect: () => void signIn(), disabled: signingIn || signOut.busy,
-  });
 
   return (
     <>
