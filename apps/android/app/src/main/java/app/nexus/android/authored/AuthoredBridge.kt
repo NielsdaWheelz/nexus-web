@@ -36,7 +36,8 @@ import java.util.UUID
  * The process-wide preparation mutex spans the JS preparation and exact local
  * settlement. Retirement releases its document lease; an already admitted SQL
  * operation still finishes under the commands mutex before a new owner can read
- * its source clock. Main-thread adoption rechecks document generation. */
+ * its source clock. Main-thread adoption rechecks document generation. Same-account
+ * remote admission resumes hints and synchronization without reopening writing. */
 private class AuthoredStorageError(cause: java.io.IOException) : java.io.IOException("couldn’t prepare notes on this device", cause)
 
 internal class AuthoredBridge(private val webView: WebView, private val session: DeviceSession) {
@@ -58,6 +59,18 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         if (!closed && boundAccount != null && boundAccount != session.accountId()) {
             onPageStarted()
             webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+        } else if (!closed) {
+            // Publications read current admission; Checking may already be Ready.
+            // Retire the old credential request before opening its replacement.
+            hintJob?.cancel(); hintJob = null
+            if (foreground && session.remotelyAdmitted()) {
+                hintOwner?.let { (message, account) ->
+                    if (boundAccount == account && current(message, account)) {
+                        startHints()
+                        message.replyProxy.postMessage(JSONObject().put("kind", "authored_hint").toString())
+                    }
+                }
+            }
         }
     }
     private var foreground = false
