@@ -13,6 +13,7 @@ import {
   apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
+  outcomeUnknown,
   type ApiPath,
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -58,7 +59,7 @@ function sharesPath(ref: CanonicalResourceRef): ApiPath {
 function feedbackFor(error: unknown, title: string, mutation: boolean): FeedbackContent | null {
   if (handleUnauthenticatedApiError(error)) return null;
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  if (mutation && error.code === "E_NETWORK") {
+  if (mutation && outcomeUnknown(error)) {
     return {
       tone: "Danger",
       title: "It’s unclear whether the sharing change completed.",
@@ -184,7 +185,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       setLiveMessage("");
       requestAnimationFrame(() => setLiveMessage(message));
     },
-    fail: (error, title) => showError(explain(error, title, true), isApiError(error) && error.code === "E_NETWORK"),
+    fail: (error, title) => showError(explain(error, title, true), outcomeUnknown(error)),
     copy: async (href, label) => {
       try {
         await copyText(href);

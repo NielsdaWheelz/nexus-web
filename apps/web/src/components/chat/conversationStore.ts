@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback, isApiError, isRefusal } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isRefusal, outcomeUnknown } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -289,7 +289,7 @@ export function createChatStore(accountId: string, conversationId: string | null
         const path = `/api/chat-runs/${runId}/cancel` as const;
         applyRead((await apiFetch<ApiJson<"/chat-runs/{run_id}/cancel", "post">>(path, { method: "POST" })).data);
       } catch (error) {
-        report(chatFailure(error, "This response couldn’t be stopped."));
+        report(chatFailure(error, outcomeUnknown(error) ? "stop request not confirmed" : "This response couldn’t be stopped."));
       }
     },
 

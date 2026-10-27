@@ -8,7 +8,7 @@
  * their idempotent identity. There is no browser persistence or cross-tab lease.
  */
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -625,7 +625,7 @@ async function attempt(row: Request): Promise<void> {
     ack = reply.data;
   } catch (error) {
     if (row.generation !== generation) return;
-    const transient = isApiError(error) && !isSameSystemApiDefect(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code);
+    const transient = outcomeUnknown(error) || (isApiError(error) && error.code === "E_RATE_LIMITED");
     const authOrWire = isApiError(error) && (error.status === 401 || error.code === "E_WIRE_MISMATCH");
     if (authOrWire) { row.uncertain = true; row.retryable = false; pauseWriting(); handleUnauthenticatedApiError(error); transition(row, { kind: "unconfirmed", error }); return; }
     if (isWriteRejection(error)) {

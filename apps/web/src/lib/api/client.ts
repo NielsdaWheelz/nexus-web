@@ -99,11 +99,11 @@ export function isRefusal(error: unknown): error is ApiError {
   );
 }
 
-/** A lost answer or lapsed session keeps the same write intent for an explicit retry. */
-export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" | "E_UNAUTHENTICATED" } {
+/** An uncertain answer or lapsed session keeps the same write intent for its owner to retry. */
+export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" | "E_DATABASE_BUSY" | "E_UNAUTHENTICATED" } {
   return (
     isApiError(error) &&
-    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT" || isUnauthenticatedApiError(error))
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT" || error.code === "E_DATABASE_BUSY" || isUnauthenticatedApiError(error))
   );
 }
 
@@ -151,6 +151,13 @@ export function apiTransportFeedback(
         tone: "Danger",
         title,
         message: "Check your connection and try again.",
+        requestId,
+      };
+    case "E_DATABASE_BUSY":
+      return {
+        tone: "Warning",
+        title,
+        message: "nexus is busy. wait a moment, then retry.",
         requestId,
       };
     case "E_UPSTREAM":

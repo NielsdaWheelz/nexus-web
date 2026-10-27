@@ -90,6 +90,6 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
 /** Required reads explicitly model these dependency failures before first mount. */
 export function isWorkspaceTransportError(error: unknown): error is ApiError {
   return isApiError(error) && [
-    "E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_AUTH_UNAVAILABLE",
+    "E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_DATABASE_BUSY", "E_AUTH_UNAVAILABLE",
   ].includes(error.code);
 }

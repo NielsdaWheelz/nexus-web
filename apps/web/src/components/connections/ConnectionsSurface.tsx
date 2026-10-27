@@ -11,7 +11,7 @@ import {useOutlineSession} from "@/lib/notes/useOutlineSession";
 import {useResourceOutline} from "@/lib/resourceGraph/useResourceOutline";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -153,7 +153,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     if (handleUnauthenticatedApiError(error)) return;
     try {
       setFeedback(connectionErrorMessage(error, operation));
-      setFailureOperation(isApiError(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code) ? operation : null);
+      setFailureOperation((outcomeUnknown(error) || (isApiError(error) && error.code === "E_RATE_LIMITED")) ? operation : null);
     }
     catch (error) { setDefectState({ error }); }
   }, []);

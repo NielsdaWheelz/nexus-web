@@ -36,6 +36,10 @@ server components: callFastAPI ────────────────�
   id and enforce `cache: "no-store"`. independent application read owners are not
   coordinated by the browser http cache. search manual reads have one aggregate
   operation deadline; an owned expiry remains distinct from caller cancellation.
+  `E_DATABASE_BUSY` is an uncertain write outcome: an earlier transaction may
+  have committed. `outcomeUnknown` preserves the owner's sealed intent and its
+  existing retry policy; sharing rereads before another mutation. transport
+  feedback says “nexus is busy. wait a moment, then retry.”
 
 - `serverState.tsx`: the one owner of keyed async reads.
   `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
@@ -146,7 +150,10 @@ cookie splitting, declared multivalue headers and stream restrictions are unchan
   It adopts a well-formed inbound `X-Request-ID` (`[A-Za-z0-9._:-]{1,128}`) or
   mints one, binds it to the log context and stamps it on every answer; refuses
   a missing or different `X-Nexus-Wire` with 426 `E_WIRE_MISMATCH` before
-  routing (`auth.middleware.PUBLIC_PATHS` are exempt); renders an exception
+  routing (`auth.middleware.PUBLIC_PATHS` are exempt); maps physical checkout
+  exhaustion to 503 `E_DATABASE_BUSY`, including first-sight auth bootstrap.
+  owned transaction conflicts remain 409 `E_RESOURCE_CONFLICT`. after response
+  headers, errors propagate through the stream owner. it renders an exception
   nothing claimed before the response started as 500 `E_INTERNAL` with its
   request id (a client disconnect as 499); logs `http.request.completed` with
   status, duration and viewer when the request ends (a stream when it closes or
