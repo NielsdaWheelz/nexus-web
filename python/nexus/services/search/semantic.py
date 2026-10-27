@@ -183,10 +183,13 @@ def nearest_chunks(
             )
         probes = 8 if maximum_distance <= 1 - 0.80 else 128
         db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
+        # A fetched batch can cross the radius; admission beyond it is never consumed.
         rows = db.execute(
             text(f"""{ctes} SELECT ce.chunk_id, ({distance}) AS distance,
-                EXISTS (SELECT 1 FROM content_chunks cc {_READY}
-                    WHERE cc.id=ce.chunk_id AND ({owner}) OFFSET 0) AS admitted
+                CASE WHEN ({distance}) <= :maximum_distance THEN
+                    EXISTS (SELECT 1 FROM content_chunks cc {_READY}
+                        WHERE cc.id=ce.chunk_id AND ({owner}) OFFSET 0)
+                    ELSE FALSE END AS admitted
                 FROM content_embeddings ce
                 WHERE ce.embedding_provider=:provider AND ce.embedding_model=:model
                   AND ce.embedding_vector IS NOT NULL
