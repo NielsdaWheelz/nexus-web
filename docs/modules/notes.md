@@ -20,6 +20,12 @@ retain their separate owners.
   actual editor transactions to incremental shared operations, never a stale
   whole-body replacement.
 
+`cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
+and its shared semantic imports into the shipped `node/authored/helper.mjs`.
+`./scripts/test` regenerates into a temporary file and rejects stale bytes.
+the frozen migration seed bundle retains its own historical semantics and is
+never regenerated from the current helper.
+
 ## content and identity
 
 one note has one permanent body element and one permanent inline yjs text. its
@@ -326,6 +332,12 @@ entry serves desktop and android through host adapters. only the browser registe
 the service worker; android retains packaged app-router delivery. compatible shell
 activation waits for local commit settlement; format changes use coordinated
 release draining rather than automatic database deletion.
+
+v1 firefox boundary: normal browser quit preserves a compatible waiting update
+through offline restart. forced quit during that update may require one online
+reopen before the cached shell loads.
+the product does not add a second activation protocol to repair that platform
+boundary. local corpus ownership remains independent of shell asset delivery.
 
 ## replication
 

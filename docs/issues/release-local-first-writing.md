@@ -1,7 +1,7 @@
 # local first writing hard cutover
 
-implementation is integrated; installed/mixed-device, shell-update and capacity
-qualification remain open. no deployment or production data deletion has been
+implementation is integrated; installed/mixed-device and capacity qualification
+remain open. no deployment or production data deletion has been
 performed. [specification](../local-first-writing-spec.md) owns the target.
 this release replaces current online-first writing, not the media/download stack.
 
@@ -11,6 +11,9 @@ prerequisites:
   firefox cold startup, existing samsung handset and the 100,000-block corpus.
 - qualify authored node helper within the current api/host memory limits and
   snapshot streaming within the bff deadline. record actual results in the pr.
+- communicate the accepted firefox forced-quit update boundary in the notes
+  module: one online reopen may be needed if forced quit interrupts a waiting
+  compatible shell update. normal quit and offline activation are qualified.
 - preflight current corpus for semantic-key collisions, unsupported bodies,
   uncertain source provenance and encoded command-size limits; preserve data or
   stop with exact records. freeze conversion in one migration after actual head.
@@ -79,7 +82,9 @@ links retained content, identities, liveness, bindings and endpoint order;
 810,348 non-note lexical rows matched. actual merge bytes decoded through the
 shared validator. the largest complete-account change/envelope was
 138,877/138,943 bytes; the largest snapshot record was 4,255 bytes. this archive
-has zero passage anchors; separate conversion cases own that nonempty case.
+has zero passage anchors. a separate real 0317–0320 conversion preserves two
+nonempty passages, their bindings and nullable provenance; committed unsupported
+body input refuses without changing the old corpus, schema or migration head.
 owned scratch resources were removed; production was read-only. installed-client
 and deployed cutover qualification remain pending, and release still takes its
 own stopped-writer backup.
