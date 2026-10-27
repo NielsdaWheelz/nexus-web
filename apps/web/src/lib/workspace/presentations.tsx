@@ -15,8 +15,9 @@ import { mediaKindLabel } from "@/lib/media/kind";
 import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
 import type { PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import type { AuthoredQuery, ResourceProjection } from "@nexus/authored/types";
+import type { AuthoredQuery } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
+interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
 interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
@@ -27,7 +28,6 @@ function authoredQuery(locator: PanePresentationLocator): AuthoredQuery {
   if (locator.kind !== "resource_ref") throw new Error("authored title locator missing");
   return { kind: "resource", ref: locator.ref };
 }
-function projectTitle(resource: ResourceProjection): string { return resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? ""; }
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
   const store = useAuthoredStore();
@@ -41,11 +41,20 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
     return [...result.values()];
   }, [state.panes]);
-  const signature = JSON.stringify(locators);
-  const [local, setLocal] = useState<Map<string, ResourceProjection | null>>(new Map());
+  const signature = JSON.stringify(locators.filter(authored));
+  const [local, setLocal] = useState<Map<string, TitleFacts | null>>(new Map());
   useEffect(() => {
     const subscriptions = locators.filter(authored).map(locator => store.subscribe(authoredQuery(locator), result => {
-      setLocal(previous => new Map(previous).set(panePresentationLocatorKey(locator), result.rows[0]?.resource ?? null));
+      const resource = result.rows[0]?.resource;
+      const facts: TitleFacts | null = resource ? { ref: resource.ref,
+        title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "",
+        local_date: resource.local_date } : null;
+      const key = panePresentationLocatorKey(locator);
+      setLocal(previous => {
+        const before = previous.get(key);
+        if (before === null && facts === null || before && facts && before.ref === facts.ref && before.title === facts.title && before.local_date === facts.local_date) return previous;
+        return new Map(previous).set(key, facts);
+      });
     }));
     return () => { for (const unsubscribe of subscriptions) unsubscribe(); };
   }, [store, signature]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -71,7 +80,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       const resource = local.get(key);
       if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
       if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate"?route.defaultLabel:visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
-      const title = projectTitle(resource);
+      const title = resource.title;
       const name = title.trim() ? title : resource.local_date !== null ? route.defaultLabel : null;
       return { title: name ?? route.defaultLabel, name, detail: kind, status: "Ready" };
     }

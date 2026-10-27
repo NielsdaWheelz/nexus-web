@@ -193,6 +193,10 @@ status; `name` is the real name the title shows, or null while the title is a
 placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
 refreshes the shared read. readers never publish canonical titles.
 
+current authored locators retain singular resource and semantic daily subscriptions.
+the title projection publishes only changed ref, caption or local date; unchanged
+read replies do not invalidate pane chrome. missing rows remain distinct from unread titles.
+
 `POST /me/workspace-presentations` resolves the distinct current locators,
 including minimized panes, in ordered batches of at most 100. batches run
 sequentially under one cancellable read. this bounds concurrency without capping
