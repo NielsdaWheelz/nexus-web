@@ -133,6 +133,9 @@ def _ctes(
     )
 
 
+_APPARATUS_DOCUMENT = """to_tsvector('english',coalesce(rai.label,'') || ' ' ||
+    coalesce(rai.kind,'') || ' ' || coalesce(rai.body_text,''))"""
+
 _SOURCE = (
     "m.id AS media_id, m.kind AS media_kind, m.title AS media_title, m.original_published_date"
 )
@@ -318,7 +321,7 @@ SOURCES: dict[str, str] = {
         FROM conversations c JOIN visible_conversations vc ON vc.conversation_id = c.id
         WHERE TRUE {where}""",
     "reader_apparatus_item": f"""SELECT 'reader_apparatus_item' AS type,rai.id,rai.label,
-            to_tsvector('english',concat_ws(' ',rai.label,rai.kind,rai.body_text)) AS doc,
+            {_APPARATUS_DOCUMENT} AS doc,
             COALESCE(rai.body_text,rai.label,rai.kind) AS text,rai.kind AS apparatus_kind,
             rai.locator,{_SOURCE},m.id AS reading_media_id,
             source_m.id AS source_media_id,source_m.kind AS source_media_kind
@@ -658,11 +661,26 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
             THEN 0.5 + ts_rank_cd(s.doc, {TSQ}, 32) / 2 ELSE COALESCE({cosine}, 0) / 2 END) / 4
         AS float8)"""
     match = f"s.doc @@ {TSQ} OR s.label ILIKE :contains OR {cosine} IS NOT NULL"
+    relation = SOURCES[family].replace("{where}", where)
+    matching = None
+    if family == "fragment":
+        matching = f"SELECT id FROM fragments WHERE canonical_text_tsv @@ {TSQ}"
+    elif family == "reader_apparatus_item":
+        matching = f"""SELECT rai.id FROM reader_apparatus_items rai
+            WHERE {_APPARATUS_DOCUMENT} @@ {TSQ}
+            UNION SELECT id FROM reader_apparatus_items WHERE label ILIKE :contains"""
+    if matching is not None:
+        # Complete lexical matches drive point reads; OFFSET 0 retains that
+        # dependency before canonical reading-owner selection and text projection.
+        ctes += f", lexical_matches AS MATERIALIZED ({matching})"
+        relation = f"""SELECT matched_source.* FROM lexical_matches matching
+            CROSS JOIN LATERAL (SELECT * FROM ({relation}) original_source
+                WHERE original_source.id=matching.id OFFSET 0) matched_source"""
     rows = db.execute(
         text(f"""{ctes} SELECT s.type, s.id, COALESCE(s.label, '') AS label,
                 {score if r.terms else "CAST(0 AS float8)"} AS score,
                 {"s.reading_media_id" if family in {"content_chunk", "fragment", "highlight", "reader_apparatus_item", "evidence_span"} else "NULL::uuid"} AS reading_media_id
-            FROM ({SOURCES[family].replace("{where}", where)}) s
+            FROM ({relation}) s
             WHERE {match if r.terms else "TRUE"}
             ORDER BY score DESC, COALESCE(s.label, '') COLLATE "C", CAST(s.id AS text) COLLATE "C"
             LIMIT :k"""),
