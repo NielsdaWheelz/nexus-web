@@ -1,14 +1,17 @@
 # local first writing hard cutover
 
-implementation is integrated; installed/mixed-device and capacity qualification
-remain open. no deployment or production data deletion has been
-performed. [specification](../local-first-writing-spec.md) owns the target.
+implementation is integrated. installed lifecycle, editor and scoped-query
+behavior, firefox cold writing and normal compatible-shell activation are
+qualified. paired reader/annotation and capacity qualification remain open.
+no deployment or production data deletion has been performed.
+[specification](../local-first-writing-spec.md) owns the target.
 this release replaces current online-first writing, not the media/download stack.
 
 prerequisites:
 
-- qualify selected sqlite binaries, native bridge, single-block editor, real
-  firefox cold startup, existing samsung handset and the 100,000-block corpus.
+- complete paired reader/annotation qualification and the 100,000-block corpus
+  on firefox and the existing samsung handset. retain the qualified sqlite,
+  native bridge, editor, lifecycle, scoped-query and cold-start contracts.
 - qualify authored node helper within the current api/host memory limits and
   snapshot streaming within the bff deadline. record actual results in the pr.
 - communicate the accepted firefox forced-quit update boundary in the notes
@@ -85,6 +88,6 @@ shared validator. the largest complete-account change/envelope was
 has zero passage anchors. a separate real 0317–0320 conversion preserves two
 nonempty passages, their bindings and nullable provenance; committed unsupported
 body input refuses without changing the old corpus, schema or migration head.
-owned scratch resources were removed; production was read-only. installed-client
-and deployed cutover qualification remain pending, and release still takes its
-own stopped-writer backup.
+owned scratch resources were removed; production was read-only. paired reading,
+capacity and deployed cutover qualification remain pending; release still takes
+its own stopped-writer backup.

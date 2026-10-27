@@ -1,20 +1,18 @@
-# retained writing after a render failure
+# combined render-failure qualification limit
 
-a render failure unmounts editor/work guards; the account writing runtime
-retains failed input and refuses to close it. the existing authenticated error
-boundary independently guards browser reload and native exit, and exposes that
-runtime's retry/copy. browser and native workspace roots pass their actual
-account id; the authored provider also registers its uncommitted runtime with
-the ordinary work guard. committed pending synchronization is never loss risk.
+failed local persistence retains input with copy/retry and a real loss guard.
+the account runtime and authenticated error boundary preserve that ownership
+when editor guards unmount. the shelf mounts its work provider outside the
+boundary through loading and ready states; the earlier missing-provider hazard
+is repaired. the observed shelf crash involved already-durable capture, not lost
+writing.
 
-native run `20261025-161649-c51c195bcaf9` exposed an unguarded shelf root: an
-attached-note menu threw for a missing mobile chrome provider and React removed
-the tree. the capture itself was already durable in native sqlite; this is not
-evidence of lost writing. the shelf now mounts that provider and the same error
-boundary under its account scope, continuously from loading through ready,
-passing the real account id when known. no second recovery owner is introduced.
+ordinary persistence-failure copy and guarded restart are qualified. the remaining
+adversarial probe combines a failed local save with a later render failure;
+no deterministic supported trigger is known, and no current loss defect is
+established. the specification requires retained failed input and truthful loss
+guards, not this particular two-failure conjunction.
 
-remaining proof: fail a real local save, then encounter a render failure; retained
-input must remain copyable/retryable and decline browser reload/native exit.
-lab30 proves the ordinary worker-failure copy and reload guard, not this combined
-render-failure path. remove this record after that narrow proof.
+if a supported trigger becomes available, verify retained copy/retry and declined
+reload/native exit through the stopped boundary. do not add a product fault seam
+or report source review as live combined-failure proof.

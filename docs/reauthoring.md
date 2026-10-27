@@ -8,6 +8,25 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+local-first cutover at `227022166` against main `d71cfb1e4`: -3,130 authored
+runtime lines (19,268 added, 22,398 deleted). shared semantics and durable device
+stores replace memory writing queues, server-authored read/write routes and
+activity recovery. one flat editing host owns outline input/history; the server
+commits canonical merge, projections and feed under one account head. reader
+captures and discovery use local authored queries; native session and shell
+owners retain account/source admission.
+
+file-scope partition: android +738; python -2,511; shared `node/authored`
++2,319; web persistence/shared entry +1,647; web discovery/resource graph -494;
+web editing/outline/capture -3,741; web reader/source integration +228; web
+shell/account/server-owned integration -1,316. each runtime path counts once.
+handwritten web source/styles, android source, python application source and
+shared typescript count; generated wire/bundles, locks, configuration/build/lab
+tooling, docs and disposable cases do not. migration source adds 716 lines
+separately. added/deleted counts include relocations (`git diff --no-renames`);
+net is unchanged by rename detection. historical checkpoint counts below retain
+their original bases and are not added to this cutover total.
+
 outline touch accessory on main against `a8343cc90`: +147 authored runtime lines
 (224 added, 77 deleted): workspace/app shell +110, notes outline +14,
 resource items +12, note editor +8 and reader web ui +3. these historical counts

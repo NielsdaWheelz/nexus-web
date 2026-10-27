@@ -1,30 +1,16 @@
-# qualify retained ownership after preparation failure
+# provider-unmount qualification limit
 
-the runtime source is repaired. `close()` refuses pending, failed or errored
-writing before setting retired. `run()` retains its frozen intent and selection
-before store opening/read_snapshot; a preparation failure therefore has an owner
-to retry even before a change/frame exists. later admitted commands remain behind
-its unsettled tail. ordinary provider cleanup calls close, not discard; an
-explicitly retired account alone discards its writing.
+recoverable preparation failure retains its frozen intent, queued writing and
+command ownership through ordinary retry. the runtime refuses to close pending
+or failed writing; provider cleanup closes rather than discards it. account
+retirement alone authorizes discard.
 
-live run `20261025-212216-4c293cc5ee65` on `b1b09675f` passes the real
-recoverable read_snapshot timeout and ordinary retry. the actual shared worker
-paused on this note's preparation request through its unchanged 30-second client
-deadline; the error appeared while the command lease remained retained. retry
-committed the retained first intent and queued later edit exactly once each
-(`command_seq + 2`), preserved offline server absence, then uploaded the exact
-final text on reconnect. no replacement store or fabricated response was used.
+the remaining adversarial probe is provider-only unmount with accepted writing,
+without account retirement. no supported user action currently isolates it:
+pane navigation unmounts editors, document exit has its own loss guard, and
+native account loss retires the account. no current loss defect is established.
 
-also retain the exact provider-unmount condition: accepted writing must remain
-owned and retryable when that provider leaves without account retirement.
-ordinary pane navigation unmounts editors, not the account provider; full-document
-exit and approved signout are different contracts. do not report those as this
-proof. no new production failure is established by this remaining qualification.
-
-no supported user action currently isolates that unmount: workspace setup retry
-precedes editor readiness; native binding loss is account retirement; switching
-document entries is full-document exit. lazy pane failures stop at the pane
-boundary. the authenticated render boundary can remove the account provider,
-but no deterministic user-triggered failure is established. the pending-outline
-boundary is inside the account provider and cannot qualify its unmount. retain
-this limitation rather than substituting pane navigation or injected react state.
+qualify that boundary if a deterministic supported trigger becomes available;
+retained writing must remain owned and retryable. do not substitute pane
+navigation or injected react state. ordinary preparation-failure/retry behavior
+is already qualified and needs no additional owner or recovery mechanism.
