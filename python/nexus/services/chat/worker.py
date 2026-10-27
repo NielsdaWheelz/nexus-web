@@ -4,7 +4,8 @@ An attempt that finds its run's generation already started knows an earlier atte
 died, and ends the run ``interrupted`` (``cancelled`` when a stop was asked). Streamed
 frames commit on a worker thread, each in its own session, so a slow write stalls
 neither the generation's loop (its stop poll, claim check and deadline) nor the
-model's event stream.
+model's event stream. Closing the stream joins its writer and in-flight database
+call before the attempt exits.
 """
 
 from __future__ import annotations
@@ -144,7 +145,7 @@ async def _execute(
         )
         await streamed.flush()
     finally:
-        streamed.close()
+        await streamed.close()
 
     def publish() -> tuple[str, str] | None:
         # The serializable attempt preserves conversation → run → job ordering.
@@ -235,9 +236,14 @@ class _Text:
         await self._drain()
         self._raise_failure()
 
-    def close(self) -> None:
+    async def close(self) -> None:
+        """Join the writer; callers flush the frames they want to publish first."""
         if self._writer is not None:
             self._writer.cancel()
+            try:
+                await self._writer
+            except asyncio.CancelledError:
+                pass
 
     def _seal(self) -> None:
         if self._buffer:
@@ -248,8 +254,14 @@ class _Text:
         async with self._lock:
             while self._frames and self._failure is None:
                 frame = self._frames.pop(0)
+                write = asyncio.create_task(asyncio.to_thread(self._write, frame))
                 try:
-                    await asyncio.to_thread(self._write, frame)
+                    await asyncio.shield(write)
+                except asyncio.CancelledError:
+                    # Cancelling the await does not stop its database thread.
+                    # Join it without replacing the caller's cancellation.
+                    await asyncio.gather(write, return_exceptions=True)
+                    raise
                 except Exception as error:  # justify-ignore-error: raised by the next add or flush
                     self._failure = error
 
