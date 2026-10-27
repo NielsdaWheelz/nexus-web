@@ -513,13 +513,13 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
             AND admitted_chunk.owner_id = chunk_reader.media_id
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = admitted_chunk.owner_id
-            AND admitted_state.lexical_revision = admitted_state.revision
+            AND (admitted_state.lexical_revision = admitted_state.revision) IS TRUE
         UNION ALL
         SELECT bounded.reading_media_id, admitted_chunk.id
         FROM ({text_scope_rows_sql(reading_ids_sql)}) bounded
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = bounded.source_media_id
-            AND admitted_state.lexical_revision = admitted_state.revision
+            AND (admitted_state.lexical_revision = admitted_state.revision) IS TRUE
             AND admitted_state.section_bounds_key IS NOT NULL
         JOIN content_chunks admitted_chunk ON admitted_chunk.owner_kind = 'media'
             AND admitted_chunk.owner_id = bounded.source_media_id

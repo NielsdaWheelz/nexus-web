@@ -13,7 +13,6 @@ import asyncio
 import math
 import re
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 
 from provider_runtime.retry import DEFAULT_RETRY
@@ -53,15 +52,7 @@ def pgvector_literal(vector: Sequence[float]) -> str:
 
 def embed_texts(texts: Sequence[str]) -> list[list[float]]:
     """Synchronous adapter retaining the provider's default background retry policy."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
-    # Existing synchronous consumers may themselves be called on an event-loop thread.
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(
-            lambda: asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
-        ).result()
+    return asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
 
 
 async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list[list[float]]:

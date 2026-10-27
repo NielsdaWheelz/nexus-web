@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -23,8 +24,8 @@ from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_items.locations import source_identities
 from nexus.services.search.admission import (
+    BACKGROUND_COMPUTATION_SECONDS,
     remaining_milliseconds,
-    search_session,
     search_session_async,
 )
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
@@ -34,8 +35,6 @@ from nexus.services.search.query import (
     MAX_LIMIT,
     SearchQuery,
     SearchScope,
-    decode_offset,
-    encode_cursor,
     is_offset,
 )
 from nexus.services.search.scope import authorize_scope
@@ -56,7 +55,10 @@ def read_snapshot[T](
                 text("SELECT set_config('statement_timeout', :timeout, true)"),
                 {"timeout": str(remaining_milliseconds(deadline))},
             )
-        return read(db)
+        result = read(db)
+        if deadline is not None:
+            remaining_milliseconds(deadline)
+        return result
     finally:
         db.rollback()
 
@@ -102,53 +104,41 @@ def _page(
     return project(db, viewer_id, page[:limit], r.terms), more
 
 
-def search(viewer_id: UUID, query: SearchQuery) -> SearchResponse:
-    """One ranked page of everything the viewer may read in ``query.scope``.
-
-    Owns an admitted session. 404 for an unreadable scope once the query has text or a filter.
-    """
-    offset = decode_offset(query.cursor)
-    limit = min(query.limit, MAX_LIMIT)
-    families = _families(query)
-    if families is None:
-        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    embedding = embed_text(query.terms) if query.terms and _SEMANTIC & set(families) else None
-    with search_session() as db:
-        results, more = read_snapshot(
-            db,
-            lambda s: _page(
-                s, viewer_id, query, families, (query.scope,), embedding, offset, limit
-            ),
-        )
-    cursor = encode_cursor({"offset": offset + limit}) if more else None
-    return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=cursor))
-
-
 async def search_scopes_async(
     viewer_id: UUID,
     base: SearchQuery,
     scopes: Sequence[SearchScope],
     *,
-    deadline: float | None = None,
+    deadline: float | None,
+    purpose: Literal["foreground", "background"],
 ) -> SearchResponse:
-    """The first page over the union of ``scopes`` in one pass; ``has_more`` is real."""
+    """One scoped page; foreground retains its caller's absolute deadline.
+
+    Background passes ``deadline=None`` explicitly: its owned computation starts
+    after embedding, immediately before admission, with the shared 400 ms budget.
+    """
+    assert (deadline is None) == (purpose == "background")
     families = _families(base)
     if families is None:
         return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    embedding = (
-        await asyncio.to_thread(embed_text, base.terms)
-        if base.terms and _SEMANTIC & set(families)
-        else None
-    )
-    limit = min(base.limit, MAX_LIMIT)
-    async with search_session_async(deadline=deadline) as database:
-        results, more = await database.run_sync(
-            lambda db: read_snapshot(
-                db,
-                lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit),
-                deadline=deadline,
-            )
+    async with asyncio.timeout_at(deadline):
+        embedding = (
+            await embed_text(base.terms) if base.terms and _SEMANTIC & set(families) else None
         )
+        limit = min(base.limit, MAX_LIMIT)
+        if purpose == "background":
+            # The provider is outside this background read's owned computation budget.
+            assert deadline is None
+            deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
+        assert deadline is not None
+        async with search_session_async(deadline=deadline, purpose=purpose) as database:
+            results, more = await database.run_sync(
+                lambda db: read_snapshot(
+                    db,
+                    lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit),
+                    deadline=deadline,
+                )
+            )
     return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=None))
 
 

@@ -1,6 +1,6 @@
 """Suggestions: three deterministic next-read lists over one snapshot.
 
-Read-only and model-free; the caller's REPEATABLE READ transaction makes
+read-only, without provider calls; the caller's repeatable-read transaction makes
 ``now()`` one instant. SQL decides each target's one family (Continuity,
 Arrival, then Rediscovery or GraphThread) and its order within it; a relational
 target needs evidence from an anchor (Connected, SharedAuthor, Similar, in that
@@ -19,7 +19,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
+from nexus.auth.permissions import (
+    visible_content_credit_rows_sql,
+    visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
+)
 from nexus.schemas.suggestions import (
     MediaSuggestionTargetOut,
     PodcastSuggestionTargetOut,
@@ -30,7 +34,6 @@ from nexus.services import highlights, libraries, library_entries, notes, readin
 from nexus.services import media as media_service
 from nexus.services.consumption import lectern, projection
 from nexus.services.content_indexing import reading_chunks_sql
-from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
 from nexus.services.podcasts.subscriptions_query import (
     active_subscription_rows_sql,
@@ -38,6 +41,7 @@ from nexus.services.podcasts.subscriptions_query import (
 )
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search.semantic import bounded_eligible_count, nearest_chunks
 
 SUGGESTION_ANCHOR_LIMIT = 5
 _PER_FAMILY = 20
@@ -314,9 +318,9 @@ def _candidates(
     targets = _targets_sql(surface)
     params = {
         "viewer_id": viewer_id,
-        "anchors": json.dumps(
-            [{"scheme": a.scheme, "id": str(a.id), "rank": i} for i, a in enumerate(anchors)]
-        ),
+        "anchor_schemes": [anchor.scheme for anchor in anchors],
+        "anchor_ids": [anchor.id for anchor in anchors],
+        "anchor_ranks": list(range(len(anchors))),
         "similar": json.dumps(_similar(db, viewer_id, anchors, targets, params)),
         "origins": _EDGE_ORIGINS,
         **params,
@@ -325,8 +329,9 @@ def _candidates(
         text(f"""
             WITH targets AS ({targets}),
             anchors AS (
-                SELECT * FROM jsonb_to_recordset(CAST(:anchors AS jsonb))
-                    AS a(scheme text, id uuid, rank integer)
+                SELECT * FROM unnest(CAST(:anchor_schemes AS text[]),
+                    CAST(:anchor_ids AS uuid[]), CAST(:anchor_ranks AS integer[]))
+                    AS a(scheme, id, rank)
             ),
             edges AS (
                 SELECT * FROM resource_edges
@@ -354,7 +359,18 @@ def _candidates(
                 JOIN anchors a ON a.scheme = p.anchor_scheme AND a.id = p.anchor_id
                 WHERE (p.target_scheme, p.target_id) <> (p.anchor_scheme, p.anchor_id)
             ),
-            authors AS ({visible_author_credit_rows_sql()}),
+            credit_visible_media AS MATERIALIZED ({visible_media_ids_cte_sql()}),
+            credit_visible_podcasts AS MATERIALIZED ({visible_podcast_ids_cte_sql()}),
+            authors AS NOT MATERIALIZED (
+                SELECT vcc.contributor_id, vcc.media_id, vcc.podcast_id
+                FROM ({
+            visible_content_credit_rows_sql(
+                visible_media="credit_visible_media", visible_podcasts="credit_visible_podcasts"
+            )
+        }) vcc
+                WHERE vcc.role='author'
+                  AND (vcc.media_id IS NOT NULL OR vcc.podcast_id IS NOT NULL)
+            ),
             authored AS (
                 SELECT t.target_scheme, t.target_id, a.rank AS anchor_rank,
                        MIN(ta.contributor_id::text)::uuid AS author_id,
@@ -430,6 +446,33 @@ def _candidates(
     return [_Candidate(**row) for row in rows]
 
 
+def _reading_membership(
+    readings: Sequence[tuple[UUID, str, UUID]], family: str, excluded_ids: set[UUID]
+) -> tuple[str, str, dict[str, object]]:
+    """same-snapshot reading identities admit own chunks and canonical piece bounds."""
+    selected = [row for row in readings if row[1] == family and row[0] not in excluded_ids]
+    direct_ids = [media_id for media_id, _, _ in selected]
+    piece_ids = [media_id for media_id, _, source_id in selected if media_id != source_id]
+    params: dict[str, object] = {
+        "direct_ids": direct_ids,
+        "piece_ids": piece_ids,
+        "source_ids": list({row[2] for row in selected} | set(direct_ids)),
+    }
+    direct = "cc.owner_id=ANY(CAST(:direct_ids AS uuid[]))"
+    membership = direct
+    projection = f"SELECT cc.owner_id AS reading_media_id,cc.id AS chunk_id WHERE {direct}"
+    if piece_ids:
+        pieces = reading_chunks_sql("""SELECT p.media_id FROM media_parts p
+            WHERE p.source_media_id=cc.owner_id
+              AND p.media_id=ANY(CAST(:piece_ids AS uuid[]))""")
+        membership = f"""cc.owner_id=ANY(CAST(:source_ids AS uuid[])) AND (
+            ({direct}) OR EXISTS (SELECT 1 FROM ({pieces}) admitted
+                WHERE admitted.chunk_id=cc.id OFFSET 0))"""
+        projection += f""" UNION ALL SELECT reading_media_id,chunk_id
+            FROM ({pieces}) piece_admission WHERE chunk_id=cc.id"""
+    return f"cc.owner_kind='media' AND ({membership})", projection, params
+
+
 def _similar(
     db: Session,
     viewer_id: UUID,
@@ -437,118 +480,153 @@ def _similar(
     targets: str,
     params: dict[str, object],
 ) -> list[dict[str, object]]:
-    """Calibrated nearest media neighbours of the media anchors, best first.
+    """approximate candidate membership, exact calibrated scores and reading projection.
 
-    Each anchor's first chunk vector stands for its work. Rank all anchors in
-    one scan, with the exact chunk limit applied separately per anchor/family.
+    Preserve original anchor ordinals and each first admitted stored vector.
+    Whole-only counts excluding ALL anchors prove lower bounds for each actual
+    family domain, which excludes only the current reading. Pieces retain the
+    canonical bounds owned by reading_chunks_sql. No provider runs in this scope.
     """
     media_anchors = [
-        {"id": str(anchor.id), "rank": rank}
-        for rank, anchor in enumerate(anchors)
-        if anchor.scheme == "media"
+        (rank, anchor.id) for rank, anchor in enumerate(anchors) if anchor.scheme == "media"
     ]
     if not media_anchors:
         return []
     provider, model, dimensions = _EMBEDDING
-    neighbours = _media_neighbor_rows_sql(f"""
-        SELECT target_id AS media_id, family AS candidate_partition
-        FROM ({targets}) t
-        WHERE target_scheme = 'media' AND family IN ('GraphThread', 'Rediscovery')
-    """)
-    rows = [
-        (distance, rank, peer_id)
-        for rank, peer_id, distance in db.execute(
-            text(f"SELECT anchor_rank, peer_media_id, distance FROM ({neighbours}) n"),
-            {
-                "viewer_id": viewer_id,
-                "media_anchors": json.dumps(media_anchors),
-                "embedding_provider": provider,
-                "embedding_model": model,
-                "embedding_dimensions": dimensions,
-                "candidate_limit": 400,
-                "max_distance": 1 - _MIN_SIMILARITY,
-                **params,
-            },
+    bindings = {
+        **params,
+        "viewer_id": viewer_id,
+        "anchor_ids": [media_id for _, media_id in media_anchors],
+        "anchor_ranks": [rank for rank, _ in media_anchors],
+        "embedding_provider": provider,
+        "embedding_model": model,
+        "embedding_dimensions": dimensions,
+    }
+    eligible_readings: list[tuple[UUID, str, UUID]] = [
+        (row.target_id, row.family, row.source_id)
+        for row in db.execute(
+            text(f"""SELECT DISTINCT target_id, family,
+            COALESCE(p.source_media_id,target_id) AS source_id
+            FROM ({targets}) t LEFT JOIN media_parts p ON p.media_id=t.target_id
+            WHERE target_scheme='media' AND family IN ('GraphThread','Rediscovery')"""),
+            bindings,
         )
     ]
+    stored_anchors = db.execute(
+        text(f"""
+        WITH anchors AS (
+            SELECT * FROM unnest(CAST(:anchor_ids AS uuid[]), CAST(:anchor_ranks AS integer[]))
+                AS a(id, rank)
+        ), anchor_chunks AS ({reading_chunks_sql("SELECT a.id AS media_id FROM anchors a JOIN media_parts p ON p.media_id=a.id")})
+        SELECT a.id,a.rank,first_chunk.id AS chunk_id,ce.embedding_vector::text AS vector_text
+        FROM anchors a
+        JOIN content_index_states cis ON cis.owner_kind='media' AND cis.owner_id=a.id
+            AND cis.status='ready' AND (cis.lexical_revision=cis.revision) IS TRUE
+            AND cis.active_embedding_provider=:embedding_provider
+            AND cis.active_embedding_model=:embedding_model
+        CROSS JOIN LATERAL (
+            SELECT cc.id FROM content_chunks cc
+            WHERE cc.owner_kind='media' AND cc.owner_id=a.id
+            ORDER BY cc.chunk_idx,cc.id LIMIT 1
+        ) first_chunk
+        JOIN content_embeddings ce ON ce.chunk_id=first_chunk.id
+            AND ce.embedding_provider=:embedding_provider
+            AND ce.embedding_model=:embedding_model
+            AND ce.embedding_dimensions=:embedding_dimensions
+            AND ce.embedding_vector IS NOT NULL
+        WHERE NOT EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=a.id)
+        UNION ALL
+        SELECT a.id,a.rank,av.chunk_id,av.vector_text FROM anchors a
+        CROSS JOIN LATERAL (
+            SELECT cc.id AS chunk_id, ce.embedding_vector::text AS vector_text
+            FROM anchor_chunks admitted
+            JOIN content_chunks cc ON cc.id=admitted.chunk_id
+            JOIN content_embeddings ce ON ce.chunk_id=cc.id
+            JOIN content_index_states cis ON cis.owner_kind=cc.owner_kind
+                AND cis.owner_id=cc.owner_id AND cis.status='ready'
+                AND (cis.lexical_revision=cis.revision) IS TRUE
+                AND cis.active_embedding_provider=:embedding_provider
+                AND cis.active_embedding_model=:embedding_model
+            WHERE admitted.reading_media_id=a.id AND cc.owner_kind='media'
+                AND ce.embedding_provider=:embedding_provider
+                AND ce.embedding_model=:embedding_model
+                AND ce.embedding_dimensions=:embedding_dimensions
+                AND ce.embedding_vector IS NOT NULL
+            ORDER BY cc.chunk_idx,cc.id LIMIT 1
+        ) av
+        WHERE EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=a.id)
+        ORDER BY 2
+    """),
+        bindings,
+    ).all()
+    if not stored_anchors:
+        return []
+    excluded_all = {anchor.id for anchor in anchors if anchor.scheme == "media"}
+    # Whole-only, all-anchor-excluded chunks are a subset of every self-only
+    # domain, even when another eligible piece shares an anchor's parent.
+    whole_readings = [row for row in eligible_readings if row[0] == row[2]]
+    lower_bounds: dict[str, int] = {}
+    for family in ("GraphThread", "Rediscovery"):
+        owner, _, proof_params = _reading_membership(whole_readings, family, excluded_all)
+        lower_bounds[family] = (
+            bounded_eligible_count(
+                db, model=model, owner=owner, params=bindings | proof_params, ctes=""
+            )
+            if proof_params["direct_ids"]
+            else 0
+        )
+    rows: list[tuple[float, int, UUID]] = []
+    for anchor_id, rank, anchor_chunk_id, vector_text in stored_anchors:
+        for family in ("GraphThread", "Rediscovery"):
+            owner, chunk_readings, membership_params = _reading_membership(
+                eligible_readings, family, {anchor_id}
+            )
+            local = bindings | membership_params | {"anchor_chunk_id": anchor_chunk_id}
+            candidates = nearest_chunks(
+                db,
+                (model, json.loads(vector_text)),
+                owner=owner,
+                params=local,
+                limit=400,
+                ctes="",
+                maximum_distance=1 - _MIN_SIMILARITY,
+                eligible_count_lower_bound=lower_bounds[family],
+            )
+            if not candidates:
+                continue
+            scored = db.execute(
+                text(f"""
+                WITH retained AS (
+                    SELECT admitted.reading_media_id AS peer_id,
+                           ce.embedding_vector <=> av.embedding_vector AS distance
+                    FROM content_embeddings ce
+                    JOIN content_chunks cc ON cc.id=ce.chunk_id
+                    JOIN LATERAL (SELECT * FROM ({chunk_readings}) family_admission WHERE family_admission.chunk_id=cc.id OFFSET 0) admitted ON true
+                    JOIN content_embeddings av ON av.chunk_id=:anchor_chunk_id
+                        AND av.embedding_provider=:embedding_provider
+                        AND av.embedding_model=:embedding_model
+                        AND av.embedding_dimensions=:embedding_dimensions
+                    WHERE ce.chunk_id=ANY(CAST(:candidate_ids AS uuid[]))
+                        AND ce.embedding_provider=:embedding_provider
+                        AND ce.embedding_model=:embedding_model
+                        AND ce.embedding_dimensions=:embedding_dimensions
+                        AND ce.embedding_vector IS NOT NULL
+                        AND ce.embedding_vector <=> av.embedding_vector <= :max_distance
+                    ORDER BY distance,admitted.reading_media_id,ce.chunk_id LIMIT 400
+                ) SELECT peer_id,MIN(distance) FROM retained GROUP BY peer_id
+            """),
+                local
+                | {
+                    "candidate_ids": [chunk_id for chunk_id, _ in candidates],
+                    "max_distance": 1 - _MIN_SIMILARITY,
+                },
+            )
+            rows.extend((float(distance), rank, peer_id) for peer_id, distance in scored)
     rows.sort()
     return [
         {"id": str(peer_id), "rank": rank, "ordinal": ordinal}
         for ordinal, (_, rank, peer_id) in enumerate(rows)
     ]
-
-
-def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
-    """Exact neighbours per anchor and eligible partition under one embedding scan: each
-    anchor's first active chunk stands for its work; distance filters before ranking, so a
-    farther chunk cannot displace an admitted one (binds documented at :func:`_similar`)."""
-    return f"""
-        WITH eligible_media AS (
-            {eligible_media_relation}
-        ),
-        eligible_media_partitions AS (
-            SELECT DISTINCT media_id, candidate_partition
-            FROM eligible_media
-            WHERE candidate_partition IS NOT NULL
-        ),
-        anchors AS (
-            SELECT * FROM jsonb_to_recordset(CAST(:media_anchors AS jsonb))
-                AS a(id uuid, rank integer)
-        ),
-        anchor_chunks AS ({reading_chunks_sql("SELECT id AS media_id FROM anchors")}),
-        peer_chunks AS ({reading_chunks_sql("SELECT media_id FROM eligible_media_partitions")}),
-        anchor_vectors AS (
-            SELECT a.id AS anchor_media_id, a.rank AS anchor_rank, av.vector
-            FROM anchors a
-            CROSS JOIN LATERAL (
-                SELECT ce.embedding_vector AS vector
-                FROM content_chunks cc
-                JOIN anchor_chunks admitted ON admitted.chunk_id=cc.id AND admitted.reading_media_id=a.id
-                JOIN content_embeddings ce ON ce.chunk_id = cc.id
-                JOIN content_index_states cis
-                  ON cis.owner_kind = 'media' AND cis.owner_id = cc.owner_id
-                 AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
-                 AND cis.active_embedding_provider = :embedding_provider
-                 AND cis.active_embedding_model = :embedding_model
-                WHERE cc.owner_kind = 'media'
-                  AND ce.embedding_provider = :embedding_provider
-                  AND ce.embedding_model = :embedding_model
-                  AND ce.embedding_dimensions = :embedding_dimensions
-                  AND ce.embedding_vector IS NOT NULL
-                ORDER BY cc.chunk_idx, cc.id
-                LIMIT 1
-            ) av
-        ),
-        ranked_chunks AS (
-            SELECT av.anchor_rank, eligible.candidate_partition, admitted.reading_media_id AS peer_media_id,
-                   ce.embedding_vector <=> av.vector AS distance,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY av.anchor_rank, eligible.candidate_partition
-                       ORDER BY ce.embedding_vector <=> av.vector, admitted.reading_media_id, cc.id
-                   ) AS candidate_rank
-            FROM content_embeddings ce
-            JOIN content_chunks cc ON cc.id = ce.chunk_id
-            JOIN peer_chunks admitted ON admitted.chunk_id=cc.id
-            JOIN eligible_media_partitions eligible ON eligible.media_id=admitted.reading_media_id
-            JOIN content_index_states peer_state
-              ON peer_state.owner_kind = 'media' AND peer_state.owner_id = cc.owner_id
-             AND peer_state.status = 'ready' AND peer_state.lexical_revision = peer_state.revision
-             AND peer_state.active_embedding_provider = :embedding_provider
-             AND peer_state.active_embedding_model = :embedding_model
-            CROSS JOIN anchor_vectors av
-            WHERE cc.owner_kind = 'media' AND admitted.reading_media_id <> av.anchor_media_id
-              AND ce.embedding_provider = :embedding_provider
-              AND ce.embedding_model = :embedding_model
-              AND ce.embedding_dimensions = :embedding_dimensions
-              AND ce.embedding_vector IS NOT NULL
-              AND ce.embedding_vector <=> av.vector <= :max_distance
-        )
-        SELECT anchor_rank, candidate_partition, peer_media_id, MIN(distance) AS distance
-        FROM ranked_chunks
-        WHERE candidate_rank <= :candidate_limit
-        GROUP BY anchor_rank, candidate_partition, peer_media_id
-        ORDER BY anchor_rank, candidate_partition, distance, peer_media_id
-    """
 
 
 def _rotate(candidates: list[_Candidate], *, limit: int) -> list[_Candidate]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import socket
@@ -11,6 +12,7 @@ import threading
 from apps.worker.health import Heartbeat
 
 from nexus.config import get_settings
+from nexus.db.engine import async_database_scope, bind_database_role
 from nexus.db.session import get_session_factory
 from nexus.jobs.process_executor import ChildExecutor
 from nexus.jobs.registry import resolve
@@ -32,6 +34,7 @@ def main() -> None:
     lane = settings.worker_lane
     if lane is None:
         raise SystemExit("WORKER_LANE must be interactive or background")
+    bind_database_role("background_supervisor" if lane == "background" else "interactive_worker")
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         # Seen between jobs and by a running child, so a release frees the claim.
@@ -54,12 +57,21 @@ def main() -> None:
                 resolve(hook)
     if executor is not None and (loaded := _CHILD_ONLY_MODULES & sys.modules.keys()):
         raise RuntimeError(f"the background supervisor imported {sorted(loaded)}")
-    # Readiness, proven once. justify-polling: no event says the schema reached this revision.
-    while not is_database_ready(
-        database_url=settings.database_url, expected_revision=identity.expected_database_revision
-    ):
-        if stop.wait(5):
-            return
+
+    # justify-polling: no event says the schema reached this revision.
+    async def ready() -> bool:
+        async with async_database_scope():
+            while not await is_database_ready(
+                expected_revision=identity.expected_database_revision
+            ):
+                if stop.is_set():
+                    return False
+                await asyncio.sleep(5)
+            return True
+
+    # This temporary loop is fully disposed before any handler owns another loop.
+    if not asyncio.run(ready()):
+        return
     if executor is not None:
         outcome = executor.run(
             "nexus.services.parser_temp:prune_job",

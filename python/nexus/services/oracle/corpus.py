@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.db.engine import bind_database_role
 from nexus.db.models import Media, OracleCorpusSource, OraclePassageAnchor, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -170,7 +171,13 @@ def rank_passages(
     ).all()
     ids = [row[5] for row in rows]
     near = nearest_chunks(
-        db, query_embedding, owner="cc.id = ANY(:ids)", params={"ids": ids}, limit=len(ids), ctes=""
+        db,
+        query_embedding,
+        owner="cc.id = ANY(:ids)",
+        params={"ids": ids},
+        limit=len(ids),
+        ctes="",
+        maximum_distance=0.5,
     )
     similarity = dict(near)
     words = set(TOKEN.findall(question.lower()))
@@ -434,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("seed").add_argument("--owner-user", type=UUID, required=True)
     args = parser.parse_args(argv)
+    bind_database_role("maintenance")
     counts = seed(get_session_factory(), owner_user_id=args.owner_user)
     print(json.dumps(counts, sort_keys=True))
     return 0

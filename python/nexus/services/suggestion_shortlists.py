@@ -7,7 +7,9 @@ Admission retries recheck freshness; existing work retains its job and attempt b
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -16,12 +18,14 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.engine import async_database_scope
 from nexus.db.models import SuggestionFeed, SuggestionShortlist
 from nexus.db.retries import retry_serializable
-from nexus.db.session import get_repeatable_read_db, get_session_factory
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.jobs import queue
+from nexus.logging import get_logger
 from nexus.schemas.suggestions import (
     SuggestionPublicationMetaOut,
     SuggestionPublicationOut,
@@ -36,7 +40,15 @@ from nexus.schemas.suggestions import (
 from nexus.services import suggestion_changes, suggestions
 from nexus.services.consumption.lectern import has_capacity
 from nexus.services.resource_graph.refs import assert_resource_ref
-from nexus.services.search.admission import search_session
+from nexus.services.search.admission import (
+    BACKGROUND_COMPUTATION_SECONDS,
+    SearchAdmissionBusy,
+    SearchBudgetExpired,
+    search_session_async,
+)
+from nexus.services.search.service import read_snapshot
+
+logger = get_logger(__name__)
 
 _MAX_AGE = timedelta(minutes=15)
 _MIN_BUILD_INTERVAL = timedelta(seconds=30)
@@ -212,27 +224,74 @@ def _authorized(db: Session, feed: SuggestionFeed) -> bool:
         return False
 
 
+@dataclass(frozen=True, slots=True)
+class _RefreshRead:
+    revision: int
+    ranked_at: datetime
+    can_publish: bool
+    target_refs: list[str]
+
+
 def run_suggestion_refresh_job(
     *, payload: Mapping[str, Any], context: queue.JobExecutionContext
 ) -> queue.JobResult:
-    """Compute outside the publication transaction; only the current claim may publish."""
+    """One complete admitted read; only a current claim atomically publishes it.
+
+    Admission refusal or this read's owned budget reschedules unchanged work after
+    retirement. Other failures retain the queue's failure budget. Publication is
+    a separate short serializable transaction; a failed read never replaces it.
+    """
     feed_id = _RefreshPayload.model_validate(payload).feed_id
-    with search_session() as db:
-        get_repeatable_read_db(db)
-        ranked_revision = suggestion_changes.input_revision(db)
-        ranked_at = db.scalar(text("SELECT now()"))
-        feed = db.get(SuggestionFeed, feed_id)
-        can_publish = feed is not None and _authorized(db, feed)
-        refs = (
-            suggestions.rank_suggestion_refs(
-                db,
-                viewer_id=feed.user_id,
-                library_id=feed.library_id,
+
+    async def read() -> _RefreshRead:
+        async with async_database_scope():
+            deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
+
+            def snapshot(db: Session) -> _RefreshRead:
+                revision = suggestion_changes.input_revision(db)
+                ranked_at = db.scalar(text("SELECT now()"))
+                feed = db.get(SuggestionFeed, feed_id)
+                can_publish = feed is not None and _authorized(db, feed)
+                refs = (
+                    suggestions.rank_suggestion_refs(
+                        db, viewer_id=feed.user_id, library_id=feed.library_id
+                    )
+                    if feed is not None and can_publish
+                    else []
+                )
+                return _RefreshRead(
+                    revision,
+                    ranked_at,
+                    can_publish,
+                    SuggestionViewIn(refs=[ref.uri for ref in refs]).refs,
+                )
+
+            async with search_session_async(deadline=deadline, purpose="background") as database:
+                return await database.run_sync(
+                    lambda db: read_snapshot(db, snapshot, deadline=deadline)
+                )
+
+    try:
+        ranked = asyncio.run(read())
+    except (SearchAdmissionBusy, SearchBudgetExpired) as exc:
+        with get_session_factory()() as control:
+            if not queue.running_job_claim_is_current(control, context=context):
+                return {"status": "superseded"}
+            job = queue.get_job(control, context.job_id)
+            assert job is not None
+            observed_at = control.scalar(text("SELECT now()"))
+            reason = (
+                "admission_busy" if isinstance(exc, SearchAdmissionBusy) else "computation_budget"
             )
-            if feed is not None and can_publish
-            else []
-        )
-        target_refs = SuggestionViewIn(refs=[ref.uri for ref in refs]).refs
+            logger.info(
+                "suggestions.refresh.rescheduled",
+                job_id=str(context.job_id),
+                execution_id=str(context.execution_id),
+                reason=reason,
+                phase="admission" if isinstance(exc, SearchAdmissionBusy) else exc.phase,
+                job_age_ms=(observed_at - job.created_at).total_seconds() * 1000,
+            )
+            return queue.RescheduleRequested(observed_at + timedelta(seconds=5), payload=payload)
 
     with get_session_factory()() as db:
 
@@ -242,7 +301,7 @@ def run_suggestion_refresh_job(
             feed = db.get(SuggestionFeed, feed_id)
             result: dict[str, Any] = {"status": "superseded"}
             if feed is not None and feed.current_job_id == context.job_id:
-                if can_publish and _authorized(db, feed):
+                if ranked.can_publish and _authorized(db, feed):
                     previous = db.scalar(
                         select(SuggestionShortlist).where(
                             SuggestionShortlist.feed_id == feed.id,
@@ -254,9 +313,9 @@ def run_suggestion_refresh_job(
                     publication = SuggestionShortlist(
                         id=new_uuid7(),
                         feed_id=feed.id,
-                        ranked_at=ranked_at,
-                        ranked_revision=ranked_revision,
-                        target_refs=target_refs,
+                        ranked_at=ranked.ranked_at,
+                        ranked_revision=ranked.revision,
+                        target_refs=ranked.target_refs,
                     )
                     db.add(publication)
                     result = {"status": "published", "publication_id": str(publication.id)}

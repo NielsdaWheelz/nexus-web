@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
+from nexus.db.session import open_control_async_session
 from nexus.jobs.queue import get_job, running_job_claim_is_current
 from nexus.logging import get_logger
 from nexus.schemas.llm import GenerationSelection, Ready
@@ -273,8 +274,8 @@ async def _dispatch(
     except Exception as error:
         if isinstance(error, ToolRefused) and not reasons and stop is not None:
             # The tool fence refuses once a stop commits, possibly before the next poll.
-            with runtime.session_factory() as db:
-                if stop(db):
+            async with open_control_async_session() as db:
+                if await db.run_sync(stop):
                     reasons.append("cancelled")
         failure = _expected_failure(error)
         if failure is None and not reasons:
@@ -318,10 +319,12 @@ async def _watch(
         if time.monotonic() >= deadline:
             reasons.append("deadline")
         else:
-            with runtime.session_factory() as db:
-                if stop is not None and stop(db):
+            async with open_control_async_session() as db:
+                if stop is not None and await db.run_sync(stop):
                     reasons.append("cancelled")
-                elif not running_job_claim_is_current(db, context=owner.job):
+                elif not await db.run_sync(
+                    lambda session: running_job_claim_is_current(session, context=owner.job)
+                ):
                     reasons.append("claim_lost")
         if reasons:
             stopped.set()

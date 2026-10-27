@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from nexus.db.engine import bind_database_role
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
 from nexus.services.generation.ledger import generation_history
@@ -35,6 +36,7 @@ def main() -> None:
     cleanup_mode.add_argument("--apply", type=Path, metavar="INVENTORY")
     args = parser.parse_args()
 
+    bind_database_role("maintenance")
     db = get_session_factory()()
     try:
         if args.command == "generation-history":

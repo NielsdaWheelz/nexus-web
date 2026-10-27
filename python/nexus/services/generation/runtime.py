@@ -12,6 +12,7 @@ from provider_runtime.agent_runtime import CodexEndpoint
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
+from nexus.db.engine import async_database_scope
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.generation.contract import RouteUnavailable
@@ -57,12 +58,15 @@ def run_generation_job[R](
         from nexus.services.tools.run import compose_tools, configured_web_search
 
         settings = get_settings()
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            trust_env=False,
-            verify=provider_ssl_context(settings.provider_ca_pem),
-        ) as client:
+        async with (
+            async_database_scope(),
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                trust_env=False,
+                verify=provider_ssl_context(settings.provider_ca_pem),
+            ) as client,
+        ):
             tools = compose_tools(
                 configured_web_search(client, settings),
                 memory_config=load_memory_client_config(settings.memory_client_config_path),
@@ -78,13 +82,12 @@ def run_generation_job[R](
             return await work(db, runtime)
 
     db = get_session_factory()()
-    loop = asyncio.new_event_loop()
     try:
         interrupt_job_generations(
             db, job_id=context.job_id, detail="a later attempt of its job started"
         )
         db.commit()
-        return loop.run_until_complete(call())
+        return asyncio.run(call())
     except RouteUnavailable as error:
         logger.warning(f"{label}_route_unavailable", detail=error.message)
         raise
@@ -94,5 +97,4 @@ def run_generation_job[R](
         logger.exception(f"{label}_failed_unexpected")
         raise
     finally:
-        loop.close()
         db.close()

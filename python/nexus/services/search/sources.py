@@ -607,7 +607,8 @@ def _saved_passages(
 
 def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
     """The family's top ``r.k`` hits in rule order, within scopes and filters."""
-    cell = scope_predicate(family, r.scopes, r.frozen)
+    scopes = compose_scopes((family,), r.scopes, r.frozen)
+    cell = scopes.cell(family)
     filters = _filters(family, r)
     if cell is None or filters is None or not (r.terms or family in LISTABLE):
         return []
@@ -633,12 +634,18 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
     }
     params |= {"prefix": f"{escaped}%", "contains": f"%{escaped}%", "kinds": list(r.content_kinds)}
     params |= {"roles": list(r.roles), "contributor_ids": r.contributor_ids}
-    ctes, scope_params = _ctes(r)
+    ctes, scope_params = _ctes(r, scope_sql=scopes)
     params |= scope_params
     if semantic and r.terms and r.embedding is not None:
-        owner = semantic.replace("{where}", where)
+        owner = _semantic_owner(family, where)
         near = nearest_chunks(
-            db, r.embedding, owner=owner, params=params, limit=max(200, 4 * r.k), ctes=ctes
+            db,
+            r.embedding,
+            owner=owner,
+            params=params,
+            limit=max(200, 4 * r.k),
+            ctes=ctes,
+            maximum_distance=0.5,
         )
         near = [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
         params |= {"ann_ids": [n[0] for n in near], "ann_cos": [n[1] for n in near]}
@@ -743,19 +750,42 @@ def _discovery_predicates(
     return cell[0] + filters, params | scope_params
 
 
+def _semantic_owner(family: str, where: str) -> str:
+    """A conservative source sieve; canonical membership still owns admission."""
+    owner = SEMANTIC[family].replace("{where}", where)
+    if family == "content_chunk":
+        owner = f"""cc.owner_id IN (
+            SELECT media_id FROM admitted_media
+            UNION SELECT media_id FROM exact_passage_media
+            UNION SELECT p.source_media_id FROM media_parts p
+                WHERE p.media_id IN (SELECT media_id FROM admitted_media
+                    UNION SELECT media_id FROM exact_passage_media)
+        ) AND ({owner})"""
+    return owner
+
+
 def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[UUID, float]]:
-    """One fixed chunk window, reused for ranking and selected-owner enrichment."""
-    predicates = _discovery_predicates(r, family, scope_predicate(family, r.scopes, None))
+    """One canonical semantic window, using the shared materialized scope relation.
+
+    A media chunk belongs to an admitted/exact reading or that reading's source.
+    This conservative source sieve adds no admission: the entire existing member
+    predicate still owns visibility, frozen-ref identity and piece bounds.
+    """
+    scopes = compose_scopes((family,), r.scopes, None)
+    predicates = _discovery_predicates(r, family, scopes.cell(family))
     if predicates is None or r.embedding is None:
         return []
     where, params = predicates
+    ctes, scope_params = _ctes(r, scope_sql=scopes)
+    owner = _semantic_owner(family, where)
     near = nearest_chunks(
         db,
         r.embedding,
-        owner=SEMANTIC[family].replace("{where}", where),
-        params=params,
+        owner=owner,
+        params=params | scope_params,
         limit=200,
-        ctes=_ctes(r)[0],
+        ctes=ctes,
+        maximum_distance=0.5,
     )
     return [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
 

@@ -13,6 +13,7 @@ claim fence and source clock; generation stays outside that retry boundary.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Highlight, NoteBlock
 from nexus.db.retries import retry_serializable
+from nexus.db.session import open_control_async_session
+from nexus.jobs import queue
 from nexus.jobs.queue import JobExecutionContext, enqueue_unique_job, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.resource_graph import CitationSnapshot
@@ -42,13 +45,14 @@ from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
+from nexus.services.search.admission import SearchAdmissionBusy, SearchBudgetExpired
 from nexus.services.search.candidates import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
     SearchResultOut,
 )
 from nexus.services.search.query import SearchQuery
-from nexus.services.search.service import search
+from nexus.services.search.service import search_scopes_async
 from nexus.services.suggestion_changes import record_input_change
 
 logger = get_logger(__name__)
@@ -184,13 +188,40 @@ def scan_state(
 
 def connection_discovery_scan_job(
     *, payload: Mapping[str, object], context: JobExecutionContext
-) -> dict:
+) -> queue.JobResult:
     user_id, ref = UUID(str(payload["user_id"])), assert_resource_ref(str(payload["ref"]))
 
-    async def handle(db: Session, runtime: Runtime) -> dict:
-        status, error_code = await _scan(
-            db, user_id=user_id, ref=ref, context=context, runtime=runtime
-        )
+    async def handle(db: Session, runtime: Runtime) -> queue.JobResult:
+        try:
+            status, error_code = await _scan(
+                db, user_id=user_id, ref=ref, context=context, runtime=runtime
+            )
+        except (SearchAdmissionBusy, SearchBudgetExpired) as exc:
+            reason = (
+                "admission_busy" if isinstance(exc, SearchAdmissionBusy) else "computation_budget"
+            )
+            phase = "admission" if isinstance(exc, SearchAdmissionBusy) else exc.phase
+
+            def defer(control: Session) -> queue.JobResult:
+                if not queue.running_job_claim_is_current(control, context=context):
+                    return {"status": "skipped", "error_code": None, "ref": ref.uri}
+                job = queue.get_job(control, context.job_id)
+                assert job is not None
+                observed_at = control.scalar(text("SELECT now()"))
+                logger.info(
+                    "connection_discovery.rescheduled",
+                    job_id=str(context.job_id),
+                    execution_id=str(context.execution_id),
+                    reason=reason,
+                    phase=phase,
+                    job_age_ms=(observed_at - job.created_at).total_seconds() * 1000,
+                )
+                return queue.RescheduleRequested(
+                    observed_at + timedelta(seconds=5), payload=payload
+                )
+
+            async with open_control_async_session() as control:
+                return await control.run_sync(defer)
         return {"status": status, "error_code": error_code, "ref": ref.uri}
 
     return run_generation_job("connection_discovery_scan", context, handle)
@@ -209,17 +240,17 @@ async def _scan(
         return "skipped", None
     source = _source_context(db, user_id=user_id, ref=ref)
     excluded = set() if source is None else _excluded(db, user_id=user_id, ref=ref)
-    db.commit()  # search() embeds first: it needs a session without a transaction
+    db.commit()  # no ordinary transaction spans embedding or search admission
     if source is None:
         return "skipped", None
     source_text, kin = source
-    response = search(
-        user_id,
-        SearchQuery(
-            text=source_text[:800],
-            requested_kinds=frozenset({"documents", "notes"}),
-            limit=_MAX_CANDIDATES * 4,
-        ),
+    query = SearchQuery(
+        text=source_text[:800],
+        requested_kinds=frozenset({"documents", "notes"}),
+        limit=_MAX_CANDIDATES * 4,
+    )
+    response = await search_scopes_async(
+        user_id, query, (query.scope,), deadline=None, purpose="background"
     )
     candidates = _candidates(response.results, excluded=excluded | kin)
     if not candidates:

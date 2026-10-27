@@ -4,10 +4,12 @@ The static paths are registered before ``/{resource_ref}…`` so the ref paramet
 not swallow them.
 """
 
+from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from nexus.api.search_operation import run_search_operation
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
@@ -31,10 +33,18 @@ router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
 
 @router.post("/targets/search")
-def search_resource_targets(
-    request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbSession
+async def search_resource_targets(
+    request: ResourceTargetSearchRequest, viewer: ViewerDep, http_request: Request
 ) -> Data[ResourceTargetSearchResponse]:
-    return Data(data=pickers.search_targets(db, viewer_id=viewer.user_id, request=request))
+    result = await run_search_operation(
+        http_request,
+        phase="picker",
+        allowance=timedelta(seconds=5),
+        read=lambda deadline: pickers.search_targets(
+            viewer_id=viewer.user_id, request=request, deadline=deadline
+        ),
+    )
+    return Data(data=result)
 
 
 @router.post("/source-targets/resolve")

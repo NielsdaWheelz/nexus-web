@@ -428,7 +428,7 @@ async def search(
     async with (
         open_async_session()
         if len(query.text) < 2 or not query.requests_read or not families or failure is not None
-        else search_session_async(deadline=deadline)
+        else search_session_async(deadline=deadline, purpose="foreground")
     ) as database:
         return await database.run_sync(lambda db: _snapshot(db, deadline, read))
 
@@ -534,6 +534,6 @@ async def preview(
     async with (
         open_async_session()
         if direct or not query.requests_read or not families or failure is not None
-        else search_session_async(deadline=deadline)
+        else search_session_async(deadline=deadline, purpose="foreground")
     ) as database:
         return await database.run_sync(lambda db: _snapshot(db, deadline, read))

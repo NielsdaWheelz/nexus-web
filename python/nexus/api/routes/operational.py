@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
-from nexus.config import get_settings
 from nexus.responses import success_response
 from nexus.runtime_health import get_runtime_identity, is_database_ready
 
@@ -19,12 +18,10 @@ async def get_liveness(response: Response) -> dict:
 
 
 @router.get("/readyz", response_model=None)
-def get_readiness(response: Response) -> dict | JSONResponse:
+async def get_readiness(response: Response) -> dict | JSONResponse:
     """Prove bounded database reachability and exact schema identity."""
     identity = get_runtime_identity()
-    settings = get_settings()
-    if not is_database_ready(
-        database_url=settings.database_url,
+    if not await is_database_ready(
         expected_revision=identity.expected_database_revision,
     ):
         return JSONResponse(

@@ -338,6 +338,7 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
             replace(query, frozen_context_refs=frozen),
             scopes,
             deadline=call.deadline,
+            purpose="foreground",
         )
     except ApiError as exc:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_CONVERSATION_NOT_FOUND)
@@ -387,7 +388,7 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
     )
     try:
         response = await search_scopes_async(
-            call.principal, query, (query.scope,), deadline=call.deadline
+            call.principal, query, (query.scope,), deadline=call.deadline, purpose="foreground"
         )
     except ApiError as exc:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)

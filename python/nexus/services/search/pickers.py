@@ -14,6 +14,7 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
+from nexus.db.session import open_async_session
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_search import (
@@ -36,7 +37,7 @@ from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.resource_items.items import resource_items_out, visible_refs
 from nexus.services.resource_items.locations import current_passages, media_passages
-from nexus.services.search.admission import search_session
+from nexus.services.search.admission import search_session_async
 from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
@@ -70,20 +71,31 @@ def _link(
     return None if edge is None else edge.id
 
 
-def search_targets(
-    db: Session, *, viewer_id: UUID, request: ResourceTargetSearchRequest
+async def search_targets(
+    *, viewer_id: UUID, request: ResourceTargetSearchRequest, deadline: float
 ) -> ResourceTargetSearchResponse:
     """A page of linkable targets. Exclusions and identity dedupe precede paging; one pass
     over a bounded prefix of the merged order, with at most one embedding."""
     q = request.q.strip()
     parsed = parse_resource_ref(q)
     exact = parsed if isinstance(parsed, ResourceRef) else None
-    embedding = embed_text(q) if exact is None and len(q) >= MIN_QUERY_LENGTH else None
+    embedding = await embed_text(q) if exact is None and len(q) >= MIN_QUERY_LENGTH else None
     if exact is not None or len(q) < MIN_QUERY_LENGTH:
-        return read_snapshot(db, lambda s: _targets(s, viewer_id, request, q, exact, embedding))
-    with search_session() as search_db:
-        return read_snapshot(
-            search_db, lambda s: _targets(s, viewer_id, request, q, exact, embedding)
+        async with open_async_session() as database:
+            return await database.run_sync(
+                lambda db: read_snapshot(
+                    db,
+                    lambda s: _targets(s, viewer_id, request, q, exact, embedding),
+                    deadline=deadline,
+                )
+            )
+    async with search_session_async(deadline=deadline, purpose="foreground") as database:
+        return await database.run_sync(
+            lambda db: read_snapshot(
+                db,
+                lambda s: _targets(s, viewer_id, request, q, exact, embedding),
+                deadline=deadline,
+            )
         )
 
 
