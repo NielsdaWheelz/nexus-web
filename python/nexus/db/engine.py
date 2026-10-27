@@ -4,6 +4,10 @@ Sync construction is serialized even on concurrent first checkout. Async pools b
 only to the current async_database_scope and its loop: callers join owned work and
 close sessions before scope exit disposes them. Search alone has no pool wait timer;
 its caller's finite absolute deadline owns checkout, admission and retirement.
+A scope-owned search lease also retains that same capacity until known backend
+retirement: SQLAlchemy invalidation itself returns a pool record too early.
+Unconfirmed known retirement fails search closed for this scope and requires live
+runtime repair. Ordinary/control sessions have no lifetime semaphore.
 Connections disable prepared statements and JIT. Control has a short independent
 statement deadline, never the worker's long domain-query allowance. Bound parameters
 are hidden in SQLAlchemy exception rendering and logs.
@@ -33,6 +37,55 @@ class _AsyncDatabaseScope:
     def __init__(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.engines: dict[str, AsyncEngine] = {}
+        self.search_capacity: asyncio.BoundedSemaphore | None = None
+        self.search_failed = False
+
+
+class SearchDatabaseLease:
+    """One search capacity owner; only actual backend absence confirms retirement."""
+
+    def __init__(self) -> None:
+        self._retirement_required = False
+        self._retired = False
+
+    def require_retirement(self) -> None:
+        """The gate has acquired a connection with an identified server PID."""
+        self._retirement_required = True
+
+    def confirm_retired(self) -> None:
+        """The gate observed that PID absent; an overrun may still fail the read."""
+        self._retired = True
+
+
+@asynccontextmanager
+async def search_database_capacity() -> AsyncIterator[SearchDatabaseLease]:
+    """Hold source-owned search capacity beyond pool invalidation through retirement.
+
+    Acquisition belongs inside the gate's original absolute deadline. A canceled
+    checkout that never returned an identified connection releases after local join;
+    this boundary does not claim positive startup-backend retirement evidence.
+    Known-unconfirmed retirement withholds its slot and refuses future checkouts.
+    Already-waiting callers keep their original deadline, without a wakeup registry.
+    """
+    require_async_database_scope()
+    scope = _scope
+    assert scope is not None
+    count = _allowance("search_async")
+    if scope.search_failed:
+        raise RuntimeError("search retirement unconfirmed; runtime repair required")
+    if scope.search_capacity is None:
+        scope.search_capacity = asyncio.BoundedSemaphore(count)
+    await scope.search_capacity.acquire()
+    lease = SearchDatabaseLease()
+    try:
+        if scope.search_failed:
+            raise RuntimeError("search retirement unconfirmed; runtime repair required")
+        yield lease
+    finally:
+        if lease._retirement_required and not lease._retired:
+            scope.search_failed = True
+        else:
+            scope.search_capacity.release()
 
 
 def bind_database_role(role: DatabaseRole) -> None:
