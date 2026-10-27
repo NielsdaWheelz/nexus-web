@@ -199,6 +199,15 @@ backlinks, search and exact reference resolution. paginate queries; do not expos
 arbitrary sql to components or the native bridge. local authored queries own the
 result online too; remote search sections cannot replace them with stale rows.
 
+an outline window is one atomic query: raw paginated rows/cursors, boundary links,
+root/peer resources and child availability share one store revision. preserve
+raw pagination before branch omissions and retain complete literal metadata for
+filtering, reference display and copying. the native bridge limits the complete
+response to 16 mib; firefox retains its existing transport behavior. this approved
+v1 native bound may refuse an extreme aggregate window that fit older separate
+responses; writing remains saved. surface the existing read error and retry. never
+truncate data, silently shrink/refill the page, or raise the native cap.
+
 | command | atomic effect |
 | --- | --- |
 | create page/note | new identity, initial content and requested first relationship; preserve existing first-item publication gesture |

@@ -53,7 +53,11 @@ export type PositionQuery =
   | { kind: "tie"; position: string; cursor: string | null; limit: number }
   | { kind: "bounds"; position: string };
 export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_ids: string[] }
+/** Raw rows own their projections; this proof adds only the root and missing
+ * boundary peers. Every field belongs to the same serialized SQL read. */
+export interface OutlineWindowProof { resources: ResourceProjection[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
 export type AuthoredQuery =
+  | { kind: "outline_window"; ref: ResourceRef; cursor: string | null; anchor_link_id: string | null; limit: number; excluded_link_ids: string[]; entering_link_id: string | null }
   | { kind: "outline_children"; occurrences: OutlineChildrenOccurrence[] }
   | { kind: "positions"; ref: ResourceRef; exclude_link_id: string | null; at: PositionQuery }
   | { kind: "adjacency_window"; ref: ResourceRef; link_id: string; cursor: string | null; limit: number }
@@ -70,7 +74,7 @@ export type AuthoredQuery =
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; outline_window: OutlineWindowProof | null }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }

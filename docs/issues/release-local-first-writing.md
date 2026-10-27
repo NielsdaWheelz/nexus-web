@@ -23,6 +23,10 @@ prerequisites:
   stop with exact records. freeze conversion in one migration after actual head.
 - prepare one paired backend/web/apk, wire revision, build assets and module/rule
   updates. no second protocol, runtime aliases or retained old write endpoints.
+- close old experimental browser workers and pair the rebuilt web/apk before
+  using the atomic `outline_window` read. this internal query/response change
+  leaves stored format and rest wire unchanged; mixed experimental clients are
+  unsupported.
 
 release procedure through existing deployment owners:
 

@@ -272,12 +272,65 @@ function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQue
   return {sql:`WITH anchor AS MATERIALIZED(${anchor("?3")}),neighbors AS(${orderedIncident(`AND(POSITION,l.link_id)${comparison}((SELECT position FROM anchor),(SELECT link_id FROM anchor))`,direction,"1","?2",false)}),nearest AS(SELECT * FROM neighbors ORDER BY position ${direction},link_id ${direction} LIMIT 1),selected AS(SELECT l.state_json AS position_json,CASE WHEN l.endpoint_a=?1 THEN l.position_a ELSE l.position_b END AS position,l.link_id FROM links l WHERE l.link_id=?3 AND EXISTS(SELECT 1 FROM anchor) UNION ALL SELECT position_json,position,link_id FROM nearest) SELECT position_json FROM selected ORDER BY position,link_id`,params:[...params,at.link_id]};
 }
 
+function eligibleChildren(endpoint: string, excluded: string): string {
+  return (["a", "b"] as const).map(side => {
+    const other = side === "a" ? "b" : "a";
+    return `EXISTS(SELECT 1 FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=${endpoint} AND l.visible=1 AND ${live(endpoint)} AND ${live(`l.endpoint_${other}`)} AND NOT (${excluded}))`;
+  }).join(" OR ");
+}
+
+/** One bounded graph proof. Pagination precedes branch omission; the only
+ * materialized incident sets contain the selected page or two endpoint limits. */
+function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>): CompiledQuery {
+  if (!Number.isFinite(query.limit) || query.excluded_link_ids.length > 1000) throw new RangeError("Outline window exceeds bound");
+  if (query.entering_link_id !== null && !query.excluded_link_ids.includes(query.entering_link_id)) throw new TypeError("Outline entering edge is not traversed");
+  const limit = Math.max(1, Math.min(48, Math.floor(query.limit)));
+  const cursor = readAdjacencyCursor(query.cursor);
+  const around = cursor === null && query.anchor_link_id !== null;
+  const before = "CAST(?5/2 AS INTEGER)", after = "(?5-CAST(?5/2 AS INTEGER))";
+  const page = around ? `anchor AS MATERIALIZED(${anchor("?2", false)}),
+    earlier_candidates AS(${orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM anchor),(SELECT link_id FROM anchor))", "DESC", before, "NULL")}),
+    later_candidates AS(${orderedIncident("AND(POSITION,l.link_id)>=((SELECT position FROM anchor),(SELECT link_id FROM anchor))", "ASC", after, "NULL")}),
+    earlier AS(SELECT * FROM earlier_candidates ORDER BY position DESC,link_id DESC LIMIT ${before}),
+    later AS(SELECT * FROM later_candidates ORDER BY position,link_id LIMIT ${after}),
+    page_links AS MATERIALIZED(SELECT * FROM earlier UNION ALL SELECT * FROM later)`
+    : `page_candidates AS(${orderedIncident(cursor === null ? "" : "AND(POSITION,l.link_id)>(?3,?4)", "ASC", "?5", "NULL")}),
+    page_links AS MATERIALIZED(SELECT * FROM page_candidates ORDER BY position,link_id LIMIT ?5)`;
+  const previous = around ? `previous_candidates AS(${orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM raw_first),(SELECT link_id FROM raw_first))", "DESC", "1", "NULL")}),` : "";
+  const previousCursor = around ? "CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM raw_first) ELSE NULL END" : "NULL";
+  const child = `CASE WHEN ${live("p.other_ref")} THEN (${eligibleChildren("p.other_ref", "l.link_id=p.link_id OR EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=l.link_id)")}) ELSE NULL END`;
+  return {sql: `WITH ${page},
+    raw_first AS(SELECT position,link_id FROM page_links ORDER BY position,link_id LIMIT 1),${previous}
+    kept AS MATERIALIZED(SELECT * FROM page_links p WHERE NOT EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=p.link_id)),
+    first_kept AS(SELECT position,link_id FROM kept ORDER BY position,link_id LIMIT 1),
+    last_kept AS(SELECT position,link_id FROM kept ORDER BY position DESC,link_id DESC LIMIT 1),
+    before_candidates AS(${orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM first_kept),(SELECT link_id FROM first_kept))", "DESC", "1", "?7", false)}),
+    after_candidates AS(${orderedIncident("AND(POSITION,l.link_id)>((SELECT position FROM last_kept),(SELECT link_id FROM last_kept))", "ASC", "1", "?7", false)}),
+    tail_candidates AS(${orderedIncident("", "DESC", "1", "?7", false)}),
+    before_edge AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT 1),
+    after_edge AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT 1),
+    tail_edge AS(SELECT * FROM tail_candidates ORDER BY position DESC,link_id DESC LIMIT 1),
+    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM page_links UNION SELECT other_ref FROM before_edge UNION SELECT other_ref FROM after_edge UNION SELECT other_ref FROM tail_edge),
+    readable AS NOT MATERIALIZED(${BOUNDED_READABLE}),
+    window_rows AS MATERIALIZED(SELECT p.*,r.projection_json,${child} AS child_available FROM page_links p JOIN readable r ON r.ref=p.other_ref)
+    SELECT json_object(
+      'rows',json((SELECT json_group_array(json_object('resource',json(projection_json),'link',json(position_json),'match_text',NULL,'activation_ref',NULL)) FROM(SELECT * FROM window_rows ORDER BY position,link_id))),
+      'next_cursor',CASE WHEN (SELECT COUNT(*) FROM window_rows)=?5 THEN (SELECT json_array(position,link_id)||'' FROM window_rows ORDER BY position DESC,link_id DESC LIMIT 1) ELSE NULL END,
+      'previous_cursor',${previousCursor},'binding_id',NULL,'canonical_source_ref',NULL,'positions',json('[]'),
+      'children',json((SELECT json_group_array(json(CASE child_available WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)) FROM(SELECT child_available FROM window_rows ORDER BY position,link_id))),
+      'scope_available',json('true'),'outline_window',json_object(
+        'resources',json((SELECT json_group_array(json(projection_json)) FROM(SELECT r.ref,r.projection_json FROM readable r WHERE NOT EXISTS(SELECT 1 FROM window_rows w WHERE w.other_ref=r.ref) ORDER BY r.ref))),
+        'before',json((SELECT position_json FROM before_edge)),'after',json((SELECT position_json FROM after_edge)),'tail',json((SELECT position_json FROM tail_edge)))) AS result_json`,
+    params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
+}
+
 export function compileQuery(query: AuthoredQuery): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
+    case "outline_window": return outlineWindow(query);
     case "outline_children": {
       if(query.occurrences.length>100||query.occurrences.some(item=>item.refs.length>2||item.excluded_link_ids.length>1000))throw new RangeError("Child occurrence batch exceeds bound");
-      const eligible=(["a","b"] as const).map(side=>{const other=side==="a"?"b":"a";return `EXISTS(SELECT 1 FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=endpoint.value AND l.visible=1 AND ${live("endpoint.value")} AND ${live(`l.endpoint_${other}`)} AND NOT EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id))`;}).join(" OR ");
+      const eligible=eligibleChildren("endpoint.value", "EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id)");
       return {sql:`SELECT CASE WHEN EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.refs') endpoint WHERE ${live("endpoint.value")}) THEN EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.refs') endpoint WHERE ${eligible}) ELSE NULL END AS child_available FROM json_each(?) occurrence ORDER BY CAST(occurrence.key AS INTEGER)`,params:[JSON.stringify(query.occurrences)]};
     }
     case "positions":return positions(query);
@@ -346,7 +399,7 @@ type PassageMembership = { activation_ref: string | null } | false;
 /** Active published source identity only; this proves no reading permission. */
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
-  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true};
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, outline_window: null};
 }
 
 /** Both serialized hosts execute this same bounded search. SQL filters the family
@@ -356,7 +409,7 @@ export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQ
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search"}>,
   matches: (text: string, expression: string) => Promise<boolean>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, outline_window: null};
   const limit = Math.max(1, Math.min(100, Math.floor(query.limit)));
   const all = query.scopes.some(scope => scope.kind === "all");
   const scopeRefs = query.scopes.flatMap(scope => scope.kind === "all" ? [] : [`${scope.kind}:${scope.id}`]);

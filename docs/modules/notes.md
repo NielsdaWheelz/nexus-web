@@ -280,10 +280,19 @@ writing rows keep a leading bullet link and a trailing disclosure only for
 projected parents. retaining an open empty input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. each data-only branch proof owns row projections, adjacent and
-absolute tail relationships and child proofs; the root admits and retains all
-note/title documents together. graph proofs
-share a store revision; unknown data never means absent. first entry waits for
+availability. one `outline_window` query reads a bounded raw page, root and
+boundary projections, adjacent and absolute tail relationships, and aligned child
+proofs in one indexed sql statement. each endpoint arm selects a bounded range;
+it never materializes the complete incident graph. raw cursors and child proofs
+precede traversal omission; neighbors surround the first and last remaining
+rows, while the absolute tail excludes only the entering relationship. full
+resource projections retain literal rendering, filtering and copy behavior.
+the native bridge's existing 16 mib aggregate output cap also applies to this
+complete window. an extreme window may fail where separate reads previously
+fit; the existing read error and explicit retry retain writing without truncating,
+shrinking or partially publishing the proof. the root admits and retains all
+note/title documents together. graph proofs share a store revision; unknown data
+never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 a cold append keeps its existing focus intent through initial prefix admission,
 then requests the bounded absolute-tail window before focusing the field.

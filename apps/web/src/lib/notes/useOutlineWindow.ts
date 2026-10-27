@@ -1,7 +1,7 @@
 "use client";
 /** One bounded data-only branch proof. The root outline admits and retains all
  * writing together; a disclosed branch never opens documents independently. */
-import {useEffect, useState} from "react";
+import {useMemo} from "react";
 import type {AuthoredQuery, LinkState, QueryResult, QueryRow, ResourceProjection} from "@nexus/authored/types";
 import {useAuthoredAccountId} from "@/lib/authored/provider";
 import {classifyOutlineOccurrence, type OutlineBranch} from "@/lib/resources/outlineProjection";
@@ -25,63 +25,40 @@ export interface OutlineWindow {
 type OutlineQuery = Extract<AuthoredQuery, {kind: "adjacency" | "adjacency_window"}>;
 export function useOutlineWindow(query: OutlineQuery, branch: OutlineBranch, runtime: WritingRuntime | null) {
   const accountId = useAuthoredAccountId();
-  const effective = {...query, limit: Math.min(48, query.limit)};
+  const traversed = [...branch.traversedEdgeIds];
+  const effective: Extract<AuthoredQuery, {kind: "outline_window"}> = {kind: "outline_window", ref: query.ref,
+    cursor: query.cursor, anchor_link_id: query.kind === "adjacency_window" ? query.link_id : null,
+    limit: Math.min(48, query.limit), excluded_link_ids: traversed, entering_link_id: traversed.at(-1) ?? null};
   const read = useAuthoredQuery(effective);
-  const key = JSON.stringify([accountId, effective, [...branch.ancestors], [...branch.traversedEdgeIds]]);
-  const enteringEdge = [...branch.traversedEdgeIds].at(-1) ?? null;
-  const [publication, publish] = useState<{key: string; runtime: WritingRuntime; window: OutlineWindow} | null>(null);
-  const [failure, fail] = useState<{key: string; error: unknown} | null>(null);
-  const current = publication?.key === key && publication.runtime === runtime ? publication.window : null;
-  useEffect(() => {
-    if (!runtime || !read.data) return;
-    let retired = false;
-    const data = read.data;
-    fail(null);
-    void (async () => {
-      const rows = data.rows.filter(row => classifyOutlineOccurrence({branch, targetRef: row.resource.ref, edgeId: row.link?.link_id ?? null}).kind !== "omit");
-      const store = await runtime.store;
-      const first = rows[0]?.link, last = rows.at(-1)?.link;
-      const boundaries = await Promise.all([
-        ...(first && last ? [
-          store.query({kind: "positions", ref: query.ref, exclude_link_id: enteringEdge, at: {kind: "neighbors", link_id: first.link_id, side: "before"}}),
-          store.query({kind: "positions", ref: query.ref, exclude_link_id: enteringEdge, at: {kind: "neighbors", link_id: last.link_id, side: "after"}}),
-        ] : []),
-        store.query({kind: "positions", ref: query.ref, exclude_link_id: enteringEdge, at: {kind: "tail"}}),
-      ]);
-      if (retired || boundaries.some(result => result.store_revision !== data.store_revision)) return;
-      const links = [
-        first && last ? boundaries[0]!.positions.find(link => link.link_id !== first.link_id) ?? null : null,
-        first && last ? boundaries[1]!.positions.find(link => link.link_id !== last.link_id) ?? null : null,
-        boundaries.at(-1)!.positions[0] ?? null,
-      ];
-      const resources = new Map(rows.map(row => [row.resource.ref, row.resource]));
-      const refs = [...new Set([query.ref, ...links.flatMap(link => link ? [link.endpoint_a === query.ref ? link.endpoint_b : link.endpoint_a] : [])])].filter(ref => !resources.has(ref));
-      if (refs.length) {
-        const peers = await store.query({kind: "resolve", refs});
-        if (retired || peers.store_revision !== data.store_revision) return;
-        for (const row of peers.rows) resources.set(row.resource.ref, row.resource);
-      }
-      const edges = links.map(link => {
-        if (!link) return null;
-        const resource = resources.get(link.endpoint_a === query.ref ? link.endpoint_b : link.endpoint_a);
-        if (!resource) throw new Error("outline neighbour is missing from its proven revision");
-        return {link, resource};
-      });
-      const childAvailability = new Map<string, boolean | null>();
-      if (rows.length) {
-        const children = await store.query({kind: "outline_children", occurrences: rows.map(row => ({refs: [row.resource.ref],
-          excluded_link_ids: [...new Set([...branch.traversedEdgeIds, row.link!.link_id])].sort()}))});
-        if (retired || children.store_revision !== data.store_revision) return;
-        if (children.children.length !== rows.length) throw new Error("outline availability result length mismatch");
-        rows.forEach((row, index) => childAvailability.set(row.link!.link_id, children.children[index]!));
-      }
-      const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
-        .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
-      if (!retired) publish({key, runtime, window: {ref: query.ref, branch, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!, childAvailability, resources,
-        rootResource: resources.get(query.ref) ?? null, editableRefs}});
-    })().catch(error => {if (!retired) fail({key, error});});
-    return () => {retired = true;};
-  }, [runtime, key, query.ref, enteringEdge, branch, read.data]);
-  const error = read.error ?? (failure?.key === key ? failure.error : null);
-  return {window: current, loading: error === null && (current === null || current.data !== read.data), error, retry: read.retry};
+  const key = JSON.stringify([accountId, effective, [...branch.ancestors]]);
+  const window = useMemo((): OutlineWindow | null => {
+    if (!runtime || !read.data) return null;
+    const data = read.data, proof = data.outline_window;
+    // justify-service-invariant-check: the closed query owns proof completeness and raw-row alignment.
+    if (proof === null) throw new Error("outline window proof is missing");
+    if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
+    const captured = branch;
+    const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));
+    for (const resource of proof.resources) resources.set(resource.ref, resource);
+    const rawChildren = new Map<string, boolean | null>();
+    for (const [index, row] of data.rows.entries()) {
+      if (row.link === null) throw new Error("outline row is missing its link");
+      rawChildren.set(row.link.link_id, data.children[index]!);
+    }
+    const rows = data.rows.filter(row => classifyOutlineOccurrence({branch: captured, targetRef: row.resource.ref, edgeId: row.link!.link_id}).kind !== "omit");
+    const edges = [proof.before, proof.after, proof.tail].map(link => {
+      if (!link) return null;
+      const resource = resources.get(link.endpoint_a === query.ref ? link.endpoint_b : link.endpoint_a);
+      if (!resource) throw new Error("outline neighbour is missing from its proven revision");
+      return {link, resource};
+    });
+    const childAvailability = new Map(rows.map(row => [row.link!.link_id, rawChildren.get(row.link!.link_id)!]));
+    const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
+      .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
+    return {ref: query.ref, branch: captured, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!,
+      childAvailability, resources, rootResource: resources.get(query.ref) ?? null, editableRefs};
+    // The serialized account/query/branch key owns the captured projection identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime, key, branch, read.data]);
+  return {window, loading: read.error === null && (window === null || window.data !== read.data), error: read.error, retry: read.retry};
 }

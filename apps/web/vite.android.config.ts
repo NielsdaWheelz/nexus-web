@@ -47,6 +47,11 @@ export default defineConfig({
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         const cursor = JSON.stringify(["a0", ""]);
         const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
+          outline_window: [
+            {kind: "outline_window", ref: "", cursor: null, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_window", ref: "", cursor, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_window", ref: "", cursor: null, anchor_link_id: "", limit: 48, excluded_link_ids: [], entering_link_id: null},
+          ],
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],
           resource: [{ kind: "resource", ref: "" }],
