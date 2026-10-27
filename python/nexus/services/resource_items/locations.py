@@ -190,17 +190,22 @@ def scoped_media_passages(
     text_scopes = {
         id: read_media_text_scope(db, id) for id, kind in kinds.items() if kind == "text_part"
     }
+    text_ids = {id for id, kind in kinds.items() if kind in ("epub", "web_article", "text_part")}
+    nontext_ids = set(source_ids) - text_ids
     contexts = set()
     for p in passages:
+        if p.source_media_id not in text_ids:
+            continue
         source, reading = p.source_media_id, p.reading_media_id
         if source in text_scopes:
             if reading is None and admitted_reading_media_ids is None:
                 reading = source
             source = text_scopes[source].source_media_id
         contexts.add((source, reading))
-    rows = list(
-        db.execute(
-            text(f"""
+    rows = (
+        list(
+            db.execute(
+                text(f"""
         WITH contexts AS (SELECT * FROM unnest(CAST(:sources AS uuid[]),CAST(:readings AS uuid[]))
             AS c(source_id,reading_id)), readable AS ({requested_media_ids_cte_sql()})
         SELECT DISTINCT c.source_id,c.reading_id,audience.media_id
@@ -210,41 +215,54 @@ def scoped_media_passages(
         WHERE COALESCE(part.source_media_id,reading.id)=c.source_id
           AND (CAST(:admitted AS uuid[]) IS NULL OR audience.media_id=ANY(CAST(:admitted AS uuid[])))
         """),
-            {
-                "viewer_id": viewer_id,
-                "sources": [c[0] for c in contexts],
-                "readings": [c[1] for c in contexts],
-                "admitted": None
-                if admitted_reading_media_ids is None
-                else list(admitted_reading_media_ids),
-            },
+                {
+                    "viewer_id": viewer_id,
+                    "sources": [c[0] for c in contexts],
+                    "readings": [c[1] for c in contexts],
+                    "admitted": None
+                    if admitted_reading_media_ids is None
+                    else list(admitted_reading_media_ids),
+                },
+            )
         )
+        if contexts
+        else []
     )
     candidates: dict[tuple[UUID, UUID | None], list[UUID]] = {}
     for row in rows:
         candidates.setdefault((row.source_id, row.reading_id), []).append(row.media_id)
     # Non-text roots use the exact ordinary requested-media audience, independently
     # of the optional passage audience (which placement checks separately).
-    readable = set(
-        db.scalars(
-            text(
-                f"SELECT media_id FROM ({requested_media_ids_cte_sql()}) audience WHERE media_id=ANY(:ids)"
-            ),
-            {"viewer_id": viewer_id, "ids": source_ids},
+    readable = (
+        set(
+            db.scalars(
+                text(
+                    f"SELECT media_id FROM ({requested_media_ids_cte_sql()}) audience WHERE media_id=ANY(:ids)"
+                ),
+                {"viewer_id": viewer_id, "ids": list(nontext_ids)},
+            )
         )
+        if nontext_ids
+        else set()
     )
     fragment_ids = {
         UUID(str(p.locator["fragment_id"]))
         for p in passages
-        if p.locator and p.locator.get("type") in ("web_text_offsets", "epub_fragment_offsets")
+        if p.source_media_id in text_ids
+        and p.locator
+        and p.locator.get("type") in ("web_text_offsets", "epub_fragment_offsets")
     }
-    words = {
-        (row.media_id, row.id): row.canonical_text
-        for row in db.execute(
-            text("SELECT id,media_id,canonical_text FROM fragments WHERE id=ANY(:ids)"),
-            {"ids": list(fragment_ids)},
-        )
-    }
+    words = (
+        {
+            (row.media_id, row.id): row.canonical_text
+            for row in db.execute(
+                text("SELECT id,media_id,canonical_text FROM fragments WHERE id=ANY(:ids)"),
+                {"ids": list(fragment_ids)},
+            )
+        }
+        if fragment_ids
+        else {}
+    )
     piece_ids = {
         id
         for (source, reading), choices in candidates.items()
