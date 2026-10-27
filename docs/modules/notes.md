@@ -282,7 +282,10 @@ availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
 availability. one `outline_window` query reads a bounded raw page, root and
 boundary projections, adjacent and absolute tail relationships, and aligned child
-proofs in one indexed sql statement. each endpoint arm selects a bounded range;
+proofs in one indexed sql statement. sql emits ordered graph records and each
+bounded resource projection once; host adapters assemble the closed response.
+projection construction never feeds back into graph or cursor derivation.
+each endpoint arm selects a bounded range;
 it never materializes the complete incident graph. raw cursors and child proofs
 precede traversal omission; neighbors surround the first and last remaining
 rows, while the absolute tail excludes only the entering relationship. full

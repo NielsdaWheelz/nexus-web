@@ -13,7 +13,7 @@ import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
-import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange } from "@nexus/authored/types";
+import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
@@ -75,7 +75,32 @@ export class Persistence {
     }
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "outline_window") return {store_revision: (await this.replica()).store_revision, ...JSON.parse(String(raw[0].result_json))};
+    if (query.kind === "outline_window") {
+      const resources = new Map<string, ResourceProjection>();
+      for (const record of raw) if (record.part === "resource") {
+        const resource: ResourceProjection = JSON.parse(String(record.value_json));
+        resources.set(resource.ref, resource);
+      }
+      const meta = raw.find(record => record.part === "meta");
+      if (!meta) throw new Error("outline window metadata is missing");
+      const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [], rawRefs = new Set<string>();
+      const proof: OutlineWindowProof = {resources: [], before: null, after: null, tail: null};
+      for (const record of raw) {
+        if (record.part === "resource" || record.part === "meta") continue;
+        const resource = resources.get(String(record.ref));
+        if (!resource) throw new Error("outline edge peer is missing from its proven revision");
+        const link: LinkState = JSON.parse(String(record.value_json));
+        if (record.part === "raw") {
+          rows.push({resource, link, match_text: null, activation_ref: null}); rawRefs.add(resource.ref);
+          children.push(record.child_available === null ? null : Number(record.child_available) === 1);
+        } else if (record.part === "before" || record.part === "after" || record.part === "tail") proof[record.part] = link;
+        else throw new Error("unknown outline window record");
+      }
+      proof.resources = [...resources.values()].filter(resource => !rawRefs.has(resource.ref));
+      return {store_revision: (await this.replica()).store_revision, rows, children, outline_window: proof,
+        next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor), previous_cursor: meta.previous_cursor === null ? null : String(meta.previous_cursor),
+        binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
+    }
     if (query.kind === "outline_children") return {
       store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],

@@ -291,8 +291,38 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         require(planKey.startsWith("$kind:") && queries.has(planKey) && params.length() <= 100)
         val sql = queries.getString(planKey)
         val records = rows(sql, *Array(params.length()) { params.opt(it) })
-        if (kind == "outline_window") return JSONObject(records.getJSONObject(0).getString("result_json"))
-            .put("store_revision", replica().getString("store_revision"))
+        if (kind == "outline_window") {
+            val resources = linkedMapOf<String, JSONObject>()
+            var metadata: JSONObject? = null
+            for (index in 0 until records.length()) {
+                val record = records.getJSONObject(index)
+                if (record.getString("part") == "resource") {
+                    val resource = JSONObject(record.getString("value_json")); resources[resource.getString("ref")] = resource
+                } else if (record.getString("part") == "meta") metadata = record
+            }
+            val meta = metadata ?: error("outline window metadata is missing")
+            val output = JSONArray(); val children = JSONArray(); val rawRefs = mutableSetOf<String>()
+            val proof = JSONObject().put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
+            for (index in 0 until records.length()) {
+                val record = records.getJSONObject(index); val part = record.getString("part")
+                if (part == "resource" || part == "meta") continue
+                val resource = resources[record.getString("ref")] ?: error("outline edge peer is missing from its proven revision")
+                val link = JSONObject(record.getString("value_json"))
+                when (part) {
+                    "raw" -> {
+                        output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL))
+                        rawRefs.add(resource.getString("ref"))
+                        children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
+                    }
+                    "before", "after", "tail" -> proof.put(part, link)
+                    else -> error("unknown outline window record")
+                }
+            }
+            proof.put("resources", JSONArray().apply { for ((ref, resource) in resources) if (ref !in rawRefs) put(resource) })
+            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("children", children)
+                .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
+                .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL).put("positions", JSONArray()).put("scope_available", true).put("outline_window", proof)
+        }
         if (kind == "outline_children") {
             val children = JSONArray()
             for (index in 0 until records.length()) {

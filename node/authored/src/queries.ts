@@ -299,6 +299,10 @@ function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>):
   const previous = around ? `previous_candidates AS(${orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM raw_first),(SELECT link_id FROM raw_first))", "DESC", "1", "NULL")}),` : "";
   const previousCursor = around ? "CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM raw_first) ELSE NULL END" : "NULL";
   const child = `CASE WHEN ${live("p.other_ref")} THEN (${eligibleChildren("p.other_ref", "l.link_id=p.link_id OR EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=l.link_id)")}) ELSE NULL END`;
+  // Internal part/ref/value_json records carry a resource projection or an edge
+  // (raw/before/after/tail); only raw edges have child_available. The single meta
+  // record carries next_cursor/previous_cursor. SQL's position/link_id/ref order
+  // lets hosts assemble the public result without graph reads or host sorting.
   return {sql: `WITH ${page},
     raw_first AS(SELECT position,link_id FROM page_links ORDER BY position,link_id LIMIT 1),${previous}
     kept AS MATERIALIZED(SELECT * FROM page_links p WHERE NOT EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=p.link_id)),
@@ -310,17 +314,20 @@ function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>):
     before_edge AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT 1),
     after_edge AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT 1),
     tail_edge AS(SELECT * FROM tail_candidates ORDER BY position DESC,link_id DESC LIMIT 1),
-    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM page_links UNION SELECT other_ref FROM before_edge UNION SELECT other_ref FROM after_edge UNION SELECT other_ref FROM tail_edge),
-    readable AS NOT MATERIALIZED(${BOUNDED_READABLE}),
-    window_rows AS MATERIALIZED(SELECT p.*,r.projection_json,${child} AS child_available FROM page_links p JOIN readable r ON r.ref=p.other_ref)
-    SELECT json_object(
-      'rows',json((SELECT json_group_array(json_object('resource',json(projection_json),'link',json(position_json),'match_text',NULL,'activation_ref',NULL)) FROM(SELECT * FROM window_rows ORDER BY position,link_id))),
-      'next_cursor',CASE WHEN (SELECT COUNT(*) FROM window_rows)=?5 THEN (SELECT json_array(position,link_id)||'' FROM window_rows ORDER BY position DESC,link_id DESC LIMIT 1) ELSE NULL END,
-      'previous_cursor',${previousCursor},'binding_id',NULL,'canonical_source_ref',NULL,'positions',json('[]'),
-      'children',json((SELECT json_group_array(json(CASE child_available WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)) FROM(SELECT child_available FROM window_rows ORDER BY position,link_id))),
-      'scope_available',json('true'),'outline_window',json_object(
-        'resources',json((SELECT json_group_array(json(projection_json)) FROM(SELECT r.ref,r.projection_json FROM readable r WHERE NOT EXISTS(SELECT 1 FROM window_rows w WHERE w.other_ref=r.ref) ORDER BY r.ref))),
-        'before',json((SELECT position_json FROM before_edge)),'after',json((SELECT position_json FROM after_edge)),'tail',json((SELECT position_json FROM tail_edge)))) AS result_json`,
+    edges(part,link_id,position,position_json,other_ref,child_available) AS MATERIALIZED(
+      SELECT 'raw',p.link_id,p.position,p.position_json,p.other_ref,${child} FROM page_links p
+      UNION ALL SELECT 'before',link_id,position,position_json,other_ref,NULL FROM before_edge
+      UNION ALL SELECT 'after',link_id,position,position_json,other_ref,NULL FROM after_edge
+      UNION ALL SELECT 'tail',link_id,position,position_json,other_ref,NULL FROM tail_edge),
+    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM edges),
+    readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
+    SELECT 'resource' AS part,r.ref,r.projection_json AS value_json,NULL AS child_available,
+      NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id FROM readable r
+    UNION ALL SELECT part,other_ref,position_json,child_available,NULL,NULL,position,link_id FROM edges
+    UNION ALL SELECT 'meta',NULL,NULL,NULL,
+      CASE WHEN (SELECT COUNT(*) FROM page_links)=?5 THEN (SELECT json_array(position,link_id) FROM page_links ORDER BY position DESC,link_id DESC LIMIT 1) ELSE NULL END,
+      ${previousCursor},NULL,NULL
+    ORDER BY part,position,link_id,ref`,
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
 }
 
