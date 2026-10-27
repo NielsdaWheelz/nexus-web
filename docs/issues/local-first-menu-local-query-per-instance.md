@@ -1,29 +1,21 @@
-# local query subscriptions multiply serialized native reads
+# identical pending native reads repeat work
 
-resource rows, their menus and live documents each subscribe to local resource
-queries. `useAuthoredQuery` also starts an explicit query after subscribing;
-both browser and native subscriptions already perform their own initial query.
-each corpus commit refreshes every subscription. on native, these reads share
-one serial queue, and each logical call has at least four sequential bridge
-frames (`begin`, `chunk`, `invoke`, `read`).
+native warm note navigation registers the same resource query from the pane body
+and pane-title subscription. the serialized adapter executes both. each query
+uses at least four bridge frames. these are independent consumers of the same
+local projection, not two authorities over writing.
 
-`lib/authored/native.ts` calls `changed(true)` inside commit before returning its
-receipt. that queues the existing subscribers' reads before a newly mounted
-note's `runtime.loadDocument` can read its canonical state. document refresh
-itself queries the projection and then reads state. `LocalOutline.focusResource`
-may add binding, link-state and resource reads before opening the document.
-there is no fixed four-second delay in these owners; the 250 ms native hints
-loop wakes network sync, not local document hydration.
+exact9f diagnostic `20261027-160646-834cd6c9fbb2` records both warm witnesses:
+two identical kind/ref registrations, each followed by its queue registration,
+precede the first query-job entry with no intervening serialized operation.
+compiled-location and realm-clock checks pass; retained sequence310 and the
+first64 pending commands remain unchanged. later runtime note/page subscriptions
+are separate waves and cannot share that initial read. diagnostic timing is not
+capacity acceptance.
 
-native15 measured one tiny-corpus save-to-render at **4573 ms**, with canonical
-commit/body confirmed. native14's five-second mutable-row wait raced that
-hydration. this is functional evidence, not proof that subscription fanout
-caused the delay, and not a 100,000-block capacity result.
-
-measure at the responsible owners before changing architecture: commit ack;
-`changed(true)` subscriber count; native queue enqueue/start/end and bridge-frame
-durations; adjacency receipt; document state-read start/end; hydrate/history
-attachment; editor binding and first paint. preserve the existing target budgets.
-resolved when target-device capacity measurements attribute the delay and meet
-those budgets, or a measured narrow change removes the redundant work while
-preserving local menu availability and canonical document identity.
+share only consecutive identical reads still waiting to start in the existing
+native queue. every intervening queue registration and the read's own start
+must end eligibility. retain per-subscriber delivery/error/unsubscribe ownership;
+never reuse running or completed results. resolve with reviewed ordering and
+actual paired native qualification. full capacity remains tracked separately
+in `local-first-native-capacity-qualification.md`.

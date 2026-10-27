@@ -22,6 +22,15 @@ admission reads bulk note/page state, then both new documents reread singleton
 snapshots. reuse may hydrate only missing documents from the already-read actual
 state; preserve existing owners, revision catch-up and actual byte checks.
 
+`9f07d3694` reuses actual present states from that bulk snapshot while preserving
+existing document owners and revision catch-up. static102 and46 functional/race/
+build targets pass. paired retained-corpus diagnostic `20261027-154538-c573378d0877`
+measures trusted-pointer warm opens163/166.6ms (callback delays2.8/3.0ms), not
+50-sample p95 acceptance. account, replica, sequence310 and the first64 pending
+commands remain unchanged across the pilot; cleanup completed. the remaining
+same-ref projection reads have independent pane-body, title and document owners.
+check their registration/execution order before introducing read sharing.
+
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
 order. retain temporary inputs until actual qualification and owned cleanup.

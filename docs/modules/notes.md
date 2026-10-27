@@ -27,6 +27,10 @@ accepted rows on refresh failure and expose their existing inline error/retry;
 retry clears the displayed error while retaining the accepted same-query prefix.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
+the native adapter shares one pending query promise only between consecutive
+identical registrations before execution. every serialized operation clears the
+pending slot; a query clears its own slot before execution and plan hashing.
+each caller keeps its own success, failure and retirement handling.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
 picker's page-count wrapper and controlled local search. null disables its read;
 showing more retains the accepted prefix until its replacement lands.
