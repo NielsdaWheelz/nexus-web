@@ -330,8 +330,14 @@ function GrantEditor(props: {
   const [busy, setBusy] = useState<string | null>(null);
   // One question at a time: a grant's id, or "Native" / "X" for a bearer-link warning.
   const [confirm, setConfirm] = useState<string | null>(null);
-  // A retried share resends the id minted for its audience until one lands.
+  // Keep an uncertain create's id until its receipt or an authoritative snapshot
+  // confirms that exact grant. Later creates must never reuse a revoked grant id.
   const attempts = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const [key, id] of attempts.current) {
+      if (snapshot.shares.some(share => share.id === id)) attempts.current.delete(key);
+    }
+  }, [snapshot.shares]);
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
   const people = snapshot.shares.filter((s): s is Schema<"UserShareOut"> => s.kind === "User");
   const { user: userAvailability, link: linkAvailability } = snapshot.creation_availability;
