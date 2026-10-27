@@ -94,6 +94,11 @@ def has_media_vectors(db: Session, model: str, owners: Sequence[UUID]) -> bool:
         logger.info("search.vector_readiness.end", mono_ns=time.monotonic_ns())
 
 
+def _ready_chunks(owner: str) -> str:
+    """The shared count/id domain; actual vector eligibility remains in scoring."""
+    return f"FROM content_chunks cc {_READY_COUNT} WHERE ({owner})"
+
+
 def bounded_eligible_count(
     db: Session, *, model: str, owner: str, params: Mapping[str, Any], ctes: str
 ) -> int:
@@ -105,8 +110,7 @@ def bounded_eligible_count(
     return int(
         db.execute(
             text(f"""{ctes} SELECT count(*) FROM (
-                SELECT 1 FROM content_chunks cc {_READY_COUNT}
-                WHERE ({owner}) LIMIT :count_limit) bounded"""),
+                SELECT 1 {_ready_chunks(owner)} LIMIT :count_limit) bounded"""),
             {
                 **params,
                 "provider": EMBEDDING_PROVIDER,
@@ -157,9 +161,10 @@ def nearest_chunks(
         if count == 0:
             return []
         if count <= _EXACT_MAX:
+            # Enumerate the complete counted domain; final scoring filters vectors.
             eligible_ids = list(
                 db.scalars(
-                    text(f"{ctes} SELECT ce.chunk_id {_eligible(owner)} LIMIT :count_limit"),
+                    text(f"{ctes} SELECT cc.id {_ready_chunks(owner)} LIMIT :count_limit"),
                     bindings | {"count_limit": _EXACT_MAX + 1},
                 )
             )
