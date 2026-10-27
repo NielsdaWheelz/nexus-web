@@ -676,15 +676,20 @@ def merge(hits: Iterable[Hit]) -> list[Hit]:
     return sorted(hits, key=lambda hit: (-hit.score, hit.label, str(hit.id)))
 
 
-def hydrate(
+def hydrate_occurrences(
     db: Session,
     viewer_id: UUID,
     family: str,
-    ids: Sequence[Any],
+    occurrences: Sequence[tuple[Any, UUID | None]],
     terms: str,
-    reading_media_id: UUID | None = None,
-) -> list[RowMapping]:
-    """The visible rows and frozen source identity in one statement snapshot."""
+) -> list[tuple[int, dict[str, Any]]]:
+    """Hydrate occurrences without merging their reading audiences.
+
+    Ordinals identify input occurrences, including one ref requested through
+    different readings. Each audience participates before canonical owner choice.
+    """
+    if not occurrences:
+        return []
     identity = ""
     if family in (
         "highlight",
@@ -694,18 +699,54 @@ def hydrate(
         "reader_apparatus_item",
     ):
         identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, (SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.media_id AND v.lane='body') AS note_body_version"
-    ctes, scope_params = _ctes(reading_media_id=reading_media_id)
-    sql = f"""{ctes} SELECT s.* {identity}
-        FROM ({SOURCES[family].replace("{where}", _STRICT_ADMISSION.get(family, ""))}) s
-        WHERE s.id = ANY(:ids)"""
-    params = {
-        "viewer_id": viewer_id,
-        "ids": list(ids),
-        "q": terms,
-        "ann_ids": [],
-        "ann_cos": [],
-    } | scope_params
-    return list(db.execute(text(sql), params).mappings())
+    id_type = "bigint" if family == "gutenberg" else "uuid"
+    sql = f"""{_BASE_CTES}, occurrences AS (
+        SELECT * FROM unnest(CAST(:ids AS {id_type}[]),CAST(:readings AS uuid[]))
+            WITH ORDINALITY AS requested(id,reading_id,ordinal))
+        SELECT occurrence.ordinal,source.* FROM occurrences occurrence CROSS JOIN LATERAL (
+            WITH admitted_media AS (
+                SELECT media_id FROM visible_media WHERE occurrence.reading_id IS NULL
+                UNION SELECT occurrence.reading_id WHERE occurrence.reading_id IS NOT NULL
+                    AND occurrence.reading_id IN ({requested_media_ids_cte_sql()}))
+                {_NO_EXACT_PASSAGES}
+            SELECT s.* {identity}
+            FROM ({SOURCES[family].replace("{where}", _STRICT_ADMISSION.get(family, ""))}) s
+            WHERE s.id=occurrence.id
+        ) source"""
+    rows = db.execute(
+        text(sql),
+        {
+            "viewer_id": viewer_id,
+            "q": terms,
+            "ann_ids": [],
+            "ann_cos": [],
+            "ids": [id for id, _ in occurrences],
+            "readings": [reading for _, reading in occurrences],
+        },
+    ).mappings()
+    out = []
+    for row in rows:
+        values = dict(row)
+        ordinal = values.pop("ordinal") - 1
+        out.append((ordinal, values))
+    return out
+
+
+def hydrate(
+    db: Session,
+    viewer_id: UUID,
+    family: str,
+    ids: Sequence[Any],
+    terms: str,
+    reading_media_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Hydrate one shared reading audience through the occurrence executor."""
+    return [
+        row
+        for _, row in hydrate_occurrences(
+            db, viewer_id, family, [(id, reading_media_id) for id in dict.fromkeys(ids)], terms
+        )
+    ]
 
 
 GENERATED_FAMILIES = frozenset({"message", "content_chunk", "fragment", "reader_apparatus_item"})

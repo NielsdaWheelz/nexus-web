@@ -29,14 +29,14 @@ from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import source_attributions
-from nexus.services.resource_items.locations import scoped_media_passage
+from nexus.services.resource_items.locations import MediaPassageContext, scoped_media_passages
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.search.candidates import (
     RESULT_MODELS,
     SearchResultOut,
     SearchResultSourceOut,
 )
-from nexus.services.search.sources import Hit, hydrate
+from nexus.services.search.sources import Hit, hydrate_occurrences
 
 MAX_SNIPPET = 300
 MEDIA_TYPES = frozenset({"media", "episode", "video"})
@@ -139,16 +139,16 @@ def project(
     without a locator), so a page can be short while the ranking has more.
     """
     ids: dict[str, list[Any]] = {}
-    groups: dict[tuple[str, UUID | None], list[Any]] = {}
     for hit in hits:
         family = family_of(hit.type)
         ids.setdefault(family, []).append(hit.id)
-        groups.setdefault((family, hit.reading_media_id), []).append(hit.id)
-    rows = {
-        (family, row["id"], owner): dict(row)
-        for (family, owner), family_ids in groups.items()
-        for row in hydrate(db, viewer_id, family, family_ids, terms, reading_media_id=owner)
-    }
+    rows = {}
+    for family in ids:
+        occurrences = [
+            (hit.id, hit.reading_media_id) for hit in hits if family_of(hit.type) == family
+        ]
+        for ordinal, row in hydrate_occurrences(db, viewer_id, family, occurrences, terms):
+            rows[(family, row["id"], occurrences[ordinal][1])] = row
     sourced = [row["media_id"] for row in rows.values() if "media_title" in row]
     credits = load_contributor_credits_for_media(db, sourced)
     credits |= load_contributor_credits_for_podcasts(db, ids.get("podcast", []))
@@ -169,25 +169,33 @@ def project(
             )
         ):
             continue
+        placed.append((row, hit.score, locator))
+    contexts = [
+        MediaPassageContext(
+            source_media_id=row.get("source_media_id", row["media_id"]),
+            reading_media_id=row["reading_media_id"],
+            locator=locator,
+            apparatus_item_id=row["id"] if row["type"] == "reader_apparatus_item" else None,
+            quote=CapturedQuote(
+                exact=row.get("span_text") or row.get("exact") or row.get("text") or "",
+                prefix=(locator or {}).get("text_quote_selector", {}).get("prefix"),
+                suffix=(locator or {}).get("text_quote_selector", {}).get("suffix"),
+                color=row.get("color"),
+            ),
+        )
+        for row, score, locator in placed
+        if row.get("reading_media_id") is not None
+    ]
+    scoped = iter(scoped_media_passages(db, viewer_id=viewer_id, passages=contexts))
+    located = []
+    for row, score, locator in placed:
         if row.get("reading_media_id") is not None:
-            scoped = scoped_media_passage(
-                db,
-                viewer_id=viewer_id,
-                source_media_id=row.get("source_media_id", row["media_id"]),
-                reading_media_id=row["reading_media_id"],
-                locator=locator,
-                apparatus_item_id=row["id"] if row["type"] == "reader_apparatus_item" else None,
-                quote=CapturedQuote(
-                    exact=row.get("span_text") or row.get("exact") or row.get("text") or "",
-                    prefix=(locator or {}).get("text_quote_selector", {}).get("prefix"),
-                    suffix=(locator or {}).get("text_quote_selector", {}).get("suffix"),
-                    color=row.get("color"),
-                ),
-            )
-            if scoped is None:
+            passage = next(scoped)
+            if passage is None:
                 continue
-            locator = scoped.locator
-        placed.append((row, hit.score, locator, *_refs(row)))
+            locator = passage.locator
+        located.append((row, score, locator, *_refs(row)))
+    placed = located
     activations = resource_activations_for_refs(
         db,
         viewer_id=viewer_id,
