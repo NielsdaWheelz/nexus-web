@@ -148,12 +148,16 @@ def unfiled_media_ids_sql() -> str:
     """
 
 
-def destination_membership_rows_sql() -> str:
-    """Physical media inputs and active show roots of one authorized destination."""
+def destination_membership_rows_sql(*, visible_media_sql: str | None = None) -> str:
+    """Physical media inputs and active show roots of one authorized destination.
+
+    A supplied media_id relation contains all canonical visible media for this
+    viewer in the same repeatable-read snapshot, never an eligible-target subset.
+    """
     return f"""
         SELECT 'media' AS target_scheme,member.media_id AS target_id,
                member.media_id,NULL::uuid AS podcast_id,member.added_at
-        FROM ({library_media_rows_sql()}) member
+        FROM ({library_media_rows_sql(visible_media_sql=visible_media_sql)}) member
         UNION ALL
         SELECT 'podcast',show.podcast_id,NULL::uuid,show.podcast_id,show.added_at
         FROM ({library_podcast_rows_sql()}) show

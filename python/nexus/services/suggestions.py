@@ -319,7 +319,11 @@ def _snapshot_facts(
     """Capture complete canonical facts once inside this caller's RR; never retain across reads."""
     anchors = lectern_anchor_refs(db, viewer_id=viewer_id) if surface == "lectern" else ()
     held = (
-        f"held AS MATERIALIZED ({library_entries.destination_membership_rows_sql()}),"
+        f"""held AS MATERIALIZED ({
+            library_entries.destination_membership_rows_sql(
+                visible_media_sql="SELECT media_id FROM visible_media"
+            )
+        }),"""
         "destination AS (SELECT * FROM held),"
         if surface != "lectern"
         else ""
@@ -336,7 +340,9 @@ def _snapshot_facts(
         db.execute(
             text(f"""
         WITH visible_media AS MATERIALIZED ({visible_media_ids_cte_sql()}),
-        visible_podcasts AS MATERIALIZED ({visible_podcast_ids_cte_sql()}),
+        visible_podcasts AS MATERIALIZED ({
+                visible_podcast_ids_cte_sql(visible_media_sql="SELECT media_id FROM visible_media")
+            }),
         visible AS (SELECT media_id FROM visible_media),
         engagement AS MATERIALIZED ({projection.engagement_fact_rows_sql()}),
         episodes AS MATERIALIZED ({episode_publication_rows_sql()}),
@@ -345,9 +351,13 @@ def _snapshot_facts(
         SELECT 'target' AS row_kind,NULL::bigint AS ordinal,t.*,
                COALESCE(p.source_media_id,t.target_id) AS source_id
         FROM targets t LEFT JOIN media_parts p ON p.media_id=t.target_id
-        UNION ALL SELECT 'anchor',ordinal,target_scheme,target_id,{empty},NULL::uuid FROM anchor_rows
+        UNION ALL SELECT 'anchor',ordinal,target_scheme,target_id,{
+                empty
+            },NULL::uuid FROM anchor_rows
         UNION ALL SELECT 'visible_media',NULL,'media',media_id,{empty},NULL::uuid FROM visible_media
-        UNION ALL SELECT 'visible_podcast',NULL,'podcast',podcast_id,{empty},NULL::uuid FROM visible_podcasts
+        UNION ALL SELECT 'visible_podcast',NULL,'podcast',podcast_id,{
+                empty
+            },NULL::uuid FROM visible_podcasts
     """),
             params | {"viewer_id": viewer_id, "anchor_limit": SUGGESTION_ANCHOR_LIMIT},
         )
