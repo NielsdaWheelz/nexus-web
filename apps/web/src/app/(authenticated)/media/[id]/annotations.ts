@@ -4,13 +4,14 @@
 // whole-document links are local authored state: the account database owns them online
 // too, and they never wait on the network. The server's document map remains a separate,
 // separately failable section of derived evidence: source references, embeds and
-// assistant links. Authored facts it echoes are dropped, so it never replaces local rows.
+// assistant links. Mounted X owners are read separately and their offsets enter only
+// occurrences at that publication generation. Authored echoes never replace local rows.
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { AuthoredQuery, AuthoredStore, LinkState, QueryResult, ResourceProjection } from "@nexus/authored/types";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
-import { createReaderAnnotations, type AnnotationsState, type ReaderAnnotation } from "@/lib/documentReader/annotations";
+import { createReaderAnnotations, sourceUnits, type AnnotationsState, type ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Decorations, Mark, MarkAnchor, NoteRef } from "@/lib/documentReader/DocumentReader";
 import { localPoint, structureOf, type ReaderDocument } from "@/lib/documentReader/model";
 import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
@@ -42,24 +43,58 @@ export interface MediaAnnotationsState {
 const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "highlight_note", "note_body"]);
 const PAGE = 100;
 
-/** Remote roots enter the mounted publication only at its exact identity. */
-function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null): EvidenceRoot[] {
+/** Remote roots keep canonical identity; only proven mounted owner occurrences
+ * receive placement. Repeated occurrences share a row, never guessed generations. */
+function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId: string): EvidenceRoot[] {
   const source = { media_id: wire.media_id, identity: wire.identity, apparatus_source: wire.evidence.apparatus_source };
   return wire.evidence.roots.flatMap(root => {
-    // the viewer's own highlights are local; library members' stay server-owned and read-only.
     if (root.content.kind === "Highlight" && root.content.is_owner) return [];
     const facts = root.direct_facts.filter(fact => !AUTHORED_ORIGINS.has(fact.origin));
     if (root.content.kind === "Resource" && facts.length === 0) return [];
-    let resolution = root.resolution;
-    if (resolution?.kind === "Resolved") {
-      const locator = resolution.anchor.locator;
-      const unit = "fragment_id" in locator && doc?.kind === "text" ? doc.units.find(unit => unit.id === locator.fragment_id) : null;
-      const mounted = doc !== null && doc.identity === wire.identity && ("fragment_id" in locator
-        ? unit && "end_offset" in locator && localPoint(doc, { unit: unit.id, offset: locator.end_offset }) !== null : true);
-      if (!mounted || !rootExtent(resolution, doc)) resolution = { kind: "Unavailable", reason: "Unanchorable" };
+    const original = root.resolution;
+    let resolutions: EvidenceRoot["resolution"][] = [original];
+    if (original?.kind === "Resolved") {
+      const locator = original.anchor.locator;
+      if (wire.media_id !== mediaId) {
+        const mounted = doc?.kind === "text" && "fragment_id" in locator && "start_offset" in locator && "end_offset" in locator
+          ? sourceUnits(doc, mediaId, wire.media_id).filter(entry => wire.publication_generation !== null &&
+              entry.generation === wire.publication_generation && entry.fragment === locator.fragment_id &&
+              locator.start_offset >= entry.unit.sourceStartOffset && locator.end_offset <= entry.unit.sourceStartOffset + entry.unit.length)
+          : [];
+        resolutions = mounted.length && "fragment_id" in locator
+          ? mounted.map(({unit}) => ({ ...original, anchor: { ...original.anchor, locator: { ...locator, fragment_id: unit.id } } }))
+          : [{ kind: "Unavailable", reason: "Unanchorable" }];
+      } else {
+        const unit = "fragment_id" in locator && doc?.kind === "text" ? doc.units.find(unit => unit.id === locator.fragment_id) : null;
+        const mounted = doc !== null && doc.identity === wire.identity && ("fragment_id" in locator
+          ? unit && "end_offset" in locator && localPoint(doc, { unit: unit.id, offset: locator.end_offset }) !== null : true);
+        if (!mounted) resolutions = [{ kind: "Unavailable", reason: "Unanchorable" }];
+      }
     }
-    return [{ ...root, resolution, direct_facts: facts, continuation: null, authored_placement: null, source }];
+    return resolutions.map(resolution => ({ ...root,
+      resolution: resolution?.kind === "Resolved" && (doc === null || !rootExtent(resolution, doc))
+        ? { kind: "Unavailable" as const, reason: "Unanchorable" as const } : resolution,
+      direct_facts: facts, continuation: null, authored_placement: null, source,
+    }));
   });
+}
+
+/** A canonical row keeps one coherent source/content/placement; facts dedupe by
+ * edge identity. Decoration occurrences are projected before this row selection. */
+function mergeRemoteRoots(occurrences: readonly EvidenceRoot[]): EvidenceRoot[] {
+  const roots = new Map<string, EvidenceRoot>(), ranks = new Map<string, number>();
+  for (const incoming of occurrences) {
+    const rank = incoming.resolution?.kind === "Resolved" ? incoming.content.kind === "Resource" ? 2 : 3 : incoming.resolution ? 1 : 0;
+    const previous = roots.get(incoming.ref);
+    if (!previous) { roots.set(incoming.ref, incoming); ranks.set(incoming.ref, rank); continue; }
+    const preferred = previous.content.kind === "Resource" && incoming.content.kind !== "Resource" ? incoming
+      : previous.content.kind !== "Resource" && incoming.content.kind === "Resource" ? previous
+      : rank > ranks.get(incoming.ref)! ? incoming : previous;
+    const facts = new Map([...previous.direct_facts, ...incoming.direct_facts].map(fact => [fact.edge_id, fact]));
+    roots.set(incoming.ref, { ...preferred, direct_facts: [...facts.values()] });
+    ranks.set(incoming.ref, Math.max(rank, ranks.get(incoming.ref)!));
+  }
+  return [...roots.values()];
 }
 
 async function readAll(store: AuthoredStore, query: (cursor: string | null) => AuthoredQuery): Promise<QueryResult["rows"]> {
@@ -78,7 +113,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   const listeners = new Set<() => void>();
   let doc: ReaderDocument | null = null;
   let bound = false;
-  let wire: WireDocumentMap | null = null;
+  let wires: WireDocumentMap[] = [];
   let links: MediaAnnotationsState["links"] = { status: "loading" };
   let remote: MediaAnnotationsState["remote"] = { status: "loading" };
   let state: MediaAnnotationsState = { local: local.getState(), links, remote, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
@@ -86,9 +121,17 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let stops: (() => void)[] = [];
   let linkReads = 0;
 
+  function remoteMediaIds(mounted: ReaderDocument): string[] {
+    return [...new Set([mediaId, ...(mounted.kind === "text" ? mounted.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.media_id] : []) : [])])];
+  }
+
   function project(remoteReadSucceeded = false) {
-    const roots = wire ? remoteRoots(wire, doc) : [];
-    if (wire && (remoteReadSucceeded || remote.status !== "failed")) remote = { status: "ready", data: { ...wire, evidence: { ...wire.evidence, roots, counts: rootCounts(roots) } } };
+    const wire = wires.find(wire => wire.media_id === mediaId);
+    const occurrences = wires.flatMap(wire => remoteRoots(wire, doc, mediaId));
+    const roots = mergeRemoteRoots(occurrences);
+    if (wire && (remoteReadSucceeded || remote.status !== "failed")) remote = { status: "ready", data: { ...wire,
+      status: wires.some(wire => wire.status === "partial") ? "partial" : roots.length || wire.embeds.length ? "ready" : wire.status,
+      evidence: { ...wire.evidence, roots, counts: rootCounts(roots) } } };
     const localState = local.getState();
     const noteRefs: NoteRef[] = [];
     const markers: RailMarker[] = [];
@@ -101,7 +144,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       for (const annotation of localState.annotations) if (annotation.placement.kind === "placed")
         markers.push({ id: annotation.id, position: at(annotation.placement.anchor, false), end: at(annotation.placement.anchor, true),
           tone: "Highlight", label: "highlight", preview: annotation.selection.quote_exact });
-      for (const root of roots) {
+      for (const root of occurrences) {
         const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
         if (!extent) continue;
         if (root.content.kind === "Highlight") shared.push({ id: root.content.highlight_id, color: root.content.color, anchor: extent.anchor });
@@ -109,6 +152,10 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
           const { unit, start, end } = extent.anchor;
           noteRefs.push({ key: root.content.stable_key, unit, start, end });
         }
+      }
+      for (const root of roots) {
+        const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
+        if (!extent) continue;
         if (extent.kind === "pdf") {
           const marker = wire?.identity === doc.identity ? wire.markers.find(item => item.item_id === root.ref) : null;
           if (marker) markers.push({ id: marker.item_id, position: marker.position, end: marker.end_position,
@@ -131,15 +178,20 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   async function readRemote() {
     controller.abort();
     controller = new AbortController();
-    const signal = controller.signal;
+    const signal = controller.signal, mounted = doc;
+    if (mounted === null) return;
     if (remote.status === "failed") { remote = { ...remote, retrying: true }; project(); }
     try {
-      const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${mediaId}/document-map`, { signal });
-      if (signal.aborted) return;
-      wire = data;
+      const next = await Promise.all(remoteMediaIds(mounted).map(async id => {
+        const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
+        return data;
+      }));
+      if (signal.aborted || doc !== mounted) return;
+      wires = next;
       project(true);
     } catch (error) {
-      if (signal.aborted || handleUnauthenticatedApiError(error)) return;
+      if (signal.aborted || doc !== mounted || handleUnauthenticatedApiError(error)) return;
+      controller.abort();
       remote = { status: "failed", error, retrying: false };
       project();
     }
@@ -167,11 +219,15 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     /** null: this device cannot show the source; local annotations still list. */
     bind(next: ReaderDocument | null) {
       if (bound && next === doc) return;
-      const reread = !bound || next?.identity !== doc?.identity;
+      controller.abort();
       bound = true;
       doc = next;
       local.bind(next);
-      if (listeners.size && reread && next !== null) void readRemote();
+      if (next !== null) {
+        const wanted = new Set(remoteMediaIds(next));
+        wires = wires.filter(wire => wanted.has(wire.media_id));
+        if (listeners.size) void readRemote();
+      }
       project();
     },
     getState: () => state,

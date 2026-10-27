@@ -102,6 +102,7 @@ def get_reader_document_map(
             fragment_ranges[str(row["id"])] = (total_fragment_chars, char_count)
         total_fragment_chars += char_count
 
+    generation = None
     if media_kind in ("epub", "web_article", "pdf", "text_part"):
         generation = read_publication_generation(db, media_id=media_id)
         if generation is None:
@@ -179,6 +180,7 @@ def get_reader_document_map(
     )
     return ReaderDocumentMapOut(
         media_id=media_id,
+        publication_generation=generation,
         annotations_version=versions_for_ref(
             db, viewer_id=viewer_id, ref=ResourceRef("media", media_id)
         ).get("annotations", 1),

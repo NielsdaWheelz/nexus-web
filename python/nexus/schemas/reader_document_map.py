@@ -242,9 +242,11 @@ class ReaderDocumentMapDiagnosticsOut(_ReaderMapOut):
 
 class ReaderDocumentMapOut(_ReaderMapOut):
     """Annotations over one publication: ``identity`` is the reader document's identity.
+    ``publication_generation`` fences canonical owner offsets; null on transcripts.
     ``annotations_version`` moves when the viewer's readable annotations of it change."""
 
     media_id: UUID
+    publication_generation: int | None = Field(ge=1)
     annotations_version: int
     identity: str
     status: ReaderDocumentMapStatus

@@ -22,3 +22,21 @@ owner's map and place its roots only when that generation equals the mounted
 resolved when a thread whose owner post has an apparatus reference or assistant link
 shows it in the connections pane at its passage, and a changed owner publication shows
 it as location unavailable instead of misplacing it.
+
+actual old-source red: checkpoint227, canonical lab
+`20261026-214625-60abed6e1a49`/session78646, frozen
+`x-owner-evidence.py`57703 + casea313. the standalone owner map resolved the
+actual canonical fragment, the mounted thread reported the same owner generation,
+and the local highlight control rendered. the owner-derived row was absent
+(case52). earlier214033 failed fixture setup by confusing an X occurrence id
+with its canonical owner fragment; it established no product verdict.
+
+source repair now reads the distinct mounted owner maps in the existing per-pane
+controller, reuses the local source-unit ownership contract and requires explicit
+publication generation per occurrence. canonical roots/direct facts dedupe while
+decorations keep repeated occurrences. new document objects cancel old read waves
+even when identity is unchanged; removed owners cannot retain cached paint.
+generated wire and repaired-source qualification remain pending. the disposable
+case qualifies owner-map composition, not X provider acquisition or apparatus
+extraction: its derived apparatus uses the existing owner API after actual fenced
+canonical X publication.

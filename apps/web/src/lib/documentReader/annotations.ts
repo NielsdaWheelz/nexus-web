@@ -152,7 +152,7 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
 }
 
 /** Units whose offsets this source owns, keyed by canonical fragment. */
-function sourceUnits(doc: TextDocument, mediaId: string, source: string): { unit: TextUnit; generation: number | null; fragment: string }[] {
+export function sourceUnits(doc: TextDocument, mediaId: string, source: string): { unit: TextUnit; generation: number | null; fragment: string }[] {
   return doc.units.flatMap(unit => {
     const owner = ownerOf(doc, mediaId, unit);
     return owner && owner.mediaId === source ? [{ unit, generation: owner.generation, fragment: owner.fragment }] : [];

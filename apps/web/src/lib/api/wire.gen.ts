@@ -10058,6 +10058,7 @@ export interface components {
         /**
          * ReaderDocumentMapOut
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
+         *     ``publication_generation`` fences canonical owner offsets; null on transcripts.
          *     ``annotations_version`` moves when the viewer's readable annotations of it change.
          */
         ReaderDocumentMapOut: {
@@ -10076,6 +10077,8 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
+            /** Publication Generation */
+            publication_generation: number | null;
             /**
              * Status
              * @enum {string}
