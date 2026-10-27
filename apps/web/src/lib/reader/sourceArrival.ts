@@ -5,7 +5,9 @@
 // Acknowledgement retires replay, never the mounted inspection's signal. Failure
 // occurrences stay out of the visit; current status separates waiting work from
 // a settled refusal that reading input must preserve. Highlights and saved passages
-// resolve their account-owned captures on the device, never the server.
+// resolve their account-owned captures on the device, never the server. A ready
+// note admits its own whole-resource arrival locally; other sources keep their
+// existing resolution authority.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PassageState } from "@nexus/authored/types";
 import { useAuthoredStore } from "@/lib/authored/provider";
@@ -43,6 +45,7 @@ export interface SourceArrivalContext {
 
 export type SourceArrivalApplyTarget =
   | { readonly kind: "source"; readonly source: SourceTarget }
+  | { readonly kind: "resource"; readonly resource_ref: string }
   | { readonly kind: "highlight"; readonly highlight_id: string }
   | { readonly kind: "passage"; readonly passage: PassageState; readonly canonical_source_ref: string | null }
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
@@ -240,6 +243,8 @@ export function useSourceArrival(input: {
         const local = intent.target.kind === "resource" && latest.current.runtime.routeId === "media" &&
           intent.target.resource_ref.startsWith("highlight:") ? intent.target.resource_ref.slice("highlight:".length) : null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
+        else if (ready && intent.target.kind === "resource" && latest.current.runtime.routeId === "note" &&
+            intent.target.resource_ref === latest.current.runtime.resourceRef) target = intent.target;
         else if (local !== null) target = { kind: "highlight", highlight_id: local };
         else if (intent.target.kind === "resource" && intent.target.resource_ref.startsWith("passage_anchor:") &&
             (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "note")) {
@@ -288,7 +293,7 @@ export function useSourceArrival(input: {
           },
         });
         if (!current()) return;
-        if (outcome === "Applied" && target?.kind === "source" && target.source.location.kind === "resource") {
+        if (outcome === "Applied" && (target?.kind === "resource" || target?.kind === "source" && target.source.location.kind === "resource")) {
           remember(null);
           publishStatus(null);
           return;

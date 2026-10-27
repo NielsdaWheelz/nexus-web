@@ -1,6 +1,7 @@
 "use client";
 /** A note's canonical body and relationships always read the device corpus. Source
- * arrivals inspect exact canonical text; they never edit or replace writing. */
+ * arrivals inspect exact canonical text; whole-note arrival admits the loaded
+ * resource locally. Neither arrival edits or replaces writing. */
 import { matchScopeQuote, normalizeScopeText } from "@nexus/authored/scope";
 import { normalizeQuote } from "@nexus/authored/identity";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -36,6 +37,11 @@ export default function NotePaneBody() {
     sourceIdentity: resource?.body_text ?? null,
     apply: async (arrival, context) => {
       if (!resource || context.signal.aborted) return "Unavailable";
+      if (arrival.kind === "resource") {
+        if (arrival.resource_ref !== resource.ref) return "Unavailable";
+        if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
+        return "Applied";
+      }
       const text = resource.body_text ?? "";
       let range: { startOffset: number; endOffset: number } | null;
       if (arrival.kind === "passage") {

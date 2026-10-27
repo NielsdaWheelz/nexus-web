@@ -591,7 +591,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     },
     apply: async (result, context) => {
       if (context.signal.aborted) return "Cancelled";
-      if (result.kind === "chat_destination") return "Unavailable";
+      if (result.kind === "chat_destination" || result.kind === "resource") return "Unavailable";
       if (result.kind === "highlight") return deliverHighlight(result.highlight_id, context);
       if (result.kind === "passage") {
         if (!doc) return "Unavailable";
