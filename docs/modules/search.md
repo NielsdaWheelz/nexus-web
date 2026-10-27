@@ -164,22 +164,40 @@ indexed pdf evidence uses its existing page target without requiring geometry.
 
 ## transactions, semantic capability and pages
 
-expensive browser, strict, picker, connection-discovery, oracle and
-suggestion refresh reads share one database-wide advisory session lock. each read
-owns an external physical connection: admission's transaction rolls back while retaining the lock, then a
-fresh read-only repeatable snapshot materializes authorization, ranking and results.
-the connection is retired after snapshot/session cleanup; there is no explicit
-unlock before backend cleanup. this requires a session-affine database connection.
+expensive browser, strict, picker, connection-discovery, oracle and suggestion
+refresh reads use the same native async admission owner and database-wide advisory
+session lock. the dedicated search connection retains the lock while admission's
+transaction rolls back and a fresh read-only repeatable snapshot materializes
+permission, ranking and results. cleanup closes the session, invalidates/closes
+the physical connection and confirms its captured backend pid is absent through
+fresh short control transactions. publication waits for that confirmation; there
+is no explicit unlock that lets another read precede backend cleanup. this needs
+session-affine database connections.
 
-provider waits, direct lookups, primary-only browse and browser branches with no
-retrieval stay outside admission. async admission and reads consume the caller's
-original absolute deadline, including queue time; expired or cancelled waiters do
-not later dispatch retrieval. sync callers retain their database timeout backstop.
-the synchronous picker still has the existing
-[request-cancellation limitation](../issues/api-sync-work-outlives-request-cancellation.md).
+checkout, admission and reading consume the caller's original finite absolute
+deadline. the dedicated search pool has no shorter ordinary checkout timeout;
+its scope-owned capacity lease shares that deadline and stays held through actual
+retirement, even if sqlalchemy returns its pool record earlier. expired or
+cancelled waiters never dispatch later. known but unconfirmed retirement fails
+closed for search in that process's owning scope until live repair; it cannot
+return a result or make that capacity available again.
 
-hybrid computes at most one embedding before opening a transaction. `read_snapshot` then
-owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
+foreground waits for admission within its remaining deadline. background uses
+nonblocking admission and one 400 ms checkout/admission/computation deadline.
+qualification requires its complete read and joined retirement to hold the
+backend no longer than 500 ms. cleanup is joined outside the computation timer;
+an overrun fails instead of returning partial results or pretending cleanup
+finished. arbitrary cancellation and database errors are not owned budget expiry.
+
+provider waits, direct lookups, primary-only browse and branches without retrieval
+stay outside admission. embedding still consumes the original foreground operation
+deadline; background discovery starts its computation allowance after embedding.
+async picker, oracle and tool consumers retain their enclosing deadlines through
+embedding, checkout and reading. sql executes through `AsyncSession.run_sync`;
+there is no synchronous public search path continuing after an async owner ends.
+
+hybrid computes at most one embedding before opening its search transaction.
+`read_snapshot` then owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
 and presentation, and ends it. entering with an open transaction raises rather
 than discarding a caller's writes. reopening uses its caller's transaction and
 does no network work.
@@ -190,11 +208,9 @@ loads local embedding sdk code before readiness, without creating clients or
 making calls.
 
 the api container, disposable runtime and local commands select uvicorn's stock
-`asyncio` loop explicitly. optional `uvloop` is not required for search; the http
-parser, route deadlines and cancellation, admission and retrieval stay with their
-existing owners. this loop choice is an operational candidate after an unexplained
-native api crash, not a demonstrated repair. complete browser qualification must
-measure its latency and retain the earlier faster baselines.
+`asyncio` loop explicitly. the http owner races each operation against disconnect
+and its original aggregate deadline, then cancels and joins the operation before
+returning an outcome. loop and database-scope teardown follow those joined owners.
 
 browser semantic retrieval has fixed windows of 200 chunks each for media and note
 owners, independent of page size/offset. scope, filters, active model and ready
@@ -213,20 +229,31 @@ when semantic chunks cannot change the response; it adds an eligibility read
 when selected media lack lexical evidence. cosine eligibility is unchanged; approximate recall is bounded, not global
 top-k. lexical evidence and semantic-only evidence have separate provenance.
 
-`nearest_chunks` counts at most25,001 current ready chunks in the caller's
-snapshot. publication owns exactly one nonnull vector per current chunk on the
-active provider/model; migration0317 rejects serving rows that violate
-that contract. the capped scalar count therefore chooses exact retrieval through
-25,000 vectors, otherwise ivfflat with40 probes over the original full predicate.
-an empty count returns no neighbours. the exact branch fetches actual eligible
-vector ids before scoring in the same snapshot; at most25,000 uuids transfer.
-authorization, publication and model predicates remain unchanged. broad routing
-avoids per-vector existence lookups; small scopes pay one extra bounded query.
-the count never truncates the searchable domain or caller's window. this cutoff
-extrapolates slightly beyond the measured 20,137-vector exact control; it is not
-a proved crossover. migration0317 owns the current-publication expression
-statistic used by that predicate. strict search and oracle reads share this
-primitive and retain their own limits and cosine policies.
+`nearest_chunks` counts at most 25,001 current ready chunks in the caller's
+snapshot. publication owns one nonnull active-model vector per current chunk.
+through 25,000 eligible chunks, retrieval enumerates that complete id domain and
+scores original float vectors exactly, applying the caller's cosine distance
+bound before the result limit. an empty count returns no neighbours.
+
+larger domains use an ivfflat cursor ordered by raw vector distance for the active
+provider/model. each row carries the complete canonical eligibility predicate as
+an admission fact; only eligible rows enter the caller's window. there is no raw
+candidate cap. streaming ends when that window is full, the stream ends, or raw
+distance crosses the caller's radius; the cursor closes inside the same snapshot,
+including on cancellation. current probes are eight for distance bounds at most
+`1 - 0.80`, forty for broader bounds. returned scores and bounds use the original
+float vectors; ann membership remains approximate. tightening a scope never
+substitutes a broader permission or publication predicate.
+
+`bounded_eligible_count` may be reused only as a proven subset lower bound for a
+superset under the same snapshot, model and audience. only a bound above 25,000
+can skip that superset's count. unknown or unsaturated counts retain ordinary
+routing; a subset count never proves a superset small or truncates its domain.
+strict search, oracle and suggestions use this common reader with their own
+windows and cosine policies. browser/strict use distance 0.5; suggestions retain
+similarity 0.80. the pinned postgres image includes interruptible ivfflat scan
+loops; dependency checks reject an unpatched package before release activation.
+that cancellation capability does not promise useful completion or recall.
 
 `semantic_status` is `not_requested` or `used`. an eligible hybrid failure or
 missing credential returns `E_EMBEDDING_PROVIDER_UNAVAILABLE` / 503 after scope
@@ -245,8 +272,8 @@ cursor rejection requires explicit page-one refresh, never an automatic restart.
 browser routes own one native async operation/session, raced against disconnect
 and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
-deadline. cancellation joins cleanup. api caps are direct400/lexical1500/hybrid3000
-ms; client and bff whole-read caps are1000/2250/3750 ms, including body/decode and
+deadline. cancellation joins cleanup. api caps are direct400/lexical1500/hybrid5000
+ms; client and bff whole-read caps are1000/2250/5750 ms, including body/decode and
 the complete prefix walk. search has no automatic retries. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
 cancellation; cleanup may outlast it, while the browser cap bounds waiting.

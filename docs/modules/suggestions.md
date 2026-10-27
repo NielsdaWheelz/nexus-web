@@ -59,10 +59,13 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 
 ## durable facts
 
-- `suggestion_inputs` is the migration-seeded singleton revision. source owners
-  call `suggestion_changes.record_input_change` after their last domain operation,
-  immediately before commit. it flushes, increments and notifies; no domain lock
-  may be acquired afterward. broad invalidation deliberately fits one user.
+- `suggestion_inputs` holds durable per-source clocks plus the migration-owned
+  baseline. canonical writers pass their changed namespaced source identities to
+  `suggestion_changes.record_input_change` in the source transaction; each clock
+  advances once per call and a transactional notification wakes observers. sorted
+  keys give multi-owner updates consistent lock order. only readers compute the
+  sum; it includes late commits, and clock rows survive source deletion. unrelated
+  writers do not share a singleton publication mutex.
 - reading and listening advance it only when they move an anchor list or the
   read state. `engagement_gate`, taken before the write, reads the head of each
   anchor list the write can move (the lectern's, and each admin library's that
@@ -79,17 +82,45 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 its normal three-attempt policy and `keep_dead=True`. its payload is `{feed_id}`.
 admission is serializable and joins existing work. a read-only repeatable-read
 snapshot captures the input revision, database time and ranking.
-ranking holds shared search admission through snapshot cleanup and physical backend
-retirement; queue wait consumes the existing database and worker timeout budgets.
-a separate short serializable publication transaction locks the execution claim, verifies the
-feed pointer and destination authority, replaces the publication, clears the
-pointer and finishes the job atomically. a newer input revision remains visibly
-dirty. workers never enqueue successors.
+ranking uses the native async search gate with one 400 ms absolute deadline
+for checkout, nonblocking admission and the complete snapshot. qualification
+requires backend hold, including joined physical retirement, no longer than 500 ms.
+retirement confirms the search pid is absent before any publication transaction;
+a known-unconfirmed backend prevents publication and fails that scope's search
+capacity closed. there is no retained partial ranking across attempts.
+
+only admission refusal or this attempt's owned computation deadline returns a
+same-job reschedule at database `now() + 5 seconds`. normal queue settlement keeps
+the payload and feed pointer and refunds the claimed attempt. each later attempt
+reruns the entire read. arbitrary `57014`, connection loss, shutdown and other
+failures retain their own error or lifecycle handling; they are not an owned-budget
+reschedule. the deferral claim check and database-time read use one short ordinary
+transaction after the search scope has closed. this sequential child handler has
+no concurrent frame/provider/ordinary owner; the supervisor heartbeat is separate.
+logs distinguish `admission_busy` and `computation_budget` with phase and job age.
+
+once the complete read and retirement succeed, a separate short serializable
+transaction locks the current execution claim, verifies the feed pointer and
+current destination authority, replaces the publication, clears the pointer and
+finishes that same job atomically. lost/superseded claims cannot publish. failed
+or deferred reads leave the prior publication intact. a later input revision
+remains visibly dirty. workers never enqueue successors. the publisher may finish
+its own job, so the outer worker need not emit another settlement event.
 
 source changes record dirtiness even with no registered feed. only an active
 observer requests work, for meaningful changes or the 15-minute age target.
 later builds become available no earlier than the previous snapshot time plus
-30 seconds. no queue completion deadline is promised.
+30 seconds. sustained competing activity may leave suggestions stale; observers
+retain current publication and truthful queued/recovering/suspended state.
+
+qualification requires every due test feed to publish the settled input revision
+within 60 seconds of a recorded `t0`, after other admitted jobs drain and
+foreground mutations stop, with its observer active. pre-existing suspended
+failures are identified at scenario start; failures created by the scenario are
+not exempt. full due-to-publication time, including preceding imports, is recorded
+separately. this contract neither bounds arbitrary import duration nor promises
+freshness during sustained competing work. backend-retirement, useful publication
+and normal resource-envelope qualification are separate obligations.
 
 ## ports
 

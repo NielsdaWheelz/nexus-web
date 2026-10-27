@@ -176,12 +176,15 @@ cookie splitting, declared multivalue headers and stream restrictions are unchan
   before response construction, so refusal is structured json. the first wake
   consumes that snapshot; later wakes re-read committed state in a fresh session.
   a keepalive comment follows 15 s of quiet; an entity gone
-  mid-stream closes it cleanly. `db/listen.py` holds one autocommit LISTEN
-  connection per stream. setup owns cleanup until response construction; the
-  response's `__call__` finally owns it afterward, including failed header sends.
-  listener close shields its complete idempotent cleanup and releases capacity
-  after connection closure settles. synchronous preflight queries retain their
-  existing cancellation/settlement semantics.
+  mid-stream closes it cleanly. `db/listen.py` owns one autocommit LISTEN socket
+  per api database scope, registers all five channels before consumption, and
+  fans hints out to at most64 local subscriptions. setup owns a subscription
+  until response construction; the response's `__call__` finally owns it afterward,
+  including failed header sends. unsubscribe is idempotent and leaves the shared
+  socket warm. socket loss wakes and terminates affected subscriptions; retries
+  reconnect and reread committed state. database scope exit closes the socket
+  and joins its consumer. synchronous preflight queries retain their existing
+  cancellation/settlement semantics.
 
 ## wire revision
 
