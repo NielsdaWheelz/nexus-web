@@ -194,6 +194,8 @@ placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
 refreshes the shared read. readers never publish canonical titles.
 
 current authored locators retain singular resource and semantic daily subscriptions.
+each locator has a keyed subscription lifetime; sibling pane changes do not restart
+its read.
 the title projection publishes only changed ref, caption or local date; unchanged
 read replies do not invalidate pane chrome. missing rows remain distinct from unread titles.
 

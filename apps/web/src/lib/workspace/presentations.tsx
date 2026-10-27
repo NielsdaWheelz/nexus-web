@@ -15,7 +15,7 @@ import { mediaKindLabel } from "@/lib/media/kind";
 import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
 import type { PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import type { AuthoredQuery } from "@nexus/authored/types";
+import type { AuthoredStore } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
@@ -23,10 +23,18 @@ export interface PanePresentation { title: string; name:string|null; detail: str
 interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
-function authoredQuery(locator: PanePresentationLocator): AuthoredQuery {
-  if (locator.kind === "daily_date") return { kind: "daily", local_date: locator.local_date };
-  if (locator.kind !== "resource_ref") throw new Error("authored title locator missing");
-  return { kind: "resource", ref: locator.ref };
+/** One locator owns one bounded read; sibling pane changes do not restart it. */
+function AuthoredTitleSubscription({ store, locatorKey, kind, value, publish }: {
+  store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string;
+  publish(key: string, facts: TitleFacts | null): void;
+}) {
+  useEffect(() => store.subscribe(kind === "daily" ? { kind: "daily", local_date: value } : { kind: "resource", ref: value }, result => {
+    const resource = result.rows[0]?.resource;
+    publish(locatorKey, resource ? { ref: resource.ref,
+      title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "",
+      local_date: resource.local_date } : null);
+  }), [store, locatorKey, kind, value, publish]);
+  return null;
 }
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
@@ -41,23 +49,14 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
     return [...result.values()];
   }, [state.panes]);
-  const signature = JSON.stringify(locators.filter(authored));
   const [local, setLocal] = useState<Map<string, TitleFacts | null>>(new Map());
-  useEffect(() => {
-    const subscriptions = locators.filter(authored).map(locator => store.subscribe(authoredQuery(locator), result => {
-      const resource = result.rows[0]?.resource;
-      const facts: TitleFacts | null = resource ? { ref: resource.ref,
-        title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "",
-        local_date: resource.local_date } : null;
-      const key = panePresentationLocatorKey(locator);
-      setLocal(previous => {
-        const before = previous.get(key);
-        if (before === null && facts === null || before && facts && before.ref === facts.ref && before.title === facts.title && before.local_date === facts.local_date) return previous;
-        return new Map(previous).set(key, facts);
-      });
-    }));
-    return () => { for (const unsubscribe of subscriptions) unsubscribe(); };
-  }, [store, signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  const publishLocal = useCallback((key: string, facts: TitleFacts | null) => {
+    setLocal(previous => {
+      const before = previous.get(key);
+      if (before === null && facts === null || before && facts && before.ref === facts.ref && before.title === facts.title && before.local_date === facts.local_date) return previous;
+      return new Map(previous).set(key, facts);
+    });
+  }, []);
   const remoteLocators = locators.filter(locator => !authored(locator));
   const remoteKey = JSON.stringify([accountId, remoteLocators, changes, observation, foreground, attempt]);
   const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: "", load: async signal => {
@@ -123,6 +122,15 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       if (presentation.status === "Ready") setVisitTitleHint({ paneId: pane.id, visitId: visit.id, titleKey: route.titleKey, title: presentation.title });
     }
   }, [state.panes, forVisit, setVisitTitleHint]);
-  return <Context value={value}>{children}</Context>;
+  return <Context value={value}>
+    {locators.map(locator => {
+      if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref") return null;
+      const key = panePresentationLocatorKey(locator);
+      return <AuthoredTitleSubscription key={key} store={store} locatorKey={key}
+        kind={locator.kind === "daily_date" ? "daily" : "resource"}
+        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} publish={publishLocal} />;
+    })}
+    {children}
+  </Context>;
 }
 export function useWorkspacePresentations(): Presentations { const value = useContext(Context); if (!value) throw new Error("workspace presentations require their account provider"); return value; }
