@@ -1,7 +1,10 @@
-# unavailable focus-note delivery
+# unperformed unavailable-target focus probe
 
-`LocalOutline.focusNote()` previously returned a boolean while asynchronously opening off-window content; absent/deleted targets could leave the page's mutation observer waiting without a claimed unavailable result.
+bounded focus uses an abortable result and settles unavailable targets without
+leaving a mount observer pending. current mounted-entry and native focus controls
+pass. no current focus defect is established.
 
-implemented: one abortable `Promise<boolean>` checks permanent membership and target liveness, opens a bounded window, and resolves only after its actual editor mounts and focuses. the page claims false as unavailable; read failures reject visibly. the outline owns and disconnects the local mount observer and cancels superseded/unmounted requests.
-
-pending proof: mounted live off-window targets focus without prefix traversal; absent/deleted targets settle, and canceled deliveries never steal focus.
+there is no separately identified live receipt for the combined absent/deleted/
+cancel schedule. retain that as an optional adversarial probe, not an allegation
+that current ownership or cancellation is broken. public unavailable completion
+and observer retirement would close this record.

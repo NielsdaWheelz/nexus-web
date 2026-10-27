@@ -399,21 +399,10 @@ future repository checks still run through `./scripts/test`; the existing local
 testing contract owns manual/disposable verification. no implementation,
 dependency installation or runtime qualification was performed in this review.
 
-## tracked repository gaps
-
-- [server-only retention and causal deletion](issues/local-first-retention-requires-causal-deletion.md)
-- [daily-page identity](issues/local-first-daily-page-identity.md)
-- [concurrent highlight notes](issues/local-first-concurrent-highlight-notes.md)
-- [browser cold start](issues/local-first-browser-cold-start.md)
-- [signout and unsynchronized data](issues/local-first-signout-purge.md)
-- [highlight source publication changes](issues/local-first-highlight-source-generations.md)
-- [editor schema under automatic merge](issues/local-first-editor-schema-merge.md)
-- [replication transport limits](issues/local-first-sync-transport-bounds.md)
-- [one durable local commit owner](issues/local-first-store-commit-ownership.md)
-- [downloaded-reader authored admission](issues/local-first-shelf-authored-admission.md)
-- [coordinated release](issues/release-local-first-writing.md)
-- [activity prominence and retirement](issues/activity-entrypoints-obscure-navigation.md)
-- [activity naming collision](issues/activity-label-names-two-features.md)
+implementation defects live in their individual issue files; qualified results
+belong in the change's pr. this investigation records the design decisions.
+[coordinated release](issues/release-local-first-writing.md) owns the operational
+cutover, which has not been deployed.
 
 resolved decisions replace superseded proposals in this document. future changes
 must preserve the explicit distinction between agreed behaviour, implementation

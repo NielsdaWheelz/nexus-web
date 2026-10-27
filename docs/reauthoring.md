@@ -8,18 +8,18 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-local-first cutover at `227022166` against main `d71cfb1e4`: -3,130 authored
-runtime lines (19,268 added, 22,398 deleted). shared semantics and durable device
+local-first cutover at `aeed23dfd` against main `d71cfb1e4`: -3,039 authored
+runtime lines (19,359 added, 22,398 deleted). shared semantics and durable device
 stores replace memory writing queues, server-authored read/write routes and
 activity recovery. one flat editing host owns outline input/history; the server
 commits canonical merge, projections and feed under one account head. reader
 captures and discovery use local authored queries; native session and shell
 owners retain account/source admission.
 
-file-scope partition: android +738; python -2,511; shared `node/authored`
+file-scope partition: android +738; python -2,500; shared `node/authored`
 +2,319; web persistence/shared entry +1,647; web discovery/resource graph -494;
-web editing/outline/capture -3,741; web reader/source integration +228; web
-shell/account/server-owned integration -1,316. each runtime path counts once.
+web editing/outline/capture -3,741; web reader/source integration +289; web
+shell/account/server-owned integration -1,297. each runtime path counts once.
 handwritten web source/styles, android source, python application source and
 shared typescript count; generated wire/bundles, locks, configuration/build/lab
 tooling, docs and disposable cases do not. migration source adds 716 lines

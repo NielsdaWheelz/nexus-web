@@ -1,23 +1,15 @@
-# structural input during atomic arrangement
+# arrangement boundary-input qualification limit
 
-the prior mounted-field handoff refused structural boundary deletion during
-indent/outdent and return during move up/down. its temporary input bridge could
-not provide the destination's exact neighbors.
+the old mounted-field handoff and temporary input bridge are removed. the flat
+controller retains one editing host and occurrence; ordered pending input and
+indexed neighbors own structural commands. ordinary joins, immediate writing,
+held deletion, reparenting and history have actual qualification.
 
-the replacement `outlineController.ts` keeps one host and occurrence, queues
-return through `outlinePending.ts`, and resolves the intended placement inside
-the existing history command owner. joins use only proven adjacent rows from
-`useOutlineWindow.ts`; an unloaded destination must not imply a missing neighbor.
-the replacement remains unqualified for immediate arrangement plus boundary input.
+the narrower conjunction of immediate arrangement followed by boundary deletion
+into an initially collapsed or off-window destination has no separately
+identified live receipt. no current refusal or input loss is demonstrated.
 
-reproduce by indenting/outdenting a focused note and immediately pressing
-backspace at its start, delete at its end, or deletion while empty before the
-new placement is acknowledged. check the displayed and canonical writing, caret,
-relationship and undo order. repeat with an initially collapsed destination and
-an off-window neighbor.
-
-resolution needs proven destination neighbors captured with the arrangement and
-retained input intent, using the existing read/input owners. an indent can target
-a collapsed, unloaded branch; neither its neighbors nor absence may be guessed.
-prove immediate arrangement plus boundary input, following writing, repeat and
-undo order without a second graph mirror or another native-edit interpreter.
+if this supported sequence is investigated, preserve its exact destination,
+writing, caret and undo semantics without guessing unloaded neighbors. this is
+an unperformed adversarial probe, not an additional exhaustive acceptance matrix
+or a reason to repeat qualified editing controls.
