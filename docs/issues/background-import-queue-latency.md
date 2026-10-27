@@ -41,3 +41,13 @@ connection discovery settle; the following pdf still returns
 `409 E_MEDIA_NOT_READY` after 17 polls. no annotation case runs. keep the reader
 qualification in a fresh runtime, with its actual upload path and unchanged
 deadlines. this observation adds no import-latency guarantee or queue-policy fix.
+
+source `c48ee1ac9016`, mixed run `20261027-105603-3508b558e063`, exhausted
+`await_current_text`'s unchanged 45-second lexical revision/witness/partition wait
+after the 110-note pagination and editor fixtures; no scoped test body ran.
+`containers.log` records 61 note-index settlements (59 `E_EMBEDDING_NOT_CONFIGURED`,
+two successes), generally 1.8–2.3 seconds apart, with no media-index settlement or
+publisher exception. backlog is supported; the exact unmet database predicate was
+not captured. the unchanged nine cases passed in fresh standalone runtime
+`20261027-110209-f8f1d8870fdb` with their existing deadlines and oracles. this
+isolates the setup problem; it supplies no queue-policy or latency fix.

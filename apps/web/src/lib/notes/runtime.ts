@@ -10,7 +10,7 @@ import { prepareChange, createNoteIntent, type Intent } from "@nexus/authored/co
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import type { AuthoredStore, Change, CommitFrame, Corpus, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
+import type { AuthoredStore, Change, CommitFrame, Corpus, QueryResult, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument { ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>; onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void }
@@ -161,14 +161,14 @@ export class WritingRuntime {
     }
     for (const note of initializers) {
       const resource: ResourceState = {kind:"note",ref:note.ref,touch_vv:{},delete_vv:{},body_state:note.intent.body_update};
-      const document = this.cacheDocument(note.ref,resource,note.doc,[],null);
+      const document = this.cacheDocument(note.ref,resource,note.doc,[],null,null);
       const release = document.retain();
       document.track(owner.settled,note.origin);
       void owner.settled.then(release,release);
       const entry = {promise:Promise.resolve(document),value:document};
       this.documents.set(note.ref,entry);
       void owner.settled.then(() => this.store.then(opened => {
-        if (!this.retired && this.documents.get(note.ref)?.value === document) this.listenDocument(document,opened);
+        if (!this.retired && this.documents.get(note.ref)?.value === document) this.listenDocument(document,opened,null);
       })).catch(() => {});
       created.push(document);
       participants.push({document,origin:note.origin});
@@ -393,16 +393,16 @@ export class WritingRuntime {
   private async loadDocument(ref: string, prelude: readonly Intent[]): Promise<CachedDocument> {
     const store = await this.store;
     const selection = selectStates({ refs: [ref] });
-    const states = await store.readStates(selection);
+    const { replica, states } = await store.readSnapshot(selection);
     const existing = states.resources.find(r => r.ref === ref);
     const creation = prelude.find((intent): intent is Extract<Intent,{kind:"create_page"}> => intent.kind === "create_page" && intent.ref === ref);
     const resource = existing ?? (creation ? {kind:"page" as const,ref,touch_vv:{},delete_vv:{},local_date:creation.local_date,title_state:createTitle("")} : null);
     if (!resource || resource.kind === "highlight") throw new Error("Writing document is unavailable");
     const doc = resource.kind === "note" ? hydrateNote(resource.body_state) : new Y.Doc();
     if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
-    return this.cacheDocument(ref, resource, doc, prelude, store);
+    return this.cacheDocument(ref, resource, doc, prelude, store, existing ? replica.store_revision : null);
   }
-  private cacheDocument(ref: string, resource: Exclude<ResourceState, {kind:"highlight"}>, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null): CachedDocument {
+  private cacheDocument(ref: string, resource: Exclude<ResourceState, {kind:"highlight"}>, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null, loadedRevision: string | null): CachedDocument {
     let observed_touch = resource.touch_vv;
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
@@ -437,6 +437,7 @@ export class WritingRuntime {
       },
       retain: () => { cached.pins++; return () => { cached.pins--; cached.last_used = Date.now(); void this.evict(); }; },
     };
+    const kind = resource.kind;
     doc.on("update", (update: Uint8Array, origin: unknown) => {
       if (origin === REMOTE || this.retired) return;
       if (this.capture_scope) {
@@ -459,7 +460,7 @@ export class WritingRuntime {
         if (error) throw error;
         return;
       }
-      const intent: Intent = resource.kind === "note" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
+      const intent: Intent = kind === "note" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
       const prepared: Intent = cached.prelude.length ? {kind:"batch",intents:[...cached.prelude,intent]} : intent;
       cached.prelude = [];
       const pending = this.run(prepared, { refs: [ref] }).catch(error => {
@@ -468,13 +469,16 @@ export class WritingRuntime {
       });
       cached.track(pending, origin);
     });
-    if (store) this.listenDocument(cached, store);
+    if (store) this.listenDocument(cached, store, loadedRevision === null ? null : { revision: loadedRevision, resource });
     return cached;
   }
-  private listenDocument(cached: CachedDocument, store: AuthoredStore): void {
+  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: Exclude<ResourceState, {kind:"highlight"}> } | null): void {
     const {ref} = cached;
     const selection = selectStates({ refs: [ref] });
-    const refresh = () => { void store.readStates(selection).then(current => {
+    const refresh = (result: QueryResult) => {
+      const initial = loaded; loaded = null;
+      void (initial !== null && result.store_revision === initial.revision
+        ? Promise.resolve({ resources: [initial.resource] }) : store.readStates(selection)).then(current => {
       const entry = this.documents.get(ref);
       if (this.retired || !entry || (entry.value && entry.value !== cached)) return;
       const latest = current.resources.find(r => r.ref === ref);

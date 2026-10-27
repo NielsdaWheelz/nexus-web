@@ -30,6 +30,11 @@ reader, media and title subscribers explicitly retain global failure reporting.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
 picker's page-count wrapper and controlled local search. null disables its read;
 showing more retains the accepted prefix until its replacement lands.
+document loading reads state and revision together. its first successful resource
+subscription delivery may reuse that actual snapshot resource only at the exact
+same revision, through the ordinary receive/bookkeeping path. the certificate is
+consumed once; changed revisions, synthetic pages and prepared documents read
+canonical state normally.
 
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.
