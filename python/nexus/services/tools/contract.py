@@ -362,7 +362,11 @@ class LibraryAddSuccess(_Closed):
 class NoteCreateInput(_Closed):
     markdown: Annotated[
         str,
-        Field(min_length=1, max_length=20_000, description="The user's note text in Markdown."),
+        Field(
+            min_length=1,
+            max_length=20_000,
+            description="Literal note text; Markdown syntax is preserved unchanged.",
+        ),
     ]
     page_uri: Annotated[
         str | None,
@@ -387,7 +391,10 @@ class HighlightCreateInput(_Closed):
     ]
     note: Annotated[
         str | None,
-        Field(max_length=20_000, description="Optional user-authored Markdown note."),
+        Field(
+            max_length=20_000,
+            description="Optional literal note; Markdown syntax is preserved unchanged.",
+        ),
     ]
     prefix: Annotated[
         str | None,
