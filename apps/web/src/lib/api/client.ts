@@ -3,7 +3,7 @@
 // browser http cache, and answers the parsed json or throws ApiError. A request
 // sealed under another revision is refused here, never rewritten. A 426 means
 // this tab was built for another wire: it reloads unless writing holds it.
-import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess } from "@/lib/native/admission";
+import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession } from "@/lib/native/admission";
 import { androidShellDocument } from "@/lib/androidShell";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
@@ -273,6 +273,8 @@ export async function apiFetch<T>(
   // Unavailable pauses background owners; an explicit browser attempt may prove
   // reachability. Native session admission remains owned by the installed host.
   if (!remoteAttemptAllowed()) {
+    // Demand asks native authority to recheck reachability; this request stays unsent.
+    if (installedApp && admission === "Unavailable") checkSession();
     throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
   }
   const headers = new Headers(init.headers);

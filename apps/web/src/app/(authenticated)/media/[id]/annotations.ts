@@ -6,7 +6,9 @@
 // separately failable section of derived evidence: source references, embeds and
 // assistant links. Mounted X owners are read separately and their offsets enter only
 // occurrences at that publication generation. Authored echoes never replace local rows.
-import { apiFetch } from "@/lib/api/client";
+// Restored admission retries mounted remote evidence under its original account binding.
+import { apiFetch, captureApiAccount, isCurrentApiAccount } from "@/lib/api/client";
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { AuthoredQuery, AuthoredStore, LinkState, QueryResult, ResourceProjection } from "@nexus/authored/types";
@@ -108,6 +110,7 @@ async function readAll(store: AuthoredStore, query: (cursor: string | null) => A
 }
 
 export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
+  const account = captureApiAccount();
   const sourceRef = `media:${mediaId}`;
   const local = createReaderAnnotations(store, mediaId);
   const listeners = new Set<() => void>();
@@ -176,6 +179,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   }
 
   async function readRemote() {
+    if (!isCurrentApiAccount(account)) return;
     controller.abort();
     controller = new AbortController();
     const signal = controller.signal, mounted = doc;
@@ -186,11 +190,11 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
         return data;
       }));
-      if (signal.aborted || doc !== mounted) return;
+      if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account)) return;
       wires = next;
       project(true);
     } catch (error) {
-      if (signal.aborted || doc !== mounted || handleUnauthenticatedApiError(error)) return;
+      if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account) || handleUnauthenticatedApiError(error)) return;
       controller.abort();
       remote = { status: "failed", error, retrying: false };
       project();
@@ -236,6 +240,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       if (listeners.size === 1) {
         stops = [
           local.subscribe(project),
+          subscribeAdmission(() => { if (remoteReady() && doc !== null && isCurrentApiAccount(account)) void readRemote(); }),
           store.annotations_changed(() => { if (doc !== null) void readRemote(); }),
           store.subscribe({ kind: "adjacency", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
           store.subscribe({ kind: "backlinks", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
