@@ -259,6 +259,9 @@ async def search_session_async(
                 except SearchRetirementOverrun:
                     outcome = "retirement_overrun"
                     raise
+                except asyncio.CancelledError:
+                    outcome = "cancelled"
+                    raise
                 except BaseException:
                     outcome = "retirement_unconfirmed"
                     raise
