@@ -7,39 +7,47 @@ own identity, so it can only match itself.
 
 Direct owner refs need no lookup. A known derived subset joins only its families;
 generic graph reads keep the complete six-family lookup.
+correlated type guards keep unrelated endpoint families out of each child lookup.
+offset 0 prevents the planner from flattening those guards into the joins.
 """
 
 from collections.abc import Collection
 
 _DERIVED_OWNERS = {
     "highlight": (
-        "LEFT JOIN highlights h ON e.scheme = 'highlight' AND h.id = e.id",
+        "LEFT JOIN LATERAL (SELECT h.anchor_media_id FROM highlights h\n"
+        "          WHERE e.scheme = 'highlight' AND h.id = e.id OFFSET 0) h ON true",
         None,
         "h.anchor_media_id",
     ),
     "fragment": (
-        "LEFT JOIN fragments f ON e.scheme = 'fragment' AND f.id = e.id",
+        "LEFT JOIN LATERAL (SELECT f.media_id FROM fragments f\n"
+        "          WHERE e.scheme = 'fragment' AND f.id = e.id OFFSET 0) f ON true",
         None,
         "f.media_id",
     ),
     "reader_apparatus_item": (
-        "LEFT JOIN reader_apparatus_items rai\n"
-        "          ON e.scheme = 'reader_apparatus_item' AND rai.id = e.id",
+        "LEFT JOIN LATERAL (SELECT rai.media_id FROM reader_apparatus_items rai\n"
+        "          WHERE e.scheme = 'reader_apparatus_item' AND rai.id = e.id "
+        "OFFSET 0) rai ON true",
         None,
         "rai.media_id",
     ),
     "evidence_span": (
-        "LEFT JOIN evidence_spans es ON e.scheme = 'evidence_span' AND es.id = e.id",
+        "LEFT JOIN LATERAL (SELECT es.owner_kind, es.owner_id FROM evidence_spans es\n"
+        "          WHERE e.scheme = 'evidence_span' AND es.id = e.id OFFSET 0) es ON true",
         "es.owner_kind",
         "es.owner_id",
     ),
     "content_chunk": (
-        "LEFT JOIN content_chunks cc ON e.scheme = 'content_chunk' AND cc.id = e.id",
+        "LEFT JOIN LATERAL (SELECT cc.owner_kind, cc.owner_id FROM content_chunks cc\n"
+        "          WHERE e.scheme = 'content_chunk' AND cc.id = e.id OFFSET 0) cc ON true",
         "cc.owner_kind",
         "cc.owner_id",
     ),
     "passage_anchor": (
-        "LEFT JOIN passage_anchors pa ON e.scheme = 'passage_anchor' AND pa.id = e.id",
+        "LEFT JOIN LATERAL (SELECT pa.owner_scheme, pa.owner_id FROM passage_anchors pa\n"
+        "          WHERE e.scheme = 'passage_anchor' AND pa.id = e.id OFFSET 0) pa ON true",
         "pa.owner_scheme",
         "pa.owner_id",
     ),
