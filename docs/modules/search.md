@@ -241,7 +241,7 @@ an admission fact; only eligible rows enter the caller's window. there is no raw
 candidate cap. streaming ends when that window is full, the stream ends, or raw
 distance crosses the caller's radius; the cursor closes inside the same snapshot,
 including on cancellation. current probes are eight for distance bounds at most
-`1 - 0.80`, forty for broader bounds. returned scores and bounds use the original
+`1 - 0.80`, 128 for broader bounds. returned scores and bounds use the original
 float vectors; ann membership remains approximate. tightening a scope never
 substitutes a broader permission or publication predicate.
 

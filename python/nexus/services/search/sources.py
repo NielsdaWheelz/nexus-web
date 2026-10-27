@@ -810,16 +810,16 @@ def _discovery_predicates(
 
 
 def _semantic_owner(family: str, where: str) -> str:
-    """A conservative source sieve; canonical membership still owns admission."""
+    """One query-local source-set array; canonical membership still owns admission."""
     owner = SEMANTIC[family].replace("{where}", where)
     if family == "content_chunk":
-        owner = f"""cc.owner_id IN (
+        owner = f"""cc.owner_id = ANY(ARRAY(
             SELECT media_id FROM admitted_media
             UNION SELECT media_id FROM exact_passage_media
             UNION SELECT p.source_media_id FROM media_parts p
                 WHERE p.media_id IN (SELECT media_id FROM admitted_media
                     UNION SELECT media_id FROM exact_passage_media)
-        ) AND ({owner})"""
+        )) AND ({owner})"""
     return owner
 
 

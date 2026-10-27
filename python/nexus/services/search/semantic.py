@@ -2,7 +2,7 @@
 
 The publisher supplies one active vector per current ready chunk. A bounded count
 routes through 25,000 chunks to exact scoring; larger domains use ordered IVF
-candidates. Tight distance bounds use eight probes, broader bounds forty. ANN
+candidates. Tight distance bounds use eight probes, broader bounds 128. ANN
 membership is approximate; returned scores and distance bounds use original floats.
 Eligibility is a caller-owned predicate over ``cc``. Count proofs may come only
 from a stronger domain in this same snapshot, audience and calibrated model.
@@ -181,7 +181,7 @@ def nearest_chunks(
                 ((row[0], float(row[1])) for row in rows),
                 key=lambda pair: (-pair[1], pair[0]),
             )
-        probes = 8 if maximum_distance <= 1 - 0.80 else 40
+        probes = 8 if maximum_distance <= 1 - 0.80 else 128
         db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
         rows = db.execute(
             text(f"""{ctes} SELECT ce.chunk_id, ({distance}) AS distance,
