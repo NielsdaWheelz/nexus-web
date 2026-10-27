@@ -4,7 +4,8 @@ read-only, without provider calls; the caller's repeatable-read transaction make
 ``now()`` one instant. SQL decides each target's one family (Continuity,
 Arrival, then Rediscovery or GraphThread) and its order within it; a relational
 target needs evidence from an anchor (Connected, SharedAuthor, Similar, in that
-priority). Python only composes.
+priority). Complete target and visibility facts are acquired once per caller-owned
+snapshot and reused by semantic and final ranking; Python only composes.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -127,15 +129,9 @@ def rank_suggestion_refs(
     surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
     if surface is None:
         return []
+    candidates = _candidates(db, viewer_id, surface, {"library_id": library_id})
     if library_id is None:
-        candidates = _candidates(
-            db, viewer_id, lectern_anchor_refs(db, viewer_id=viewer_id), "lectern", {}
-        )
         return [ResourceRef(c.scheme, c.id) for c in _rotate(candidates, limit=80)]
-    anchors = library_entries.library_anchor_facts(
-        db, viewer_id=viewer_id, library_id=library_id, limit=SUGGESTION_ANCHOR_LIMIT
-    )
-    candidates = _candidates(db, viewer_id, anchors, surface, {"library_id": library_id})
     ordered = sorted(candidates, key=lambda c: (c.lane, c.lane_strength, c.scheme, c.id))
     picked: list[_Candidate] = []
     counts: Counter[tuple[str, object]] = Counter()
@@ -228,8 +224,9 @@ def hydrate_current_suggestions(
 
 
 def _targets_sql(surface: Surface) -> str:
-    """Eligible targets with their facts and their one family. Binds :viewer_id
-    (and :library_id for the library surfaces)."""
+    """Target policy over caller CTEs visible, visible_podcasts, engagement, episodes,
+    and held (library surfaces). Binds :viewer_id and, for libraries, :library_id.
+    """
     on_lectern = surface == "lectern"
     podcasts = (
         f"""
@@ -238,7 +235,7 @@ def _targets_sql(surface: Surface) -> str:
                    WHERE pe.published_at <= now()), NULL, NULL,
                MAX(e.last_engaged_at) FILTER (WHERE e.last_engaged_at <= now())
         FROM ({active_subscription_rows_sql()}) s
-        JOIN ({visible_podcast_ids_cte_sql()}) vp USING (podcast_id)
+        JOIN visible_podcasts vp USING (podcast_id)
         LEFT JOIN episodes pe
           ON pe.podcast_id = s.podcast_id AND pe.media_id IN (SELECT media_id FROM visible)
         LEFT JOIN engagement e ON e.media_id = pe.media_id
@@ -248,18 +245,9 @@ def _targets_sql(surface: Surface) -> str:
         if surface == "library"
         else ""
     )
-    held = (
-        f"held AS ({library_entries.destination_membership_rows_sql()}),"
-        if surface in ("library", "default_library")
-        else ""
-    )
     day = "to_char((now() AT TIME ZONE 'UTC')::date - {n}, 'YYYY-MM-DD')"
     return f"""
-        WITH visible AS ({visible_media_ids_cte_sql()}),
-        engagement AS ({projection.engagement_fact_rows_sql()}),
-        episodes AS ({episode_publication_rows_sql()}),
-        {held}
-        facts AS (
+        WITH facts AS (
             SELECT 'media'::text AS target_scheme, m.id AS target_id, m.kind::text AS media_kind,
                    m.created_at, pe.published_at AS episode_at,
                    CASE WHEN m.original_published_date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$'
@@ -300,10 +288,90 @@ def _targets_sql(surface: Surface) -> str:
     """
 
 
+_TARGET_FIELDS = (
+    ("target_scheme", "text"),
+    ("target_id", "uuid"),
+    ("media_kind", "text"),
+    ("created_at", "timestamptz"),
+    ("episode_at", "timestamptz"),
+    ("published_on", "text"),
+    ("read_state", "text"),
+    ("engaged_at", "timestamptz"),
+    ("added_day", "text"),
+    ("episode_day", "text"),
+    ("published_day", "text"),
+    ("arrival_day", "text"),
+    ("family", "text"),
+)
+
+
+@dataclass(frozen=True)
+class _SnapshotFacts:
+    anchors: tuple[ResourceRef, ...]
+    targets: list[RowMapping]
+    visible_media: list[UUID]
+    visible_podcasts: list[UUID]
+
+
+def _snapshot_facts(
+    db: Session, viewer_id: UUID, surface: Surface, params: dict[str, object]
+) -> _SnapshotFacts:
+    """Capture complete canonical facts once inside this caller's RR; never retain across reads."""
+    anchors = lectern_anchor_refs(db, viewer_id=viewer_id) if surface == "lectern" else ()
+    held = (
+        f"held AS MATERIALIZED ({library_entries.destination_membership_rows_sql()}),"
+        "destination AS (SELECT * FROM held),"
+        if surface != "lectern"
+        else ""
+    )
+    anchor_rows = (
+        library_entries.library_anchor_rows_sql()
+        if surface != "lectern"
+        else (
+            "SELECT NULL::text AS target_scheme,NULL::uuid AS target_id,NULL::bigint AS ordinal WHERE false"
+        )
+    )
+    empty = ",".join(f"NULL::{kind}" for _, kind in _TARGET_FIELDS[2:])
+    rows = (
+        db.execute(
+            text(f"""
+        WITH visible_media AS MATERIALIZED ({visible_media_ids_cte_sql()}),
+        visible_podcasts AS MATERIALIZED ({visible_podcast_ids_cte_sql()}),
+        visible AS (SELECT media_id FROM visible_media),
+        engagement AS MATERIALIZED ({projection.engagement_fact_rows_sql()}),
+        episodes AS MATERIALIZED ({episode_publication_rows_sql()}),
+        {held}
+        targets AS ({_targets_sql(surface)}), anchor_rows AS ({anchor_rows})
+        SELECT 'target' AS row_kind,NULL::bigint AS ordinal,t.*,
+               COALESCE(p.source_media_id,t.target_id) AS source_id
+        FROM targets t LEFT JOIN media_parts p ON p.media_id=t.target_id
+        UNION ALL SELECT 'anchor',ordinal,target_scheme,target_id,{empty},NULL::uuid FROM anchor_rows
+        UNION ALL SELECT 'visible_media',NULL,'media',media_id,{empty},NULL::uuid FROM visible_media
+        UNION ALL SELECT 'visible_podcast',NULL,'podcast',podcast_id,{empty},NULL::uuid FROM visible_podcasts
+    """),
+            params | {"viewer_id": viewer_id, "anchor_limit": SUGGESTION_ANCHOR_LIMIT},
+        )
+        .mappings()
+        .all()
+    )
+    if surface != "lectern":
+        anchors = tuple(
+            ResourceRef(row["target_scheme"], row["target_id"])
+            for row in sorted(
+                (row for row in rows if row["row_kind"] == "anchor"), key=lambda row: row["ordinal"]
+            )
+        )
+    return _SnapshotFacts(
+        anchors,
+        [row for row in rows if row["row_kind"] == "target"],
+        [row["target_id"] for row in rows if row["row_kind"] == "visible_media"],
+        [row["target_id"] for row in rows if row["row_kind"] == "visible_podcast"],
+    )
+
+
 def _candidates(
     db: Session,
     viewer_id: UUID,
-    anchors: tuple[ResourceRef, ...],
     surface: Surface,
     params: dict[str, object],
 ) -> list[_Candidate]:
@@ -315,13 +383,31 @@ def _candidates(
         if library
         else ""
     )
-    targets = _targets_sql(surface)
+    facts = _snapshot_facts(db, viewer_id, surface, params)
+    anchors = facts.anchors
+    targets = (
+        "SELECT * FROM unnest("
+        + ",".join(f"CAST(:target_{name} AS {kind}[])" for name, kind in _TARGET_FIELDS)
+        + ") AS t("
+        + ",".join(name for name, _ in _TARGET_FIELDS)
+        + ")"
+    )
+    readings = list(
+        dict.fromkeys(
+            (row["target_id"], row["family"], row["source_id"])
+            for row in facts.targets
+            if row["target_scheme"] == "media" and row["family"] in ("GraphThread", "Rediscovery")
+        )
+    )
     params = {
         "viewer_id": viewer_id,
         "anchor_schemes": [anchor.scheme for anchor in anchors],
         "anchor_ids": [anchor.id for anchor in anchors],
         "anchor_ranks": list(range(len(anchors))),
-        "similar": json.dumps(_similar(db, viewer_id, anchors, targets, params)),
+        "similar": json.dumps(_similar(db, viewer_id, anchors, readings, params)),
+        "visible_media_ids": facts.visible_media,
+        "visible_podcast_ids": facts.visible_podcasts,
+        **{f"target_{name}": [row[name] for row in facts.targets] for name, _ in _TARGET_FIELDS},
         "origins": _EDGE_ORIGINS,
         **params,
     }
@@ -359,8 +445,8 @@ def _candidates(
                 JOIN anchors a ON a.scheme = p.anchor_scheme AND a.id = p.anchor_id
                 WHERE (p.target_scheme, p.target_id) <> (p.anchor_scheme, p.anchor_id)
             ),
-            credit_visible_media AS MATERIALIZED ({visible_media_ids_cte_sql()}),
-            credit_visible_podcasts AS MATERIALIZED ({visible_podcast_ids_cte_sql()}),
+            credit_visible_media AS (SELECT unnest(CAST(:visible_media_ids AS uuid[])) AS media_id),
+            credit_visible_podcasts AS (SELECT unnest(CAST(:visible_podcast_ids AS uuid[])) AS podcast_id),
             authors AS NOT MATERIALIZED (
                 SELECT vcc.contributor_id, vcc.media_id, vcc.podcast_id
                 FROM ({
@@ -477,7 +563,7 @@ def _similar(
     db: Session,
     viewer_id: UUID,
     anchors: tuple[ResourceRef, ...],
-    targets: str,
+    eligible_readings: Sequence[tuple[UUID, str, UUID]],
     params: dict[str, object],
 ) -> list[dict[str, object]]:
     """approximate candidate membership, exact calibrated scores and reading projection.
@@ -502,16 +588,6 @@ def _similar(
         "embedding_model": model,
         "embedding_dimensions": dimensions,
     }
-    eligible_readings: list[tuple[UUID, str, UUID]] = [
-        (row.target_id, row.family, row.source_id)
-        for row in db.execute(
-            text(f"""SELECT DISTINCT target_id, family,
-            COALESCE(p.source_media_id,target_id) AS source_id
-            FROM ({targets}) t LEFT JOIN media_parts p ON p.media_id=t.target_id
-            WHERE target_scheme='media' AND family IN ('GraphThread','Rediscovery')"""),
-            bindings,
-        )
-    ]
     stored_anchors = db.execute(
         text(f"""
         WITH anchors AS (
