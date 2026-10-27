@@ -43,7 +43,7 @@ from nexus.services.podcasts.subscriptions_query import (
 )
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.search.semantic import bounded_eligible_count, nearest_chunks
+from nexus.services.search.semantic import ChunkDomain, bounded_eligible_count, nearest_chunks
 
 SUGGESTION_ANCHOR_LIMIT = 5
 _PER_FAMILY = 20
@@ -543,25 +543,29 @@ def _candidates(
 
 
 def _reading_membership(
-    readings: Sequence[tuple[UUID, str, UUID]], family: str, excluded_ids: set[UUID]
+    readings: Sequence[tuple[UUID, str, UUID]],
+    family: str,
+    excluded_ids: set[UUID],
+    *,
+    prefix: str,
 ) -> tuple[str, str, dict[str, object]]:
-    """same-snapshot reading identities admit own chunks and canonical piece bounds."""
+    """Same-snapshot own/piece admission; callers give each family a distinct bind prefix."""
     selected = [row for row in readings if row[1] == family and row[0] not in excluded_ids]
     direct_ids = [media_id for media_id, _, _ in selected]
     piece_ids = [media_id for media_id, _, source_id in selected if media_id != source_id]
     params: dict[str, object] = {
-        "direct_ids": direct_ids,
-        "piece_ids": piece_ids,
-        "source_ids": list({row[2] for row in selected} | set(direct_ids)),
+        f"{prefix}direct_ids": direct_ids,
+        f"{prefix}piece_ids": piece_ids,
+        f"{prefix}source_ids": list({row[2] for row in selected} | set(direct_ids)),
     }
-    direct = "cc.owner_id=ANY(CAST(:direct_ids AS uuid[]))"
+    direct = f"cc.owner_id=ANY(CAST(:{prefix}direct_ids AS uuid[]))"
     membership = direct
     projection = f"SELECT cc.owner_id AS reading_media_id,cc.id AS chunk_id WHERE {direct}"
     if piece_ids:
-        pieces = reading_chunks_sql("""SELECT p.media_id FROM media_parts p
+        pieces = reading_chunks_sql(f"""SELECT p.media_id FROM media_parts p
             WHERE p.source_media_id=cc.owner_id
-              AND p.media_id=ANY(CAST(:piece_ids AS uuid[]))""")
-        membership = f"""cc.owner_id=ANY(CAST(:source_ids AS uuid[])) AND (
+              AND p.media_id=ANY(CAST(:{prefix}piece_ids AS uuid[]))""")
+        membership = f"""cc.owner_id=ANY(CAST(:{prefix}source_ids AS uuid[])) AND (
             ({direct}) OR EXISTS (SELECT 1 FROM ({pieces}) admitted
                 WHERE admitted.chunk_id=cc.id OFFSET 0))"""
         projection += f""" UNION ALL SELECT reading_media_id,chunk_id
@@ -581,7 +585,9 @@ def _similar(
     Preserve original anchor ordinals and each first admitted stored vector.
     Whole-only counts excluding ALL anchors prove lower bounds for each actual
     family domain, which excludes only the current reading. Pieces retain the
-    canonical bounds owned by reading_chunks_sql. No provider runs in this scope.
+    canonical bounds owned by reading_chunks_sql. Families share one ANN traversal
+    per anchor while keeping independent admission, routing and 400-chunk windows.
+    No provider runs in this scope.
     """
     media_anchors = [
         (rank, anchor.id) for rank, anchor in enumerate(anchors) if anchor.scheme == "media"
@@ -651,33 +657,43 @@ def _similar(
     # Whole-only, all-anchor-excluded chunks are a subset of every self-only
     # domain, even when another eligible piece shares an anchor's parent.
     whole_readings = [row for row in eligible_readings if row[0] == row[2]]
+    families = (("GraphThread", "graph_"), ("Rediscovery", "rediscovery_"))
     lower_bounds: dict[str, int] = {}
-    for family in ("GraphThread", "Rediscovery"):
-        owner, _, proof_params = _reading_membership(whole_readings, family, excluded_all)
+    for family, prefix in families:
+        owner, _, proof_params = _reading_membership(
+            whole_readings, family, excluded_all, prefix=prefix
+        )
         lower_bounds[family] = (
             bounded_eligible_count(
                 db, model=model, owner=owner, params=bindings | proof_params, ctes=""
             )
-            if proof_params["direct_ids"]
+            if proof_params[f"{prefix}direct_ids"]
             else 0
         )
     rows: list[tuple[float, int, UUID]] = []
     for anchor_id, rank, anchor_chunk_id, vector_text in stored_anchors:
-        for family in ("GraphThread", "Rediscovery"):
+        domains = []
+        projections = []
+        local = bindings | {"anchor_chunk_id": anchor_chunk_id}
+        for family, prefix in families:
             owner, chunk_readings, membership_params = _reading_membership(
-                eligible_readings, family, {anchor_id}
+                eligible_readings, family, {anchor_id}, prefix=prefix
             )
-            local = bindings | membership_params | {"anchor_chunk_id": anchor_chunk_id}
-            candidates = nearest_chunks(
-                db,
-                (model, json.loads(vector_text)),
-                owner=owner,
-                params=local,
-                limit=400,
-                ctes="",
-                maximum_distance=1 - _MIN_SIMILARITY,
-                eligible_count_lower_bound=lower_bounds[family],
+            domains.append(
+                ChunkDomain(owner=owner, eligible_count_lower_bound=lower_bounds[family])
             )
+            projections.append(chunk_readings)
+            local.update(membership_params)
+        windows = nearest_chunks(
+            db,
+            (model, json.loads(vector_text)),
+            domains=domains,
+            params=local,
+            limit=400,
+            ctes="",
+            maximum_distance=1 - _MIN_SIMILARITY,
+        )
+        for chunk_readings, candidates in zip(projections, windows, strict=True):
             if not candidates:
                 continue
             scored = db.execute(

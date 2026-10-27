@@ -59,7 +59,7 @@ from nexus.services.search.scope import (
     compose_scopes,
     scope_predicate,
 )
-from nexus.services.search.semantic import Embedding, nearest_chunks
+from nexus.services.search.semantic import ChunkDomain, Embedding, nearest_chunks
 from nexus.text import escape_like
 
 TSQ = "websearch_to_tsquery('english', :q)"
@@ -641,10 +641,10 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
     params |= scope_params
     if semantic and r.terms and r.embedding is not None:
         owner = _semantic_owner(family, where)
-        near = nearest_chunks(
+        (near,) = nearest_chunks(
             db,
             r.embedding,
-            owner=owner,
+            domains=(ChunkDomain(owner),),
             params=params,
             limit=max(200, 4 * r.k),
             ctes=ctes,
@@ -837,10 +837,10 @@ def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[U
     where, params = predicates
     ctes, scope_params = _ctes(r, scope_sql=scopes)
     owner = _semantic_owner(family, where)
-    near = nearest_chunks(
+    (near,) = nearest_chunks(
         db,
         r.embedding,
-        owner=owner,
+        domains=(ChunkDomain(owner),),
         params=params | scope_params,
         limit=200,
         ctes=ctes,

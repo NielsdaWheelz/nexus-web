@@ -48,7 +48,7 @@ from nexus.services.resource_graph.citations import (
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search import projection
 from nexus.services.search.admission import search_session_async
-from nexus.services.search.semantic import Embedding, embed_text, nearest_chunks
+from nexus.services.search.semantic import ChunkDomain, Embedding, embed_text, nearest_chunks
 from nexus.services.search.service import read_snapshot
 from nexus.services.suggestion_changes import record_input_change
 
@@ -294,10 +294,10 @@ def _retrieve(
         return _failure("E_ORACLE_CORPUS_NOT_READY", f"{len(public)} rankable corpus passages")
     excluded = list(db.scalars(select(OracleCorpusSource.media_id)))
     params = {"viewer_id": viewer_id, "excluded": excluded}
-    near = nearest_chunks(
+    (near,) = nearest_chunks(
         db,
         embedding,
-        owner=_PERSONAL_CHUNKS,
+        domains=(ChunkDomain(_PERSONAL_CHUNKS),),
         params=params,
         limit=200,
         ctes="",

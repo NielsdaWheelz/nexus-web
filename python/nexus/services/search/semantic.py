@@ -4,15 +4,17 @@ The publisher supplies one active vector per current ready chunk. A bounded coun
 routes through 25,000 chunks to exact scoring; larger domains use ordered IVF
 candidates. Tight distance bounds use eight probes, broader bounds 128. ANN
 membership is approximate; returned scores and distance bounds use original floats.
-Eligibility is a caller-owned predicate over ``cc``. Count proofs may come only
-from a stronger domain in this same snapshot, audience and calibrated model.
+Each domain owns its eligibility predicate over ``cc`` and its independent result
+window. ANN domains share one ordered scan; exact domains retain complete scoring.
+Count proofs may come only from a stronger domain in this same snapshot, audience
+and calibrated model. Callers own distinct parameter names across domains.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 from uuid import UUID
 
@@ -46,6 +48,12 @@ _READY_COUNT = """JOIN (
 ) cis ON cis.owner_kind=cc.owner_kind AND cis.owner_id=cc.owner_id"""
 
 type Embedding = tuple[str, list[float]]
+
+
+@dataclass(frozen=True)
+class ChunkDomain:
+    owner: str
+    eligible_count_lower_bound: int | None = None
 
 
 async def embed_text(q: str) -> Embedding | None:
@@ -125,20 +133,19 @@ def nearest_chunks(
     db: Session,
     embedding: Embedding,
     *,
-    owner: str,
+    domains: Sequence[ChunkDomain],
     params: Mapping[str, Any],
     limit: int,
     ctes: str,
     maximum_distance: float,
-    eligible_count_lower_bound: int | None = None,
-) -> list[tuple[UUID, float]]:
-    """Return ``(chunk_id, cosine)`` with deterministic ties within the retained set.
+) -> list[list[tuple[UUID, float]]]:
+    """Aligned independent windows, each sorted by cosine then chunk id.
 
-    Only a caller-proved subset count above the cutoff skips this domain's count.
-    Unknown or unsaturated bounds retain normal routing. The raw ANN cursor has
-    no candidate cap: each row retains its eligibility boolean so crossing the
-    distance bound can stop before scanning unrelated eligible rows. The cursor
-    closes inside this caller-owned snapshot, including on cancellation.
+    Only a caller-proved subset count above the cutoff skips that domain's count.
+    Unknown or unsaturated bounds retain normal routing. ANN domains share one
+    uncapped raw cursor with independent admission flags and result limits; stop
+    only when every ANN window is full, the radius is crossed or the scan ends.
+    The cursor closes inside this caller-owned snapshot, including on cancellation.
     """
     logger.info("search.nearest_chunks.begin", mono_ns=time.monotonic_ns())
     try:
@@ -153,18 +160,26 @@ def nearest_chunks(
             "limit": limit,
             "maximum_distance": maximum_distance,
         }
-        count = (
-            eligible_count_lower_bound
-            if eligible_count_lower_bound is not None and eligible_count_lower_bound > _EXACT_MAX
-            else bounded_eligible_count(db, model=model, owner=owner, params=params, ctes=ctes)
-        )
-        if count == 0:
-            return []
-        if count <= _EXACT_MAX:
+        near: list[list[tuple[UUID, float]]] = [[] for _ in domains]
+        ann_domains: list[int] = []
+        for index, domain in enumerate(domains):
+            count = (
+                domain.eligible_count_lower_bound
+                if domain.eligible_count_lower_bound is not None
+                and domain.eligible_count_lower_bound > _EXACT_MAX
+                else bounded_eligible_count(
+                    db, model=model, owner=domain.owner, params=params, ctes=ctes
+                )
+            )
+            if count == 0:
+                continue
+            if count > _EXACT_MAX:
+                ann_domains.append(index)
+                continue
             # Enumerate the complete counted domain; final scoring filters vectors.
             eligible_ids = list(
                 db.scalars(
-                    text(f"{ctes} SELECT cc.id {_ready_chunks(owner)} LIMIT :count_limit"),
+                    text(f"{ctes} SELECT cc.id {_ready_chunks(domain.owner)} LIMIT :count_limit"),
                     bindings | {"count_limit": _EXACT_MAX + 1},
                 )
             )
@@ -177,19 +192,26 @@ def nearest_chunks(
                     ORDER BY ({distance}) + 0, ce.chunk_id LIMIT :limit"""),
                 bindings | {"eligible_ids": eligible_ids},
             )
-            return sorted(
+            near[index] = sorted(
                 ((row[0], float(row[1])) for row in rows),
                 key=lambda pair: (-pair[1], pair[0]),
             )
+            del eligible_ids, rows
+        if not ann_domains:
+            return near
         probes = 8 if maximum_distance <= 1 - 0.80 else 128
         db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
+        admission = ", ".join(
+            f"""CASE WHEN ({distance}) <= :maximum_distance THEN
+                EXISTS (SELECT 1 FROM content_chunks cc {_READY}
+                    WHERE cc.id=ce.chunk_id AND ({domains[index].owner}) OFFSET 0)
+                ELSE FALSE END AS admitted_{index}"""
+            for index in ann_domains
+        )
         # A fetched batch can cross the radius; admission beyond it is never consumed.
         rows = db.execute(
             text(f"""{ctes} SELECT ce.chunk_id, ({distance}) AS distance,
-                CASE WHEN ({distance}) <= :maximum_distance THEN
-                    EXISTS (SELECT 1 FROM content_chunks cc {_READY}
-                        WHERE cc.id=ce.chunk_id AND ({owner}) OFFSET 0)
-                    ELSE FALSE END AS admitted
+                {admission}
                 FROM content_embeddings ce
                 WHERE ce.embedding_provider=:provider AND ce.embedding_model=:model
                   AND ce.embedding_vector IS NOT NULL
@@ -197,17 +219,20 @@ def nearest_chunks(
             bindings,
             execution_options={"yield_per": 32},
         )
-        near = []
         try:
-            for chunk_id, raw_distance, admitted in rows:
+            for row in rows:
+                chunk_id, raw_distance = row[:2]
                 if not raw_distance <= maximum_distance:
                     break
-                if admitted:
-                    near.append((chunk_id, 1 - float(raw_distance)))
-                    if len(near) == limit:
-                        break
+                for index, admitted in zip(ann_domains, row[2:], strict=True):
+                    if admitted and len(near[index]) < limit:
+                        near[index].append((chunk_id, 1 - float(raw_distance)))
+                if all(len(near[index]) == limit for index in ann_domains):
+                    break
         finally:
             rows.close()
-        return sorted(near, key=lambda pair: (-pair[1], pair[0]))
+        for index in ann_domains:
+            near[index].sort(key=lambda pair: (-pair[1], pair[0]))
+        return near
     finally:
         logger.info("search.nearest_chunks.end", mono_ns=time.monotonic_ns())
