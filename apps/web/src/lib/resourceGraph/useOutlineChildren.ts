@@ -73,8 +73,7 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
           return {proofs,errors};
         });
       };
-      stops.push(store.subscribe(query,receive));
-      void store.query(query).then(receive,error=>{if(active&&revision===null)setLocal(current=>({...current,errors:new Map(current.errors).set(chunkKey,error)}));});
+      stops.push(store.subscribe(query,receive,error=>{if(active)setLocal(current=>({...current,errors:new Map(current.errors).set(chunkKey,error)}));}));
     }
     return()=>{active=false;for(const stop of stops)stop();};
     // Serialized descriptors are the closed query's identity.

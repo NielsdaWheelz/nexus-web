@@ -140,10 +140,10 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     readStates: selection => call("states", { selection }),
     query: query => call("query", { query }),
     commit: frame => call("commit", { frame, lease: commandLease }),
-    subscribe: (query, listener) => {
+    subscribe: (query, listener, failed) => {
       let active = true;
       let generation = 0;
-      const read = (corpusChanged = true) => { if (!corpusChanged) return; const current = ++generation; void call<QueryResult>("query", { query }).then(result => { if (active && generation === current) listener(result); }, error => { if (active && status !== "preparing") reportError(error); }); };
+      const read = (corpusChanged = true) => { if (!corpusChanged) return; const current = ++generation; void call<QueryResult>("query", { query }).then(value => { if (active && generation === current) listener(value); }, error => { if (active && generation === current) failed(error); }); };
       queries.add(read); read();
       return () => { active = false; queries.delete(read); };
     },

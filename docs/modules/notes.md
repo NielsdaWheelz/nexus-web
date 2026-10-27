@@ -20,6 +20,17 @@ retain their separate owners.
   actual editor transactions to incremental shared operations, never a stale
   whole-body replacement.
 
+authored query subscriptions require success and failure callbacks and return one
+unsubscribe function. one initial read and subsequent invalidations use those same
+owners; adapters do not report failures behind the caller. read surfaces retain
+accepted rows on refresh failure and expose their existing inline error/retry;
+retry clears the displayed error while retaining the accepted same-query prefix.
+account, query and null changes never borrow another read's rows. direct runtime,
+reader, media and title subscribers explicitly retain global failure reporting.
+`useAuthoredPrefix` owns one revision-consistent paginated read for both the
+picker's page-count wrapper and controlled local search. null disables its read;
+showing more retains the accepted prefix until its replacement lands.
+
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.
 `./scripts/test` regenerates into a temporary file and rejects stale bytes.

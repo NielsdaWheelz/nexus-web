@@ -207,10 +207,11 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       catch (error) { sync.localFailure(true); throw error; }
       finally { sync.facts.saving = false; changed(); }
     }),
-    subscribe: (query, listener) => {
+    subscribe: (query, listener, failed) => {
       let live = true;
-      const read = (corpusChanged = true) => { if (!corpusChanged) return; void serialize(() => queryLocal(query)).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
-      queries.add(read); read(); return () => { live = false; queries.delete(read); };
+      const read = (corpusChanged = true) => { if (!corpusChanged) return; void serialize(() => queryLocal(query)).then(value => { if (live) listener(value); }, error => { if (live) failed(error); }); };
+      queries.add(read); read();
+      return () => { live = false; queries.delete(read); };
     },
     annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.last_error); return () => { statuses.delete(listener); }; },

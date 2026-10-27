@@ -33,7 +33,7 @@ function AuthoredTitleSubscription({ store, locatorKey, kind, value, publish }: 
     publish(locatorKey, resource ? { ref: resource.ref,
       title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "",
       local_date: resource.local_date } : null);
-  }), [store, locatorKey, kind, value, publish]);
+  }, reportError), [store, locatorKey, kind, value, publish]);
   return null;
 }
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {

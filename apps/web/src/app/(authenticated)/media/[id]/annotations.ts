@@ -242,8 +242,8 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
           local.subscribe(project),
           subscribeAdmission(() => { if (remoteReady() && doc !== null && isCurrentApiAccount(account)) void readRemote(); }),
           store.annotations_changed(() => { if (doc !== null) void readRemote(); }),
-          store.subscribe({ kind: "adjacency", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
-          store.subscribe({ kind: "backlinks", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
+          store.subscribe({ kind: "adjacency", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks(), reportError),
+          store.subscribe({ kind: "backlinks", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks(), reportError),
         ];
         if (doc !== null) void readRemote();
       }

@@ -480,8 +480,7 @@ export class WritingRuntime {
       const latest = current.resources.find(r => r.ref === ref);
       if (latest && latest.kind !== "highlight") cached.receive(latest);
     }).catch(error => this.publish({ error, error_refs: [ref] })); };
-    cached.unsubscribe = store.subscribe({ kind: "resource", ref }, refresh);
-    refresh();
+    cached.unsubscribe = store.subscribe({ kind: "resource", ref }, refresh, reportError);
   }
   private async evict(): Promise<void> {
     const opened = await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));

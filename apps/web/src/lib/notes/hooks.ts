@@ -16,7 +16,8 @@ export function useAuthoredQuery(query: AuthoredQuery | null): { data: QueryResu
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ key: string; accountId: string | null; data: QueryResult | null; error: unknown | null }>({ key, accountId, data: null, error: null });
   useEffect(() => {
-    if (query === null || accountId === null) return;
+    if (query === null || accountId === null) { setState({ key, accountId, data: null, error: null }); return; }
+    setState(old => ({ key, accountId, data: old.key === key && old.accountId === accountId ? old.data : null, error: null }));
     let retired = false;
     let latestRevision: bigint | null = null;
     const receive = (data:QueryResult) => {
@@ -25,8 +26,9 @@ export function useAuthoredQuery(query: AuthoredQuery | null): { data: QueryResu
       latestRevision=revision;
       setState({key,accountId,data,error:null});
     };
-    const unsubscribe = store.subscribe(query, receive);
-    void store.query(query).then(receive).catch(error => { if (!retired && latestRevision===null) setState({ key, accountId, data: null, error }); });
+    const unsubscribe = store.subscribe(query, receive, error => {
+      if (!retired) setState(old => ({ key, accountId, data: old.key === key && old.accountId === accountId ? old.data : null, error }));
+    });
     return () => { retired = true; unsubscribe(); };
     // The serialized closed query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,15 +60,16 @@ export function useWritingDocument(ref: string | null, prelude: readonly Intent[
 
 /** Read a bounded prefix from one local revision. A newer subscription delivery
  * supersedes an in-flight traversal; mixed-revision pages are never published. */
-export function useAuthoredPages(query: Extract<AuthoredQuery, { cursor: string | null }>) {
+type CursorQuery = Extract<AuthoredQuery, { cursor: string | null }>;
+export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
   const store = useAuthoredStore();
   const accountId = useAuthoredAccountId();
-  const key = JSON.stringify([accountId,{ ...query, cursor: null }]);
-  const [pages, setPages] = useState({ key, count: 1 });
-  const count = pages.key === key ? pages.count : 1;
+  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
   const [state, setState] = useState<{ key: string; data: QueryResult | null; error: unknown | null }>({ key, data: null, error: null });
   const [attempt, retry] = useState(0);
   useEffect(() => {
+    setState(old => ({ key, data: query !== null && old.key === key ? old.data : null, error: null }));
+    if (query === null) return;
     let generation = 0;
     let active = true;
     let latestRevision:bigint|null=null;
@@ -77,21 +80,38 @@ export function useAuthoredPages(query: Extract<AuthoredQuery, { cursor: string 
       latestRevision=revision;
       const current = ++generation;
       void (async () => {
-        const rows = [...first.rows];
-        let cursor = first.next_cursor;
+        const rows = first.scope_available === false ? [] : [...first.rows];
+        let cursor = first.scope_available === false ? null : first.next_cursor;
         for (let page = 1; page < count && cursor !== null; page++) {
           const next = await store.query({ ...query, cursor });
           if (!active || current !== generation || next.store_revision !== first.store_revision) return;
+          if (next.scope_available === false) {
+            setState({ key, data: { ...next, rows: [], next_cursor: null }, error: null });
+            return;
+          }
           rows.push(...next.rows); cursor = next.next_cursor;
         }
         if (active && current === generation) setState({ key, data: { ...first, rows, next_cursor: cursor }, error: null });
       })().catch(error => { if (active && current === generation) setState(old => ({ key, data: old.key === key ? old.data : null, error })); });
     };
-    const stop = store.subscribe(firstQuery, receive);
-    void store.query(firstQuery).then(receive).catch(error => { if (active && latestRevision===null) setState({ key, data: null, error }); });
-    return () => { active = false; generation++; stop(); };
+    const unsubscribe = store.subscribe(firstQuery, receive, error => {
+      if (!active) return;
+      generation++;
+      setState(old => ({ key, data: old.key === key ? old.data : null, error }));
+    });
+    return () => { active = false; generation++; unsubscribe(); };
     // The serialized query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, key, count, attempt]);
-  return { data: state.key === key ? state.data : null, error: state.key === key ? state.error : null, more: () => setPages({ key, count: count + 1 }), retry: () => retry(n => n + 1) };
+  return { data: query !== null && state.key === key ? state.data : null, error: query !== null && state.key === key ? state.error : null, retry: () => retry(n => n + 1) };
+}
+
+/** The picker owns its page count; controlled search passes its count to the same prefix owner. */
+export function useAuthoredPages(query: CursorQuery | null) {
+  const accountId = useAuthoredAccountId();
+  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
+  const [pages, setPages] = useState({ key, count: 1 });
+  const count = pages.key === key ? pages.count : 1;
+  const prefix = useAuthoredPrefix(query, count);
+  return { ...prefix, more: () => setPages({ key, count: count + 1 }) };
 }

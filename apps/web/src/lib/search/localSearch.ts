@@ -8,11 +8,11 @@
 // authored links. Missing scope inputs are explicit, never a remote-writing fallback.
 // Excerpts use separate literal matching text; canonical labels/captures stay intact.
 // search activation retains the selected reading and the canonical saved occurrence.
-import { useCallback, useEffect, useState } from "react";
-import type { QueryResult, ResourceProjection, ResourceRef } from "@nexus/authored/types";
+import { useMemo } from "react";
+import type { AuthoredQuery, ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import type { SearchFamily, SearchScope } from "@nexus/authored/scope";
 import { capturedHighlightText } from "@nexus/authored/queries";
-import { useAuthoredStore } from "@/lib/authored/provider";
+import { useAuthoredPrefix } from "@/lib/notes/hooks";
 import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { SearchKind } from "./kinds";
@@ -84,54 +84,19 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
   readonly error: unknown;
   readonly retry: () => void;
 } {
-  const store = useAuthoredStore();
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string; matches: LocalMatch[] | null; complete: boolean; scopeAvailable: boolean | null; error: unknown }>({ key: "", matches: null, complete: false, scopeAvailable: null, error: null });
-  const key = text === null ? "" : JSON.stringify([text, kinds === null ? null : [...kinds].sort(), scope, attempt]);
-  useEffect(() => {
-    if (text === null) return;
-    const parsed = scope === "all" ? null : parseResourceRef(scope);
-    if (scope !== "all" && (!parsed || parsed.scheme !== "media" && parsed.scheme !== "library" && parsed.scheme !== "conversation")) {
-      setState({ key, matches: [], complete: true, scopeAvailable: false, error: null });
-      return;
-    }
-    const scopes: SearchScope[] = parsed && (parsed.scheme === "media" || parsed.scheme === "library" || parsed.scheme === "conversation")
-      ? [{ kind: parsed.scheme, id: parsed.id }] : [{ kind: "all", id: null }];
-    const families: SearchFamily[] | null = kinds === null ? null : [...kinds].filter(kind => kind !== "web");
-    let live = true, reading = false, again = false;
-    const read = async () => {
-      if (reading) { again = true; return; }
-      reading = true;
-      try {
-        const rows: QueryResult["rows"] = [];
-        let cursor: string | null = null;
-        for (let page = 0; page < pages; page++) {
-          const result: QueryResult = await store.query({ kind: "search", text, cursor, limit: PAGE, scopes, families });
-          if (result.scope_available === false) {
-            if (live) setState({ key, matches: [], complete: true, scopeAvailable: false, error: null });
-            return;
-          }
-          rows.push(...result.rows);
-          cursor = result.next_cursor;
-          if (cursor === null) break;
-        }
-        const matches = rows.flatMap(({ resource, match_text, activation_ref }) => {
-          const kind = kindOf(resource);
-          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text, { matchText: match_text, activationRef: activation_ref })] : [];
-        });
-        if (live) setState({ key, matches, complete: cursor === null, scopeAvailable: true, error: null });
-      } catch (error) {
-        if (live) setState(current => ({ ...current, key, matches: current.key === key ? current.matches : null, scopeAvailable: null, error }));
-      } finally {
-        reading = false;
-        if (again && live) { again = false; void read(); }
-      }
-    };
-    const stop = store.subscribe({ kind: "search", text, cursor: null, limit: 1, scopes, families }, () => void read());
-    return () => { live = false; stop(); };
-    // the serialized query is the read identity; pages only extend it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, pages, store]);
-  const retry = useCallback(() => setAttempt(value => value + 1), []);
-  return state.key === key ? { matches: state.matches, complete: state.complete, scopeAvailable: state.scopeAvailable, error: state.error, retry } : { matches: null, complete: false, scopeAvailable: null, error: null, retry };
+  const parsed = scope === "all" ? null : parseResourceRef(scope);
+  const invalidScope = scope !== "all" && (!parsed || parsed.scheme !== "media" && parsed.scheme !== "library" && parsed.scheme !== "conversation");
+  const scopes: SearchScope[] = parsed && (parsed.scheme === "media" || parsed.scheme === "library" || parsed.scheme === "conversation")
+    ? [{ kind: parsed.scheme, id: parsed.id }] : [{ kind: "all", id: null }];
+  const families: SearchFamily[] | null = kinds === null ? null : [...kinds].filter(kind => kind !== "web").sort();
+  const query: Extract<AuthoredQuery, {kind: "search"}> | null = text === null || invalidScope ? null
+    : { kind: "search", text, cursor: null, limit: PAGE, scopes, families };
+  const prefix = useAuthoredPrefix(query, pages);
+  const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref }) => {
+    const kind = kindOf(resource);
+    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref })] : [];
+  }), [prefix.data, kinds, text]);
+  if (text !== null && invalidScope) return { matches: [], complete: true, scopeAvailable: false, error: null, retry: prefix.retry };
+  return { matches, complete: prefix.data?.next_cursor === null, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,
+    error: prefix.error, retry: prefix.retry };
 }

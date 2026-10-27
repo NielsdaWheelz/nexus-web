@@ -349,7 +349,7 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
     for (const stop of triggers) stop();
     generation++;
     again = false;
-    triggers = sources.map(source => store.subscribe({ kind: "annotations", source_ref: source, cursor: null, limit: 1 }, refresh));
+    triggers = sources.map(source => store.subscribe({ kind: "annotations", source_ref: source, cursor: null, limit: 1 }, refresh, reportError));
     refresh();
   }
 
