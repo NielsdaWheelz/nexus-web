@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
+from importlib import import_module
 from threading import Lock
 from typing import Literal
 
@@ -202,6 +203,8 @@ async def async_database_scope() -> AsyncIterator[None]:
     global _scope
     if _role is None:
         raise RuntimeError("bind a database role before opening its async scope")
+    # Driver import is CPU-only scope setup; engines and physical checkout stay lazy.
+    import_module("psycopg")
     with _sync_engine_lock:
         if _scope is not None:
             raise RuntimeError("an async database scope is already active")
