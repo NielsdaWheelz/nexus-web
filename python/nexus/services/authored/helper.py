@@ -2,6 +2,8 @@
 
 The account head lock serializes calls across API processes. A helper has no
 credentials, database or network capability supplied by this owner.
+The process exits with 2 for invalid input and 3 for input capacity; stderr is
+diagnostic text, never a failure discriminator. Other exits remain defects.
 """
 
 import json
@@ -57,10 +59,9 @@ def call(value: dict[str, Any]) -> Any:
         check=False,
         env={"NODE_ENV": "production", "PATH": "/usr/local/bin:/usr/bin:/bin"},
     )
-    if result.returncode != 0:
-        if "Semantic input exceeds process budget" in result.stderr:
-            raise ApiError(ApiErrorCode.E_INTERNAL, "Authored merge exceeds server capacity")
-        if "TypeError:" in result.stderr:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid authored change")
-        result.check_returncode()
+    if result.returncode == 3:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Authored merge exceeds server capacity")
+    if result.returncode == 2:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid authored change")
+    result.check_returncode()
     return json.loads(result.stdout)

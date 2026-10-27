@@ -1,7 +1,8 @@
 /** One-shot semantic process. This boundary closes request/command keys and
  * scalar shapes. Python producers supply nested semantic records; shared merge
  * validation and Python's closed result decoder admit their published effects.
- * The platform owns transactions and SQL publication. */
+ * Exit 2 rejects input, 3 exceeds the input budget, and 1 reports an unexpected
+ * failure. Stderr is diagnostic only. The platform owns SQL publication. */
 import { mergeChanges, isVisible } from "./src/merge.ts";
 import { createNoteIntent, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
 import { parseBody } from "./src/body.ts";
@@ -63,13 +64,6 @@ function corpus(value: unknown): Corpus {
   // justify-type-assertion: Python's closed Corpus decoder owns these nested state records.
   return states as unknown as Corpus;
 }
-let input = "";
-for await (const chunk of process.stdin) {
-  input += chunk;
-  if (Buffer.byteLength(input) > 12 * 1024 * 1024) throw new TypeError("Semantic input exceeds process budget");
-}
-const request = object(JSON.parse(input));
-let result;
 async function serverIntent(value: unknown, states: Corpus, account_id: string, context: CommandContext): Promise<Intent> {
   const command = serverCommand(value);
   if (command.kind === "batch") {
@@ -107,30 +101,49 @@ async function serverIntent(value: unknown, states: Corpus, account_id: string, 
   }
   return command;
 }
-switch (request.op) {
-  case "identity":
-    if (request.kind === "link") { closed(request, "op account_id kind endpoint_a endpoint_b"); result = { id: linkId(text(request.account_id), text(request.endpoint_a), text(request.endpoint_b)) }; }
-    else if (request.kind === "daily") { closed(request, "op account_id kind local_date"); result = { ref: `page:${dailyId(text(request.account_id), text(request.local_date))}` }; }
-    else throw new TypeError("Unknown semantic identity kind");
-    break;
-  case "prepare_server": {
-    closed(request, "op account_id states replica_id command_seq lamport command");
-    const account_id = text(request.account_id), states = corpus(request.states);
-    const context = { replica_id: text(request.replica_id), command_seq: text(request.command_seq), lamport: text(request.lamport) };
-    const command = await serverIntent(request.command, states, account_id, context);
-    const change = prepareChange(context, command, states);
-    await validateBindings(account_id, states, [change]);
-    result = { change, states: mergeChanges(states, [change]) };
-    break;
+async function main(): Promise<void> {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    input += chunk;
+    if (Buffer.byteLength(input) > 12 * 1024 * 1024) {
+      console.error("Semantic input exceeds process budget");
+      process.exitCode = 3;
+      return;
+    }
   }
-  case "merge": {
-    closed(request, "op account_id states changes");
-    if (!Array.isArray(request.changes)) throw new TypeError("Expected semantic changes");
-    const account_id = text(request.account_id), states = corpus(request.states);
-    // justify-type-assertion: Python's closed Change decoder owns nested change shapes; shared merge validates semantic effects.
-    const changes = request.changes as Change[];
-    await validateBindings(account_id, states, changes); result = mergeChanges(states, changes); break;
+  const request = object(JSON.parse(input));
+  let result;
+  switch (request.op) {
+    case "identity":
+      if (request.kind === "link") { closed(request, "op account_id kind endpoint_a endpoint_b"); result = { id: linkId(text(request.account_id), text(request.endpoint_a), text(request.endpoint_b)) }; }
+      else if (request.kind === "daily") { closed(request, "op account_id kind local_date"); result = { ref: `page:${dailyId(text(request.account_id), text(request.local_date))}` }; }
+      else throw new TypeError("Unknown semantic identity kind");
+      break;
+    case "prepare_server": {
+      closed(request, "op account_id states replica_id command_seq lamport command");
+      const account_id = text(request.account_id), states = corpus(request.states);
+      const context = { replica_id: text(request.replica_id), command_seq: text(request.command_seq), lamport: text(request.lamport) };
+      const command = await serverIntent(request.command, states, account_id, context);
+      const change = prepareChange(context, command, states);
+      await validateBindings(account_id, states, [change]);
+      result = { change, states: mergeChanges(states, [change]) };
+      break;
+    }
+    case "merge": {
+      closed(request, "op account_id states changes");
+      if (!Array.isArray(request.changes)) throw new TypeError("Expected semantic changes");
+      const account_id = text(request.account_id), states = corpus(request.states);
+      // justify-type-assertion: Python's closed Change decoder owns nested change shapes; shared merge validates semantic effects.
+      const changes = request.changes as Change[];
+      await validateBindings(account_id, states, changes); result = mergeChanges(states, changes); break;
+    }
+    default: throw new TypeError("Unknown semantic operation");
   }
-  default: throw new TypeError("Unknown semantic operation");
+  process.stdout.write(JSON.stringify(result));
 }
-process.stdout.write(JSON.stringify(result));
+try { await main(); }
+catch (error) {
+  console.error(error);
+  process.exitCode = error instanceof TypeError || error instanceof SyntaxError ? 2 : 1;
+}
