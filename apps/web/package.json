@@ -14,6 +14,7 @@
     "build:extension": "node scripts/build-extension.mjs",
     "gen:wire": "node scripts/gen-wire.mjs",
     "gen:chat-citations": "node scripts/gen-chat-citations.mjs",
+    "gen:authored-helper": "node scripts/gen-authored-helper.mjs",
     "build:android": "bun run build:authored && vite build --config vite.android.config.ts",
     "build:packaged": "bun run build:shelf && bun run build:android",
     "build:authored": "vite build --config vite.authored.config.ts"

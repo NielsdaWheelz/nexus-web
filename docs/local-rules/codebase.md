@@ -27,6 +27,10 @@ technology-ownership, import, and module-boundary model.
   host cache locking, real container creation and reference-aware tag retention.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
+`make setup` and ci install locked dependencies for `apps/web`, `node/authored`
+and `node/ingest`. the authored package's own install supplies module resolution
+for its shared source and semantic-helper generation/typechecking.
+
 ## web production build
 
 `apps/web/package.json` owns `bun run build`: `build:next` removes generated

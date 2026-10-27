@@ -53,7 +53,8 @@ shellcheck "${shell_files[@]}"
   bun run lint:css-tokens
   wire="$(mktemp)"
   citation_markers="$(mktemp)"
-  trap 'rm -f "$wire" "$citation_markers"' EXIT
+  authored_helper="$(mktemp)"
+  trap 'rm -f "$wire" "$citation_markers" "$authored_helper"' EXIT
   bun run gen:wire "$wire"
   cmp -s "$wire" src/lib/api/wire.gen.ts || {
     echo "error: src/lib/api/wire.gen.ts is stale; run: cd apps/web && bun run gen:wire" >&2
@@ -62,6 +63,11 @@ shellcheck "${shell_files[@]}"
   bun run gen:chat-citations "$citation_markers"
   cmp -s "$citation_markers" ../../python/nexus/services/chat/markdown_citations.mjs || {
     echo "error: markdown_citations.mjs is stale; run: cd apps/web && bun run gen:chat-citations" >&2
+    exit 1
+  }
+  bun run gen:authored-helper "$authored_helper"
+  cmp -s "$authored_helper" ../../node/authored/helper.mjs || {
+    echo "error: node/authored/helper.mjs is stale; run: cd apps/web && bun run gen:authored-helper" >&2
     exit 1
   }
   bun run lint
