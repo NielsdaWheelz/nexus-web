@@ -29,7 +29,7 @@ from sqlalchemy import text
 from nexus.db.session import get_session_factory, get_repeatable_read_db
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_chunking import Chunk, IndexableBlock
-from nexus.services.content_indexing import IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
+from nexus.services.content_indexing import JOB_KIND, IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
 from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from nexus.services.contributor_writes import MediaTarget, create_contributor
 from nexus.services.contributors import replace_observed_role_slices_batch
@@ -82,7 +82,7 @@ async def read(viewer, scope="all", q="labneedle", view="resources", kinds=("doc
     return (await discovery.search(viewer, query, phase="lexical", view=view, cursor=None,
         limit=50, deadline=asyncio.get_running_loop().time()+10)).model_dump(mode="json")
 
-def await_current_text(owner, *, witness):
+def await_current_text(owner, *, witness, preparation):
     until = time.monotonic() + 45
     while time.monotonic() < until:
         with factory() as db:
@@ -91,7 +91,25 @@ def await_current_text(owner, *, witness):
             if sections is not None and state is not None and state.lexical_revision == state.revision and state.section_bounds_key == sections.bounds_key and (not witness or state.section_witness_key == sections.witness_key):
                 return
         time.sleep(.25)
-    raise AssertionError("source lexical revision, witness or partition did not publish")
+    failure = AssertionError("source lexical revision, witness or partition did not publish")
+    try:
+        with factory() as db:
+            sections = _read_sections(db, owner)
+            state = db.execute(text("SELECT revision, lexical_revision, section_witness_key, section_bounds_key, status, status_reason, updated_at FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":owner}).mappings().one_or_none()
+            target = {"media_id":str(owner), "revision":None if state is None else state["revision"]}
+            jobs = db.execute(text("SELECT id, kind, payload->'revision' AS revision, status, error_code, last_error, available_at, attempts, max_attempts, claimed_by, lease_expires_at, started_at, finished_at, updated_at FROM background_jobs WHERE id=:job_id OR (kind=:kind AND payload @> CAST(:target AS jsonb)) ORDER BY created_at, id"), {"job_id":preparation.job_id, "kind":JOB_KIND, "target":json.dumps(target)}).mappings().all()
+        diagnostic = {"owner_ref":"media:"+str(owner), "require_witness":witness,
+            "preparation":{"job_id":str(preparation.job_id), "revision":preparation.revision},
+            "content_index_state":None if state is None else dict(state),
+            "observed_sections":None if sections is None else {"generation":sections.generation, "witness_key":sections.witness_key, "bounds_key":sections.bounds_key},
+            "jobs":[dict(job) for job in jobs]}
+        diagnostic_file = Path(context["artifacts_dir"]) / ("search-text-readiness-"+str(owner)+".private.json")
+        with os.fdopen(os.open(diagnostic_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+            json.dump(diagnostic, output, default=str)
+        failure.add_note("readiness diagnostics: "+str(diagnostic_file))
+    except Exception as diagnostic_error:
+        failure.add_note("readiness diagnostics failed: "+type(diagnostic_error).__name__+": "+str(diagnostic_error))
+    raise failure
 
 def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, end, words, prefix, suffix, publication):
     """One canonical authored highlight; its projection owns rows and search publication."""
@@ -181,13 +199,13 @@ if mode == "seed":
         preparation=prepare_media_parts(db,viewer_id=viewer,source_media_id=source,request=PartPrepare(id=uuid4(),expected_source_generation=generation))
         assert preparation.media_id==source
     print("seed_stage=await_initial_text", file=sys.stderr, flush=True)
-    await_current_text(source,witness=True)
+    await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=create_part", file=sys.stderr, flush=True)
     with factory() as db:
         receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece",form=None))
         assert receipt.media_id==part
     print("seed_stage=await_partition_text", file=sys.stderr, flush=True)
-    await_current_text(source,witness=True)
+    await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=share_part", file=sys.stderr, flush=True)
     with factory() as db:
         removal_revision=str(db.scalar(text("SELECT removal_revision FROM users WHERE id=:id"),{"id":viewer}))

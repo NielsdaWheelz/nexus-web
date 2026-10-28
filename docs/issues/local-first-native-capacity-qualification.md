@@ -14,13 +14,17 @@ retained-corpus diagnostic `20261027-164129-47acbb079667` measures186.7ms.
 all targets render and account/replica/sequence310/first64 pending commands stay
 unchanged. these are debugger-free diagnostics, not fresh-campaign acceptance.
 
-the remaining note-route read waterfall is resource → mounted outline query →
-admission snapshot. the current candidate composes one root-window read for
+30ef removes the note-route resource → mounted-outline waterfall and composes one
+root-window read for
 canonical note metadata, editor and active title, retaining actual pagination,
 branch provenance and admission's revision/byte fences. its metadata survives
 query-key changes; document admission still waits for the visible note view.
-the transient native pending-read shortcut is removed. verify editor/arrival/
-title behavior and installed performance before attributing any further gain.
+the transient native pending-read shortcut is removed. 44 affected browser
+controls and full apk build pass. the same retained50-target diagnostic
+`20261027-173558-37a61aab1186` measures161.1ms, still above150ms. every target,
+account/replica/sequence310 and pending bytes remain unchanged; hardware and
+canonical cleanup pass. inspect the remaining admission/monitor/paint path before
+another full campaign; no further bottleneck is established yet.
 
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
