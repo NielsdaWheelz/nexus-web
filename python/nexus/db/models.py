@@ -344,9 +344,6 @@ class MediaPart(Base):
     start_dom_edge: Mapped[Literal["before", "after"]] = mapped_column(Text)
     end_dom_path: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
     end_dom_edge: Mapped[Literal["before", "after"]] = mapped_column(Text)
-    form: Mapped[Literal["essay", "poem", "letter", "short_story", "section"] | None] = (
-        mapped_column(Text)
-    )
     version: Mapped[int] = mapped_column(BigInteger)
     word_count: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

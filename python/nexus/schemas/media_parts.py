@@ -10,7 +10,6 @@ from nexus.schemas.reader import NavigationTextRangeOut
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
-PartForm = Literal["essay", "poem", "letter", "short_story", "section"]
 PartBlockReason = Literal[
     "not_creator",
     "unsupported_source",
@@ -42,7 +41,6 @@ class PartCreate(_Closed):
     id: UUID
     selection: SectionSelection
     title: str = Field(min_length=1, max_length=1000)
-    form: PartForm | None
 
     @model_validator(mode="after")
     def nonblank_title(self) -> "PartCreate":
@@ -54,7 +52,6 @@ class PartCreate(_Closed):
 class PartUpdate(_Closed):
     expected_version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=1000)
-    form: PartForm | None
     selection: SectionSelection | None
 
     @model_validator(mode="after")
@@ -113,7 +110,6 @@ class PartFinding(_Closed):
     section_ids: list[str] = Field(min_length=1)
     verdict: Literal["independent_work", "uncertain", "not_independent"]
     title: str | None = Field(min_length=1, max_length=1000, pattern=r"\S")
-    form: PartForm | None
     contributors: list[PartContributorSlice] | None
     evidence: list[PartEvidence] = Field(max_length=32)
     uncertainty_reason: str | None = Field(max_length=2000)
@@ -197,7 +193,6 @@ class PartDefinition(_Closed):
     source_generation: int
     extent: NavigationTextRangeOut
     title: str
-    form: PartForm | None
     version: int
     body_generation: int
     selection: SectionSelection | None

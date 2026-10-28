@@ -76,7 +76,7 @@ from nexus.services.reader_text_slice import (
 )
 
 JOB_KIND = "discover_document_parts"
-PROMPT_VERSION = 7
+PROMPT_VERSION = 8
 _INPUT_BYTES = 256 * 1024
 _OUTPUT_BYTES = 64 * 1024
 # justify-polling: a waiting discovery observes an existing structural publication;
@@ -121,7 +121,7 @@ never invent offsets, missing ends or titles. independent_work requires a source
 title and supporting quotes. every evidence quote, for any verdict, must be an exact
 contiguous substring of text_blocks for its section_id. use short excerpts; never add
 quotation marks, punctuation or ellipses, and never quote a label as though it appeared
-in text_blocks. for not_independent use evidence=[] and null title, title_basis, form,
+in text_blocks. for not_independent use evidence=[] and null title, title_basis,
 contributors and uncertainty_reason. use title_basis=printed for a source-printed work
 title; an offered owned label qualifies only when it is that work title. a section number
 or movement label alone does not establish a work title. use title_basis=incipit for an
@@ -749,7 +749,6 @@ def _publish(
             part_id=new_uuid7(),
             extent=extent,
             title=finding.title,
-            form=finding.form,
             candidate=candidate,
             decision=None,
         )
