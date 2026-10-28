@@ -197,6 +197,7 @@ export interface NoteEditorProps {
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
   onEditorReady?(editor: NoteEditorHandle | null): void;
   onAttachmentActiveChange?(active: boolean): void;
+  onLinkInputActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
@@ -290,8 +291,16 @@ function NoteEditorContent(props: NoteEditorProps) {
   busy.current = attachment.value?.pending === true;
   const [linkVisible, setLinkVisible] = useState(false);
   const link = linkDraft.value;
-  const setLink = linkDraft.set;
-  const readLink = linkDraft.read;
+  const { set: setLinkDraft, read: readLink } = linkDraft;
+  const setLink = useCallback((value: LinkDialog | null) => {
+    latest.current.onLinkInputActiveChange?.(value !== null);
+    setLinkDraft(value);
+  }, [setLinkDraft]);
+  useLayoutEffect(() => { latest.current.onLinkInputActiveChange?.(link !== null); }, [link]);
+  useLayoutEffect(() => {
+    const report = latest.current.onLinkInputActiveChange;
+    return () => { if (!retainedInput) report?.(false); };
+  }, [retainedInput, readLink]);
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
   const attachmentActive = attachmentValue !== null;
   useLayoutEffect(() => { latest.current.onAttachmentActiveChange?.(attachmentActive); }, [attachmentActive]);

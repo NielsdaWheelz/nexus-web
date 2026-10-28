@@ -34,6 +34,19 @@ attached-note editing subsequently autosaves through the ordinary note owner.
 multiple notes remain independent; unlinking or deleting an annotation does not
 consume them. canceling a creation dialog commits nothing.
 
+enter and save finish explicit capture after the local commit, without waiting
+for upload. empty input creates a fresh highlight but adds nothing to an existing
+one. successful capture closes its own unchanged opening and returns to reading;
+later input, focus, navigation or child interaction keeps the newer work open.
+attached-note autosave, ensuring a highlight and color changes do not close it.
+
+local failure keeps the input and requires explicit retry of the original command.
+the composer observes its completion even when another writing surface retries it;
+only its own eligible retry may renew permission to close. settlement clears only
+the matching operation and failure. submitted text is consumed only at its original
+revision with no unfinished reference, hyperlink or attachment. hyperlink activity
+includes hidden retained input; hiding its form is not cancellation.
+
 hosted and downloaded readers share the annotation controller. local authored
 queries own annotation reads online as well as offline. sources already on the
 device remain annotatable without a network publication lookup. retained source

@@ -61,6 +61,7 @@ export interface ComposerDraft {
   operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" } | null;
   issue: DraftIssue | null;
   referenceActive: boolean;
+  linkInputActive: boolean;
   attachmentActive: boolean;
   sourceMediaId: string;
   sourceHasChats: boolean | null;

@@ -289,10 +289,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!draft || !opening) return null;
     const hasNote = bodyHasContent(draft.body);
     const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
+    const saving = failed ? draft.operation !== null : draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure";
     const blockedReason = failed ? "retry saving first. your words are kept."
       : sourceChanged ? "the source changed. your words are kept; select the passage again."
       : draft.chatIssue?.kind === "Passage" || draft.chatIssue?.kind === "Source" ? "select the passage again before saving or sending."
       : draft.attachmentActive ? "finish or discard the attachment before saving or sending."
+      : draft.linkInputActive ? "finish or cancel the link before saving or sending."
       : draft.referenceActive ? (isMobile ? "finish linking before using this action." : "finish linking or press escape to keep this as prose.")
       : draft.operation ? "finish or retry the current request first."
       : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
@@ -314,9 +316,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });
     // a failed local commit is retried as the same frozen command, never saved again.
-    const saveAction = failed ? command("RetryPassageSave", "retry saving", <Save size={16} aria-hidden="true" />, failed.retry, null)
+    const saveAction = failed ? command("RetryPassageSave", "retry saving", <Save size={16} aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
       : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save note",
-        <Save size={16} aria-hidden="true" />, composer.save, blockedReason ?? (draft.highlightId !== null && !hasNote ? "write a note to add it to this highlight." : null));
+        <Save size={16} aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write a note to add it to this highlight." : null));
     const newLabel = hasMessage ? "send in new chat" : "open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
@@ -352,7 +354,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
       {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
         : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
-      <SelectionAction action={saveAction} help={`${saveAction.label} · enter saves · shift-enter inserts a line`} busy={draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure"} />
+      <SelectionAction action={saveAction} help={failed ? "retry the pending save" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} />
       {canQuote ? <>
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} />
         {!isMobile ? <div className={styles.highlightControl}>
@@ -385,7 +387,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               body={draft.body} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
               reference={composer.reference()} placeholder={isMobile ? opening.mode === "Ask" ? "ask about this passage" : annotation?.notes.length ? "add another note…" : "write a note…" : "note or question…"} compact editable
               focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
-              onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive}
+              onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
               onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
               onContinueChat={canQuote ? () => composer.continueChat() : undefined}
@@ -393,7 +395,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           </PaneReturnVisitScope>
         </div>
         {failed ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
-          actions={[{ label: "retry", onClick: failed.retry }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
+          actions={[{ label: "retry saving", onClick: failed.retry, busy: saving, disabledReason: saving ? "saving on this device…" : undefined }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
         {canQuote ? <>
           {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "highlight saved; send not confirmed" : "this chat changed", message: commandRecovery.kind === "Unconfirmed" ? "the request may have succeeded." : "review this chat before sending again." }} announcement="Polite"
             actions={commandRecovery.kind === "Unconfirmed" ? [{ label: "retry same send", onClick: composer.retryChat }]
