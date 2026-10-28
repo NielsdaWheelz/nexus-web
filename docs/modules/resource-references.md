@@ -59,7 +59,8 @@ passage.
 
 ## presentation contract
 
-`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`. an
+`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing,
+authored_by_viewer}`. an
 activation is `{resource_ref, kind: route | external | none, href, unavailable_reason}`;
 a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
 `#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
@@ -78,8 +79,9 @@ every wire key is present and snake_case; absence is null.
 | `reference` | an embed note's stored label, or `embedded resource` |
 
 two row families compose the same resource facts. indexes serve collection panes,
-search and chat context: native title links, applicable bibliography,
-consumption and time, existing resource actions, and podcast-show artwork. indexes
+search and chat context through native links and applicable bibliography. collection
+and search rows retain consumption facts and resource quick actions; context
+shows literal target content, source provenance and minus/overflow controls. indexes
 never create outline sessions, disclosure or editors. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
@@ -211,19 +213,29 @@ bibliography once; index consumption composes separately. occurrence, location,
 evidence and relationship facts keep their own identity.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48.
-image alts share one budget. truncation respects graphemes and
-prefers word boundaries; flags describe omitted content. ellipses are rendering,
+image alts share one budget. truncation respects graphemes; flags describe omitted content. ellipses are rendering,
 never stored evidence. omitted quotation tails never touch a nonadjacent suffix.
 search match ranges address codepoints in a separate plain excerpt; no inserted
 emphasis markup enters saved evidence. geometry-only selections say `selected
 region`.
 
-annotations are independent notes attached by links. highlights initially disclose
-their attached notes; folding hides those children. no primary annotation lives
+annotations are independent notes attached by links. outlines initially disclose
+a highlight’s attached notes; folding hides those children. chat context shows
+every current attached-note preview immediately, in highlight-endpoint position
+then link-id order. each is an independent clipped native note link; the primary
+quote and source bibliography remain separate. no primary annotation lives
 in the preview payload. notes have no invented owning page. relationship
 rationale belongs to the occurrence. captured
 quotes never borrow today's colour, annotation or attribution; current annotations
 under a historical branch are labelled as current.
+
+context’s `ResourceIndexBody` renders the six body variants as literal compact
+content, omitting highlight surroundings. local `authoredPreview` projects
+canonical body nodes with the same 600-codepoint budget, grapheme boundaries,
+48-codepoint surroundings, image counts and sole-reference identity. full-body
+and search renderers retain their separate contracts. supporting content sits
+between the primary and metadata and may grow without a note-count cap; controls
+stay aligned with the primary. these rows do not use `UniformIndex`.
 
 ## controls and composition
 
@@ -246,8 +258,12 @@ cancel or lost ownership aborts the hold; a completed hold consumes its click.
 opening never executes. authorized exact unlink preserves both resources and all
 other edges. unavailable navigation can retain a focusable context-only bullet.
 provenance details keep useful creation/rationale; routine “linked by” is omitted.
-chat context uses an independent accessible remove control and its supplied
-aggregate `detach_context` mutation, never one arbitrarily chosen admission edge.
+chat context uses the shared minus icon button and its supplied aggregate
+`detach_context` mutation, never one arbitrarily chosen admission edge. uncertain
+retry retains that exact mutation; definitive refusal requires explicit refresh.
+removal recovers focus to the next usable primary, then the previous, then the pane
+landmark, only while the initiating control still owns focus. a missing writing
+runtime disables activation and explains why.
 
 lists use nested `ul/li` and labelled native controls. branches start collapsed and
 read one bounded exact adjacency hop. root filters never filter children. a

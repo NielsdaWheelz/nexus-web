@@ -81,6 +81,24 @@ export default function ResourceBody({ body, match = null }: { body: Body; match
   }
 }
 
+/** One literal line for context and attached-note links. */
+export function ResourceIndexBody({ body }: { body: Body }) {
+  switch (body.kind) {
+    case "media": return <MediaTitle subject={{ kind: "Stored", summary: body.media_summary }} />;
+    case "named": return body.title || "untitled";
+    case "passage": return <mark className={styles.exact} data-color={body.color ?? undefined}>{hasExcerpt(body.exact) ? <ExcerptText excerpt={body.exact} /> : "selected region"}</mark>;
+    case "prose": return <span className={body.format === "code" ? styles.code : undefined} style={{ whiteSpace: "inherit" }}>
+      {hasExcerpt(body.excerpt) ? <ExcerptText excerpt={body.excerpt} /> : "empty note"}
+      {body.image_count > 0 ? <span className={styles.bodyCount}> · {body.image_count === 1 ? "image" : `${body.image_count} images`}</span> : null}
+    </span>;
+    case "images": {
+      const alt = body.alts.find(value => value !== null && hasExcerpt(value));
+      return alt ? <ExcerptText excerpt={alt} /> : body.count === 1 ? "image" : `${body.count} images`;
+    }
+    case "reference": return body.label && hasExcerpt(body.label) ? <ExcerptText excerpt={body.label} /> : body.target_ref;
+  }
+}
+
 /** Distinct literal evidence keeps its own omission marks and codepoint ranges. */
 export function ResourceMatchEvidence({ match }: { match: ResourceMatch }) {
   return <div className={styles.matchEvidence}><ExcerptText excerpt={match.excerpt} match={match} /></div>;
