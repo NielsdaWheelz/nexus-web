@@ -31,5 +31,7 @@ attempts, and last index revision/lexical/witness/bounds plus observed section
 keys. the seed now writes an owner-specific private diagnostic artifact on that
 existing failure, using the actual preparation receipt and current owner/revision
 jobs. diagnostic capture failures remain notes on the original assertion. the
-45s loop and success predicate are unchanged. this diagnostic path is source-reviewed
-but unqualified; obtain actual evidence before proposing a queue or publisher fix.
+45s loop and success predicate are unchanged. the three retained checks pass on
+f73a4bf21 in `20261027-174235-aa5c53966f5e`, with canonical cleanup. the failure
+capture branch was not triggered; the earlier incident's cause remains unknown.
+obtain its job-state evidence before proposing a queue or publisher fix.
