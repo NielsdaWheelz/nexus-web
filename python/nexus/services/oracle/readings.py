@@ -20,7 +20,7 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.db.session import open_async_session
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
 from nexus.schemas.oracle import (
     OracleConcordanceOut,
@@ -263,8 +263,11 @@ async def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.
     db.commit()  # end the job's reads: no transaction spans the embedding call
     deadline = asyncio.get_running_loop().time() + 5
     async with asyncio.timeout_at(deadline):
-        embedding = await embed_text(question)
-        if embedding is None:
+        try:
+            embedding = await embed_text(question)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
             return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
         async with open_async_session() as ordinary:
             await ordinary.run_sync(

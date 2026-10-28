@@ -18,7 +18,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Never, cast
 from uuid import UUID
 
-from llm_tools import canonical_json_bytes
+from llm_tools import BoundaryFailure, canonical_json_bytes
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -341,6 +341,8 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
             purpose="foreground",
         )
     except ApiError as exc:
+        if exc.code is ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+            raise BoundaryFailure("ToolUnavailable") from exc
         _collapse(exc, ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_CONVERSATION_NOT_FOUND)
 
     def finish(_: Session) -> NexusSearchSuccess:
@@ -391,6 +393,8 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
             call.principal, query, (query.scope,), deadline=call.deadline, purpose="foreground"
         )
     except ApiError as exc:
+        if exc.code is ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+            raise BoundaryFailure("ToolUnavailable") from exc
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)
 
     def finish(_: Session) -> DocumentSearchSuccess:

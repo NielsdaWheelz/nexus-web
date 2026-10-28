@@ -22,9 +22,11 @@ from uuid import UUID
 
 from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
 from provider_runtime.retry import DEFAULT_RETRY
+from provider_runtime.types import TransientExhausted
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import reading_chunks_sql
 from nexus.services.embeddings import (
@@ -58,23 +60,30 @@ class ChunkDomain:
     eligible_count_lower_bound: int | None = None
 
 
-async def embed_text(q: str) -> Embedding | None:
-    """One cancellable foreground provider attempt, outside database admission.
+async def embed_text(q: str) -> Embedding:
+    """One required query embedding, outside database admission.
 
-    Expected provider failures return None for the caller's failure policy;
-    malformed vectors remain defects.
+    Missing configuration and transient exhaustion are modeled unavailability.
+    Other provider failures and malformed vectors remain defects. Callers skip
+    this operation entirely when semantics were not requested.
     """
     try:
         vectors = await embed_texts_async([q], retry=replace(DEFAULT_RETRY, max_attempts=1))
         return embedding_model(), vectors[0]
     except (NonGenerationCallFailed, CredentialMissing) as exc:
+        if isinstance(exc, NonGenerationCallFailed) and not isinstance(
+            exc.failure, TransientExhausted
+        ):
+            raise
         logger.warning(
             "search_semantic_embedding_unavailable",
             error=type(exc.failure).__name__
             if isinstance(exc, NonGenerationCallFailed)
             else type(exc).__name__,
         )
-        return None
+        raise ApiError(
+            ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE, "Related matches are unavailable."
+        ) from exc
 
 
 def _eligible(owner: str) -> str:

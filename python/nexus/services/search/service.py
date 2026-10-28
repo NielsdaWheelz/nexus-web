@@ -16,8 +16,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import get_repeatable_read_db
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.db.session import get_repeatable_read_db, open_async_session
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
@@ -80,11 +80,16 @@ def _page(
     embedding: Embedding | None,
     offset: int,
     limit: int,
+    *,
+    embedding_failure: ApiError | None = None,
 ) -> tuple[list[SearchResultOut], bool]:
     """One page of the merged order over the union of ``scopes`` (authorized even when no
-    family serves the query), and whether more follow."""
+    family serves the query), and whether more follow. A requested embedding failure
+    surfaces only after scope authorization."""
     for scope in scopes:
         authorize_scope(db, viewer_id, scope)
+    if embedding_failure is not None:
+        raise embedding_failure
     authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
     r = Retrieval(
         viewer_id=viewer_id,
@@ -122,20 +127,41 @@ async def search_scopes_async(
     if families is None:
         return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
     async with asyncio.timeout_at(deadline):
-        embedding = (
-            await embed_text(base.terms) if base.terms and _SEMANTIC & set(families) else None
-        )
+        embedding = None
+        embedding_failure = None
+        try:
+            if base.terms and _SEMANTIC & set(families):
+                embedding = await embed_text(base.terms)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
+            embedding_failure = exc
         limit = min(base.limit, MAX_LIMIT)
-        if purpose == "background":
-            # The provider is outside this background read's owned computation budget.
-            assert deadline is None
-            deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
-        assert deadline is not None
-        async with search_session_async(deadline=deadline, purpose=purpose) as database:
+        if embedding_failure is not None:
+            # Authorization precedes the provider error, without search admission
+            # or a background computation clock that could refund this failure.
+            session_scope = open_async_session()
+        else:
+            if purpose == "background":
+                assert deadline is None
+                deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
+            assert deadline is not None
+            session_scope = search_session_async(deadline=deadline, purpose=purpose)
+        async with session_scope as database:
             results, more = await database.run_sync(
                 lambda db: read_snapshot(
                     db,
-                    lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit),
+                    lambda s: _page(
+                        s,
+                        viewer_id,
+                        base,
+                        families,
+                        scopes,
+                        embedding,
+                        0,
+                        limit,
+                        embedding_failure=embedding_failure,
+                    ),
                     deadline=deadline,
                 )
             )
