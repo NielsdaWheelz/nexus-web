@@ -8,7 +8,7 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-browser recovery against `620acb2c4`: +965 authored runtime lines (1,196 added,
+browser recovery against `0f7d6ffa6`: +965 authored runtime lines (1,196 added,
 231 deleted). target-bound capture, source publication and import history retain
 the original media and filing; review and exact submission replay extend the
 existing extension owner. the migration adds 72 lines separately. generated wire

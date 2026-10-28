@@ -5,11 +5,11 @@ publishing a native x capture onto existing media changes its imports identity f
 rows for the same media. this undermines recovery in place and can invalidate
 an open original inspector. source-derived; no live reproduction.
 
-evidence: native x capture can publish a fresh attempt onto existing media in
-`python/nexus/services/media_upload_sessions.py:554-607`. imports emits every
-upload session at `python/nexus/services/imports.py:205-210` and suppresses the
-media ref whenever any session published it at `:211-215`. detail lookup at
-`:437-447` requires the exact ref to remain in that projection.
+evidence: `python/nexus/services/media_upload_sessions.py::confirm_session` admits a
+fresh attempt on a bound native x target. the `import_refs` relation in
+`python/nexus/services/imports.py:225` emits non-web-recovery upload sessions
+and suppresses their published media refs at `:230`. `read_import_detail`
+requires the exact ref to remain in that projection.
 
 reproduce: open a native x article's media import inspector, replace its
 content with a bound extension capture, then reread the original ref and list;
