@@ -56,6 +56,8 @@ selection scope while execution keeps the same catalog command ids.
   published geometry compares raw measurements to its frozen opening snapshot
   within 1/64 css pixel; it never rebases that snapshot. meaning and viewport
   remain exact. rounding buckets cannot define measurement equality.
+  available action sheets derive their fractional layout top from their fixed,
+  bottom-aligned backdrop and panel height, independently of entrance translation.
   non-menu highlight actions and metadata remedies own their visible read lifetimes and
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
@@ -75,6 +77,15 @@ selection scope while execution keeps the same catalog command ids.
   adds exactly one local fork from displayed activation, preserving location.
   that activation participates in menu subject identity, so a changed route
   retires the open menu.
+- menu section captions identify an otherwise hidden action target, never the
+  pane, occurrence, view, resource or client producer. unnamed sections retain
+  their order and separators; command names, choice names and disabled reasons
+  remain explicit. an owned authored resource supplies its label from the same
+  settled local projection as its verbs, admitted only for the invocation's
+  request. that label names local confirmations and both local and delayed source
+  groups. server arrival cannot rename the published target. nonempty delayed
+  source groups expose their caption visibly and accessibly inside their existing
+  width and scroll budget; loading, failed and empty regions keep status content.
 - a bullet relationship menu supplies no resource ref/fork. right-click,
   context-menu key, shift-f10 and stationary touch hold use the shared context
   anchor. native title link menus stay native. movement, scroll, cancellation,

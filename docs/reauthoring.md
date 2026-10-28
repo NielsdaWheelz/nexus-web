@@ -4,12 +4,19 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+overflow menu captions against `6d6a6799c`: +1 net authored runtime line
+(21 added, 20 deleted), all web. generic category/group-count caption policy and
+caller-supplied authored command titles are removed. the existing local projection
+names confirmations and source groups; the existing delayed region renders its
+meaningful caption. sheet geometry keeps fractional layout coordinates as that
+region grows. docs and disposable cases are excluded.
+
 direction, keep features (owner, 2026-10-13). every area is rewritten once, fresh, from a spec of its observable behaviour, and stops at its honest floor: no behaviour cut for a budget, no lines moved out of a slice to fit a cap. the 1/5 target is dropped; the reading kernel alone projects ~81k. earlier rewrites (player #534, reader #535, offline #502, dossiers #514, oracle #531, synapse #525, find #509, launcher #410) change only where a sweep crosses them. code that a feature or release session adds to an area after its rewrite is regrowth: it joins the queue as a re-slice, cut against the newest merged behaviour.
 
 ## counting
 
-x quote captures at snapshot `4d24988b7` against `84372f7eb` adds 2,932 authored
-runtime lines (5,242 added, 2,310 deleted): python +2,570, handwritten web +333,
+x quote captures against `fff2266c9` adds 2,951 authored
+runtime lines (5,271 added, 2,320 deleted): python +2,589, handwritten web +333,
 android +11 and shared `node/authored/src` +18. immutable capture fragments,
 selected occurrences and bounded admissions replace phantom x media, child-media
 quote/artifact states and media-owned x annotations. the existing index, queue,
