@@ -7,6 +7,8 @@ import MetadataResearchActions, {
 } from "@/components/media/MetadataResearchActions";
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
+import Button from "@/components/ui/Button";
+import { removeUploadSession } from "@/lib/imports/ingest";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -179,13 +181,15 @@ export default function ImportInspector({
       />
     );
   }
-  const { item, source_issues: issues, related_imports: related } = detail.data;
+  const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original } = detail.data;
   const mediaId = item.media_id;
   const metadata = item.obligations.metadata;
   const operation = metadata?.operation ?? null;
   const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
   const at = (value: string) => momentText(value, display);
   const primary = speaking(item);
+  const sourceOffer = item.obligations.source?.recovery;
+  const showOriginal = original !== null && !(sourceOffer?.kind === "BrowserCapture" && sourceOffer.source_url === original.source_url);
   return (
     <div className={styles.inspector}>
       {detail.error === null ? null : (
@@ -224,6 +228,11 @@ export default function ImportInspector({
           </p>
         ) : null}
       </header>
+      {showOriginal && original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
+      {captures.length > 0 ? <section className={styles.inspectorSection}>
+        <h3>pending captures</h3>
+        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} refresh={detail.refetch} />)}
+      </section> : null}
       {related.map((relatedImport) => {
         const { relation, item: sibling } = relatedImport;
         const sourceOutcome = relatedSourceOutcomeLine(item, relatedImport);
@@ -261,20 +270,27 @@ export default function ImportInspector({
         const slot = item.obligations[key];
         if (slot === null) return null;
         const recovery = recoveryLine(slot);
+        let title = (key === "source" ? sourceFailureLine(item) : null)
+          ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null);
+        if (slot.recovery?.kind === "BrowserCapture") {
+          if (slot.failure_code === "E_SOURCE_ACCESS_DENIED") title = "this page blocked the import.";
+          if (slot.failure_code === "E_SOURCE_NOT_READABLE") title = "no readable article was found.";
+        }
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
             <FeedbackStatus content={{
               tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
-              title: (key === "source" ? sourceFailureLine(item) : null) ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null),
+              title,
               message: [
-                slot.classification === "NeedsAttention" && slot.failure_code !== null
+                slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
                   ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
                 recovery,
                 slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
                   ? `choose the original file: ${item.original_filename}` : null,
               ].filter(Boolean).join(" ") || undefined,
             }} announcement="None" />
+            {slot.recovery?.kind === "BrowserCapture" ? <p>when the article is visible, use nexus capture to finish this import.</p> : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>
@@ -359,6 +375,35 @@ export default function ImportInspector({
       </details>
     </div>
   );
+}
+
+
+function PendingCapture({ capture, refresh }: {
+  capture: import("@/lib/api/wire").Schema<"PendingCapture">;
+  refresh: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  let label = `verification failed · ${capture.failure_code}`;
+  if (capture.state === "AwaitingBytes") label = "awaiting upload confirmation";
+  if (capture.state === "CapabilityExpired") label = "upload expired · E_UPLOAD_CAPABILITY_EXPIRED";
+  const discard = async () => {
+    setBusy(true);
+    try {
+      await removeUploadSession(capture.session_id);
+      setFailed(false);
+      refresh();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div>
+    <p>{label} · <Moment value={capture.accepted_at} /></p>
+    <Button disabled={busy} onClick={() => void discard()}>discard capture</Button>
+    {failed ? <p>couldn’t discard capture. try again.</p> : null}
+  </div>;
 }
 
 /**

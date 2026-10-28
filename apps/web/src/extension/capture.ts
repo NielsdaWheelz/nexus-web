@@ -45,7 +45,9 @@ export type TargetView =
       /** hostname only: signed query parameters are never displayed */
       host: string;
       previewText: string;
-      replacement: { title: string | null } | null;
+      purpose: { kind: "New" } | { kind: "Replacement"; title: string | null } | { kind: "Recovery"; candidate: Schema<"RecoveryCandidate"> };
+      webMatch: "None" | "Unique" | "Ambiguous";
+      webChoice: boolean;
     }
   | {
       kind: "document";
@@ -88,11 +90,15 @@ export interface ViewState {
   } | null;
   /** why nothing could be pinned, while no draft exists */
   unsupported: string | null;
+  checkingFailed: boolean;
 }
 
 export type Command =
   | { kind: "activate" }
   | { kind: "list_destinations" }
+  | { kind: "list_recovery_targets"; draftId: string; accountId: string; q: string; cursor: string | null }
+  | { kind: "retry_checking" }
+  | { kind: "stop_checking" }
   | { kind: "login" }
   | { kind: "retry" }
   | { kind: "review" }
@@ -103,6 +109,7 @@ export type Command =
 export type CommandResult =
   | { kind: "state"; state: ViewState }
   | { kind: "destinations"; snapshot: Schema<"LibraryDestinationsOut"> }
+  | { kind: "recovery_targets"; page: Schema<"RecoveryCandidatePage"> }
   | { kind: "failure"; failure: CaptureFailure };
 
 /** Selection and its save barrier share this port's ordered message stream. */
@@ -111,6 +118,7 @@ export type ViewCommand = {
   draftId: string;
   accountId: string;
 } & (
+  | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null }
   | { kind: "set_destination"; destination: LibraryDestination; included: boolean }
   | { kind: "save" }
 );

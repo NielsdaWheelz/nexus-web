@@ -105,6 +105,7 @@ export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "link";
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
+      readonly target?: "_blank";
       readonly restoreFocusOnClose?: boolean;
       readonly state?: never;
       readonly render?: never;

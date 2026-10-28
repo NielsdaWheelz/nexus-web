@@ -1,8 +1,9 @@
 """Imports wire contracts (`docs/modules/imports.md`).
 
-One import is an upload session (`upload:<session id>`, kept after publication) or a
-visible media with a source attempt or metadata job that no session of the viewer
-published (`media:<id>`). Its source, search and metadata obligations are independent; the
+One import is a standalone upload session (`upload:<session id>`, kept after publication)
+or a visible media with a source attempt or metadata job (`media:<id>`). A standalone
+published session owns its media's row; web recovery sessions leave the media row intact.
+Its source, search and metadata obligations are independent; the
 server classifies the import over them and names the one that speaks for it (`primary`).
 `ImportListQuery.normalized()` is the only filter identity a list cursor is bound to.
 """
@@ -17,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.extension_capture import CaptureTarget
 from nexus.schemas.import_history import HistoryEntry, ImportFailureCode, SafeFailureCode, Stage
 from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
@@ -53,6 +55,12 @@ class RepairSourceOffer(_Wire):
     input: SourceRecoveryInput
 
 
+class BrowserCaptureOffer(_Wire):
+    kind: Literal["BrowserCapture"] = "BrowserCapture"
+    source_url: str
+    target: CaptureTarget
+
+
 class RepairSearchOffer(_Wire):
     kind: Literal["RepairSearch"] = "RepairSearch"
     expected_revision: int = Field(ge=0)
@@ -72,7 +80,14 @@ class ImportObligation(_Wire):
     progress: SourceProgress | None
     next_retry_at: datetime | None
     failure_code: SafeFailureCode | None
-    recovery: RetryUploadOffer | RetrySourceOffer | RepairSourceOffer | RepairSearchOffer | None
+    recovery: (
+        RetryUploadOffer
+        | RetrySourceOffer
+        | RepairSourceOffer
+        | RepairSearchOffer
+        | BrowserCaptureOffer
+        | None
+    )
     unavailable_reason: RecoveryRestriction | None
 
 
@@ -121,10 +136,25 @@ class RelatedImport(_Wire):
     item: ImportItem
 
 
+class PendingCapture(_Wire):
+    session_id: UUID
+    state: Literal["AwaitingBytes", "VerificationFailed", "CapabilityExpired"]
+    accepted_at: datetime
+    expires_at: datetime
+    failure_code: SafeFailureCode | None
+
+
+class OriginalSource(_Wire):
+    source_url: str
+    source_label: str
+
+
 class ImportDetail(_Wire):
     item: ImportItem
     source_issues: list[SourceIssue]
     related_imports: list[RelatedImport]
+    pending_captures: list[PendingCapture]
+    original_source: OriginalSource | None
 
 
 class HistoryPage(_Wire):

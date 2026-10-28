@@ -23,8 +23,9 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.acquisition import AcquisitionGuard
+from nexus.schemas.capture_limits import WEB_ARTICLE_HTML_MAX_BYTES
 from nexus.services.url_normalize import validate_requested_url
-from nexus.services.web_article_structure import WEB_ARTICLE_HTML_MAX_BYTES
 
 ARTICLE_PACKET_MAX_BYTES = 4 * 1024 * 1024
 ARTICLE_SOURCE_HTML_MAX_BYTES = 64 * 1024
@@ -67,31 +68,59 @@ class LocalFile(_Strict):
     kind: Literal["LocalFile"] = "LocalFile"
 
 
-class XArticleNativeTarget(_Strict):
+class CaptureTarget(_Strict):
     media_id: UUID
     expected_source_attempt_id: UUID
     expected_reader_generation: int | None = Field(ge=1)
 
 
 class XArticleBinding(_Strict):
+    kind: Literal["XArticle"] = "XArticle"
     article_id: Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
-    native_target: XArticleNativeTarget | None
+    target: CaptureTarget | None
+
+
+class WebRecoveryBinding(_Strict):
+    kind: Literal["WebRecovery"] = "WebRecovery"
+    target: CaptureTarget
+    source_relation: Literal["ExactUrl", "AlternativeCopy"]
+
+
+CaptureBinding = Annotated[XArticleBinding | WebRecoveryBinding, Field(discriminator="kind")]
+
+
+class TargetSummary(_Strict):
+    title: str
+    source_label: str
+    source_url: str
+    accepted_at: datetime
+
+
+class RecoveryCandidate(_Strict):
+    binding: WebRecoveryBinding
+    summary: TargetSummary
+
+
+class RecoveryCandidatePage(_Strict):
+    items: list[RecoveryCandidate]
+    next_cursor: str | None
 
 
 class CaptureTargetOut(_Strict):
-    x_article_binding: XArticleBinding | None
-    target_title: str | None
+    capture_binding: CaptureBinding | None
+    target_summary: TargetSummary | None
+    web_match: Literal["None", "Unique", "Ambiguous"]
 
 
 class BrowserCapture(_Strict):
     kind: Literal["BrowserCapture"] = "BrowserCapture"
     source_url: RequestedUrl
     sha256: Sha256Hex
-    x_article_binding: XArticleBinding | None
+    capture_binding: CaptureBinding | None
 
 
 class CreateCaptureRequest(_Strict):
-    """``id`` is the extension's session id, minted once per draft and resent on retry."""
+    """The session id and capture intent are frozen at first dispatch."""
 
     id: UUID
     kind: Literal["web_article", "pdf", "epub"]
@@ -100,8 +129,23 @@ class CreateCaptureRequest(_Strict):
     content_type: Literal["application/pdf", "application/epub+zip", "application/json"]
     size_bytes: int = Field(gt=0)
     sha256: Sha256Hex
-    x_article_binding: XArticleBinding | None
+    capture_binding: CaptureBinding | None
     library_ids: Annotated[list[UUID], AfterValidator(_distinct)] = Field(default_factory=list)
+
+
+class AcquireCaptureRequest(AcquisitionGuard):
+    kind: Literal["Acquire"] = "Acquire"
+    generation: int = Field(ge=1)
+
+
+class RecoverCaptureRequest(_Strict):
+    kind: Literal["Recover"] = "Recover"
+    generation: int = Field(ge=1)
+
+
+ConfirmCaptureRequest = Annotated[
+    AcquireCaptureRequest | RecoverCaptureRequest, Field(discriminator="kind")
+]
 
 
 class ArticlePacket(_Strict):

@@ -75,6 +75,7 @@ export const ACTION_CATALOG = {
     group: "Navigate",
   },
   OpenSource: { label: "open source", icon: ExternalLink, group: "Navigate" },
+  BrowserCapture: { label: "open source in new tab", icon: ExternalLink, group: "Navigate" },
   OpenPodcastFeed: { label: "open feed", icon: Rss, group: "Navigate" },
   Metadata: { label: "metadata…", icon: Info, group: "Navigate" },
   Playback: {

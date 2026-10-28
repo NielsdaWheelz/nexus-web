@@ -19,8 +19,12 @@ import {
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
+import ChoicePicker from "@/components/ui/ChoicePicker";
 import type { Schema } from "@/lib/api/wire";
 import { useCollectionLayout } from "@/lib/ui/collection";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import {
   VIEW_PORT,
   setDestination,
@@ -67,8 +71,8 @@ const STATUS: Record<CapturePhase["kind"], string> = {
   review: "",
   failed: "",
   acquiring: "Reading the source…",
-  uploading: "Uploading…",
-  confirming: "Saving…",
+  uploading: "uploading capture…",
+  confirming: "submitting capture…",
   saved: "added to nexus",
 };
 
@@ -135,7 +139,7 @@ function Popup() {
     };
   }, []);
 
-  const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "save" }): boolean => {
+  const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null } | { kind: "save" }): boolean => {
     const current = connection.current;
     if (current === null || state === null || state.draft === null || state.account === null) return false;
     const sent: ViewCommand = { ...action, sequence: ++current.sequence, draftId: state.draft.id, accountId: state.account.userId };
@@ -197,17 +201,20 @@ function Popup() {
   const chosen = pending.reduce((destinations, edit) => edit.kind === "set_destination" && edit.draftId === draft?.id && edit.accountId === account?.userId
     ? setDestination(destinations, edit) : destinations, draft?.destinations ?? []);
   const saving = pending.some(edit => edit.kind === "save");
+  const selectingRecovery = pending.some(edit => edit.kind === "set_recovery_target" && edit.draftId === draft?.id && edit.accountId === account?.userId);
   const phase = draft?.phase ?? null;
   const openUrl = phase?.kind === "saved" ? phase.openUrl : null;
   const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
-  const replacement = draft?.target.kind === "article" ? draft.target.replacement : null;
+  const purpose = draft?.target.kind === "article" ? draft.target.purpose : { kind: "New" } as const;
+  const replacement = purpose.kind === "Replacement" ? purpose : null;
+  const recovery = purpose.kind === "Recovery" ? purpose : null;
+  const showRecoveryPicker = draft?.target.kind === "article" && draft.target.webChoice;
   const busySave = phase !== null && phase.kind !== "draft" && phase.kind !== "review";
   const captionScope = JSON.stringify([account?.userId ?? null, draft?.id ?? null]);
   const saveCaption = (saving || busySave) && submittedSaveCaption.current?.scope === captionScope ? submittedSaveCaption.current.label
-    : phase?.kind === "review" ? "save" : draft?.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save";
+    : phase?.kind === "review" ? "save" : draft?.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : recovery !== null ? "finish import" : "Save";
   const recaptureFailure = draft?.needsRecapture || captureFailure?.recovery === "Recapture";
   const retrying = retryFailure !== null;
-  const settled = phase?.kind === "saved" || phase?.kind === "failed";
   const kindLabel =
     draft === null
       ? ""
@@ -231,7 +238,7 @@ function Popup() {
             state.unsupported !== null
               ? {
                   tone: "Neutral",
-                  title: "This page can’t be saved",
+                  title: state.checkingFailed ? "couldn’t check this page" : "This page can’t be saved",
                   message: state.unsupported,
                 }
               : {
@@ -240,6 +247,7 @@ function Popup() {
                 }
           }
           announcement="Polite"
+          actions={state.checkingFailed ? [{ label: "retry checking", onClick: () => sendWithOrigins({ kind: "retry_checking" }) }] : undefined}
         />
       )}
 
@@ -275,10 +283,13 @@ function Popup() {
         </div>
       )}
 
-      {draft !== null ? (
+      {draft !== null && showRecoveryPicker ? <RecoveryPicker
+        key={`recovery:${account?.userId}:${draft.id}`} draft={draft} accountId={account?.userId ?? null} enabled={connected && draft.editable && !saving}
+        onSet={candidate => post({ kind: "set_recovery_target", candidate })} /> : null}
+      {draft !== null && recovery === null ? (
         <Destinations
           context={JSON.stringify([account?.userId ?? null, draft.id])}
-          key={`${account?.userId ?? "signed-out"}:${draft.id}`}
+          key={`destinations:${account?.userId ?? "signed-out"}:${draft.id}`}
           chosen={chosen}
           confirmed={draft.destinations}
           enabled={connected && draft.editable && !saving}
@@ -289,7 +300,7 @@ function Popup() {
       ) : null}
 
       {draft?.target.kind === "article" && draft.target.previewText !== "" ? (
-        <details className={styles.preview}>
+        <details className={styles.preview} open={recovery !== null || undefined}>
           <summary>Preview text</summary>
           <p className={styles.previewText}>{draft.target.previewText}</p>
         </details>
@@ -300,6 +311,11 @@ function Popup() {
           message: replacement.title ?? undefined }} announcement="Polite" />
       ) : null}
 
+      {recovery !== null && phase?.kind !== "saved" ? <section className={styles.destinations}>
+        <p>finish “{recovery.candidate.summary.title}”</p>
+        <p>{recovery.candidate.summary.source_label} · {new Date(recovery.candidate.summary.accepted_at).toLocaleDateString()}</p>
+        {recovery.candidate.binding.source_relation === "AlternativeCopy" ? <p>this page has a different address. use its captured text to finish “{recovery.candidate.summary.title}”.</p> : null}
+      </section> : null}
       {notice !== null ? (
         <FeedbackNotice
           content={notice}
@@ -310,27 +326,33 @@ function Popup() {
 
       {captureFailure ? (
         <FeedbackNotice
-          content={failureContent(captureFailure.failure,
-            captureFailure.recovery === "Check" ? "save not confirmed"
+          content={failureContent(captureFailure.recovery === "Check" ? { ...captureFailure.failure, message: "the request may have succeeded. if you stop checking, the import may still finish." } : captureFailure.failure,
+            captureFailure.failure.code === "E_CAPTURE_TARGET_CHANGED" ? "this import changed. capture the page again."
+              : captureFailure.recovery === "Check" ? "submission not confirmed"
               : captureFailure.recovery === "Review" ? "save needs review" : "capture not saved")}
           announcement="Assertive"
           returnFocus={() => frame.current}
           actions={
-            recaptureFailure && account !== null
+            captureFailure.recovery === "Check"
+              ? account !== null && !draft?.needsRecapture
+                ? [{ label: "check submission", onClick: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
+                    { label: "stop checking", onClick: () => send({ kind: "stop_checking" }), disabledReason: retrying ? "capture is being checked" : undefined }]
+                : [{ label: "stop checking", onClick: () => send({ kind: "stop_checking" }) }]
+              : recaptureFailure && account !== null
               ? [{ label: "capture again", onClick: () => send({ kind: "capture_again" }) },
                   { label: "discard", onClick: () => send({ kind: "discard" }) }]
               : captureFailure.recovery === "Review" && account !== null
               ? [{ label: "review and save", onClick: () => sendWithOrigins({ kind: "review" }), busy: retrying },
                   { label: "discard", onClick: () => send({ kind: "discard" }), disabledReason: retrying ? "save is being reviewed" : undefined }]
-              : (captureFailure.recovery === "Retry" || captureFailure.recovery === "Check") && account !== null
+              : captureFailure.recovery === "Retry" && account !== null
               ? [
                   {
-                    label: captureFailure.recovery === "Check" ? "check save" : "retry",
+                    label: "retry",
                     onClick: () => sendWithOrigins({ kind: "retry" }),
                     busy: retrying,
                   },
                   {
-                    label: "Discard",
+                    label: "discard capture",
                     onClick: () => send({ kind: "discard" }),
                     disabledReason: retrying ? "capture is being retried" : undefined,
                   },
@@ -340,17 +362,18 @@ function Popup() {
         />
       ) : null}
 
+      {captureFailure?.recovery === "Check" ? <p className={styles.fine}>the request may have succeeded. if you stop checking, the import may still finish.</p> : null}
       {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: phase.kind === "saved"
-        ? phase.openUrl === null ? "this item is no longer available" : replacement !== null ? "replacement submitted" : STATUS.saved
+        ? phase.openUrl === null ? "this item is no longer available" : recovery !== null ? "capture submitted" : replacement !== null ? "replacement submitted" : STATUS.saved
         : STATUS[phase.kind] }} announcement="Polite" /> : null}
 
       {draft === null ||
       phase === null ||
       phase.kind === "failed" ? null : phase.kind === "saved" ? (
         <>
-          {openUrl !== null ? <Button emphasis="strong" className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
-            Open in Nexus
-          </Button> : null}
+          {openUrl !== null ? <ButtonLink href={openUrl} target="_blank" rel="noopener noreferrer" emphasis="strong" className={styles.primary}>
+            {recovery !== null ? "view import" : "Open in Nexus"}
+          </ButtonLink> : null}
           <Button onClick={() => send({ kind: "capture_again" })}>
             capture again
           </Button>
@@ -376,7 +399,7 @@ function Popup() {
           </p>
           <Button
             emphasis="strong" className={styles.primary}
-            disabled={account === null || !connected || saving || (phase.kind !== "draft" && phase.kind !== "review")}
+            disabled={account === null || !connected || saving || selectingRecovery || (draft.target.kind === "article" && draft.target.webMatch === "Ambiguous" && recovery === null) || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
             aria-busy={phase.kind !== "draft" && phase.kind !== "review"}
           >
@@ -385,13 +408,13 @@ function Popup() {
         </>
       )}
 
-      {(draft !== null && !settled) || account !== null ? (
+      {(draft !== null && (phase?.kind === "draft" || phase?.kind === "review")) || account !== null ? (
         <div className={styles.secondary}>
-          {draft !== null && !settled ? (
+          {draft !== null && (phase?.kind === "draft" || phase?.kind === "review") ? (
             <Button
               onClick={() => send({ kind: "discard" })}
             >
-              Discard
+              discard capture
             </Button>
           ) : null}
           {account !== null ? (
@@ -405,6 +428,46 @@ function Popup() {
       ) : null}
     </main>
   );
+}
+
+
+function RecoveryPicker({ draft, accountId, enabled, onSet }: {
+  draft: NonNullable<ViewState["draft"]>; accountId: string | null; enabled: boolean;
+  onSet: (candidate: Schema<"RecoveryCandidate"> | null) => boolean;
+}) {
+  const [items, setItems] = useState<Schema<"RecoveryCandidate">[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [error, setError] = useState<CaptureFailure | null>(null);
+  const [loading, setLoading] = useState(false);
+  const serial = useRef(0);
+  const target = draft.target.kind === "article" ? draft.target : null;
+  const selected = target?.purpose.kind === "Recovery" ? target.purpose.candidate : null;
+  const load = (query: string, next: string | null) => {
+    if (accountId === null) return;
+    const request = ++serial.current;
+    setLoading(true);
+    void command({ kind: "list_recovery_targets", draftId: draft.id, accountId, q: query, cursor: next }).then(result => {
+      if (request !== serial.current) return;
+      setLoading(false);
+      if (result.kind === "recovery_targets") {
+        setItems(previous => next === null ? result.page.items : [...previous, ...result.page.items]);
+        setCursor(result.page.next_cursor); setError(null);
+      } else if (result.kind === "failure") setError(result.failure);
+    });
+  };
+  const choices = selected !== null && !items.some(item => item.binding.target.media_id === selected.binding.target.media_id) ? [selected, ...items] : items;
+  return <section className={styles.destinations}>
+    <p>{target?.webMatch === "Ambiguous" ? "choose the failed import to finish" : "finish a failed import…"}</p>
+    <ChoicePicker label="failed import" value={selected?.binding.target.media_id ?? null} disabled={!enabled}
+      onOpen={() => load(q, null)} onChange={id => { const item = choices.find(candidate => candidate.binding.target.media_id === id); if (item) onSet(item); }}
+      options={choices.map(item => ({ id: item.binding.target.media_id, label: item.summary.title,
+        detail: `${item.summary.source_label} · ${new Date(item.summary.accepted_at).toLocaleDateString()}`, unavailable_reason: null }))}
+      footer={<><input aria-label="search failed imports" value={q} onChange={event => { setQ(event.target.value); load(event.target.value, null); }} />
+        {error ? <Button onClick={() => load(q, null)}>retry checking</Button> : null}
+        {cursor !== null ? <Button disabled={loading} onClick={() => load(q, cursor)}>load more</Button> : null}</>} />
+    {selected !== null && target?.webMatch === "None" ? <Button disabled={!enabled} onClick={() => onSet(null)}>save as new</Button> : null}
+  </section>;
 }
 
 /** Firefox owns Escape for its native popup. Opening this inline chooser owns
@@ -505,6 +568,15 @@ function Destinations({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Popup />
+    <RenderEnvironmentProvider value={{
+      androidShell: false,
+      platform: /Mac|iPhone|iPad/u.test(navigator.platform) ? "mac" : /Win/u.test(navigator.platform) ? "windows" : /Linux/u.test(navigator.platform) ? "linux" : "other",
+      displayLocale: navigator.language,
+      displayTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      currentInstant: new Date().toISOString(),
+      navCollapsed: false,
+    }}>
+      <MobileViewportProvider><Popup /></MobileViewportProvider>
+    </RenderEnvironmentProvider>
   </StrictMode>,
 );

@@ -29,7 +29,7 @@ export type RecoveryOffer = NonNullable<ImportObligation["recovery"]>;
 /** A recovery of a media's own work (not a re-upload). */
 export type MediaRecoveryOffer = Exclude<
   RecoveryOffer,
-  { kind: "RetryUpload" }
+  { kind: "RetryUpload" | "BrowserCapture" }
 >;
 export type RecoveryRestriction = NonNullable<
   ImportObligation["unavailable_reason"]

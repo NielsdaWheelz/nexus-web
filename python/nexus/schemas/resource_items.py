@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.imports import (
+    BrowserCaptureOffer,
+    RepairSearchOffer,
+    RepairSourceOffer,
+    RetrySourceOffer,
+)
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
@@ -262,7 +267,8 @@ class RecoveryAction(_Action):
 
     kind: Literal["Recovery"] = "Recovery"
     offer: Annotated[
-        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer, Field(discriminator="kind")
+        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer | BrowserCaptureOffer,
+        Field(discriminator="kind"),
     ]
 
 

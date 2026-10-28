@@ -164,8 +164,9 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   const open = useOpenAction(item);
   const sourceOffer = item.obligations.source?.recovery ?? null;
   const searchOffer = item.obligations.search?.recovery ?? null;
-  const source = useRecoveryAction(item.media_id, sourceOffer?.kind === "RetryUpload" ? null : sourceOffer);
-  const search = useRecoveryAction(item.media_id, searchOffer?.kind === "RetryUpload" ? null : searchOffer);
+  const browserOffer = sourceOffer?.kind === "BrowserCapture" ? sourceOffer : null;
+  const source = useRecoveryAction(item.media_id, sourceOffer?.kind === "RetryUpload" || sourceOffer?.kind === "BrowserCapture" ? null : sourceOffer);
+  const search = useRecoveryAction(item.media_id, searchOffer?.kind === "RetryUpload" || searchOffer?.kind === "BrowserCapture" ? null : searchOffer);
   const upload = useUploadActions(item);
   const recovery = item.primary === "search" ? search : source;
   const metadata = item.obligations.metadata;
@@ -174,6 +175,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     {upload.input}
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
       ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
+      : browserOffer && item.primary === "source" ? <span data-import-shortcut=""><ButtonLink href={browserOffer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink></span>
       : recovery ? <span data-import-shortcut=""><RecoveryControl action={recovery} /></span> : null}
     {open.action ? <span data-import-shortcut=""><OpenControl item={item} action={open.action} /></span> : null}
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}
@@ -204,7 +206,8 @@ export function ImportObligationActions({ item, obligation }: {
   readonly obligation: "source" | "search";
 }) {
   const offer = item.obligations[obligation]?.recovery ?? null;
-  const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" ? null : offer);
+  const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" || offer?.kind === "BrowserCapture" ? null : offer);
+  if (offer?.kind === "BrowserCapture") return <ButtonLink href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
   if (item.media_id === null) return obligation === "source" ? <UploadActions item={item} /> : null;
   return action ? <RecoveryControl action={action} /> : null;
 }

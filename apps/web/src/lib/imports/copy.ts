@@ -46,8 +46,6 @@ export interface FailureCopy {
   readonly title: string;
   /** What the reader can understand or do about the cause. */
   readonly explanation: string;
-  /** The original page can help where Nexus could not (the media banner's Open source). */
-  readonly recovery?: "OpenOriginal";
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
@@ -197,7 +195,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "This page blocked the import.",
     explanation:
       "Open the original page in your browser and use Nexus Capture there.",
-    recovery: "OpenOriginal",
   },
   E_SOURCE_FETCH_FAILED: {
     reason: "Source could not be fetched",
@@ -219,7 +216,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "No readable content found",
     title: "No readable content was found.",
     explanation: "Try another copy of this source with readable content.",
-    recovery: "OpenOriginal",
   },
   E_SOURCE_POSITION_UNMAPPABLE: {
     reason: "a saved reading spot has no clear match",
@@ -287,13 +283,11 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "article unavailable through x’s api",
     title: "article unavailable through x’s api",
     explanation: "x did not provide a complete structured article. open the original on x.",
-    recovery: "OpenOriginal",
   },
   E_X_ARTICLE_IDENTITY_CHANGED: {
     reason: "the post now points to a different article",
     title: "this post’s article changed",
     explanation: "refresh the related thread to inspect the article now linked by this post.",
-    recovery: "OpenOriginal",
   },
   E_X_IDENTITY_CONFLICT: {
     reason: "saved threads overlap",
@@ -464,6 +458,10 @@ function statusLine(
 ): string {
   const source = item.obligations.source;
   if (item.primary === "source" && item.classification === "NeedsAttention") {
+    if (source?.recovery?.kind === "BrowserCapture") {
+      if (source.failure_code === "E_SOURCE_ACCESS_DENIED") return "this page blocked the import.";
+      if (source.failure_code === "E_SOURCE_NOT_READABLE") return "no readable article was found.";
+    }
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
@@ -642,6 +640,7 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
 };
 
 function offerLine(offer: RecoveryOffer): string {
+  if (offer.kind === "BrowserCapture") return "when the article is visible, use nexus capture to finish this import.";
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":

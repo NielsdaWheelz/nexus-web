@@ -104,8 +104,6 @@ function MediaInfo({
     kind: "Source",
     processingStatus: media.processing_status,
     lastErrorCode: media.last_error_code,
-    capabilities: media.capabilities,
-    sourceUrl: media.canonical_source_url,
   });
   const retrievalFailure = mediaErrorMessage({
     kind: "Retrieval",

@@ -37,7 +37,7 @@ export interface FeedbackContent {
 /** commandKey names an exact command, so a held control never silently changes meaning. */
 export type FeedbackAction =
   | { label: string; onClick: (intent: OpenIntent) => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never; onActivate?: never }
-  | { label: string; href: string; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
+  | { label: string; href: string; target?: "_blank"; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
 export type FeedbackActions = readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
 export interface FeedbackProps {
   content: FeedbackContent;
@@ -275,6 +275,8 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
     {shown.href !== undefined ? <ButtonLink
       {...events}
       href={shown.href}
+      target={shown.target}
+      rel={shown.target === "_blank" ? "noopener noreferrer" : undefined}
       className={styles.control}
       data-workspace-rich-target={shown.onActivate ? "true" : undefined}
       aria-disabled={blocked || undefined}

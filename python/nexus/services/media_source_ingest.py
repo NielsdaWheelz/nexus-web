@@ -30,7 +30,7 @@ from uuid import UUID
 from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import (
     Media,
     MediaFile,
@@ -452,7 +452,49 @@ def _accept_url(
     spec = url_source_spec(url)
     if (key := _identity_key(spec)) is not None:
         sa.lock_identity(db, key)
-    media = _reusable_media(db, spec)
+    owned_web = False
+    media = None
+    if spec.source_type == st.GENERIC_WEB_URL and library_ids is not None:
+        # The first generic attempt freezes the normalized original admission URL.
+        matches = list(
+            db.scalars(
+                select(Media)
+                .where(
+                    Media.created_by_user_id == actor_id,
+                    Media.kind == "web_article",
+                    Media.canonical_url.is_(None),
+                    Media.requested_url.is_not(None),
+                    ~exists().where(MediaTeardownIntent.media_id == Media.id),
+                    text(
+                        "(SELECT source_type FROM media_source_attempts a WHERE a.media_id=media.id ORDER BY attempt_no LIMIT 1) = 'generic_web_url'"
+                    ),
+                    text(
+                        "(SELECT canonical_source_url FROM media_source_attempts a WHERE a.media_id=media.id ORDER BY attempt_no LIMIT 1) = :original_url"
+                    ),
+                    text(f"media.id IN ({visible_media_ids_cte_sql()})"),
+                )
+                .params(original_url=spec.canonical_source_url, viewer_id=actor_id)
+                .limit(2)
+            )
+        )
+        if len(matches) > 1:
+            raise ConflictError(
+                ApiErrorCode.E_SOURCE_TARGET_AMBIGUOUS,
+                "several imports use this address. choose the import in imports.",
+            )
+        if matches:
+            media = matches[0]
+            owned_web = True
+            library_entries.lock_media_rows_in_order(db, [media.id])
+            db.refresh(media)
+            latest = sa.latest_attempt(db, media.id, lock=False)
+            if latest is not None and latest.status in st.IN_FLIGHT:
+                raise ConflictError(
+                    ApiErrorCode.E_SOURCE_IMPORT_ACTIVE,
+                    "this source is already importing. view its import.",
+                )
+    if media is None:
+        media = _reusable_media(db, spec)
     if media is None:
         media = _new_media(db, spec, url=url, actor_id=actor_id)
         if library_ids is not None:
@@ -524,6 +566,23 @@ def _accept_url(
             sa.enqueue_attempt(db, attempt, actor_id=actor_id, request_id=request_id)
             return _from_url_out(db, attempt, id)
     settled = st.FAILED if media.processing_status == ProcessingStatus.failed else st.SUCCEEDED
+    if owned_web and latest is not None:
+        attempt = sa.create_attempt(
+            db,
+            id=id,
+            media=media,
+            actor_id=actor_id,
+            source_type=latest.source_type,
+            requested_url=latest.requested_url,
+            canonical_source_url=latest.canonical_source_url,
+            provider=latest.provider,
+            provider_target_ref=latest.provider_target_ref,
+            payload=latest.source_payload,
+            status=settled,
+            failure_code=latest.error_code,
+            failure_message=latest.error_message,
+        )
+        return _from_url_out(db, attempt, id)
     attempt = _url_attempt(
         db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload, status=settled
     )
