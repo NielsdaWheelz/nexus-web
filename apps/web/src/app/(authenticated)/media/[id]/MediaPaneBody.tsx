@@ -981,7 +981,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         }}
         apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
-        renderPostActions={(unit) => unit.xPost ? <PostActions key={unit.id} post={unit.xPost} /> : null}
+        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} reader={reader} /> : null;

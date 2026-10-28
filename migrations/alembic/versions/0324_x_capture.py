@@ -7,6 +7,7 @@ not rewritten. Downgrade requires a matched backup and client restore.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import time
@@ -73,6 +74,14 @@ def upgrade() -> None:
         capture_id uuid NOT NULL REFERENCES x_post_captures(id), UNIQUE(grant_id,capture_id))""")
     op.execute(
         "ALTER TABLE fragments ADD COLUMN x_post_capture_id uuid REFERENCES x_post_captures(id)"
+    )
+    op.drop_constraint("fragments_media_id_fkey", "fragments", type_="foreignkey")
+    op.create_foreign_key(
+        "fragments_media_id_fkey", "fragments", "media", ["media_id"], ["id"]
+    )
+    op.alter_column("fragments", "media_id", nullable=True)
+    op.create_unique_constraint(
+        "uq_fragments_x_post_capture_id", "fragments", ["x_post_capture_id"]
     )
     op.execute(
         "ALTER TABLE document_embeds ADD COLUMN target_x_post_capture_id uuid REFERENCES x_post_captures(id)"
@@ -419,9 +428,100 @@ def _convert_workspace(db: sa.Connection) -> None:
             )
         return candidates[0]
 
+    def new_identity(
+        reading: str, account: object, source_only: bool, generation: int
+    ) -> str:
+        source = mappings.get(reading)
+        if source_only:
+            assert source is not None
+            primary = [(str(source["capture_id"]), source["capture_id"])]
+        else:
+            primary = [
+                (str(r.id), r.capture_id)
+                for r in db.execute(
+                    sa.text("""SELECT id,capture_id
+                FROM x_thread_posts WHERE thread_media_id=CAST(:id AS uuid) ORDER BY ordinal"""),
+                    {"id": reading},
+                )
+            ]
+            if not primary:
+                binding = db.scalar(
+                    sa.text(
+                        "SELECT capture_id FROM x_post_media WHERE media_id=CAST(:id AS uuid)"
+                    ),
+                    {"id": reading},
+                )
+                if binding is not None:
+                    primary = [(reading, binding)]
+            if not primary:
+                primary = [
+                    (str(r.id), r.target_x_post_capture_id)
+                    for r in db.execute(
+                        sa.text("""SELECT e.id,e.target_x_post_capture_id
+                    FROM document_embeds e JOIN fragments f ON f.id=e.fragment_id
+                    WHERE e.media_id=CAST(:id AS uuid) AND e.provider='x' AND e.embed_kind='post'
+                      AND e.target_x_post_capture_id IS NOT NULL AND e.canonical_end_offset IS NOT NULL
+                    ORDER BY f.idx,e.canonical_end_offset,e.document_order_key"""),
+                        {"id": reading},
+                    )
+                ]
+        revisions = set(
+            db.scalars(
+                sa.text(
+                    "SELECT source_revision_id FROM x_post_captures WHERE id=ANY(:ids)"
+                ),
+                {"ids": [capture for _, capture in primary]},
+            )
+        )
+        is_native = (
+            source_only
+            or source is not None
+            or bool(
+                db.scalar(
+                    sa.text(
+                        "SELECT EXISTS(SELECT 1 FROM x_thread_sources WHERE media_id=CAST(:id AS uuid))"
+                    ),
+                    {"id": reading},
+                )
+            )
+        )
+        units = []
+        for unit_id, capture_id in primary:
+            units.append(f"{unit_id}:{capture_id}")
+            contexts = db.execute(
+                sa.text("""SELECT c.relation,c.referenced_revision_id,c.target_capture_id
+                FROM x_post_capture_contexts c JOIN x_post_capture_admissions a
+                  ON a.capture_id=c.target_capture_id AND a.user_id=:account
+                WHERE c.capture_id=:capture AND c.target_capture_id IS NOT NULL ORDER BY c.ordinal"""),
+                {"account": account, "capture": capture_id},
+            ).mappings()
+            for context in contexts:
+                if (
+                    is_native
+                    and not source_only
+                    and context["relation"] == "replied_to"
+                    and context["referenced_revision_id"] in revisions
+                ):
+                    continue
+                child_id = old_occurrence(
+                    capture_id,
+                    context["target_capture_id"],
+                    unit_id,
+                    context["relation"],
+                )
+                units.append(f"{child_id}:{context['target_capture_id']}")
+        digest = hashlib.sha256("\n".join(units).encode()).hexdigest()[:24]
+        return (
+            f"capture:{source['capture_id']}:{digest}"
+            if source_only
+            else f"g{generation + 1}:x{digest}"
+            if units
+            else f"g{generation + 1}"
+        )
+
     rows = list(
         db.execute(
-            sa.text("SELECT id,state FROM workspace_sessions ORDER BY id")
+            sa.text("SELECT id,user_id,state FROM workspace_sessions ORDER BY id")
         ).mappings()
     )
     for row in rows:
@@ -584,10 +684,8 @@ def _convert_workspace(db: sa.Connection) -> None:
                         raise RuntimeError(
                             f"0324 workspace {row['id']} has unsupported reader destination"
                         )
-                    destination["source_identity"] = (
-                        f"capture:{mapping['capture_id']}"
-                        if retired
-                        else f"g{generation + 1}"
+                    destination["source_identity"] = new_identity(
+                        media, row["user_id"], retired, generation
                     )
                     query = [
                         (
@@ -1483,16 +1581,8 @@ def _convert_schema(db: sa.Connection) -> None:
           FROM jsonb_array_elements_text(ts.coverage->'unchecked_primary_post_media_ids')
                WITH ORDINALITY AS ord(media_id, ordinality)
           JOIN x_post_sources xp ON xp.media_id::text=ord.media_id), '[]'::jsonb))""")
-    op.drop_constraint("fragments_media_id_fkey", "fragments", type_="foreignkey")
-    op.create_foreign_key(
-        "fragments_media_id_fkey", "fragments", "media", ["media_id"], ["id"]
-    )
-    op.alter_column("fragments", "media_id", nullable=True)
     op.execute("""UPDATE fragments f SET media_id=NULL,x_post_capture_id=map.capture_id
         FROM x_capture_map map WHERE f.id=map.fragment_id""")
-    op.create_unique_constraint(
-        "uq_fragments_x_post_capture_id", "fragments", ["x_post_capture_id"]
-    )
     if db.scalar(
         sa.text("""SELECT count(*) FROM fragments
         WHERE (media_id IS NULL) = (x_post_capture_id IS NULL)

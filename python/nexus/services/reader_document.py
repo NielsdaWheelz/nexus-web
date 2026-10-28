@@ -784,7 +784,9 @@ def _native_x_units(
         db.execute(
             text("SELECT id, post_id FROM x_post_captures WHERE id=ANY(:ids)"),
             {"ids": [capture for _, capture in members]},
-        ).tuples()
+        )
+        .tuples()
+        .all()
     )
     units: list[ReaderUnitOut] = []
     for occurrence, capture in members:

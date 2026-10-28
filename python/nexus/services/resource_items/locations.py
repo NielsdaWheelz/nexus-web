@@ -442,7 +442,7 @@ def media_passages(
 
     capture_rows = db.execute(
         text(f"""
-            WITH readable AS ({readable_x_capture_ids_sql()}), requested AS (
+            WITH readable AS ({readable_x_capture_ids_sql()}), capture_candidates AS (
                 SELECT 'fragment' AS scheme,f.id,f.id AS fragment_id,f.x_post_capture_id AS capture_id,
                     f.canonical_text AS exact,''::text AS prefix,''::text AS suffix,NULL::text AS color,
                     0 AS lo,char_length(f.canonical_text) AS hi
@@ -475,13 +475,13 @@ def media_passages(
                   AND cc.summary_locator->>'capture_id'=f.x_post_capture_id::text
                   AND cc.summary_locator->>'fragment_id'=f.id::text
             )
-            SELECT requested.* FROM requested JOIN readable ON readable.capture_id=requested.capture_id
-            JOIN fragments retained ON retained.id=requested.fragment_id
+            SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
+            JOIN fragments retained ON retained.id=capture_candidates.fragment_id
             WHERE lo>=0 AND lo<hi AND hi<=char_length(retained.canonical_text)
-              AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=requested.exact
-              AND (CAST(:owners AS jsonb)->>(scheme||':'||id::text) IS NULL OR EXISTS (
-                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(scheme||':'||id::text))::uuid AS media_id")}) occurrence
-                WHERE occurrence.capture_id=requested.capture_id
+              AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=capture_candidates.exact
+              AND (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text) IS NULL OR EXISTS (
+                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text))::uuid AS media_id")}) occurrence
+                WHERE occurrence.capture_id=capture_candidates.capture_id
             ))
         """),
         {

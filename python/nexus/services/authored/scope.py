@@ -136,7 +136,7 @@ def _ctes() -> str:
             FROM scope_libraries library CROSS JOIN LATERAL ({library}) expanded
             JOIN readings reading ON reading.media_id=expanded.media_id
         ),
-        conversations AS MATERIALIZED ({visible_conversation_ids_cte_sql()}),
+        scope_conversations AS MATERIALIZED ({visible_conversation_ids_cte_sql()}),
         capture_readings AS MATERIALIZED (
             SELECT f.id AS fragment_id,f.x_post_capture_id AS capture_id,f.idx,char_length(f.canonical_text) AS size
             FROM fragments f JOIN ({captures}) readable ON readable.capture_id=f.x_post_capture_id
@@ -188,7 +188,7 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         UNION ALL SELECT 'scope:library:'||id::text,
             jsonb_build_object('kind','scope','scope_ref','library:'||id::text) FROM scope_libraries
         UNION ALL SELECT 'scope:conversation:'||conversation_id::text,
-            jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM conversations
+            jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM scope_conversations
         UNION ALL SELECT 'workspace:'||workspace.media_id::text,
             jsonb_build_object('kind','workspace_member','reading_ref','media:'||workspace.media_id::text)
             FROM workspace JOIN readings reading ON reading.media_id=workspace.media_id
@@ -198,7 +198,7 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
             jsonb_build_object('kind','library_member','library_ref','library:'||library_id::text,'reading_ref','media:'||media_id::text) FROM library_members
         UNION ALL SELECT DISTINCT 'context:'||e.source_id::text||':'||e.target_scheme||':'||e.target_id::text,
             jsonb_build_object('kind','conversation_fact','conversation_ref','conversation:'||e.source_id::text,'target_ref',e.target_scheme||':'||e.target_id::text)
-            FROM resource_edges e JOIN conversations c ON c.conversation_id=e.source_id
+            FROM resource_edges e JOIN scope_conversations c ON c.conversation_id=e.source_id
             WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'
                 AND e.origin IN ('citation','system') AND e.ordinal IS NULL AND e.authored_visible
         UNION ALL SELECT 'capture-reading:'||fragment_id::text,

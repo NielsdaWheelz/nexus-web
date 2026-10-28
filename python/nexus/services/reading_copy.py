@@ -2,9 +2,10 @@
 
 ``reader.json`` is ``{"media": {id, title, kind}, "document": ReaderDocumentOut}``,
 the document as ``GET /media/{id}/reader`` builds it, except that a pdf's
-``file.url`` names the member ``document.pdf`` and web article images become
-text placeholders (offline web articles are text-only). The zip also carries
-``document.pdf`` (pdf) or ``assets/{asset_key}`` (epub).
+``file.url`` names the member ``document.pdf`` and ordinary web article images
+become placeholders. Archived X capture images are included with their exact
+selected capture identities. The zip also carries ``document.pdf`` (pdf),
+``assets/{asset_key}`` (epub), or ``x-assets/{asset_id}.{extension}``.
 """
 
 from __future__ import annotations

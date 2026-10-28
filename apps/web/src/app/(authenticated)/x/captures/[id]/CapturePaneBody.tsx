@@ -97,7 +97,7 @@ function CaptureReader({ id }: { readonly id: string }) {
     {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
     <DocumentReaderView reader={reader} profile={profile} isMobile={mobile} playback={null}
       decorations={annotations.decorations} onSelection={annotations.onSelection} onMarks={annotations.onMarks}
-      renderPostActions={unit => unit.xPost ? <PostActions post={unit.xPost} /> : null} />
+      renderPostActions={unit => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null} />
     {annotations.panel}{annotations.list}
     {doc?.kind === "text" ? <ResourceOutlineList scope={`capture-sources:${id}`} ariaLabel="source connections">
       {[...new Set(doc.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.fragment_id] : []))].map(fragment =>
