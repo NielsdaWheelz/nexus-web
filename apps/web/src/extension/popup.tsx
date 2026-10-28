@@ -326,10 +326,11 @@ function Popup() {
 
       {captureFailure ? (
         <FeedbackNotice
-          content={failureContent(captureFailure.recovery === "Check" ? { ...captureFailure.failure, message: "the request may have succeeded. if you stop checking, the import may still finish." } : captureFailure.failure,
-            captureFailure.failure.code === "E_CAPTURE_TARGET_CHANGED" ? "this import changed. capture the page again."
-              : captureFailure.recovery === "Check" ? "submission not confirmed"
-              : captureFailure.recovery === "Review" ? "save needs review" : "capture not saved")}
+          content={captureFailure.recovery === "Check"
+            ? { tone: "Danger", title: "submission not confirmed", requestId: captureFailure.failure.requestId ?? undefined }
+            : failureContent(captureFailure.failure,
+                captureFailure.failure.code === "E_CAPTURE_TARGET_CHANGED" ? "this import changed. capture the page again."
+                  : captureFailure.recovery === "Review" ? "save needs review" : "capture not saved")}
           announcement="Assertive"
           returnFocus={() => frame.current}
           actions={
