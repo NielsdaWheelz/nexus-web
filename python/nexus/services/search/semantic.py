@@ -2,8 +2,9 @@
 
 The publisher supplies one active vector per current ready chunk. A bounded count
 routes through 25,000 chunks to exact scoring; larger domains use ordered IVF
-candidates. Tight distance bounds use eight probes, broader bounds 128. ANN
-membership is approximate; returned scores and distance bounds use original floats.
+candidates. Tight distance bounds use eight probes, broader bounds 128. ANN uses
+normalized half inner product only for access; original floats own scores/radii.
+Stored and query originals have finite components and l2 norm in [0.5, 2].
 Each domain owns its eligibility predicate over ``cc`` and its independent result
 window. ANN domains share one ordered scan; exact domains retain complete scoring.
 Count proofs may come only from a stronger domain in this same snapshot, audience
@@ -13,6 +14,7 @@ and calibrated model. Callers own distinct parameter names across domains.
 from __future__ import annotations
 
 import time
+from bisect import insort
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -143,8 +145,10 @@ def nearest_chunks(
 
     Only a caller-proved subset count above the cutoff skips that domain's count.
     Unknown or unsaturated bounds retain normal routing. ANN domains share one
-    uncapped raw cursor with independent admission flags and result limits; stop
-    only when every ANN window is full, the radius is crossed or the scan ends.
+    uncapped raw cursor and independent original-score top-k windows. The selected
+    half stream can reorder originals; stop only beyond every window's original
+    threshold plus the conservative .01 access-key error bound, or at stream end.
+    Noniterative IVF preserves one ordered batch across the fixed selected lists.
     The cursor closes inside this caller-owned snapshot, including on cancellation.
     """
     logger.info("search.nearest_chunks.begin", mono_ns=time.monotonic_ns())
@@ -201,6 +205,13 @@ def nearest_chunks(
             return near
         probes = 8 if maximum_distance <= 1 - 0.80 else 128
         db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
+        db.execute(text("SET LOCAL ivfflat.iterative_scan = off"))
+        access_distance = (
+            f"CAST(public.l2_normalize(ce.embedding_vector) AS public.halfvec({EMBEDDING_DIMENSIONS}))"
+            " <#> "
+            f"CAST(public.l2_normalize(CAST(:embedding AS vector({EMBEDDING_DIMENSIONS})))"
+            f" AS public.halfvec({EMBEDDING_DIMENSIONS}))"
+        )
         admission = ", ".join(
             f"""CASE WHEN ({distance}) <= :maximum_distance THEN
                 EXISTS (SELECT 1 FROM content_chunks cc {_READY}
@@ -208,31 +219,42 @@ def nearest_chunks(
                 ELSE FALSE END AS admitted_{index}"""
             for index in ann_domains
         )
-        # A fetched batch can cross the radius; admission beyond it is never consumed.
+        # Half keys own access only; admission and retained windows use original cosine.
         rows = db.execute(
             text(f"""{ctes} SELECT ce.chunk_id, ({distance}) AS distance,
+                1 + ({access_distance}) AS frontier,
                 {admission}
                 FROM content_embeddings ce
                 WHERE ce.embedding_provider=:provider AND ce.embedding_model=:model
                   AND ce.embedding_vector IS NOT NULL
-                ORDER BY {distance}"""),
+                ORDER BY {access_distance}"""),
             bindings,
             execution_options={"yield_per": 32},
         )
         try:
             for row in rows:
-                chunk_id, raw_distance = row[:2]
-                if not raw_distance <= maximum_distance:
-                    break
-                for index, admitted in zip(ann_domains, row[2:], strict=True):
-                    if admitted and len(near[index]) < limit:
-                        near[index].append((chunk_id, 1 - float(raw_distance)))
-                if all(len(near[index]) == limit for index in ann_domains):
+                chunk_id, raw_distance, frontier = row[:3]
+                cosine = 1 - float(raw_distance)
+                for index, admitted in zip(ann_domains, row[3:], strict=True):
+                    window = near[index]
+                    if admitted and (
+                        len(window) < limit or (-cosine, chunk_id) < (-window[-1][1], window[-1][0])
+                    ):
+                        insort(window, (chunk_id, cosine), key=lambda pair: (-pair[1], pair[0]))
+                        if len(window) > limit:
+                            window.pop()
+                # Strictness retains possible equal-distance candidates with better UUIDs.
+                if (
+                    float(frontier)
+                    > max(
+                        maximum_distance if len(near[index]) < limit else 1 - near[index][-1][1]
+                        for index in ann_domains
+                    )
+                    + 0.01
+                ):
                     break
         finally:
             rows.close()
-        for index in ann_domains:
-            near[index].sort(key=lambda pair: (-pair[1], pair[0]))
         return near
     finally:
         logger.info("search.nearest_chunks.end", mono_ns=time.monotonic_ns())
