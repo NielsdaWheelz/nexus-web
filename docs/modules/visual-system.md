@@ -306,6 +306,21 @@ rotation. colors, type and spacing use existing tokens; no geometry animation.
 
 ## overflow buttons
 
+application action labels use sentence case in their owning producer, including
+pending, recovery, inverse and disclosure states. named destinations retain their
+names: Nexus, Lectern, All and Today. source titles, personal names and quoted
+queries retain their literal spelling. shared action copy also names the same
+inline controls; renderers never capitalize it.
+
+command/link descriptors explicitly supply an icon. ordinary actions use their
+semantic owner's glyph; only chapter and map destination lists use `null`.
+the menu retains its 16px decorative slot and text label. custom content owns its
+anatomy: swatches and status prose need no action glyph, while nested actions do.
+loading/empty/trailing-failure prose and preparation feedback retain their own
+presentation. icon-only button contracts remain non-null. lucide owns standard
+drawings; use existing semantic presentations or direct named glyph imports,
+without a second registry, inferred glyphs or placeholders.
+
 `OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
 shared controls own its paint and busy glyph. it forwards native attributes,
 handlers and refs without owning interaction state. `ActionMenu` supplies behavior and

@@ -1,6 +1,8 @@
 "use client";
 
 /** Current view facts authorize new intents; retained commands keep their target. */
+import { createElement } from "react";
+import { RotateCcw } from "lucide-react";
 import type { ActionButtonSpec, PodcastActionFocus, PodcastActionSubject } from "./inlineActions";
 import { useActionRuntime, type ActionContext } from "./ResourceActionsProvider";
 import { projectConsumptionUndoActions, projectPodcastLibrariesAction, projectPodcastSubscriptionAction, type ActionCommand } from "./project";
@@ -15,7 +17,7 @@ function project(subject: PodcastActionSubject, ctx: ActionContext, run: (comman
   return [
     subscription,
     { ...projectPodcastLibrariesAction({ target, title: subject.title, disabledReason: subscription.disabledReason ?? null, ctx, run, focus }),
-      accessibleLabel: `add to library: ${subject.title}` },
+      accessibleLabel: `Add to library: ${subject.title}` },
   ];
 }
 
@@ -33,7 +35,7 @@ export function usePodcastMenuActions(subject: PodcastActionSubject, focus: Podc
   const { ctx, run } = useActionRuntime();
   const actions: ActionDescriptor[] = project(subject, ctx, run, focus);
   const facts = subject.facts;
-  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "retry checking subscription", disabled: facts.retrying, onSelect: facts.retry });
+  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "Retry checking subscription", icon: createElement(RotateCcw, { size: 16, "aria-hidden": true }), disabled: facts.retrying, onSelect: facts.retry });
   if (facts.kind === "Ready" && facts.resolution.kind === "Canonical") actions.push(...projectConsumptionUndoActions({ kind: "Podcast", podcast_id: facts.resolution.podcast_id }, ctx));
   return actions;
 }

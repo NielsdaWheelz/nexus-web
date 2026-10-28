@@ -1,5 +1,7 @@
 "use client";
 
+import { CircleMinus } from "lucide-react";
+
 // Personal history (J8): Stats or Year in Reading for a period, anchor and filters held in the
 // pane url (statsPeriod.ts). The figures are one server snapshot per read; sessions page by
 // keyset under their own snapshot. The pane rereads when it becomes active, when the page
@@ -481,7 +483,7 @@ function Sessions(props: {
           {
             kind: "command",
             id: "Consumption.Activity.ExcludeSession",
-            label: "Don’t count this session",
+            label: "Don’t count this session", icon: <CircleMinus size={16} aria-hidden="true" />,
             onSelect: () => props.onExclude(row),
           },
         ] }] } }}

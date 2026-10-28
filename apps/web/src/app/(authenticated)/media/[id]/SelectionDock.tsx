@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
-import { ChevronDown, Copy, MessageCircle, MessagesSquare, Move, NotebookPen, Save, Share2, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContextValue } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -15,6 +15,7 @@ import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import { AttachedNotes, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -33,7 +34,7 @@ function copy(feedback: FeedbackContextValue, text: string, title: string) {
 }
 
 type SelectionActionPresentation =
-  | { readonly action: Extract<ActionDescriptor, { kind: "command" }>; readonly unavailable?: never }
+  | { readonly action: Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement }; readonly unavailable?: never }
   | { readonly action: null; readonly unavailable: {
       readonly id: string; readonly label: string; readonly icon: ReactElement; readonly reason: string;
       readonly hasPopup: "dialog";
@@ -47,7 +48,6 @@ function SelectionAction({ action, unavailable, help, busy, buttonRef }: Selecti
 }) {
   const reasonId = useId();
   const presentation = action ?? unavailable;
-  if (!presentation.icon) throw new Error(`Selection action ${presentation.id} has no icon`);
   const reason = action ? action.disabled ? action.disabledReason ?? "this action is unavailable." : null : unavailable.reason;
   const activate = (event: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>) => {
     if (!action || action.disabled) return;
@@ -186,16 +186,16 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
   };
   const content = (captured: MobileSelection): MenuContent => {
     const options: ActionDescriptor[] = [
-      { kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />,
+      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: <Copy size={16} aria-hidden="true" />,
         onSelect: () => { if (verbs.selectionCurrent(captured)) copy(feedback, captured.capture.quote, "passage couldn’t be copied"); } },
-      { kind: "custom", id: "HighlightColours", label: "highlight colour", render: ({ closeMenu }) => (
+      { kind: "custom", id: "HighlightColours", label: "Highlight colour", render: ({ closeMenu }) => (
         <Colours selected={null} persisted={false} size="comfortable"
           onSelect={(color) => { closeMenu(); menuCommand.current = captured; verbs.highlightSelection(captured, color); }} />
       ) },
       sharePiece === null
-        ? { kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
+        ? { kind: "command", id: "SharePassage", label: "Share passage", icon: <Share2 size={16} aria-hidden="true" />,
           onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } }
-        : { kind: "command", id: "SharePiece", label: "share piece", icon: <Share2 size={16} aria-hidden="true" />,
+        : { kind: "command", id: "SharePiece", label: "Share piece", icon: <Share2 size={16} aria-hidden="true" />,
           onSelect: ({ triggerEl }) => {
             if (!verbs.selectionCurrent(captured)) return;
             menuCommand.current = captured;
@@ -237,10 +237,10 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
             <HighlightButton selected="yellow" persisted={false} disabledReason={null} busy={false}
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))} />
-            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="open passage note"
+            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="Open passage note"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))} />
-            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="ask about passage"
+            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="Ask about passage"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))} /> : null}
             <OverflowMenuButton {...trigger} className={styles.selectionIcon} onPointerDown={pointerDown} onKeyDown={keyDown}
@@ -303,7 +303,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const sending = composer.ownChatCommand && composer.chatState.kind === "Busy";
     const continuationBlocked = (selected !== null && selected.snapshot.kind !== "Ready") || (hasNote && composer.chat?.target.kind === "Blocked");
     const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
-    const chatLabel = selected ? `${hasMessage ? "send to" : "open in"} “${selected.title}”` : "choose existing chat";
+    const chatLabel = selected ? `${hasMessage ? "Send to" : "Open in"} “${selected.title}”` : "Choose existing chat";
     const chatIssue = draft.chatIssue;
     const commandRecovery = composer.ownChatCommand && (composer.chatState.kind === "Unconfirmed" || composer.chatState.kind === "RefreshRequired") ? composer.chatState : null;
     const blockedChat = composer.chat?.target.kind === "Blocked" ? composer.chat.target.reason === "AssistantRunning"
@@ -311,30 +311,30 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
       : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
     const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
-    const command = (id: string, label: string, icon: ActionDescriptor["icon"], onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> => ({
+    const command = (id: string, label: string, icon: ReactElement, onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });
     // a failed local commit is retried as the same frozen command, never saved again.
-    const saveAction = failed ? command("RetryPassageSave", "retry saving", <Save size={16} aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
-      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save note",
+    const saveAction = failed ? command("RetryPassageSave", "Retry saving", <Save size={16} aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
+      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "Save highlight" : "Save note",
         <Save size={16} aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write a note to add it to this highlight." : null));
-    const newLabel = hasMessage ? "send in new chat" : "open in new chat";
+    const newLabel = hasMessage ? "Send in new chat" : "Open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
     const newAction = command("NewChat", newLabel, <MessageCircle size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
     const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
-    const chooseAction = { ...command("ChooseChat", "choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
+    const chooseAction = { ...command("ChooseChat", "Choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"),
+    const copyAction = command("CopyPassage", "Copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"),
       draft.passage.quote.trim().length > 0 ? null : "this highlight has no text to copy");
     // sharing a new passage first commits its highlight; an existing one shares as it is.
     const shareAction = { ...(sharePiece !== null
-      ? command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
-      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "share highlight" : "share passage", <Share2 size={16} aria-hidden="true" />,
+      ? command("SharePiece", "Share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
+      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "Share highlight" : "Share passage", <Share2 size={16} aria-hidden="true" />,
         ({ triggerEl }) => verbs.share(triggerEl), draft.highlightId ? null : blockedReason)), hasPopup: "dialog" as const };
     const options: ActionDescriptor[] = isMobile ? [copyAction] : [];
     if (isMobile) {
-      options.push({ kind: "custom", id: "HighlightColours", label: "highlight colours", render: ({ closeMenu }) =>
+      options.push({ kind: "custom", id: "HighlightColours", label: "Highlight colours", render: ({ closeMenu }) =>
         <Colours selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} size="comfortable"
           onSelect={(color) => { closeMenu(); verbs.highlight(color); }} /> });
       if (canQuote) {
@@ -345,8 +345,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     }
     if (draft.highlightId) {
       const id = draft.highlightId;
-      if (annotation?.placement.kind === "placed") options.push(command("EditHighlightBounds", "edit highlight bounds", <Move size={16} aria-hidden="true" />, () => verbs.editBounds(id), blockedReason));
-      options.push({ ...command("DeleteHighlight", "delete highlight", <Trash2 size={16} aria-hidden="true" />, () => verbs.remove(id), draft.operation ? "finish the current request first." : null), tone: "danger" });
+      if (annotation?.placement.kind === "placed") options.push(command("EditHighlightBounds", ACTION_CATALOG.EditHighlightBounds.label, <ACTION_CATALOG.EditHighlightBounds.icon size={16} aria-hidden="true" />, () => verbs.editBounds(id), blockedReason));
+      options.push({ ...command("DeleteHighlight", ACTION_CATALOG.DeleteHighlight.label, <ACTION_CATALOG.DeleteHighlight.icon size={16} aria-hidden="true" />, () => verbs.remove(id), draft.operation ? "finish the current request first." : null), tone: "danger" });
     }
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
@@ -358,9 +358,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} />
         {!isMobile ? <div className={styles.highlightControl}>
           <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={sending || preparing} />
-          <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="choose existing chat" aria-haspopup="dialog"
+          <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="Choose existing chat" aria-haspopup="dialog"
             aria-expanded={composer.pickerOpen} aria-controls={composer.pickerOpen ? pickerId : undefined}
-            aria-disabled={chooseAction.disabled || undefined} tooltip={{ text: chooseAction.disabledReason ? `choose existing chat. ${chooseAction.disabledReason}` : "choose existing chat" }}
+            aria-disabled={chooseAction.disabled || undefined} tooltip={{ text: chooseAction.disabledReason ? `Choose existing chat. ${chooseAction.disabledReason}` : "Choose existing chat" }}
             icon={<ChevronDown size={16} aria-hidden="true" />} onClick={composer.chooseChat} />
         </div> : null}
       </> : null}

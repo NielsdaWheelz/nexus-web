@@ -47,7 +47,7 @@ interface Inverse {
   readonly target: CollectionTarget;
   readonly receipt: Receipt;
 }
-const inverseLabel = (target: CollectionTarget, state: Request["desired_state"], count: number, scope: string) => `undo mark ${verb(target, state)} · ${count} item${count === 1 ? "" : "s"} · ${scope}`;
+const inverseLabel = (target: CollectionTarget, state: Request["desired_state"], count: number, scope: string) => `Undo mark ${verb(target, state)} · ${count} item${count === 1 ? "" : "s"} · ${scope}`;
 const targetKey = (target: CollectionTarget) => JSON.stringify(target);
 const verb = (target: CollectionTarget, state: Request["desired_state"]) => target.kind === "Podcast"
   ? state === "finished" ? "played" : "unplayed"
@@ -115,7 +115,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
   /** One failed attempt, with its exact retry while the owner still holds it. */
   function report(entry: Entry, content: FeedbackContent, retry: boolean) {
     entry.retract = feedback.receipt({ ...content, title: `${content.title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${content.message === undefined ? "" : ` ${content.message}`}` },
-      retry ? { label: entry.kind === "Undo" ? inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel) : "retry same request",
+      retry ? { label: entry.kind === "Undo" ? inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel) : "Retry same request",
         disabledReason: remoteReady() ? undefined : "requires a connection",
         onClick: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) } : undefined);
   }

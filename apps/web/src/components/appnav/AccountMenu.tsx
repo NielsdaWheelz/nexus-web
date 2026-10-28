@@ -206,7 +206,7 @@ export default function AccountMenu(props: {
     {
       kind: "command",
       id: "signout",
-      label: "Sign Out",
+      label: "Sign out",
       tone: "danger",
       icon: <LogOut size={16} aria-hidden="true" />,
       separatorBefore: true,

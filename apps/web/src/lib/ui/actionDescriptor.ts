@@ -82,7 +82,6 @@ export function projectActionControlState(
 interface ActionBase {
   readonly id: string;
   readonly label: string;
-  readonly icon?: ReactElement;
   readonly indicator?: { readonly kind: "Status" };
   readonly disabled?: boolean;
   readonly busy?: boolean;
@@ -96,6 +95,7 @@ interface ActionBase {
 export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "command";
+      readonly icon: ReactElement | null;
       readonly onSelect: (detail: ActionSelectDetail) => void;
       readonly state?: ActionControlState;
       readonly restoreFocusOnClose?: boolean;
@@ -104,6 +104,7 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
+      readonly icon: ReactElement | null;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly target?: "_blank";
       readonly restoreFocusOnClose?: boolean;
@@ -112,6 +113,7 @@ export type ActionDescriptor =
     } & ({ readonly href: string } | { readonly href: null; readonly disabled: true }))
   | (ActionBase & {
       readonly kind: "custom";
+      readonly icon?: never;
       readonly render: (
         controls: ActionTriggerDetail & {
           readonly closeMenu: () => void;

@@ -5,7 +5,7 @@
 // is only the current state. Failures add the store's current cause; remote failures
 // keep the local fact and announce once.
 import { useEffect, useRef } from "react";
-import { Check, CircleAlert, CloudOff, LoaderCircle } from "lucide-react";
+import { Check, CircleAlert, CloudOff, LoaderCircle, LogIn } from "lucide-react";
 import type { SyncStatus } from "@nexus/authored/types";
 import Button from "@/components/ui/Button";
 import { useFeedback } from "@/components/feedback/Feedback";
@@ -55,7 +55,8 @@ export function syncStatusOption(status: SyncStatus, cause: string | null, auth:
           tabIndex={presentation === "menu" ? -1 : 0}
           disabled={auth.busy}
           onClick={() => { closeMenu(); auth.onSignIn(); }}
-        >sign in</Button> : null}
+          icon={<LogIn size={16} aria-hidden="true" />}
+        >Sign in</Button> : null}
       </span>
     </div>,
   };

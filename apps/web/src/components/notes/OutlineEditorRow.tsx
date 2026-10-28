@@ -3,7 +3,7 @@
 /** Native row controls live outside ProseMirror's contentDOM. Portals publish
  * chrome into the view's stable slots; no control creates an editing host. */
 import {createPortal} from "react-dom";
-import {ChevronRight, CornerLeftUp} from "lucide-react";
+import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, Unlink} from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
@@ -44,8 +44,8 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const scheme = parsed === null ? "note_block" : parsed.scheme;
     const identity = resourceTypeLabel(scheme).toLowerCase();
     const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
-    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", restoreFocusOnClose: false, onSelect: row.select}];
-    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `unlink from ${row.parentLabel}`, restoreFocusOnClose: false, onSelect: row.unlink});
+    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
+    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}

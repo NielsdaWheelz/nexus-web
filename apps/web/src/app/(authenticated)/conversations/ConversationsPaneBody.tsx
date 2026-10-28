@@ -61,7 +61,7 @@ const UNIT = { singular: "chat", plural: "chats" };
 const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
-  label: "new chat",
+  label: "New chat",
   icon: <Plus size={20} aria-hidden="true" />,
   href: "/conversations/new",
 };
