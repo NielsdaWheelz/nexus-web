@@ -275,12 +275,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && draft.highlightId === null && identity !== null && draft.passage.identity !== identity);
   const anchor = useCallback(() => {
     if (!draft) return null;
-    const passage = annotation?.placement.kind === "placed" ? { identity: draft.passage.identity, anchor: annotation.placement.anchor } : draft.passage;
-    const measured = reader.measurePassage(passage);
+    const measured = reader.measurePassage(draft.passage);
     if (measured) return measured;
     const bounds = reader.measureBounds();
     return bounds ? { rect: null, lines: [], bounds } : null;
-  }, [annotation, draft, reader]);
+  }, [draft, reader]);
   const chooserAnchor = useCallback(() => {
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });

@@ -243,7 +243,14 @@ export function useSelectionComposer(input: {
     };
     const existing = carried ? undefined : store.getSnapshot().find(entry => entry.id === current.current?.draftId &&
       (highlightId ? entry.highlightId === highlightId : entry.highlightId === null && samePassage(entry.passage, passage)));
-    if (existing) return existing;
+    if (existing) {
+      if (highlightId && !samePassage(existing.passage, passage)) {
+        const updated = { ...existing, passage: { ...passage, quote: existing.passage.quote } };
+        store.put(updated);
+        return updated;
+      }
+      return existing;
+    }
     const shown = reader.getState().document;
     const annotation = highlightId ? annotations.annotation(highlightId) : null;
     const anchor: DraftAnchor = passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: selected.quote } : passage.anchor;

@@ -474,6 +474,17 @@ def media_passages(
                 WHERE cc.id=ANY(:chunks) AND cc.summary_locator->>'type'='x_capture_offsets'
                   AND cc.summary_locator->>'capture_id'=f.x_post_capture_id::text
                   AND cc.summary_locator->>'fragment_id'=f.id::text
+                UNION ALL
+                SELECT 'evidence_span',es.id,f.id,f.x_post_capture_id,es.span_text,
+                    COALESCE(es.selector #>> '{{text_quote,prefix}}',''),
+                    COALESCE(es.selector #>> '{{text_quote,suffix}}',''),NULL::text,
+                    (es.selector->>'start_offset')::integer,(es.selector->>'end_offset')::integer
+                FROM evidence_spans es JOIN fragments f ON f.id=es.owner_id AND es.owner_kind='fragment'
+                JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
+                    AND state.lexical_revision=state.revision
+                WHERE es.id=ANY(:spans) AND es.selector->>'type'='x_capture_offsets'
+                  AND es.selector->>'capture_id'=f.x_post_capture_id::text
+                  AND es.selector->>'fragment_id'=f.id::text
             )
             SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
             JOIN fragments retained ON retained.id=capture_candidates.fragment_id
@@ -490,6 +501,7 @@ def media_passages(
             "highlights": ids["highlight"],
             "passages": [str(value) for value in ids["passage_anchor"]],
             "chunks": ids["content_chunk"],
+            "spans": ids["evidence_span"],
             "owners": json.dumps(reading_owners, default=str),
         },
     ).mappings()
