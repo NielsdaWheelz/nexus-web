@@ -48,7 +48,7 @@ from nexus.services.resource_graph.citations import (
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search import projection
 from nexus.services.search.admission import search_session_async
-from nexus.services.search.semantic import ChunkDomain, Embedding, embed_text, nearest_chunks
+from nexus.services.search.semantic import Embedding, embed_text, nearest_chunks
 from nexus.services.search.service import read_snapshot
 from nexus.services.suggestion_changes import record_input_change
 
@@ -249,7 +249,7 @@ async def _run(
 
 
 # The personal lane: the viewer's visible media and own notes, the oracle corpus excluded.
-# EXISTS over a union keeps the predicate one semi-join, so ivfflat can drive the scan.
+# EXISTS over a union keeps media and note visibility in one semi-join.
 _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:excluded) AND EXISTS (
     SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
     WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
@@ -301,7 +301,7 @@ def _retrieve(
     (near,) = nearest_chunks(
         db,
         embedding,
-        domains=(ChunkDomain(_PERSONAL_CHUNKS),),
+        domains=(_PERSONAL_CHUNKS,),
         params=params,
         limit=200,
         ctes="",

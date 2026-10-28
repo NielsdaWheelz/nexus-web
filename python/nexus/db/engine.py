@@ -59,7 +59,7 @@ class SearchDatabaseLease:
 
 
 @asynccontextmanager
-async def search_database_capacity() -> AsyncIterator[SearchDatabaseLease]:
+async def search_database_capacity(*, wait: bool) -> AsyncIterator[SearchDatabaseLease | None]:
     """Hold source-owned search capacity beyond pool invalidation through retirement.
 
     Acquisition belongs inside the gate's original absolute deadline. A canceled
@@ -67,6 +67,7 @@ async def search_database_capacity() -> AsyncIterator[SearchDatabaseLease]:
     this boundary does not claim positive startup-backend retirement evidence.
     Known-unconfirmed retirement withholds its slot and refuses future checkouts.
     Already-waiting callers keep their original deadline, without a wakeup registry.
+    A nonwaiting caller observes contention, including queued waiters, as absence.
     """
     require_async_database_scope()
     scope = _scope
@@ -76,6 +77,9 @@ async def search_database_capacity() -> AsyncIterator[SearchDatabaseLease]:
         raise RuntimeError("search retirement unconfirmed; runtime repair required")
     if scope.search_capacity is None:
         scope.search_capacity = asyncio.BoundedSemaphore(count)
+    if not wait and scope.search_capacity.locked():
+        yield None
+        return
     await scope.search_capacity.acquire()
     lease = SearchDatabaseLease()
     try:

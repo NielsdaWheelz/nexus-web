@@ -35,7 +35,7 @@ from nexus.services.media_source_ingest import (
 )
 from nexus.services.oracle.synthesis import Candidate
 from nexus.services.search import projection
-from nexus.services.search.semantic import ChunkDomain, Embedding, nearest_chunks
+from nexus.services.search.semantic import Embedding, nearest_chunks
 from nexus.services.suggestion_changes import record_input_change
 
 SYSTEM_KEY = "oracle_corpus"
@@ -173,7 +173,7 @@ def rank_passages(
     (near,) = nearest_chunks(
         db,
         query_embedding,
-        domains=(ChunkDomain("cc.id = ANY(:ids)"),),
+        domains=("cc.id = ANY(:ids)",),
         params={"ids": ids},
         limit=len(ids),
         ctes="",

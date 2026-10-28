@@ -8,6 +8,8 @@ or anchor counts as its media): the source's own work and works it already
 relates to. Removing an edge does not prevent a later scan from proposing it.
 Only publication retries, as one fresh serializable database attempt with its
 claim fence and source clock; generation stays outside that retry boundary.
+Only observed admission contention refunds an attempt. Setup and computation expiry
+spend the queue's ordinary failure budget.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
-from nexus.services.search.admission import SearchAdmissionBusy, SearchBudgetExpired
+from nexus.services.search.admission import SearchAdmissionBusy
 from nexus.services.search.candidates import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
@@ -196,11 +198,7 @@ def connection_discovery_scan_job(
             status, error_code = await _scan(
                 db, user_id=user_id, ref=ref, context=context, runtime=runtime
             )
-        except (SearchAdmissionBusy, SearchBudgetExpired) as exc:
-            reason = (
-                "admission_busy" if isinstance(exc, SearchAdmissionBusy) else "computation_budget"
-            )
-            phase = "admission" if isinstance(exc, SearchAdmissionBusy) else exc.phase
+        except SearchAdmissionBusy:
 
             def defer(control: Session) -> queue.JobResult:
                 if not queue.running_job_claim_is_current(control, context=context):
@@ -212,8 +210,8 @@ def connection_discovery_scan_job(
                     "connection_discovery.rescheduled",
                     job_id=str(context.job_id),
                     execution_id=str(context.execution_id),
-                    reason=reason,
-                    phase=phase,
+                    reason="admission_busy",
+                    phase="admission",
                     job_age_ms=(observed_at - job.created_at).total_seconds() * 1000,
                 )
                 return queue.RescheduleRequested(

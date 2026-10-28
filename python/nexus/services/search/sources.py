@@ -61,7 +61,7 @@ from nexus.services.search.scope import (
     compose_scopes,
     scope_predicate,
 )
-from nexus.services.search.semantic import ChunkDomain, Embedding, nearest_chunks
+from nexus.services.search.semantic import Embedding, nearest_chunks
 from nexus.text import escape_like
 
 TSQ = "websearch_to_tsquery('english', :q)"
@@ -143,15 +143,15 @@ _SOURCE = (
 )
 
 
-def _ann(prefix: str) -> str:
-    return f"unnest(CAST(:{prefix}_ann_ids AS uuid[]), CAST(:{prefix}_ann_cos AS float8[])) AS ann(id, cosine)"
+def _semantic_rows(prefix: str) -> str:
+    return f"unnest(CAST(:{prefix}_semantic_ids AS uuid[]), CAST(:{prefix}_semantic_cos AS float8[])) AS neighbour(id, cosine)"
 
 
-def _ann_params(family: str, neighbours: Sequence[tuple[UUID, float]]) -> dict[str, Any]:
+def _semantic_params(family: str, neighbours: Sequence[tuple[UUID, float]]) -> dict[str, Any]:
     prefix = {"content_chunk": "chunk", "note_block": "note"}[family]
     return {
-        f"{prefix}_ann_ids": [identity for identity, _ in neighbours],
-        f"{prefix}_ann_cos": [cosine for _, cosine in neighbours],
+        f"{prefix}_semantic_ids": [identity for identity, _ in neighbours],
+        f"{prefix}_semantic_cos": [cosine for _, cosine in neighbours],
     }
 
 
@@ -287,15 +287,15 @@ SOURCES: dict[str, str] = {
         FROM pages p CROSS JOIN LATERAL (SELECT {page_title_sql("p")} AS title) page
         WHERE p.user_id = :viewer_id AND p.authored_visible {{where}}""",
     "note_block": f"""SELECT 'note_block' AS type, nb.id, nb.body_text AS label,
-            to_tsvector('english', nb.body_text) AS doc, ann.cosine, nb.body_text AS text,
+            to_tsvector('english', nb.body_text) AS doc, neighbour.cosine, nb.body_text AS text,
             nb.body_text, 'Note' AS title, 'note' AS source_label,
             jsonb_build_object('type', 'note_block_offsets', 'block_id', nb.id, 'start_offset', 0,
                 'end_offset', char_length(nb.body_text),
                 'text_quote_selector', jsonb_build_object('exact', nb.body_text),
                 'body_version', NULL) AS locator
-        FROM note_blocks nb LEFT JOIN (SELECT cc.owner_id, max(ann.cosine) AS cosine
-            FROM {_ann("note")} JOIN content_chunks cc ON cc.id = ann.id GROUP BY cc.owner_id) ann
-            ON ann.owner_id = nb.id
+        FROM note_blocks nb LEFT JOIN (SELECT cc.owner_id, max(neighbour.cosine) AS cosine
+            FROM {_semantic_rows("note")} JOIN content_chunks cc ON cc.id = neighbour.id GROUP BY cc.owner_id) neighbour
+            ON neighbour.owner_id = nb.id
         WHERE nb.user_id = :viewer_id AND nb.authored_visible AND nb.body_text <> '' {{where}}""",
     "highlight": f"""SELECT 'highlight' AS type,h.id,h.exact AS label,
             to_tsvector('english',concat_ws(' ',h.exact,quote.prefix,quote.suffix)) AS doc,
@@ -355,10 +355,10 @@ SOURCES: dict[str, str] = {
             AND f.t_end_ms IS NOT NULL THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms
             ELSE m.kind<>'pdf' END {{where}}""",
     "content_chunk": f"""SELECT 'content_chunk' AS type,cc.id,NULL AS label,
-            cc.chunk_text_tsv AS doc,ann.cosine,cc.chunk_text AS text,cc.source_kind,
+            cc.chunk_text_tsv AS doc,neighbour.cosine,cc.chunk_text AS text,cc.source_kind,
             es.id AS span_id,es.span_text,es.selector,es.citation_label,es.resolver_kind,
             {_SOURCE},m.id AS reading_media_id,source_m.id AS source_media_id,source_m.kind AS source_media_kind
-        FROM content_chunks cc LEFT JOIN {_ann("chunk")} ON ann.id=cc.id
+        FROM content_chunks cc LEFT JOIN {_semantic_rows("chunk")} ON neighbour.id=cc.id
         JOIN media source_m ON source_m.id=cc.owner_id
         CROSS JOIN LATERAL (SELECT ({_CHUNK_OWNER}) AS media_id) reading
         JOIN media m ON m.id=reading.media_id
@@ -631,7 +631,7 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
     """Independent top-``r.k`` windows, concatenated in supplied family order.
 
     Ordinary families share one statement's canonical scope relations. Semantic
-    domains keep independent windows/counts; only their raw ANN traversal is shared.
+    domains keep independent complete windows.
     Saved passages retain their placement-validated refill executor. The caller's
     stable merge therefore keeps its original family tie order.
     """
@@ -652,11 +652,11 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
             "contributor_ids": r.contributor_ids,
         }
     )
-    params |= _ann_params("content_chunk", ()) | _ann_params("note_block", ())
+    params |= _semantic_params("content_chunk", ()) | _semantic_params("note_block", ())
     windows: list[list[Hit]] = [[] for _ in families]
     active: list[tuple[int, str, str]] = []
     semantic_families: list[str] = []
-    domains: list[ChunkDomain] = []
+    domains: list[str] = []
     for index, family in enumerate(families):
         cell = scopes.cell(family)
         filters = _filters(family, r)
@@ -677,7 +677,7 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
         active.append((index, family, where))
         if family in SEMANTIC and r.terms and r.embedding is not None:
             semantic_families.append(family)
-            domains.append(ChunkDomain(_semantic_owner(family, where)))
+            domains.append(_semantic_owner(family, where))
     if domains:
         assert r.embedding is not None
         neighbours = nearest_chunks(
@@ -690,12 +690,14 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
             maximum_distance=0.5,
         )
         for family, near in zip(semantic_families, neighbours, strict=True):
-            params |= _ann_params(family, [(id, cosine) for id, cosine in near if cosine >= 0.5])
+            params |= _semantic_params(
+                family, [(id, cosine) for id, cosine in near if cosine >= 0.5]
+            )
     arms = []
     for index, family, where in active:
         if family == "content_chunk" and r.terms:  # never scan the whole chunk table
             where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
-                OR cc.id = ANY(CAST(:chunk_ann_ids AS uuid[])))"""
+                OR cc.id = ANY(CAST(:chunk_semantic_ids AS uuid[])))"""
         cosine = "s.cosine" if family in SEMANTIC else "NULL"
         score = f"""CAST(((CASE WHEN lower(s.label) = lower(:q) THEN 3 WHEN s.label ILIKE :prefix THEN 2
                 WHEN s.label ILIKE :contains THEN 1 ELSE 0 END) + CASE WHEN s.doc @@ {TSQ}
@@ -789,7 +791,7 @@ def hydrate_occurrences(
             "ids": [id for id, _ in occurrences],
             "readings": [reading for _, reading in occurrences],
         }
-        | (_ann_params(family, ()) if family in SEMANTIC else {}),
+        | (_semantic_params(family, ()) if family in SEMANTIC else {}),
     ).mappings()
     out = []
     for row in rows:
@@ -853,7 +855,7 @@ def _discovery_predicates(
         "contributor_ids": r.contributor_ids,
     }
     if family in SEMANTIC:
-        params |= _ann_params(family, ())
+        params |= _semantic_params(family, ())
     _, scope_params = _ctes(r)
     return cell[0] + filters, params | scope_params
 
@@ -889,7 +891,7 @@ def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[U
     (near,) = nearest_chunks(
         db,
         r.embedding,
-        domains=(ChunkDomain(owner),),
+        domains=(owner,),
         params=params | scope_params,
         limit=200,
         ctes=ctes,
@@ -1047,7 +1049,7 @@ def discovery_semantic_hits(
     if predicates is None or not neighbours:
         return []
     where, params = predicates
-    params |= _ann_params(family, neighbours)
+    params |= _semantic_params(family, neighbours)
     ctes, bindings = _ctes(r)
     owner = "s.media_id" if family == "content_chunk" else "NULL::uuid"
     reading = "s.reading_media_id" if family == "content_chunk" else "NULL::uuid"
@@ -1088,9 +1090,9 @@ def discovery_semantic_children(
         JOIN admitted_media admitted ON admitted.media_id=part.media_id
         WHERE part.media_id=ANY(CAST(:named_parts AS uuid[]))"""
     rows = db.execute(
-        text(f"""{ctes} SELECT reading.chunk_id,reading.reading_media_id,ann.cosine
+        text(f"""{ctes} SELECT reading.chunk_id,reading.reading_media_id,neighbour.cosine
             FROM ({reading_chunks_sql(readings)}) reading
-            JOIN {_ann("chunk")} ON ann.id=reading.chunk_id
+            JOIN {_semantic_rows("chunk")} ON neighbour.id=reading.chunk_id
             JOIN content_chunks cc ON cc.id=reading.chunk_id
             JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id"""),
         params
@@ -1098,7 +1100,7 @@ def discovery_semantic_children(
             "viewer_id": r.viewer_id,
             "named_parts": list(owners),
         }
-        | _ann_params("content_chunk", neighbours),
+        | _semantic_params("content_chunk", neighbours),
     )
     return [
         DiscoveryHit(

@@ -3,6 +3,8 @@
 The input counter records relevance changes. The queue owns execution and failure.
 Only a fenced successful build replaces the latest publication; readers never rank.
 Admission retries recheck freshness; existing work retains its job and attempt budget.
+Only observed admission contention refunds an attempt. Setup and computation expiry
+spend the queue's ordinary failure budget.
 """
 
 from __future__ import annotations
@@ -43,7 +45,6 @@ from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.search.admission import (
     BACKGROUND_COMPUTATION_SECONDS,
     SearchAdmissionBusy,
-    SearchBudgetExpired,
     search_session_async,
 )
 from nexus.services.search.service import read_snapshot
@@ -237,8 +238,8 @@ def run_suggestion_refresh_job(
 ) -> queue.JobResult:
     """One complete admitted read; only a current claim atomically publishes it.
 
-    Admission refusal or this read's owned budget reschedules unchanged work after
-    retirement. Other failures retain the queue's failure budget. Publication is
+    Admission refusal reschedules unchanged work after retirement. Setup and
+    computation expiry spend the queue's failure budget. Publication is
     a separate short serializable transaction; a failed read never replaces it.
     """
     feed_id = _RefreshPayload.model_validate(payload).feed_id
@@ -273,22 +274,19 @@ def run_suggestion_refresh_job(
 
     try:
         ranked = asyncio.run(read())
-    except (SearchAdmissionBusy, SearchBudgetExpired) as exc:
+    except SearchAdmissionBusy:
         with get_session_factory()() as control:
             if not queue.running_job_claim_is_current(control, context=context):
                 return {"status": "superseded"}
             job = queue.get_job(control, context.job_id)
             assert job is not None
             observed_at = control.scalar(text("SELECT now()"))
-            reason = (
-                "admission_busy" if isinstance(exc, SearchAdmissionBusy) else "computation_budget"
-            )
             logger.info(
                 "suggestions.refresh.rescheduled",
                 job_id=str(context.job_id),
                 execution_id=str(context.execution_id),
-                reason=reason,
-                phase="admission" if isinstance(exc, SearchAdmissionBusy) else exc.phase,
+                reason="admission_busy",
+                phase="admission",
                 job_age_ms=(observed_at - job.created_at).total_seconds() * 1000,
             )
             return queue.RescheduleRequested(observed_at + timedelta(seconds=5), payload=payload)

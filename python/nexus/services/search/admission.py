@@ -172,7 +172,11 @@ async def search_session_async(
         try:
             try:
                 async with budget:
-                    lease = await ownership.enter_async_context(search_database_capacity())
+                    lease = await ownership.enter_async_context(
+                        search_database_capacity(wait=purpose == "foreground")
+                    )
+                    if lease is None:
+                        raise SearchAdmissionBusy()
                     connection = await get_search_async_engine().connect()
                     raw = await connection.get_raw_connection()
                     driver = raw.driver_connection
