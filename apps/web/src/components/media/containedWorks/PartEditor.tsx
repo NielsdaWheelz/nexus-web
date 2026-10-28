@@ -2,12 +2,13 @@
 
 // The draft owns its baseline/version and exact unconfirmed command. Preparation
 // changes available geometry, never the user's title or a reviewed generation.
+// A confirmed save stays busy until refresh and close settle together.
 import { useEffect, useMemo, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
-import { isApiError, isRefusal } from "@/lib/api/client";
+import { captureApiAccount, isCurrentApiAccount, isApiError, isRefusal } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -20,7 +21,7 @@ type Request = { kind: "prepare"; body: Schema<"PartPrepare"> }
   | { kind: "save"; id: string | null; body: Schema<"PartCreate"> | Schema<"PartUpdate"> };
 type Draft = {
   title: string; first: string | null; last: string | null; generation: number | null;
-  baseline: string; version: number | null; request: Request | null;
+  baseline: string; version: number | null; baselineSelection: Schema<"SectionSelection"> | null; request: Request | null;
   busy: boolean; error: string | null; conflict: boolean; retired: boolean;
 };
 export function partError(error: unknown): string {
@@ -60,13 +61,13 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     last: definition?.selection?.section_ids.at(-1) ?? initialSelection?.section_ids.at(-1) ?? initialSection }), [definition, initialTitle, initialSection, initialSelection]);
   const state = useResourceDraft<Draft>(definition === null ? `extract:${source}:${initialSection}` : `work:${definition.media_id}`, () => ({
     ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-    baseline: JSON.stringify(initial), version: definition?.version ?? null, request: null, busy: false, error: null, conflict: false, retired: false,
+    baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, error: null, conflict: false, retired: false,
   }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last }) !== value.baseline,
     unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (!state.read().retired) return;
     state.set({ ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-      baseline: JSON.stringify(initial), version: definition?.version ?? null, request: null, busy: false, error: null, conflict: false, retired: false });
+      baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, error: null, conflict: false, retired: false });
   }, [state, initial, definition, initialSelection, navigation]);
   const { title, first, last, busy, request, error, conflict } = state.value;
   const [adjacent, setAdjacent] = useState(first !== last);
@@ -104,21 +105,26 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const blocking = busy || request !== null;
   const run = async (sent: Request, retry = false) => {
     if (state.read().busy || state.read().request !== null && !retry) return;
+    const account = captureApiAccount();
     state.set(value => ({ ...value, request: sent, busy: true, error: null }));
-    let savedId: string | null = null;
+    let receipt: Schema<"PartReceipt"> | null = null;
     try {
       if (sent.kind === "prepare") await prepareParts(source, sent.body);
-      else savedId = (await savePart(source, sent.id, sent.body)).media_id;
+      else receipt = await savePart(source, sent.id, sent.body);
     } catch (failure) {
+      if (!isCurrentApiAccount(account)) return;
       state.set(value => ({ ...value, busy: false, request: isRefusal(failure) ? null : sent,
-        conflict: definition !== null && isApiError(failure) && failure.status === 409, error: partError(failure) }));
+        conflict: value.conflict || sent.kind === "save" && sent.id !== null && isApiError(failure) && failure.status === 409, error: partError(failure) }));
       if (isRefusal(failure)) { void onRefresh(); preview.revalidate(); }
       return;
     }
-    state.set(value => ({ ...value, request: null, busy: false,
-      baseline: savedId === null ? value.baseline : JSON.stringify({ title: value.title, first: value.first, last: value.last }) }));
-    if (savedId === null) { setPreparationStarted(true); await onRefresh(); }
-    else { try { await onSaved(savedId); } finally { state.set(value => ({ ...value, retired: true })); onClose(); } }
+    if (!isCurrentApiAccount(account)) return;
+    state.set(value => ({ ...value, request: null, busy: receipt !== null,
+      version: receipt?.version ?? value.version,
+      baselineSelection: sent.kind === "save" ? sent.body.selection ?? value.baselineSelection : value.baselineSelection,
+      baseline: receipt === null ? value.baseline : JSON.stringify({ title: value.title, first: value.first, last: value.last }) }));
+    if (receipt === null) { setPreparationStarted(true); await onRefresh(); }
+    else { try { await onSaved(receipt.media_id); } finally { if (isCurrentApiAccount(account)) { state.set(value => ({ ...value, busy: false, retired: true })); onClose(); } } }
   };
   // Manual intent opens first. Only this owner admits its preparation command.
   useEffect(() => {
@@ -132,7 +138,8 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const save = () => {
     const current = state.read();
     if (current.busy || current.request !== null || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)) return;
-    const unchangedBounds = definition?.selection !== null && JSON.stringify(definition?.selection?.section_ids) === JSON.stringify(selector?.section_ids);
+    const unchangedBounds = current.baselineSelection !== null && current.baselineSelection.source_generation === selector?.source_generation &&
+      JSON.stringify(current.baselineSelection.section_ids) === JSON.stringify(selector?.section_ids);
     void run({ kind: "save", id: definition?.media_id ?? null, body: definition === null
       ? { id: crypto.randomUUID(), title: current.title, selection: selector! }
       : { expected_version: current.version!, title: current.title, selection: unchangedBounds || !canBounds ? null : selector } });
@@ -141,6 +148,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const savedLabels = definition?.selection?.section_ids.map(id => navigation?.sections.find(section => section.section_id === id)?.label ?? null) ?? null;
   return <Dialog open title={definition === null ? "extract work" : "edit work"} onClose={onClose} returnFocusTo={returnFocusTo}
     onDismissRequest={() => {
+      if (state.read().busy && state.read().request === null) return "blocked";
       if (!guard.confirmLoss({ scopes: [], ownerIds: [state.owner] })) return "blocked";
       if (state.read().request === null) state.set(value => ({ ...value, retired: true, baseline: JSON.stringify({ title: value.title, first: value.first, last: value.last }) }));
       return "accepted";
@@ -169,7 +177,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
       {error ? <p role="alert">{error}</p> : null}
       {conflict && definition ? <section aria-label="current saved work"><p>currently saved: {definition.title}</p>
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
-        <Button disabled={blocking || readFailure || readPending} onClick={() => state.set(value => ({ ...value, version: definition.version, generation: navigation?.generation ?? value.generation, conflict: false, error: null }))}>keep my changes</Button>
+        <Button disabled={blocking || readFailure || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, error: null }))}>keep my changes</Button>
       </section> : null}
       {request !== null && !busy ? <Button onClick={() => void run(request, true)}>try same request again</Button> : null}
       <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy} onClick={save}>{definition === null ? "extract" : "save"}</Button>

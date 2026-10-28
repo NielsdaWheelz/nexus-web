@@ -33,6 +33,7 @@ from nexus.schemas.media import (
     ListeningStateOut,
     MediaOut,
     MediaProcessingSnapshotOut,
+    PartSourceEditionOut,
     PodcastEpisodeChapterOut,
 )
 from nexus.schemas.media_summary import (
@@ -399,8 +400,12 @@ _DETAIL_SQL = """
     SELECT m.requested_url, m.canonical_url, m.edition_published_date, m.edition_isbn,
         m.publisher, m.language, m.description,
         m.metadata_enriched_at, m.created_at, m.updated_at,
-        pe.description_html, pe.description_text
+        pe.description_html, pe.description_text,
+        source.edition_published_date AS source_edition_published_date,
+        source.edition_isbn AS source_edition_isbn, source.publisher AS source_publisher
     FROM media m LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+    LEFT JOIN media_parts part ON part.media_id = m.id
+    LEFT JOIN media source ON source.id = part.source_media_id
     WHERE m.id = :media_id
 """
 
@@ -429,6 +434,13 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         part_source=None
         if row.part_source_title is None
         else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
+        part_source_edition=None
+        if row.part_version is None
+        else PartSourceEditionOut(
+            published_date=detail.source_edition_published_date,
+            isbn=detail.source_edition_isbn,
+            publisher=detail.source_publisher,
+        ),
         canonical_source_url=row.canonical_source_url,
         provider=row.provider,
         provider_id=row.provider_id,

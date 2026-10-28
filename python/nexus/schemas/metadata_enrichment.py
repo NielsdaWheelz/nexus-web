@@ -118,11 +118,39 @@ class MetadataRoleSlice(_Frozen):
         return self
 
 
-class MetadataFindings(_Frozen):
-    """The sole external eight-field, required-nullable research result."""
+type ClearMetadataField = Literal[
+    "original_published_date",
+    "edition_published_date",
+    "edition_isbn",
+    "publisher",
+    "language",
+    "description",
+]
+type ContainerDiscrepancyField = Literal[
+    "title",
+    "contributors",
+    "original_published_date",
+    "edition_published_date",
+    "edition_isbn",
+    "publisher",
+    "language",
+]
 
-    # As generated and as accepted: null keeps the stored value; contributors=[] is
-    # invalid; credits=[] clears that role.
+
+class ContainerDiscrepancy(_Frozen):
+    field: ContainerDiscrepancyField
+    explanation: Annotated[str, StringConstraints(min_length=1, max_length=400, pattern=r"\S")]
+
+
+class ContainerReport(_Frozen):
+    source_title: str
+    discrepancies: Annotated[list[ContainerDiscrepancy], Field(min_length=1, max_length=7)]
+
+
+class MetadataFindings(_Frozen):
+    """The sole external research result, including explicit clears and source reports."""
+
+    # Unlisted null preserves storage; contributors=[] is invalid; credits=[] clears a role.
     title: _ShortText | None
     contributors: (
         Annotated[
@@ -136,12 +164,21 @@ class MetadataFindings(_Frozen):
     publisher: _ShortText | None
     language: _Language | None
     description: _Description | None
+    clear_fields: list[ClearMetadataField]
+    container_discrepancies: Annotated[list[ContainerDiscrepancy], Field(max_length=7)]
 
     @model_validator(mode="after")
     def _each_role_once(self) -> MetadataFindings:
         roles = [item.role for item in self.contributors or []]
         if len(roles) != len(set(roles)):
             raise ValueError("each contributor role must occur at most once")
+        if len(self.clear_fields) != len(set(self.clear_fields)):
+            raise ValueError("duplicate clear field")
+        if any(getattr(self, field) is not None for field in self.clear_fields):
+            raise ValueError("a cleared field must be null")
+        fields = [item.field for item in self.container_discrepancies]
+        if len(fields) != len(set(fields)):
+            raise ValueError("duplicate container discrepancy")
         return self
 
 
@@ -151,6 +188,7 @@ class MetadataBibliographyCompletedOutcome(_Frozen):
     completed_at: AwareDatetime
     changed_fields: list[MetadataField]
     unresolved_fields: list[MetadataField]
+    container_report: ContainerReport | None
 
 
 class MetadataTitleCompletedOutcome(_Frozen):
@@ -171,6 +209,7 @@ class MetadataNoFindingsOutcome(_Frozen):
     status: Literal["no_findings"] = "no_findings"
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
+    container_report: ContainerReport | None
 
 
 class MetadataFailedOutcome(_Frozen):
@@ -265,6 +304,7 @@ class MetadataNoFindingsOperation(_Operation):
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
     reviewed_at: AwareDatetime | None
+    container_report: ContainerReport | None
 
 
 class MetadataFailedOperation(_Operation):

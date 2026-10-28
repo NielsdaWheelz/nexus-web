@@ -139,7 +139,9 @@ preview supplies the exact bounded document and any creation conflict. first
 candidate acceptance carries the reviewed navigation key as well as candidate
 version; this fences rich cuts even when text endpoints have not changed.
 already-desired same-part retries retain their original bytes and identity.
-manual editing freezes its baseline version until explicit conflict review.
+manual editing freezes its baseline version and selection until explicit conflict
+review. review adopts the saved version while preserving the chosen range; a
+confirmed save advances the baseline before refreshing the surrounding view.
 preparation is an extraction prerequisite; retry-wait remains observed work.
 its index obligation is visible independently of import-history membership.
 structural readiness ends preparation feedback even if search indexing continues.

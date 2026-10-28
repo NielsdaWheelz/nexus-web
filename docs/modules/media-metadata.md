@@ -27,17 +27,32 @@ row formatting and retained-summary freshness belong to the
 [library presentation contract](library.md); the metadata overlay keeps full dates
 and all credits.
 
-generated json has exactly eight required nullable fields: title, contributors,
-original date, edition date, edition isbn, publisher, language and description.
+generated json has eight required nullable fields: title, contributors,
+original date, edition date, edition isbn, publisher, language and description,
+plus required `clear_fields` and `container_discrepancies` arrays.
 `schemas/metadata_enrichment.py` owns the closed schema. malformed output rejects
 the entire result; there is no repair generation. an accepted null is an absent
-finding. unknown scalars preserve stored facts. all-null output
-is `no_findings`, not success. partial findings and unchanged non-null confirmation
-are successful research.
+finding unless explicitly listed for clearing. a clear requires evidence that the
+claim is wrong; an explicit clear of an already-null field confirms absence.
+all-null output without clears is `no_findings`, not success. partial findings,
+clears and unchanged non-null confirmation are successful research.
+
+for a piece, edition date, isbn and publisher belong to its source, and are not
+applicable findings. source facts and credits form bounded context, not authority
+to mutate the source or read siblings. the frozen input includes both complete
+credit rosters, the source facts, child definition and exact text scope. only
+handles offered by that snapshot may be returned. a nonempty discrepancy list
+against supplied source facts produces a historical report with the captured source
+title; a report alone is `no_findings` and does not stamp success. stale or failed
+runs publish neither findings nor reports. report explanations reject exact captured
+private identifiers as tokens; ordinary words can coincide with those identifiers
+and cause conservative rejection. this check does not prove that generated prose
+contains no other private material.
 
 contributors are complete ordered observations of specified roles, not one
 authors list. admitted handles preserve person identity across credited-name
-changes; unbound names use the contributor owner's exact resolver. observed
+changes; a piece may also reuse its source's handles. unbound names use the
+contributor owner's exact resolver. pieces cannot carry publisher credits. observed
 spellings remain nonresolving aliases. duplicate identity within one role rejects
 the result. an explicit empty role slice may clear that role; unresolved roles
 remain untouched. author slices follow the same publication policy as other
@@ -243,8 +258,7 @@ pane closes, so lists still learn its title. an automatic run that starts while 
 settled pane stays visible shows on the next mount, visibility change or overlay
 open. bibliographic rereads preserve reader locator, selection and playback. a
 frame whose stamp moved past the tab's known stamp publishes `Metadata`
-(architecture §8.12) when its run changed a summary field (title, contributors,
-first publication) or its fields are unknown; the admission's
+(architecture §8.12) when its run changed any metadata field or its fields are unknown; the admission's
 `last_enriched_at` seeds the known stamp, so a run that lands before the first
 frame still counts. unchanged success refreshes activity only. row menus use
 their inspected action expectation.
@@ -292,7 +306,20 @@ the publication description displays `Media.description`; retained podcast
 notes remain in their listening/source view and never replace this bibliographic
 field.
 
-the same detail response exposes stored `provider`, `provider_id`, `requested_url`
+piece detail derives required `part_source_edition` from its actual source, even
+when every edition fact is unknown. readable-child authority permits these citation
+facts; the source link still requires independent source readability. public sharing
+keeps title-only attribution. the overlay separates piece publication from source
+edition and renders the run's captured report as history, never a proposed source
+edit. imports and the overlay share the result renderer.
+
+overlay open/foreground reconnects the existing operation observer and rereads
+detail; metadata invalidation also refreshes source-edition facts. a report-only run
+replaces the observed operation without requiring a changed success stamp. piece
+drafts retain their original definition version and exact uncertain command;
+conflicts preserve input until the user explicitly adopts the reviewed saved version.
+
+for other media, the same detail response exposes stored `provider`, `provider_id`, `requested_url`
 and `canonical_url` as required nullable fields. the overlay's source group shows the
 exact provider identity and distinct stored urls alongside `canonical_source_url`;
 it reconstructs no identifier or url and adds no reads. an absent provider says

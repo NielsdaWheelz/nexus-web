@@ -475,6 +475,7 @@ def publish_part(
     _set_extent(part, extent)
     db.add(part)
     db.add(ReaderPublication(id=new_uuid7(), media_id=part_id, generation=1, source_issues=[]))
+    db.flush()
     if candidate.finding is not None:
         finding = PartFinding.model_validate(candidate.finding)
         if finding.contributors is not None:
@@ -484,8 +485,10 @@ def publish_part(
                 parse_contributor_handle,
             )
             from nexus.services.contributors import (
+                ContributorObservationRejected,
+                MediaTarget,
                 apply_prepared_role_slices_in_current_transaction,
-                prepare_contained_work_role_slices_in_current_transaction,
+                prepare_observed_role_slices_in_current_transaction,
             )
 
             observation = ObservedRoleSlices(
@@ -504,12 +507,17 @@ def publish_part(
                     for credit in role_slice.credits
                 ),
             )
-            prepared = prepare_contained_work_role_slices_in_current_transaction(
-                db,
-                source_media_id=extent.source_media_id,
-                part_media_id=part_id,
-                observation=observation,
-            )
+            try:
+                prepared = prepare_observed_role_slices_in_current_transaction(
+                    db,
+                    target=MediaTarget(part_id),
+                    observation=observation,
+                    source="part_discovery",
+                )
+            except ContributorObservationRejected as exc:
+                raise _invalid(
+                    "invalid_contributors", "this proposal's contributors are invalid"
+                ) from exc
             apply_prepared_role_slices_in_current_transaction(db, prepared=prepared)
     candidate.part_id = part_id
     candidate.accepted_selection = extent.selection.model_dump(mode="json")

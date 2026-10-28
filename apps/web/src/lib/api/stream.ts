@@ -171,6 +171,7 @@ export function openStream<E, P = unknown>(
         await admitted();
         if (signal.aborted || !isCurrentApiAccount(account)) return;
         const empty = await connect();
+        if (signal.aborted || !isCurrentApiAccount(account)) return;
         if (terminal) return options.onComplete?.();
         if (empty === null) {
           await jittered(PLANNED_CUT_RESUME_MS);

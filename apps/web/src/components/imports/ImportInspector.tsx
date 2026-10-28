@@ -5,6 +5,7 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
+import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
@@ -42,7 +43,6 @@ import { useImports } from "@/lib/imports/ImportsProvider";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import {
   METADATA_FAILURE_COPY,
-  METADATA_FIELD_LABELS,
   METADATA_REVIEW_HELP,
   earlierMetadataRuns,
   metadataOperationName,
@@ -297,16 +297,7 @@ export default function ImportInspector({
               : operation?.status === "no_findings" && operation.reviewed_at === null ? METADATA_REVIEW_HELP
                 : undefined,
           }} announcement="None" />
-          {operation?.status === "completed" &&
-          operation.outcome.purpose === "bibliography" &&
-          operation.outcome.unresolved_fields.length > 0 ? (
-            <p>
-              not established by this run:{" "}
-              {operation.outcome.unresolved_fields
-                .map((name) => METADATA_FIELD_LABELS[name])
-                .join(", ")}
-            </p>
-          ) : null}
+          <MetadataResearchResult operation={operation} />
           {earlierRuns > 0 ? (
             <p>
               {earlierRuns} earlier metadata{" "}
@@ -524,6 +515,7 @@ function HistoryEvent({
         </Pill>
       ) : null}
       <Moment value={entry.occurred_at} />
+      <MetadataResearchResult operation={operation} />
       {operation === null ? null : <OperationDetails operation={operation} />}
     </li>
   );

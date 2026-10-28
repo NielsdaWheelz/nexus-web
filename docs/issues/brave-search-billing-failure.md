@@ -16,6 +16,15 @@ was closed and its worker resumed. no provider response was substituted.
 
 restore the credential's provider quota, then repeat a real
 dispatcher call and verify that its saved external snapshot can be reopened and
-found in full search. separately decide whether this provider billing response
-should be an expected typed tool failure instead of a host-policy exception;
-that belongs to the shared `llm_tools` provider/binding owner.
+found in full search. provider billing still requires owner repair.
+
+2026-10-28: contained-work bibliography qualification reproduced the same 402
+through the actual metadata worker in isolated run
+`20261028-101320-f9b386f5f80a`. the queue ended with
+`E_WORKER_HANDLER_FAILED` and no result. the contained-work change fixes the
+shared provider classification and pins its consumers together: search now records
+`UpstreamUnavailable`, and research can complete from saved evidence without
+inventing unsupported facts. three real-source runs exercised that behavior in
+`20261028-104217-6216244b52d3`. this resolves the worker crash, not the external
+billing failure or successful public-search qualification. activation follows
+[the paired release](release-contained-work-metadata.md).

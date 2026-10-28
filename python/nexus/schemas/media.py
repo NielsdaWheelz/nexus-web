@@ -73,6 +73,12 @@ class XSourceContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PartSourceEditionOut(BaseModel):
+    published_date: PublicationDate | None
+    isbn: str | None
+    publisher: str | None
+
+
 class MediaOut(BaseModel):
     """One media as this viewer sees it: bibliography, processing, readability and the
     viewer's own consumption; ``player_descriptor`` only for a playable episode."""
@@ -81,6 +87,7 @@ class MediaOut(BaseModel):
     kind: MediaKind
     title: str
     part_source: MediaPartSourceOut | None
+    part_source_edition: PartSourceEditionOut | None
     part_version: int | None
     canonical_source_url: str | None
     provider: str | None
