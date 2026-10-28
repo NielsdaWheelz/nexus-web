@@ -139,7 +139,20 @@ _APPARATUS_DOCUMENT = """to_tsvector('english',coalesce(rai.label,'') || ' ' ||
 _SOURCE = (
     "m.id AS media_id, m.kind AS media_kind, m.title AS media_title, m.original_published_date"
 )
-_ANN = "unnest(CAST(:ann_ids AS uuid[]), CAST(:ann_cos AS float8[])) AS ann(id, cosine)"
+
+
+def _ann(prefix: str) -> str:
+    return f"unnest(CAST(:{prefix}_ann_ids AS uuid[]), CAST(:{prefix}_ann_cos AS float8[])) AS ann(id, cosine)"
+
+
+def _ann_params(family: str, neighbours: Sequence[tuple[UUID, float]]) -> dict[str, Any]:
+    prefix = {"content_chunk": "chunk", "note_block": "note"}[family]
+    return {
+        f"{prefix}_ann_ids": [identity for identity, _ in neighbours],
+        f"{prefix}_ann_cos": [cosine for _, cosine in neighbours],
+    }
+
+
 _FQUOTE = "jsonb_build_object('exact', f.canonical_text, 'prefix', '', 'suffix', '')"
 
 
@@ -279,7 +292,7 @@ SOURCES: dict[str, str] = {
                     WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block'
                     AND v.resource_id=nb.id AND v.lane='body'),1)) AS locator
         FROM note_blocks nb LEFT JOIN (SELECT cc.owner_id, max(ann.cosine) AS cosine
-            FROM {_ANN} JOIN content_chunks cc ON cc.id = ann.id GROUP BY cc.owner_id) ann
+            FROM {_ann("note")} JOIN content_chunks cc ON cc.id = ann.id GROUP BY cc.owner_id) ann
             ON ann.owner_id = nb.id
         WHERE nb.user_id = :viewer_id AND nb.body_text <> '' {{where}}""",
     "highlight": f"""SELECT 'highlight' AS type,h.id,h.exact AS label,
@@ -343,7 +356,7 @@ SOURCES: dict[str, str] = {
             cc.chunk_text_tsv AS doc,ann.cosine,cc.chunk_text AS text,cc.source_kind,
             es.id AS span_id,es.span_text,es.selector,es.citation_label,es.resolver_kind,
             {_SOURCE},m.id AS reading_media_id,source_m.id AS source_media_id,source_m.kind AS source_media_kind
-        FROM content_chunks cc LEFT JOIN {_ANN} ON ann.id=cc.id
+        FROM content_chunks cc LEFT JOIN {_ann("chunk")} ON ann.id=cc.id
         JOIN media source_m ON source_m.id=cc.owner_id
         CROSS JOIN LATERAL (SELECT ({_CHUNK_OWNER}) AS media_id) reading
         JOIN media m ON m.id=reading.media_id
@@ -608,85 +621,116 @@ def _saved_passages(
     return accepted
 
 
-def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
-    """The family's top ``r.k`` hits in rule order, within scopes and filters."""
-    scopes = compose_scopes((family,), r.scopes, r.frozen)
-    cell = scopes.cell(family)
-    filters = _filters(family, r)
-    if cell is None or filters is None or not (r.terms or family in LISTABLE):
-        return []
-    if family == "passage_anchor":
-        return [
-            Hit("passage_anchor", row["id"], row["label"], row["score"], owner)
-            for row, owner in _saved_passages(db, r)
-        ]
-    where = (
-        cell[0]
-        + filters
-        + _STRICT_ADMISSION.get(family, "")
-        + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
-    )
+def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
+    """Independent top-``r.k`` windows, concatenated in supplied family order.
+
+    Ordinary families share one statement's canonical scope relations. Semantic
+    domains keep independent windows/counts; only their raw ANN traversal is shared.
+    Saved passages retain their placement-validated refill executor. The caller's
+    stable merge therefore keeps its original family tie order.
+    """
+    scopes = compose_scopes(families, r.scopes, r.frozen)
     escaped = escape_like(r.terms)
-    semantic = SEMANTIC.get(family)
-    params = cell[1] | {
-        "viewer_id": r.viewer_id,
-        "q": r.terms,
-        "k": r.k,
-        "ann_ids": [],
-        "ann_cos": [],
-    }
-    params |= {"prefix": f"{escaped}%", "contains": f"%{escaped}%", "kinds": list(r.content_kinds)}
-    params |= {"roles": list(r.roles), "contributor_ids": r.contributor_ids}
     ctes, scope_params = _ctes(r, scope_sql=scopes)
-    params |= scope_params
-    if semantic and r.terms and r.embedding is not None:
-        owner = _semantic_owner(family, where)
-        (near,) = nearest_chunks(
+    params = (
+        dict(scopes.bindings)
+        | scope_params
+        | {
+            "viewer_id": r.viewer_id,
+            "q": r.terms,
+            "k": r.k,
+            "prefix": f"{escaped}%",
+            "contains": f"%{escaped}%",
+            "kinds": list(r.content_kinds),
+            "roles": list(r.roles),
+            "contributor_ids": r.contributor_ids,
+        }
+    )
+    params |= _ann_params("content_chunk", ()) | _ann_params("note_block", ())
+    windows: list[list[Hit]] = [[] for _ in families]
+    active: list[tuple[int, str, str]] = []
+    semantic_families: list[str] = []
+    domains: list[ChunkDomain] = []
+    for index, family in enumerate(families):
+        cell = scopes.cell(family)
+        filters = _filters(family, r)
+        if cell is None or filters is None or not (r.terms or family in LISTABLE):
+            continue
+        if family == "passage_anchor":
+            windows[index] = [
+                Hit("passage_anchor", row["id"], row["label"], row["score"], owner)
+                for row, owner in _saved_passages(db, r)
+            ]
+            continue
+        where = (
+            cell[0]
+            + filters
+            + _STRICT_ADMISSION.get(family, "")
+            + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
+        )
+        active.append((index, family, where))
+        if family in SEMANTIC and r.terms and r.embedding is not None:
+            semantic_families.append(family)
+            domains.append(ChunkDomain(_semantic_owner(family, where)))
+    if domains:
+        assert r.embedding is not None
+        neighbours = nearest_chunks(
             db,
             r.embedding,
-            domains=(ChunkDomain(owner),),
+            domains=domains,
             params=params,
             limit=max(200, 4 * r.k),
             ctes=ctes,
             maximum_distance=0.5,
         )
-        near = [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
-        params |= {"ann_ids": [n[0] for n in near], "ann_cos": [n[1] for n in near]}
-    if family == "content_chunk" and r.terms:  # never scan the whole chunk table
-        where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
-            OR cc.id = ANY(CAST(:ann_ids AS uuid[])))"""
-    cosine = "s.cosine" if semantic else "NULL"
-    score = f"""CAST(((CASE WHEN lower(s.label) = lower(:q) THEN 3 WHEN s.label ILIKE :prefix THEN 2
-            WHEN s.label ILIKE :contains THEN 1 ELSE 0 END) + CASE WHEN s.doc @@ {TSQ}
-            THEN 0.5 + ts_rank_cd(s.doc, {TSQ}, 32) / 2 ELSE COALESCE({cosine}, 0) / 2 END) / 4
-        AS float8)"""
-    match = f"s.doc @@ {TSQ} OR s.label ILIKE :contains OR {cosine} IS NOT NULL"
-    relation = SOURCES[family].replace("{where}", where)
-    matching = None
-    if family == "fragment":
-        matching = f"SELECT id FROM fragments WHERE canonical_text_tsv @@ {TSQ}"
-    elif family == "reader_apparatus_item":
-        matching = f"""SELECT rai.id FROM reader_apparatus_items rai
-            WHERE {_APPARATUS_DOCUMENT} @@ {TSQ}
-            UNION SELECT id FROM reader_apparatus_items WHERE label ILIKE :contains"""
-    if matching is not None:
-        # Complete lexical matches drive point reads; OFFSET 0 retains that
-        # dependency before canonical reading-owner selection and text projection.
-        ctes += f", lexical_matches AS MATERIALIZED ({matching})"
-        relation = f"""SELECT matched_source.* FROM lexical_matches matching
-            CROSS JOIN LATERAL (SELECT * FROM ({relation}) original_source
-                WHERE original_source.id=matching.id OFFSET 0) matched_source"""
-    rows = db.execute(
-        text(f"""{ctes} SELECT s.type, s.id, COALESCE(s.label, '') AS label,
+        for family, near in zip(semantic_families, neighbours, strict=True):
+            params |= _ann_params(family, [(id, cosine) for id, cosine in near if cosine >= 0.5])
+    arms = []
+    for index, family, where in active:
+        if family == "content_chunk" and r.terms:  # never scan the whole chunk table
+            where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
+                OR cc.id = ANY(CAST(:chunk_ann_ids AS uuid[])))"""
+        cosine = "s.cosine" if family in SEMANTIC else "NULL"
+        score = f"""CAST(((CASE WHEN lower(s.label) = lower(:q) THEN 3 WHEN s.label ILIKE :prefix THEN 2
+                WHEN s.label ILIKE :contains THEN 1 ELSE 0 END) + CASE WHEN s.doc @@ {TSQ}
+                THEN 0.5 + ts_rank_cd(s.doc, {TSQ}, 32) / 2 ELSE COALESCE({cosine}, 0) / 2 END) / 4
+            AS float8)"""
+        match = f"s.doc @@ {TSQ} OR s.label ILIKE :contains OR {cosine} IS NOT NULL"
+        relation = SOURCES[family].replace("{where}", where)
+        matching = None
+        if family == "fragment":
+            matching = f"SELECT id FROM fragments WHERE canonical_text_tsv @@ {TSQ}"
+        elif family == "reader_apparatus_item":
+            matching = f"""SELECT rai.id FROM reader_apparatus_items rai
+                WHERE {_APPARATUS_DOCUMENT} @@ {TSQ}
+                UNION SELECT id FROM reader_apparatus_items WHERE label ILIKE :contains"""
+        if matching is not None:
+            # Separate complete lexical sets retain their driving point reads.
+            name = f"rank_{index}_{family}_matches"
+            ctes += f", {name} AS MATERIALIZED ({matching})"
+            relation = f"""SELECT matched_source.* FROM {name} matching
+                CROSS JOIN LATERAL (SELECT * FROM ({relation}) original_source
+                    WHERE original_source.id=matching.id OFFSET 0) matched_source"""
+        arms.append(f"""(SELECT {index} AS family_index,s.type,CAST(s.id AS text) AS id,
+                COALESCE(s.label, '') AS label,
                 {score if r.terms else "CAST(0 AS float8)"} AS score,
                 {"s.reading_media_id" if family in {"content_chunk", "fragment", "highlight", "reader_apparatus_item", "evidence_span"} else "NULL::uuid"} AS reading_media_id
             FROM ({relation}) s
             WHERE {match if r.terms else "TRUE"}
             ORDER BY score DESC, COALESCE(s.label, '') COLLATE "C", CAST(s.id AS text) COLLATE "C"
-            LIMIT :k"""),
-        params,
-    )
-    return [Hit(row[0], row[1], row[2], row[3], row[4]) for row in rows]
+            LIMIT :k)""")
+    if arms:
+        rows = db.execute(
+            text(f"""{ctes} SELECT * FROM ({" UNION ALL ".join(arms)}) ranked
+                ORDER BY family_index,score DESC,label COLLATE "C",id COLLATE "C"
+            """),
+            params,
+        )
+        for row in rows:
+            index, kind, identity, label, score, reading = row
+            id = int(identity) if families[index] == "gutenberg" else UUID(identity)
+            windows[index].append(Hit(kind, id, label, score, reading))
+    return [hit for window in windows for hit in window]
 
 
 def merge(hits: Iterable[Hit]) -> list[Hit]:
@@ -736,11 +780,10 @@ def hydrate_occurrences(
         {
             "viewer_id": viewer_id,
             "q": terms,
-            "ann_ids": [],
-            "ann_cos": [],
             "ids": [id for id, _ in occurrences],
             "readings": [reading for _, reading in occurrences],
-        },
+        }
+        | (_ann_params(family, ()) if family in SEMANTIC else {}),
     ).mappings()
     out = []
     for row in rows:
@@ -802,9 +845,9 @@ def _discovery_predicates(
         "kinds": list(r.content_kinds),
         "roles": list(r.roles),
         "contributor_ids": r.contributor_ids,
-        "ann_ids": [],
-        "ann_cos": [],
     }
+    if family in SEMANTIC:
+        params |= _ann_params(family, ())
     _, scope_params = _ctes(r)
     return cell[0] + filters, params | scope_params
 
@@ -998,10 +1041,7 @@ def discovery_semantic_hits(
     if predicates is None or not neighbours:
         return []
     where, params = predicates
-    params |= {
-        "ann_ids": [identity for identity, _ in neighbours],
-        "ann_cos": [cosine for _, cosine in neighbours],
-    }
+    params |= _ann_params(family, neighbours)
     ctes, bindings = _ctes(r)
     owner = "s.media_id" if family == "content_chunk" else "NULL::uuid"
     reading = "s.reading_media_id" if family == "content_chunk" else "NULL::uuid"
@@ -1044,16 +1084,15 @@ def discovery_semantic_children(
     rows = db.execute(
         text(f"""{ctes} SELECT reading.chunk_id,reading.reading_media_id,ann.cosine
             FROM ({reading_chunks_sql(readings)}) reading
-            JOIN {_ANN} ON ann.id=reading.chunk_id
+            JOIN {_ann("chunk")} ON ann.id=reading.chunk_id
             JOIN content_chunks cc ON cc.id=reading.chunk_id
             JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id"""),
         params
         | {
             "viewer_id": r.viewer_id,
             "named_parts": list(owners),
-            "ann_ids": [identity for identity, _ in neighbours],
-            "ann_cos": [cosine for _, cosine in neighbours],
-        },
+        }
+        | _ann_params("content_chunk", neighbours),
     )
     return [
         DiscoveryHit(

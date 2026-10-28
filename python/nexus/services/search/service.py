@@ -98,7 +98,7 @@ def _page(
         embedding=embedding,
         highlight_notes_only=query.highlight_notes_only,
     )
-    hits = merge(hit for family in families for hit in rank(db, r, family))
+    hits = merge(rank(db, r, families=families))
     page = hits[offset : offset + limit + 1]
     more = len(page) > limit and is_offset(offset + limit)
     return project(db, viewer_id, page[:limit], r.terms), more

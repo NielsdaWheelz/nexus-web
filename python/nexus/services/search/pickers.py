@@ -123,7 +123,7 @@ def _targets(
     else:
         needed = offset + TARGET_PAGE + 1
         r = Retrieval(viewer_id, q, 2 * needed + len(excluded), embedding=embedding)
-        hits = merge(hit for family in (*_DIRECT, *_PASSAGES) for hit in rank(db, r, family))
+        hits = merge(rank(db, r, families=(*_DIRECT, *_PASSAGES)))
         candidates = _refs(hits[: r.k])
         reading_owners = {_refs([hit])[0].uri: hit.reading_media_id for hit in hits[: r.k]}
     candidates = [ref for ref in candidates if ref.uri not in excluded]
