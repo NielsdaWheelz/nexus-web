@@ -6,7 +6,6 @@ import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Button from "@/components/ui/Button";
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { Message } from "@/lib/chat/wire";
@@ -14,7 +13,6 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
-import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useChatPane } from "./ChatSurface";
 import styles from "./MessageFooter.module.css";
 
@@ -31,7 +29,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
   status?: string | null;
   alternatives: ReactNode;
 }) {
-  const { store, command } = useChatPane();
   const feedback = useFeedback();
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -44,12 +41,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
       feedback.receipt({ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." });
     }
-  };
-  const regenerate = (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Unowned") return;
-    event.preventDefault();
-    if (activation.kind === "Open") void store.repeat("regenerate", message.id, null, activation.intent);
   };
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
@@ -66,10 +57,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
         <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
             <Button iconOnly icon={<Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
-          ) : null}
-          {message.role === "assistant" && message.status === "complete" && run ? (
-            <Button iconOnly icon={<ACTION_CATALOG.RegenerateMessage.icon />} aria-label="Regenerate response" className={styles.secondary}
-              disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate} />
           ) : null}
           <MessageMenu message={message} onOpenChange={setMenuOpen} />
         </div>
