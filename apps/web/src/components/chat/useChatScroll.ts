@@ -327,13 +327,13 @@ function createScrollOwner(
       scrollGesture = null;
       if (event.target instanceof Element && event.target.closest("a[href]")) releaseInspection();
     },
-    /** A wheel over the docked composer scrolls the transcript, unless something inside can scroll. */
+    /** A wheel over the docked composer scrolls the transcript, unless the composer can scroll. */
     onComposerWheel(event: WheelEvent<HTMLElement>) {
       const port = scrollport.current;
-      if (!port || event.defaultPrevented || event.deltaY === 0) return;
+      if (!port || event.defaultPrevented || event.ctrlKey || event.deltaY === 0) return;
       for (
-        let node = event.target instanceof HTMLElement ? event.target : null;
-        node && node !== event.currentTarget;
+        let node = event.target instanceof Element ? event.target : null;
+        node;
         node = node.parentElement
       ) {
         const canScroll =
@@ -341,6 +341,7 @@ function createScrollOwner(
             ? node.scrollTop > 0
             : node.scrollTop + node.clientHeight < node.scrollHeight;
         if (node.scrollHeight > node.clientHeight && canScroll) return;
+        if (node === event.currentTarget) break;
       }
       const atEdge =
         event.deltaY < 0

@@ -1,11 +1,15 @@
 .pane { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; overflow: auto; }
-.head { display: flex; flex: none; flex-direction: column; align-items: stretch; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
+.head { container: connection-controls / inline-size; display: flex; flex: none; flex-direction: column; align-items: stretch; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
 .mode { align-self: flex-start; max-width: 100%; }
-.filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.filter { --control-icon-size: 12px; }
-/* The check's slot stays reserved, so selecting never moves a neighbour. */
-.unchecked { visibility: hidden; }
-.count { font-variant-numeric: tabular-nums; font-weight: var(--weight-regular); }
+.filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+.facetLabel { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1); min-inline-size: 0; }
+.count { flex: none; min-inline-size: 2ch; color: var(--ink-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; font-weight: var(--weight-regular); text-align: end; }
+@container connection-controls (min-width: 18rem) {
+  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container connection-controls (min-width: 36rem) {
+  .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 .reason { margin: 0; color: var(--ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .list { flex: 1 0 var(--size-xl); min-height: var(--size-xl); overflow: auto; padding: var(--space-2) var(--space-3) var(--space-8); overflow-anchor: none; }
 .group { position: relative; width: 100%; margin: 0; }

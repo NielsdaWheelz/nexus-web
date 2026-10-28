@@ -27,6 +27,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
+import compact from "@/components/ui/CompactChrome.module.css";
+import selection from "@/components/ui/Selection.module.css";
+import { cx } from "@/lib/ui/cx";
 import { assertNever } from "@/lib/assertNever";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { NEW_PANE_HINT, PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
@@ -93,7 +96,7 @@ function PaneChip(props: {
   return (
     <div
       ref={sortable.setNodeRef}
-      className={styles.chip}
+      className={cx(styles.chip, selection.surface, item.isActive && selection.selected)}
       style={{ transform: props.cancelled ? undefined : CSS.Translate.toString(sortable.transform) }}
       data-active={item.isActive || undefined}
       data-in-view={item.isInView || undefined}
@@ -107,7 +110,7 @@ function PaneChip(props: {
           sortable.setActivatorNodeRef(node);
           props.register("activate", node);
         }}
-        className={styles.activator}
+        className={cx(styles.activator, selection.target)}
         tabIndex={props.focusable === "activate" ? 0 : -1}
         aria-current={item.isActive ? "page" : undefined}
         aria-describedby={props.descriptionId}
@@ -374,7 +377,7 @@ export default function WorkspacePaneStrip(props: {
         finishDrag(paneId);
       }}
     >
-      <div className={styles.root}>
+      <div className={cx(styles.root, compact.compact)}>
         <div
           ref={strip}
           className={styles.switcher}
@@ -426,8 +429,8 @@ export default function WorkspacePaneStrip(props: {
       </div>
       {draggedItem ? createPortal(
         <DragOverlay adjustScale={false} dropAnimation={null}>
-          <div className={`${styles.chip} ${styles.dragOverlay}`} data-active={draggedItem.isActive || undefined} aria-hidden inert>
-            <span className={styles.activator}><ChipIdentity item={draggedItem} /></span>
+          <div className={cx(styles.chip, styles.dragOverlay, compact.compact, selection.surface, draggedItem.isActive && selection.selected)} data-active={draggedItem.isActive || undefined} aria-hidden inert>
+            <span className={cx(styles.activator, selection.target)}><ChipIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
               {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized, isMobile: false }).map((control) => {
                 const Icon = control.icon;

@@ -5,6 +5,7 @@
 import {createPortal} from "react-dom";
 import {ChevronRight, CornerLeftUp} from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import {ResourceTypeIcon} from "@/components/resources/ResourceType";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
@@ -37,8 +38,12 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row || row.root) return [];
-    const parsed = row.ref && parseResourceRef(row.ref);
-    const identity = parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "note";
+    const parsed = row.ref === null ? null : parseResourceRef(row.ref);
+    // justify-defect: only uncommitted drafts lack a canonical resource ref.
+    if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
+    const scheme = parsed === null ? "note_block" : parsed.scheme;
+    const identity = resourceTypeLabel(scheme).toLowerCase();
+    const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
     const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", restoreFocusOnClose: false, onSelect: row.select}];
     if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `unlink from ${row.parentLabel}`, restoreFocusOnClose: false, onSelect: row.unlink});
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
@@ -50,9 +55,9 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
           className={`${styles.control} ${styles.bullet}`} href={row.href} data-outline-bullet="true" data-row-focusable="true"
           aria-label={`open ${identity}: ${row.label}`} data-workspace-rich-target="true"
           onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}
-          onKeyDown={event => {context.onKeyDown(event); if (!event.defaultPrevented) activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}});}}>•</a>
+          onKeyDown={event => {context.onKeyDown(event); if (!event.defaultPrevented) activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}});}}>{marker}</a>
           : <button {...context} type="button" className={`${styles.control} ${styles.bullet}`} data-outline-bullet="true"
-            data-row-focusable="true" aria-label={`actions for ${row.label}`}>•</button>}/>
+            data-row-focusable="true" aria-label={`actions for ${identity}: ${row.label}`}>{marker}</button>}/>
     </span>;
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"
       aria-label={`show earlier occurrence of ${row.label}`} onKeyDown={event => event.stopPropagation()}

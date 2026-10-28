@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
+import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import ModalFrame from "./ModalFrame";
 import styles from "./HoverPreview.module.css";
@@ -73,7 +73,8 @@ export function useHoverPreview(enabled: boolean, label: string): {
   useLayoutEffect(() => {
     if (!anchor || !position.placed || !focusNext.current) return;
     focusNext.current = false;
-    position.ref.current?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
+    const panel = position.ref.current;
+    if (panel) (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
   }, [anchor, position.placed, position.ref]);
   useOverlay(card, {
     kind: "transient",
@@ -108,7 +109,8 @@ export function useHoverPreview(enabled: boolean, label: string): {
       skipReturnFocus.current = false;
       if (focus && anchor === element && position.placed) {
         focusNext.current = false;
-        position.ref.current?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
+        const panel = position.ref.current;
+        if (panel) (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
       } else setAnchor(element);
     },
     close,
@@ -131,11 +133,12 @@ export function useHoverPreview(enabled: boolean, label: string): {
             className={styles.card}
             role="dialog"
             aria-label={label}
+            tabIndex={-1}
             style={position.style}
             onPointerEnter={() => window.clearTimeout(timer.current)}
             onPointerLeave={() => later(() => {
               const preview = position.ref.current;
-              if (!preview?.contains(document.activeElement) && !preview?.querySelector('[aria-haspopup="menu"][aria-expanded="true"]')) close();
+              if (!preview?.contains(document.activeElement)) close();
             })}
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;

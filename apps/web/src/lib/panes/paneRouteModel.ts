@@ -21,7 +21,6 @@ import {
   Settings,
   Sparkles,
   UserCog,
-  UserRound,
   type LucideIcon,
 } from "lucide-react";
 import type { DestinationId } from "@/lib/navigation/destinations";
@@ -33,6 +32,7 @@ import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
 import {
   formatResourceRef,
   parseResourceRef,
+  resourceIconForScheme,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
 import { routeShareTarget } from "@/lib/sharing/targets";
@@ -44,23 +44,23 @@ const ROUTES = {
   downloads: ["downloads", "Downloads", Download],
   lectern: ["lectern", "Lectern", ListMusic],
   libraries: ["libraries", "Libraries", Library],
-  library: ["libraries/:id", "Library", Library],
+  library: ["libraries/:id", "Library", resourceIconForScheme("library")],
   browse: ["browse", "Browse", Compass],
   browsePreview: ["browse/preview", "Preview", Compass],
-  media: ["media/:id", "Media", FileText],
+  media: ["media/:id", "Media", resourceIconForScheme("media")],
   xCapture: ["x/captures/:id", "Post", FileText],
   conversations: ["conversations", "Chats", MessageSquare],
   conversationNew: ["conversations/new", "New chat", MessageSquare],
-  conversation: ["conversations/:id", "Chat", MessageSquare],
+  conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
   podcasts: ["podcasts", "Podcasts", Mic],
-  podcastDetail: ["podcasts/:podcastId", "Podcast", Mic],
+  podcastDetail: ["podcasts/:podcastId", "Podcast", resourceIconForScheme("podcast")],
   search: ["search", "Search", Search],
-  author: ["authors/:handle", "Author", UserRound],
+  author: ["authors/:handle", "Author", resourceIconForScheme("contributor")],
   notes: ["notes", "Notes", FileText],
   pageNew: ["pages/new", "New page", FileText],
-  page: ["pages/:pageId", "Page", FileText],
-  dailyDate: ["daily/:localDate", "Daily Page", FileText],
-  note: ["notes/:blockId", "Note", FileText],
+  page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
+  dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
+  note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", ListTodo],
   stats: ["stats", "Stats", ChartColumn],
   settings: ["settings", "Settings", Settings],
@@ -71,7 +71,7 @@ const ROUTES = {
   settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],
   atlas: ["atlas", "The Atlas", Map],
   oracle: ["oracle", "Oracle", Sparkles],
-  oracleReading: ["oracle/:readingId", "Reading", Sparkles],
+  oracleReading: ["oracle/:readingId", "Reading", resourceIconForScheme("oracle_reading")],
 } as const satisfies Record<string, readonly [string, string, LucideIcon]>;
 
 export type PaneRouteId = keyof typeof ROUTES;

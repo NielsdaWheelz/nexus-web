@@ -12,6 +12,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
+import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import { ExcerptText } from "@/components/resources/ResourceBody";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -35,6 +36,7 @@ import { SEARCH_ACTION_LABELS, searchProgress } from "@/lib/search/progress";
 import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { TRANSPORT_CODES } from "@/lib/nexus/useNexusFind";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
 
@@ -328,11 +330,6 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   </div>;
 }
 
-const LOCAL_KIND_LABELS: Record<LocalMatch["kind"], string> = {
-  notes: "note", highlights: "highlight", saved_passages: "saved passage", documents: "source", conversations: "chat",
-  people: "author", libraries: "library", readings: "reading", web: "web",
-};
-
 /** Literal local matches: canonical label, exact excerpt, exact target. A retained source label
  * yields to the server's own row for the same ref; authored rows are only ever local. */
 function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
@@ -354,11 +351,21 @@ function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLoc
 
 function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {
   const { href, label, excerpt, resource } = match;
-  const kind = resource.kind === "page" ? "page" : LOCAL_KIND_LABELS[match.kind];
+  const parsed = parseResourceRef(resource.ref);
+  // justify-defect: local result identity is an authored canonical resource ref.
+  if (parsed === null) throw new Error(`Invalid canonical local search ref: ${resource.ref}`);
+  const typeLabel = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const titleProvidesType = resource.kind === "highlight" && !resource.selection?.quote_exact.trim();
+  const title = <ResourceIndexTitle scheme={parsed.scheme} hasArtwork={false}>
+    {!href && !titleProvidesType ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
+    {titleProvidesType ? typeLabel : label}
+  </ResourceIndexTitle>;
   const activate = (event: Parameters<typeof activateTargetLink>[0]["event"]) => href ? activateTargetLink({ event, runtime, target: { href, labelHint: label } }) : undefined;
   return <li className={styles.localResult} data-resource-ref={resource.ref}>
-    {href ? <a href={href} data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{label}</a> : <span>{label}</span>}
-    <span className={styles.localKind}> · {kind}</span>
+    {href ? <a className={styles.localTitle} dir="auto" href={href} aria-label={titleProvidesType ? typeLabel : `${typeLabel}: ${label}`}
+      data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{title}</a>
+      : <span className={styles.localTitle} dir="auto">{title}</span>}
+    {parsed.scheme === "note_block" ? <span className={styles.localKind}> · {typeLabel}</span> : null}
     {excerpt ? <p className={styles.evidence}>
       {excerpt.before ? "…" : null}
       {excerpt.marks.reduce<{ at: number; parts: ReactNode[] }>((acc, [start, end], index) => ({ at: end,

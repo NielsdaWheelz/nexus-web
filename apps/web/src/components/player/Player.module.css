@@ -281,14 +281,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 44px;
-  font-size: var(--text-sm);
-}
-
 .rateRange {
   width: 100%;
   min-height: 44px;
@@ -437,16 +429,6 @@
 
 .preset {
   width: 100%;
-}
-
-.silenceField {
-  display: grid;
-  gap: var(--space-1);
-  cursor: pointer;
-}
-
-.switch input {
-  accent-color: var(--accent);
 }
 
 .remember {

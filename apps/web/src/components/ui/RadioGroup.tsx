@@ -22,7 +22,7 @@ export default function RadioGroup<V extends string>({
   const descriptionId = useId();
   const segmented = presentation === "Segmented";
   return (
-    <fieldset className={cx(styles.group, segmented && styles.segmented)} disabled={disabled}
+    <fieldset className={styles.group} disabled={disabled}
       aria-describedby={cx(describedBy, description && descriptionId) || undefined}>
       <legend className={legend === "Hidden" ? "sr-only" : undefined}>{label}</legend>
       <div className={segmented ? styles.segments : styles.choices}>
