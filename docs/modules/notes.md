@@ -27,10 +27,10 @@ accepted rows on refresh failure and expose their existing inline error/retry;
 retry clears the displayed error while retaining the accepted same-query prefix.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
-the native adapter shares one pending query promise only between consecutive
-identical registrations before execution. every serialized operation clears the
-pending slot; a query clears its own slot before execution and plan hashing.
-each caller keeps its own success, failure and retirement handling.
+the active note's root read supplies only literal title facts and its revision
+to the existing pane-title map; other authored locators retain their subscriptions.
+older facts cannot replace newer ones, and revision-only advances do not republish
+presentations. unknown or failed active-note reads retain their prior title hint.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
 picker's page-count wrapper and controlled local search. null disables its read;
 showing more retains the accepted prefix until its replacement lands.
@@ -39,6 +39,14 @@ subscription delivery may reuse that actual snapshot resource only at the exact
 same revision, through the ordinary receive/bookkeeping path. the certificate is
 consumed once; changed revisions, synthetic pages and prepared documents read
 canonical state normally.
+the note route and outline share one root-window read. its actual root request
+owns paging and branch provenance; descendant windows retain their collectors.
+same-account, same-ref canonical root metadata advances by successful revision,
+including absence, and survives paging or refresh failure without retiring the
+editing host. arrivals and inspection use that exact canonical text; edit-note
+delivery waits for the actual editor handle. unknown and unavailable notes do
+not admit writing documents. android's existing aggregate window cap also bounds
+this canonical note-route read; failures retain the owned inline retry.
 
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.

@@ -78,8 +78,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let lease: string | null = null;
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
-  let pendingRead: {key: string; result: Promise<QueryResult>} | null = null;
-  const serialize = <T,>(work: () => Promise<T>): Promise<T> => { pendingRead = null; const next = queue.then(work); queue = next.catch(() => undefined); return next; };
+  const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
   const queries = new Set<(corpusChanged?: boolean) => void>();
   const annotations = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
@@ -98,16 +97,6 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       const after = await call<ReplicaState>("replica");
       if (before.store_revision === after.store_revision) return {store_revision:after.store_revision,...result};
     }
-  };
-  const readQuery = (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
-    const key = JSON.stringify(query);
-    if (pendingRead?.key === key) return pendingRead.result;
-    const result: Promise<QueryResult> = serialize(() => {
-      if (pendingRead?.result === result) pendingRead = null;
-      return queryLocal(query);
-    });
-    pendingRead = {key, result};
-    return result;
   };
   const changeStates = async (changes: Change[]) => {
     const selection: StateSelection = { refs: [], link_ids: [], anchor_ids: [], source_refs: [] };
@@ -207,7 +196,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     readSnapshot: selection => serialize(() => call("read_snapshot", { selection })),
     readReplica: () => serialize(persistence.replica),
     readStates: selection => serialize(() => call("states", { selection })),
-    query: readQuery,
+    query: query => serialize(() => queryLocal(query)),
     commit: frame => serialize(async () => {
       sync.facts.saving = true; changed();
       try {
@@ -220,7 +209,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     }),
     subscribe: (query, listener, failed) => {
       let live = true;
-      const read = (corpusChanged = true) => { if (!corpusChanged) return; void readQuery(query).then(value => { if (live) listener(value); }, error => { if (live) failed(error); }); };
+      const read = (corpusChanged = true) => { if (!corpusChanged) return; void serialize(() => queryLocal(query)).then(value => { if (live) listener(value); }, error => { if (live) failed(error); }); };
       queries.add(read); read();
       return () => { live = false; queries.delete(read); };
     },

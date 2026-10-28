@@ -6,32 +6,35 @@ import { matchScopeQuote, normalizeScopeText } from "@nexus/authored/scope";
 import { normalizeQuote } from "@nexus/authored/identity";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import LocalOutline, {type LocalOutlineHandle} from "@/components/notes/LocalOutline";
+import {useLocalOutlineRoot, type LocalOutlineHandle} from "@/components/notes/LocalOutline";
+import Button from "@/components/ui/Button";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
-import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneEntryDelivery, usePaneParam } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { useNoteRootTitle } from "@/lib/workspace/presentations";
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
   const ref = `note_block:${blockId}`;
-  const read = useAuthoredQuery({ kind: "resource", ref });
-  const resource = read.data?.rows[0]?.resource ?? null;
   const sourceView = useRef<HTMLDivElement>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
+  const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
+  const rootField = useMemo(() => ({label: "edit note", inspection: inspection?.view ?? null}), [inspection]);
+  const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField});
+  const resource = read.rootRead.resource;
+  useNoteRootTitle(ref, read.rootRead);
   const [error, setError] = useState<unknown | null>(null);
-  usePaneReturnReady(read.data !== null || read.error !== null);
+  usePaneReturnReady(read.rootRead.known || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
     const handle = outline.current;
-    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !handle || !claim(delivery)) return;
+    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !read.ready || !handle || !claim(delivery)) return;
     void handle.focusRoot().catch(setError);
-  }, [resource, delivery, claim]);
-  const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
+  }, [resource, read.ready, delivery, claim]);
   const arrival = useSourceArrival({
     ready: resource !== null,
     sourceIdentity: resource?.body_text ?? null,
@@ -73,13 +76,15 @@ export default function NotePaneBody() {
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
   usePaneChrome(useMemo(() => ({ resourceRef }), [resourceRef]));
-  if (read.error) return <p role="alert">couldn’t open this note on this device.</p>;
-  if (!read.data) return <p>opening note…</p>;
-  if (!resource) return <p>this note is no longer available.</p>;
+  if (!resource) {
+    if (read.error) return <div role="alert"><p>couldn’t open this note on this device.</p><Button onClick={read.retry}>retry</Button></div>;
+    if (!read.rootRead.known) return <p>opening note…</p>;
+    return <p>this note is no longer available.</p>;
+  }
   return <div ref={sourceView} tabIndex={-1}>
     {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
     {error ? <p role="alert">{error instanceof Error ? error.message : "couldn’t save this change on this device."}</p> : null}
-    <LocalOutline rootRef={ref} apiRef={outline} rootField={{label: "edit note", inspection: inspection?.text === resource.body_text ? inspection.view : null}} />
+    {read.view}
   </div>;
 }
 

@@ -7,20 +7,20 @@ p95 192.8ms and typing300 p95 40ms pass. all eleven os premises and ten
 local appends pass; the budget stop precedes final upload-prefix and canonical
 append assertions. canonical and hardware cleanup completed.
 
-linear sql in367 reduces host preparation;9f reuses admission's actual state
-instead of rereading each new document.1989 shares identical reads still waiting
-to start. actual metadata trace `20261027-162345-ae3485e12d5d` witnesses two
-registrations sharing exactly one initial native resource query per warm open.
-its separate debugger-free retained-corpus50-target diagnostic measures p95
-220.8ms. all targets render, and account/replica/sequence310/first64 pending
-commands remain unchanged. this is not full fresh-campaign acceptance.
+linear sql and admission-state reuse remove repeated work. the1989 pending-read
+shortcut eliminates one initial projection query but retained50-target p95 is
+220.8ms. e8f1 reuses compiled statements at the native connection: the same
+retained-corpus diagnostic `20261027-164129-47acbb079667` measures186.7ms.
+all targets render and account/replica/sequence310/first64 pending commands stay
+unchanged. these are debugger-free diagnostics, not fresh-campaign acceptance.
 
-the native connection still prepares every packaged statement afresh. prior
-transport trace `20261027-151324-19cbb8a5377a` measures outline invocation
-22–29ms, including execution and transport; it does not isolate preparation.
-connection-owned reuse of finite packaged read plans is the current hypothesis,
-with full reset/binding cleanup and no query-result cache. measure the installed
-candidate before keeping it or changing another owner.
+the remaining note-route read waterfall is resource → mounted outline query →
+admission snapshot. the current candidate composes one root-window read for
+canonical note metadata, editor and active title, retaining actual pagination,
+branch provenance and admission's revision/byte fences. its metadata survives
+query-key changes; document admission still waits for the visible note view.
+the transient native pending-read shortcut is removed. verify editor/arrival/
+title behavior and installed performance before attributing any further gain.
 
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
