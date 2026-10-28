@@ -80,7 +80,9 @@ interface CollectionRowBase {
   readonly activity: CollectionActivity | null;
   readonly exceptionalStatus: ExceptionalStatus | null;
   /**
-   * The canonical resource suffix for this row's one contextual More menu.
+   * The displayed resource's canonical identity and contextual More menu subject.
+   * Presenters guarantee both identities coincide; `kind` is collection behavior,
+   * not resource type (a `note` collection item can display a `page:` resource).
    * `null` means a non-resource row, which may contribute only `flatActions`.
    */
   readonly resourceRef: CanonicalResourceRef | null;

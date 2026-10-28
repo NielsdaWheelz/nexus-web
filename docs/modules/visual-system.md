@@ -331,17 +331,24 @@ selection and accessibility traversal reach only mounted content. small lists
 and intrinsic search, details and outline presentations keep their own layout.
 the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
-`ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
-44×44px with any coarse pointer, and 2px gaps. outline indentation and creation
-alignment consume the same geometry. note-pane margins follow containing width,
+outline styles own control minima: 24px with a fine pointer, 44px with any coarse
+pointer. each control basis is the maximum of that minimum and one `--text-md`
+glyph plus two `--space-1` gaps. leading/trailing slots, disclosure and spacers
+share the basis in both dimensions; enlarged type can widen existing columns.
+default geometry and nesting increments are unchanged. note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-ordinary `ResourceRow` leading controls consume that same geometry. its optional
-passive `leadingVisual` slot occupies a separate column across both text rows,
+`ResourceType` renders decorative, unfocusable, current-color lucide glyphs at
+`--text-md` square with stroke 2. outline markers use muted ink at rest and retain
+control hover/focus/disabled treatment. index prefixes use muted ink with a
+`--space-1` gap; the glyph does not shrink, while the existing title fragment
+ellipsizes. notes have no index prefix or gap. type adds no control or text line.
+
+`ResourceRow`'s optional passive `leadingVisual` slot occupies a separate column across both text rows,
 aligned at the top; expanded content starts at the text column. omitted visuals
 reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 `--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment

@@ -12,10 +12,12 @@ import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
 import { assertNever } from "@/lib/assertNever";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { ExcerptText, type ResourceMatch } from "./ResourceBody";
 import IndexBibliography from "./IndexBibliography";
 import ResourceMetadata from "./ResourceMetadata";
 import ContextualActionMenu from "./ContextualActionMenu";
+import { ResourceIndexTitle } from "./ResourceType";
 import styles from "./ResourceIndexRow.module.css";
 
 type MatchMethod = Parameters<typeof resourceMetadata>[0]["matchMethod"];
@@ -43,6 +45,9 @@ export default function ResourceIndexRow({
   attention?: string;
 }) {
   const item = useResolvedResourceItem(supplied);
+  const parsed = parseResourceRef(item.ref);
+  // justify-defect: canonical row identity must satisfy the resource-ref grammar.
+  if (parsed === null) throw new Error(`Invalid canonical resource index ref: ${item.ref}`);
   if (podcastSubject !== undefined && (podcastSubject.target.kind !== "Canonical" || item.ref !== `podcast:${podcastSubject.target.podcast_id}` || item.preview.body.kind !== "named" || item.missing))
     throw new Error("podcast action subject does not match the live resource ref");
   const body = item.preview.body;
@@ -60,7 +65,9 @@ export default function ResourceIndexRow({
   const actionFocus = { get trigger() { return moreRef.current; }, returnFocus, afterRemoval: afterRemoval ?? returnFocus };
   const subject = summary !== null ? { kind: "Media" as const, subject: { kind: "Stored" as const, summary }, knownDescriptor: null }
     : podcastSubject !== undefined ? { kind: "Podcast" as const, subject: podcastSubject } : null;
+  const typeLabel = resourceTypeLabel(parsed.scheme).toLowerCase();
   let title: string;
+  let titleProvidesType = false;
   switch (body.kind) {
     case "media": title = body.media_summary.title; break;
     case "named": title = body.title || "untitled"; break;
@@ -68,14 +75,26 @@ export default function ResourceIndexRow({
     case "passage":
     case "prose": {
       const literal = body.kind === "passage" ? body.exact.text : body.excerpt.text;
-      title = source?.title?.trim() || (literal.startsWith(item.label) ? metadata.identity : item.label);
+      if (source?.title?.trim()) title = source.title.trim();
+      else if (!literal || literal.startsWith(item.label)) {
+        title = typeLabel;
+        titleProvidesType = true;
+      } else title = item.label;
       break;
     }
     case "reference": title = item.label; break;
     default: assertNever(body);
   }
   const needsKind = body.kind !== "media" && body.kind !== "named";
-  const parts = needsKind ? [{ kind: "text" as const, key: "identity", text: metadata.identity, href: null, date: null }, ...metadata.parts.filter(part => part.key !== "identity")] : metadata.parts;
+  const titleLocation = needsKind && source?.title?.trim() ? source.location_label : null;
+  const titleMatch = match?.excerpt.text === title ? match : null;
+  const accessibleTitle = [titleMatch?.excerpt.truncated_before ? "earlier text omitted" : null,
+    title, titleMatch?.excerpt.truncated_after ? "later text omitted" : null].filter(Boolean).join(" ");
+  const titleLabel = `${titleProvidesType ? "" : `${typeLabel}: `}${accessibleTitle}${titleLocation ? `, ${titleLocation}` : ""}`;
+  const parts = parsed.scheme !== "note_block" ? metadata.parts.filter(part => part.key !== "identity")
+    : needsKind ? [{ kind: "text" as const, key: "identity", text: metadata.identity, href: null, date: null }, ...metadata.parts.filter(part => part.key !== "identity")] : metadata.parts;
+  const artwork = parsed.scheme === "podcast" && body.kind === "named" && !item.missing
+    ? <PodcastRowArtwork title={item.label} imageUrl={body.image_url} /> : undefined;
   const contributors = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
   const unavailable = item.missing || item.activation.kind === "none";
   const attention = suppliedAttention ?? (summary?.processing_status === "failed" ? "processing failed; open metadata for details and recovery" : null);
@@ -92,13 +111,15 @@ export default function ResourceIndexRow({
     default: assertNever(presentation);
   }
   return <ResourceRow
-    primary={item.activation.href ? { kind: "link", href: item.activation.href, paneLabelHint: item.label,
+    primary={item.activation.href ? { kind: "link", href: item.activation.href, label: titleLabel, paneLabelHint: item.label,
       ref: (node) => { titleRef.current = node; if (typeof primaryLinkRef === "function") primaryLinkRef(node); else if (primaryLinkRef) primaryLinkRef.current = node; },
     } : { kind: "static" }}
-    leadingVisual={item.ref.startsWith("podcast:") && body.kind === "named" && !item.missing ? <PodcastRowArtwork title={item.label} imageUrl={body.image_url} /> : undefined}
-    title={<>{match?.excerpt.text === title ? <ExcerptText excerpt={match.excerpt} match={match} /> : title}
-      {needsKind && source?.title?.trim() ? <span className="sr-only">, {metadata.identity}{source.location_label ? `, ${source.location_label}` : ""}</span> : null}
-    </>}
+    leadingVisual={artwork}
+    title={<ResourceIndexTitle scheme={parsed.scheme} hasArtwork={artwork !== undefined}>
+      {!item.activation.href && !titleProvidesType ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
+      {titleMatch !== null ? <ExcerptText excerpt={titleMatch.excerpt} match={titleMatch} /> : title}
+      {!item.activation.href && titleLocation ? <span className={`sr-only ${styles.accessibleContext}`}>{`, ${titleLocation}`}</span> : null}
+    </ResourceIndexTitle>}
     content={content}
     controls={<>
       {primaryControl ? <span data-row-primary-control="">{primaryControl}</span> : null}
