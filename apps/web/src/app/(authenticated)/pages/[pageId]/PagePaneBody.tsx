@@ -94,7 +94,7 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   usePaneChrome({
     displayTitle, menuActions,
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
-    query: { kind: "Controls", label: "Filter page items", focusInput, content: <PaneQueryToolbar inputRef={inputRef}
+    query: { kind: "Controls", focusInput, content: <PaneQueryToolbar inputRef={inputRef}
       input={{ label: "Filter page items", placeholder: "Filter page items", value: filter, appliedValue: filter, onChange: setFilter, onClear: () => setFilter("") }}
       onReset={filter ? () => setFilter("") : undefined} /> },
   });

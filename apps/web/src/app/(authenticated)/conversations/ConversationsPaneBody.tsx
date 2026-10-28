@@ -159,7 +159,6 @@ export default function ConversationsPaneBody() {
   usePaneChrome({
     query: invalid ? undefined : {
       kind: "Controls",
-      label: "Filter chats",
       focusInput,
       content: (
         <PaneQueryToolbar

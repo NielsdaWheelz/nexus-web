@@ -112,7 +112,6 @@ export default function LibrariesPaneBody() {
     primaryAction: creation.primaryAction,
     query: invalid ? undefined : {
       kind: "Controls",
-      label: "Filter libraries",
       focusInput,
       content: (
         <PaneQueryToolbar

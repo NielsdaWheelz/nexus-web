@@ -306,7 +306,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     primaryAction: addContent,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
-      label: "Filter library entries",
       focusInput,
       content: (
         <PaneQueryToolbar
