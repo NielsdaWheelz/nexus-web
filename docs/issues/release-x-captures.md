@@ -1,8 +1,11 @@
 # release x quote captures
 
-status: implementation in progress; migration/live qualification and release outstanding
+status: implementation and disposable migration/live qualification complete;
+production census, device synchronization, backup and coordinated release outstanding
 
-the [capture cutover](../x-quote-capture-spec.md) changes x source ownership,
+the [capture ownership contract](../modules/ingest.md),
+[retention contract](../modules/storage.md) and
+[sharing contract](../modules/resource-sharing.md) change x source ownership,
 authored references, reader locations and client format together. mixed versions
 cannot read/write safely. owner approved synchronizing every device before release
 and retaining committed captures/images indefinitely.

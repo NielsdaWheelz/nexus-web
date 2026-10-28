@@ -29,7 +29,8 @@ throttling, a request timeout, a dropped connection) itself, three attempts in a
 inside the lock, and resends a file body from byte 0; any other failure (a 403, say)
 is not retried.
 
-Key shapes, all built in `python/nexus/storage/paths.py`:
+key shapes (`storage/paths.py` builds media/upload keys;
+`tasks/archive_x_capture_assets.py` owns capture-image keys):
 
 | key | owner row |
 | --- | --- |
@@ -75,8 +76,10 @@ once. A document (`web_article`, `epub`, `pdf`) left with no reference (no libra
 no grant) gets a `media_teardown_intents` row (one per media; UUIDv7 from
 `nexus.ids.new_uuid7`) and one `media_teardown` job `{media_id, intent_id}` in the same
 transaction, under the media row lock; so do a duplicate document
-(`delete_duplicate_document_media`) and a document whose last grant or highlight goes
-(`claim_document_teardown_if_unreferenced_locked`). The intent excludes the media from
+(`delete_duplicate_document_media`) and a document whose last media-backed grant
+reference disappears (`claim_document_teardown_if_unreferenced_locked`). capture
+annotations retain their capture source rather than a containing media. the
+intent excludes the media from
 every visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
 
 The job (`media_deletion.run_teardown_job`) is one step and acts only on its exact
@@ -89,18 +92,22 @@ whole-transaction restart. serializable conflicts use the same bounded retry.
 the next attempt reloads the viewer set before taking the media lock. no intent
 or another one is `Stale`; a reference that reappeared voids the intent and keeps the
 media (`Voided`); otherwise the media's dependent rows go in the load-bearing order (owner
-hooks before the rows they own, the content index before the media, highlight children
-before their roots), and the objects those rows named (`media_file`, `epub_resources`,
+hooks before the rows they own, the content index before the media), and the
+objects those rows named (`media_file`, `epub_resources`,
 the attempts' stored artifacts) are enumerated inside that transaction (`Deleted`).
 After commit it deletes those objects best-effort; an object it fails to delete, or one
 written after the deletion, is unowned and the orphan sweep reclaims it. There is no
-grace and no checkpoint. A dead job voids its exact intent while the media lives
-(`jobs/dead_letters.media_teardown`), so the media is readable again.
+grace and no checkpoint. a dead job clears its exact intent while the media lives
+(`jobs/dead_letters.media_teardown`). this removes the teardown fence; it restores
+no references, withdrawn x binding or reader authority.
 
 committed x captures, fragments, direct contexts, admissions and archived image rows
-outlive every media presentation. media teardown removes the optional post binding,
-thread memberships or article slots, never these source records or their object
-paths. the orphan sweep treats every `x_post_capture_assets.storage_path` as owned;
+outlive every media presentation. final unreferenced removal withdraws the optional
+post binding in the teardown-intent commit. a fresh guarded capture save can create
+a new presentation immediately; the old collector remains bound to its old media.
+physical teardown removes thread memberships and article slots, never retained
+source records or their object paths. the orphan sweep treats every
+`x_post_capture_assets.storage_path` as owned;
 only unpublished uploads can age into orphans. capture authorization is checked
 before streaming archived bytes; image reads never fetch upstream.
 

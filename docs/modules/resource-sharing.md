@@ -14,10 +14,11 @@ media or highlight. The database enforces the shape (0249): the subject scheme
 is `media` or `highlight`, exactly one audience column is set, and a creator
 holds one grant per subject and audience. A grant is also:
 
-- an authorization path: `auth/permissions.py` reads its SQL predicates; a
-  highlight grant opens that highlight and its media;
-- a reference: while any grant names a document media or its highlights, the
-  media is not torn down; revoking the last one claims the teardown.
+- an authorization path: `auth/permissions.py` reads its SQL predicates. a
+  media-backed highlight grant also opens its media; a capture-highlight grant
+  opens its admitted retained source, without granting containing media.
+- a reference: grants on a document media or media-backed highlights retain
+  that media. capture-highlight grants retain no containing presentation.
 
 public capture output is pinned in `resource_grant_captures(grant_id,capture_id)`.
 link creation records the exact selected/direct manifest the grantor could read
@@ -28,17 +29,27 @@ and that exact grant's manifest; later unrelated account imports cannot widen it
 an authorized source publisher calls
 `extend_public_media_capture_manifests(db, media_id=..., capture_ids=...)` in its
 publication transaction with the same already-authorized manifest used for account
-admission. reuse supplies its frozen pre-mutation manifest. only active public media
-grants gain the currently selected subset; highlight-grant manifests stay pinned.
+admission. reuse supplies its frozen pre-mutation manifest. active public media
+grants and live media-backed highlight grants gain the currently selected subset.
+capture-only highlights retain their exact source manifest.
 old manifest rows may remain because public reads also require current selection.
 revocation and deduplication delete manifest rows before their grant.
 
+deduplication freezes each public grantor's readable winner manifest before moving
+holdings or grants. a transferred placement cannot widen an existing public token.
+after transfer, each private reader receives admissions only for their readable
+selected captures; this does not admit unseen direct context. native public
+summaries, documents and assets require every selected primary in the token's
+manifest before exposing source-derived metadata.
+
 Every grant mutation invalidates audience visibility for exactly the users it
-affects, in the same transaction. Locks go media, then highlight, then grant,
-the order media deletion uses. Grants and users are addressed by plain uuids.
+affects, in the same transaction. media-backed subjects acquire the ordered
+media-family barrier before grant rows, matching media deletion. live capture
+highlights use their retained source without an artificial media anchor. grants
+and users are addressed by plain uuids.
 `DELETE /resource-shares/{grant_id}` revokes (creator) or declines (grantee);
-an absent grant, or one that is not the viewer's, answers 204 too. It runs READ
-COMMITTED and restarts when a dedupe repoint moved the grant's subject while it
+an absent grant, or one that is not the viewer's, answers 204 too. it runs
+SERIALIZABLE and restarts when a dedupe repoint moved the grant's subject while it
 waited.
 
 `services/resource_sharing.py` serves the Share overlay: one ordered
@@ -63,8 +74,8 @@ A link is `{APP_PUBLIC_URL}/s#share=nxshr1_<43>`. The token lives in the URL
 fragment and is stored raw; resolution is equality on that column and depends
 on no key. `/s` sends it only in the `X-Nexus-Share-Token` header of
 credential-free, uncached, no-redirect fetches to `/api/public/resource-share`,
-whose one catch-all BFF route forwards four closed shapes (the share,
-`document`, `file`, `assets/[0-9]{1,9}`) and 404s anything else. The PDF's
+whose one catch-all BFF route forwards the share, `document`, `file`,
+`assets/[0-9]{1,9}` and `apparatus/[0-9]{1,9}` and 404s anything else. The PDF's
 bytes ride the same fetch, not pdf.js's own, which would send the viewer's
 cookies: one `bytes=0-` read streams the whole file, and a chunk pdf.js needs
 before the stream reaches it is read by range.
@@ -76,14 +87,18 @@ teardown; text-ready (else `ProjectionNotReady`); a succeeded source attempt;
 a podcast episode only with a publisher transcript
 (`transcript_origin = 'Publisher'`); a video only from `youtube_video` with a
 disclosable URL; an EPUB with a succeeded EPUB attempt; a PDF with an
-`application/pdf` file of at least one byte; any other kind with a fragment;
+`application/pdf` file of at least one byte; another supported text publication
+with ordinary or selected capture text;
 and a resolvable highlight. Its facts are one statement after the lock: no
 section or asset read. Every other outcome, including wrong-kind endpoints and
 unknown ordinals, is one masked `404 E_NOT_FOUND "Share unavailable"`.
 Authorization precedes interpretation: path segments and Range are read only
-after the token passes; query strings are ignored.
+after the token passes. text asset/apparatus reads require the exact
+`expected_identity` of the mounted reader; callers cannot nominate a capture,
+storage path or upstream URL. standalone captures have no public-link product.
 
-A read locks the media `FOR SHARE`, then reads its facts in a fresh statement.
+a public read takes the ordered media-family `FOR UPDATE` barrier, then reads
+its facts in a fresh statement.
 Article and transcript publication takes a conflicting parent
 `FOR NO KEY UPDATE` or `FOR UPDATE` lock. An article or transcript highlight
 must resolve to a current same-media fragment; a stale anchor fails with the
@@ -92,18 +107,17 @@ URL and the shared highlight (quote, color, and a text anchor naming a
 fragment/segment ordinal or a PDF page and quads). `document` is the reader
 document the signed-in reader mounts (`services/reader_document.py`, built with
 no viewer and the exact public grant's capture manifest) rebuilt field by field
-through the public allowlist: a
-field the private document gains never crosses unseen. Unit ids are ordinals,
-html passes `public_html`, source issues are empty; a PDF's file is
+through the public allowlist: a field the private document gains never crosses
+unseen. unit ids are ordinals; html passes `public_html`, source issues are empty; a PDF's file is
 `/api/public/resource-share/file`. `/s` mounts it in the shared reader
 (`lib/documentReader`) read-only, opened at the shared highlight.
 
-EPUB images are `assets/{n}`: `n` indexes the media's public image list
-(`epub_assets.list_public_epub_asset_sources`: every stored image type but SVG,
-in package order); `n >= len` is the masked 404. Published EPUB content is
-immutable (`reader_publication` refuses replacing it), so an ordinal in an open
-tab names the same image for as long as the link lives; if republication is
-ever allowed, the asset path must carry the publication generation. PDF bytes
+admitted text images use `assets/{n}` with the mounted `expected_identity`;
+ordinals address only that publication's public asset manifest. epub images use
+stored package resources; x images use archived bytes from the grant's selected
+capture manifest and never fetch upstream. ordinary web-image admission remains
+with the existing source policy. a changed body identity refuses a stale ordinal;
+unknown or unadmitted images are the masked 404. PDF bytes
 stream through FastAPI with the token reauthorized on every request; there are
 no signed storage URLs. The first storage chunk is read before the answer
 starts, so a missing or failing object is the masked 404, not a truncated body.
@@ -118,8 +132,8 @@ dropped, `on*` stripped; absolute http(s) links without credentials open `_blank
 `noopener noreferrer` and `referrerpolicy=no-referrer`; a same-document `#id`
 link stays; an EPUB link to another unit names it by ordinal
 (`data-nexus-fragment-id`, plus `data-nexus-anchor-id`, `href="#"`); every other
-href is removed; every image loses its source, and an EPUB image whose source
-is its private asset path carries its ordinal as `data-nexus-public-asset`.
+href is removed. images lose private source paths; only images in the admitted
+manifest carry their ordinal as `data-nexus-public-asset`.
 `public_source_urls.py` decides the disclosable URL: a generic web URL (ingest
 already validated and normalized it) minus params, query and fragment; an X
 post or YouTube video only when its ref and every URL of the attempt agree; a
