@@ -284,11 +284,14 @@ def _chat_defaults(model: _Model) -> set[str]:
 def _reasoning_labels(
     row: AgentReasoningFacts | ApiReasoningFacts,
 ) -> tuple[str | None, str, str]:
+    if row.mode is None and row.effort == "default":
+        return None, "default", row.label
     mode = (
         {
             "standard": "Standard",
             "pro": "Pro",
             "adaptive": "Adaptive",
+            "between_tools": "Between tools",
             "disabled": "Thinking Off",
         }.get(row.mode, row.mode)
         if row.mode is not None
@@ -296,6 +299,7 @@ def _reasoning_labels(
     )
     effort = {
         "none": "None",
+        "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
         "high": "High",

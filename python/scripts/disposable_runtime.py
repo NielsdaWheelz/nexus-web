@@ -544,8 +544,6 @@ def main() -> int:
                 "--offline",
                 "--extra",
                 "dev",
-                "--extra",
-                "codex-agent",
             ],
             cwd=ROOT / "python",
         )

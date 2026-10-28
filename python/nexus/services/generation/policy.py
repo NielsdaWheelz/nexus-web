@@ -37,9 +37,9 @@ PROVIDER_MAX_TURNS: Final = 24
 MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 
 _CHAT_MODEL_DEFAULTS: dict[GenerationApiProvider | None, GenerationModelDefault] = {
-    None: GenerationModelDefault(model_key="gpt-6-sol", mode=None),
-    "openai": GenerationModelDefault(model_key="openai:gpt-6-sol", mode="standard"),
-    "anthropic": GenerationModelDefault(model_key="anthropic:claude-sonnet-5", mode="adaptive"),
+    None: GenerationModelDefault(model_key="gpt-6.1-sol", mode=None),
+    "openai": GenerationModelDefault(model_key="openai:gpt-6.1-sol", mode="standard"),
+    "anthropic": GenerationModelDefault(model_key="anthropic:claude-sonnet-5-5", mode="adaptive"),
     "gemini": GenerationModelDefault(model_key="gemini:gemini-3.8-flash", mode=None),
     "deepseek": GenerationModelDefault(model_key="deepseek:deepseek-flash", mode=None),
     "xai": GenerationModelDefault(model_key="xai:grok-4.7", mode=None),
@@ -47,9 +47,8 @@ _CHAT_MODEL_DEFAULTS: dict[GenerationApiProvider | None, GenerationModelDefault]
 _CHAT_EFFORT_EXCEPTIONS: dict[tuple[str, str | None], str] = {
     ("openai:gpt-6-astra", "standard"): "medium",
     ("openai:gpt-6-astra", "pro"): "medium",
-    ("openai:gpt-6-sol", "pro"): "medium",
+    ("openai:gpt-6.1-sol", "pro"): "medium",
     ("openai:gpt-6-luna", "pro"): "medium",
-    ("anthropic:claude-sonnet-5", "disabled"): "high",
 }
 
 # operation, owner, model, reasoning, whole-generation timeout s, input KiB.
