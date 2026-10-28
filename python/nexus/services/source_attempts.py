@@ -7,7 +7,12 @@ accepted attempt commits with its job (I11). A media's attempts form a chain ord
 derived id (``successor_id``, I10), so its retry finds its own effect. An explicit new
 browser source instead retains its attempt in the upload receipt. An attempt whose source
 converged on another media keeps that answer in ``media_source_supersessions`` after its
-own media is torn down.
+own media is torn down. actor-owned succeeded x_post attempts with exactly
+{capture_id:<uuid>}, no job and a finish time are synchronous capture acceptance
+receipts: they retain their original media_id after physical teardown. all other
+attempts require live media and are deleted with it. creation always locks a live
+media row, including when creating one of these receipts; replay reads the settled
+receipt rather than creating or restoring media.
 
 The recovery policy lives here too: one answer per latest attempt, read by Imports,
 the media projection, action menus and every recovery admission.
@@ -24,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import Media, MediaSourceAttempt
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.schemas.extension_capture import CaptureTarget
 from nexus.schemas.import_history import (
@@ -94,6 +99,14 @@ def create_attempt(
     An attempt born settled (a re-added source whose media exists) mirrors the
     media's outcome, so I3 holds from its first row.
     """
+    # The column also holds historical capture-receipt targets, so no FK owns this check.
+    if (
+        db.scalar(
+            select(Media.id).where(Media.id == media.id).with_for_update(read=True, key_share=True)
+        )
+        is None
+    ):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     attempt_no = db.scalar(
         select(func.coalesce(func.max(MediaSourceAttempt.attempt_no), 0) + 1).where(
             MediaSourceAttempt.media_id == media.id

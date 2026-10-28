@@ -49,6 +49,8 @@ export type OverlayOptions = {
     ) & {
       /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
       readonly inside?: () => readonly (Element | null)[];
+      /** A logical part of a transient which is not an element box. */
+      readonly containsPoint?: (event: PointerEvent) => boolean;
       /** Read at dispatch: false passes Escape and Back to the next layer. */
       readonly eligible?: () => boolean;
       /** Names the layer for isTopmostInteractionOwner. */
@@ -438,7 +440,7 @@ function onPointerDown(event: PointerEvent): void {
     const options = layer.options.current;
     const { kind, inside } = options;
     if (layer.parent !== modal || kind === "modal" || !inside) continue;
-    if (inside().some((element) => element?.contains(target))) {
+    if (inside().some((element) => element?.contains(target)) || (kind === "transient" && options.containsPoint?.(event))) {
       if (kind === "transient") return;
       // A caption's portal belongs to the same surface as its trigger.
       const trigger = options.kind === "tooltip" ? options.trigger() : null;

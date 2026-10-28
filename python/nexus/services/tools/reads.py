@@ -26,7 +26,6 @@ from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
-from nexus.schemas.reader_document import ReaderTextBodyOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
@@ -63,7 +62,6 @@ from nexus.services.search.query import (
     build_search_query,
     scope_from_uri,
 )
-from nexus.services.search.scope import reading_media_ids_sql
 from nexus.services.search.service import search_scopes_async
 from nexus.services.tools import assistant_writes
 from nexus.services.tools.contract import (
@@ -153,38 +151,32 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
     media = parent_media_id_for_read_pointer(call.db, scheme=ref.scheme, resource_id=ref.id)
     if f"media:{media}" in scope:
         return
-    if ref.scheme != "fragment":
+    if ref.scheme not in {"fragment", "content_chunk", "evidence_span"}:
         refuse("ResourceUnavailable")
+    fragment_id = (
+        ref.id
+        if ref.scheme == "fragment"
+        else call.db.scalar(
+            text(f"SELECT owner_id FROM {ref.scheme}s WHERE id=:id AND owner_kind='fragment'"),
+            {"id": ref.id},
+        )
+    )
     roots = [root.id for uri in scope if (root := _parse(uri)).scheme == "media"]
-    if media is not None and roots:
-        from nexus.services.reader_document import read_reader_document
+    if fragment_id is not None and roots:
+        from nexus.auth.permissions import requested_media_ids_cte_sql
+        from nexus.services.media_text_scope import x_capture_scope_rows_sql
+        from nexus.services.x_source import readable_x_capture_ids_sql
 
-        # The structural set only narrows candidates. The viewer's actual projection
-        # proves which canonical bodies this frozen parent presently displays.
-        for root_id in call.db.scalars(
-            text(f"""SELECT admitted_root.media_id
-                     FROM unnest(CAST(:roots AS uuid[])) admitted_root(media_id)
-                     WHERE :source IN ({reading_media_ids_sql("SELECT admitted_root.media_id")})"""),
-            {"roots": roots, "source": media},
-        ):
-            try:
-                document = read_reader_document(call.db, call.principal, root_id)
-            except ApiError as exc:
-                if exc.code not in (
-                    ApiErrorCode.E_MEDIA_NOT_FOUND,
-                    ApiErrorCode.E_MEDIA_NOT_READY,
-                ):
-                    raise
-                # justify-ignore-error: an unreadable parent cannot derive a source capability.
-                continue
-            if isinstance(document, ReaderTextBodyOut) and any(
-                unit.x_post is not None
-                and unit.x_post.owner is not None
-                and unit.x_post.owner.media_id == media
-                and unit.x_post.owner.fragment_id == ref.id
-                for unit in document.units
-            ):
-                return
+        candidates = f"SELECT media_id FROM unnest(CAST(:roots AS uuid[])) AS root(media_id) WHERE media_id IN ({requested_media_ids_cte_sql()})"
+        visible = call.db.scalar(
+            text(f"""SELECT EXISTS (
+            SELECT 1 FROM ({x_capture_scope_rows_sql(candidates)}) occurrence
+            JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=occurrence.capture_id
+            WHERE occurrence.fragment_id=:fragment)"""),
+            {"roots": roots, "fragment": fragment_id, "viewer_id": call.principal},
+        )
+        if visible:
+            return
     refuse("ResourceUnavailable")
 
 

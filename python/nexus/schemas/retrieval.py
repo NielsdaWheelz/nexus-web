@@ -47,6 +47,23 @@ type TextQuoteSelector = Annotated[
 ]
 
 
+class XCaptureOffsetsLocator(BaseModel):
+    type: Literal["x_capture_offsets"]
+    capture_id: UUID
+    fragment_id: UUID
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote_selector: TextQuoteSelector | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> XCaptureOffsetsLocator:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("end_offset must be greater than start_offset")
+        return self
+
+
 class WebTextOffsetsLocator(BaseModel):
     type: Literal["web_text_offsets"]
     media_id: UUID | str
@@ -195,7 +212,8 @@ class ExternalUrlLocator(BaseModel):
 
 
 MediaRetrievalLocator = Annotated[
-    WebTextOffsetsLocator
+    XCaptureOffsetsLocator
+    | WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | PdfPageGeometryLocator
     | PdfPageLocator
@@ -206,7 +224,8 @@ MediaRetrievalLocator = Annotated[
 
 
 RetrievalLocator = Annotated[
-    WebTextOffsetsLocator
+    XCaptureOffsetsLocator
+    | WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | NoteBlockOffsetsLocator
     | PdfPageGeometryLocator
@@ -229,6 +248,7 @@ LocatorBackedResultType = Literal[
     "reader_apparatus_item",
 ]
 RetrievalLocatorType = Literal[
+    "x_capture_offsets",
     "web_text_offsets",
     "epub_fragment_offsets",
     "pdf_page_geometry",
@@ -243,6 +263,7 @@ RetrievalLocatorType = Literal[
 
 _SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
     {
+        "x_capture_offsets",
         "web_text_offsets",
         "epub_fragment_offsets",
         "pdf_page_geometry",
@@ -279,7 +300,10 @@ def validate_locator_for_result_type(
 def retrieval_locator_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
-    return _LOCATOR_ADAPTER.validate_python(value).model_dump(
+    locator = _LOCATOR_ADAPTER.validate_python(value)
+    if isinstance(locator, XCaptureOffsetsLocator):
+        return locator.model_dump(mode="json")
+    return locator.model_dump(
         mode="json",
         exclude_none=True,
         exclude_defaults=True,

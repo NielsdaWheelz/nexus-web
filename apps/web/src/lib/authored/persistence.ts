@@ -22,8 +22,17 @@ export class Persistence {
   async initialize(accountId: string) {
     for (const sql of DEVICE_SCHEMA) await this.db.run(sql);
     await this.db.run("INSERT OR IGNORE INTO replica_state VALUES (1,?,?,0,0,0,0,?,0)", [accountId, crypto.randomUUID(), FORMAT_REVISION]);
-    const state = await this.replica();
-    if (state.account_id !== accountId || state.format_revision !== FORMAT_REVISION) throw new Error("authored account or format mismatch");
+    await this.db.transaction(async () => {
+      const state = await this.replica();
+      if (state.account_id !== accountId) throw new Error("authored account mismatch");
+      if (state.format_revision === FORMAT_REVISION) return;
+      if (state.format_revision !== 1) throw new Error("authored format mismatch");
+      const pending = await this.db.all("SELECT 1 FROM pending_changes LIMIT 1");
+      if (pending.length) throw new Error("authored format upgrade requires an empty outbox");
+      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations"]) await this.db.run(`DELETE FROM ${table}`);
+      await this.db.run("UPDATE scope_state SET active_revision=NULL,staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1");
+      await this.db.run("UPDATE replica_state SET replica_id=?,command_seq=0,store_revision=0,lamport=0,server_cursor=0,format_revision=?,provisioning_complete=0 WHERE singleton=1", [crypto.randomUUID(), FORMAT_REVISION]);
+    });
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
     return { replica: await this.replica(), states: await this.states(selection) };

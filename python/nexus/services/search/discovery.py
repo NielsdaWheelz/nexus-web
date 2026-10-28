@@ -400,7 +400,9 @@ async def search(
                 ]
                 # Known rows dominate new semantic-only inside owners. Only a
                 # selected media's missing child can still change this full page.
-                if len(rows) < r.k or (missing and has_media_vectors(db, r.embedding[0], missing)):
+                if len(rows) < r.k or (
+                    missing and has_media_vectors(db, r.embedding[0], missing, r.viewer_id)
+                ):
                     logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
                     try:
                         facts = facts.with_semantic(
@@ -512,7 +514,7 @@ async def preview(
             if (
                 len(inside) < 2
                 or any(not hit.lexical for hit in inside)
-                or (missing and has_media_vectors(db, r.embedding[0], missing))
+                or (missing and has_media_vectors(db, r.embedding[0], missing, r.viewer_id))
             ):
                 logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
                 try:

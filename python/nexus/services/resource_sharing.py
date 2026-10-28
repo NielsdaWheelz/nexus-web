@@ -79,11 +79,16 @@ def _unavailable(
         if row is None:
             raise _not_found()
         media_id, owner_id = row
-    if not can_read_media(db, viewer_id, media_id, include_tearing_down=True) or (
-        owner_id != viewer_id and not can_read_highlight(db, viewer_id, subject.id)
-    ):
+    readable = (
+        can_read_highlight(db, viewer_id, subject.id)
+        if subject.scheme == "highlight"
+        else can_read_media(db, viewer_id, media_id, include_tearing_down=True)
+    )
+    if not readable:
         raise _not_found()
-    if db.scalar(select(exists().where(MediaTeardownIntent.media_id == media_id))):
+    if media_id is not None and db.scalar(
+        select(exists().where(MediaTeardownIntent.media_id == media_id))
+    ):
         return "Deleting"
     if owner_id != viewer_id:
         return "InsufficientAuthority"

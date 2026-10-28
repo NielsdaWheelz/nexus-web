@@ -256,3 +256,17 @@ class ReaderDocumentMapOut(_ReaderMapOut):
     diagnostics: ReaderDocumentMapDiagnosticsOut = Field(
         default_factory=ReaderDocumentMapDiagnosticsOut
     )
+
+
+class ReaderCaptureDocumentMapOut(_ReaderMapOut):
+    capture_id: UUID
+    publication_generation: None
+    annotations_version: int
+    identity: str
+    status: ReaderDocumentMapStatus
+    embeds: list[DocumentEmbedOut] = Field(default_factory=list)
+    evidence: ReaderEvidenceOut
+    markers: list[ReaderDocumentMapMarkerOut] = Field(default_factory=list)
+    diagnostics: ReaderDocumentMapDiagnosticsOut = Field(
+        default_factory=ReaderDocumentMapDiagnosticsOut
+    )

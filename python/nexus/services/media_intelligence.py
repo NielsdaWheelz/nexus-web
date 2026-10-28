@@ -93,18 +93,18 @@ def load_candidates(db: Session, *, media_id: UUID) -> list[Candidate]:
 
     Thread claims cite canonical post spans; contextual posts never enter its prose.
     """
+    from nexus.services.media_intelligence_lifecycle import primary_index_owners_sql
+
     rows = db.execute(
-        text("""
-            SELECT cc.primary_evidence_span_id, coalesce(nullif(es.span_text, ''), cc.chunk_text, '')
-            FROM content_chunks cc JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
-            JOIN content_index_states s ON s.owner_kind = cc.owner_kind
-              AND s.owner_id = cc.owner_id AND s.status = 'ready'
-            LEFT JOIN x_thread_posts tp ON tp.thread_media_id = :m AND tp.post_media_id = cc.owner_id
-            WHERE cc.owner_kind = 'media' AND (
-                tp.id IS NOT NULL OR (cc.owner_id = :m
-                    AND NOT EXISTS (SELECT 1 FROM x_thread_sources WHERE media_id = :m)))
-            ORDER BY tp.ordinal NULLS FIRST, cc.chunk_idx
-        """),
+        text(f"""
+        SELECT cc.primary_evidence_span_id,coalesce(nullif(es.span_text,''),cc.chunk_text,'')
+        FROM ({primary_index_owners_sql()}) owners
+        JOIN content_index_states s ON s.owner_kind=owners.owner_kind AND s.owner_id=owners.owner_id
+          AND s.status='ready' AND s.lexical_revision=s.revision
+        JOIN content_chunks cc ON cc.owner_kind=owners.owner_kind AND cc.owner_id=owners.owner_id
+        JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id
+        WHERE owners.media_id=:m ORDER BY owners.ordinal,cc.chunk_idx
+    """),
         {"m": media_id},
     ).all()
     candidates: list[Candidate] = []

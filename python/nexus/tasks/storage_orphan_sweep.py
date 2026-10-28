@@ -53,13 +53,16 @@ def storage_orphan_sweep(
 
 
 def _owned(db: Session, paths: list[str]) -> set[str]:
-    """The paths a committed row names: exactly what the media hard-delete enumerates
-    (``media_file``, ``epub_resources``, an attempt's stored artifact). Two statements per
-    page; attempts are read by the media id in the key, since they store under their own."""
+    """Committed media objects and permanently retained capture assets.
+
+    Unpublished x uploads have no asset row and remain ordinary sweep candidates.
+    Attempts are read by the media id in their object keys.
+    """
     named = db.scalars(
         text("""
             SELECT storage_path FROM media_file WHERE storage_path = ANY(:paths)
             UNION SELECT storage_path FROM epub_resources WHERE storage_path = ANY(:paths)
+            UNION SELECT storage_path FROM x_post_capture_assets WHERE storage_path = ANY(:paths)
         """),
         {"paths": paths},
     )

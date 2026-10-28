@@ -243,7 +243,14 @@ export function useSelectionComposer(input: {
     };
     const existing = carried ? undefined : store.getSnapshot().find(entry => entry.id === current.current?.draftId &&
       (highlightId ? entry.highlightId === highlightId : entry.highlightId === null && samePassage(entry.passage, passage)));
-    if (existing) return existing;
+    if (existing) {
+      if (highlightId && !samePassage(existing.passage, passage)) {
+        const updated = { ...existing, passage: { ...passage, quote: existing.passage.quote } };
+        store.put(updated);
+        return updated;
+      }
+      return existing;
+    }
     const shown = reader.getState().document;
     const annotation = highlightId ? annotations.annotation(highlightId) : null;
     const anchor: DraftAnchor = passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: selected.quote } : passage.anchor;
@@ -256,7 +263,7 @@ export function useSelectionComposer(input: {
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Source", message: "this passage can’t be annotated here." },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.slice("media:".length), sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
+      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
     };
     store.put(entry);
     return entry;

@@ -1693,6 +1693,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/from-x-capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create From X Capture */
+        post: operations["create_from_x_capture_media_from_x_capture_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/image": {
         parameters: {
             query?: never;
@@ -1891,6 +1908,23 @@ export interface paths {
         get: operations["get_reader_document_map_media__media_id__document_map_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/embeds/{occurrence_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Embedded Quote */
+        post: operations["retry_embedded_quote_media__media_id__embeds__occurrence_id__retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2294,6 +2328,23 @@ export interface paths {
         put?: never;
         /** Mark Unread */
         post: operations["mark_unread_media__media_id__unread_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/x-capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace X Capture */
+        put: operations["replace_x_capture_media__media_id__x_capture_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3257,6 +3308,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/x/captures/{capture_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Archive */
+        get: operations["read_archive_x_captures__capture_id__archive_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x/captures/{capture_id}/assets/{asset_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Asset */
+        get: operations["read_asset_x_captures__capture_id__assets__asset_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x/captures/{capture_id}/document-map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Capture Map */
+        get: operations["read_capture_map_x_captures__capture_id__document_map_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x/captures/{capture_id}/reader": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Capture */
+        get: operations["read_capture_x_captures__capture_id__reader_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x/captures/{capture_id}/retry-images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Archive */
+        post: operations["retry_archive_x_captures__capture_id__retry_images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3789,7 +3925,7 @@ export interface components {
              */
             kind: "passage";
             /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Owner Ref */
             owner_ref: string;
             /**
@@ -4977,10 +5113,10 @@ export interface components {
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
         };
-        /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPartDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_ReaderTextDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+        /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderCaptureDocumentOut, ReaderPartDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_ReaderTextDocumentOut__ReaderCaptureDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
-            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderPartDocumentOut"] | components["schemas"]["ReaderTranscriptDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
+            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderCaptureDocumentOut"] | components["schemas"]["ReaderPartDocumentOut"] | components["schemas"]["ReaderTranscriptDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
         };
         /** Data[Annotated[Union[SourceRepairAdmission, SearchRepairAdmission], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_SourceRepairAdmission__SearchRepairAdmission___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -5147,6 +5283,10 @@ export interface components {
         /** Data[FromUrlOut] */
         Data_FromUrlOut_: {
             data: components["schemas"]["FromUrlOut"];
+        };
+        /** Data[FromXCaptureOut] */
+        Data_FromXCaptureOut_: {
+            data: components["schemas"]["FromXCaptureOut"];
         };
         /** Data[GenerationCatalog] */
         Data_GenerationCatalog_: {
@@ -5328,9 +5468,21 @@ export interface components {
         Data_QuickReadsOut_: {
             data: components["schemas"]["QuickReadsOut"];
         };
+        /** Data[QuoteRetrieval] */
+        Data_QuoteRetrieval_: {
+            data: components["schemas"]["QuoteRetrieval"];
+        };
         /** Data[ReaderApparatusDetailOut] */
         Data_ReaderApparatusDetailOut_: {
             data: components["schemas"]["ReaderApparatusDetailOut"];
+        };
+        /** Data[ReaderCaptureDocumentMapOut] */
+        Data_ReaderCaptureDocumentMapOut_: {
+            data: components["schemas"]["ReaderCaptureDocumentMapOut"];
+        };
+        /** Data[ReaderCaptureDocumentOut] */
+        Data_ReaderCaptureDocumentOut_: {
+            data: components["schemas"]["ReaderCaptureDocumentOut"];
         };
         /** Data[ReaderDocumentMapOut] */
         Data_ReaderDocumentMapOut_: {
@@ -5359,6 +5511,10 @@ export interface components {
         /** Data[RemoteChildrenOut] */
         Data_RemoteChildrenOut_: {
             data: components["schemas"]["RemoteChildrenOut"];
+        };
+        /** Data[ReplaceXCaptureOut] */
+        Data_ReplaceXCaptureOut_: {
+            data: components["schemas"]["ReplaceXCaptureOut"];
         };
         /** Data[ResolvedMediaSummariesOut] */
         Data_ResolvedMediaSummariesOut_: {
@@ -5449,6 +5605,10 @@ export interface components {
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
         };
+        /** Data[XCaptureArchiveOut] */
+        Data_XCaptureArchiveOut_: {
+            data: components["schemas"]["XCaptureArchiveOut"];
+        };
         /** Data[list[OracleConcordanceOut]] */
         Data_list_OracleConcordanceOut__: {
             /** Data */
@@ -5523,7 +5683,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "open_child_media" | "open_original" | "view_import" | "retry_child" | "refresh_parent";
+            kind: "open_child_media" | "open_original" | "view_import" | "retry_child" | "refresh_parent" | "open_capture" | "retry_quote";
             /** Label */
             label: string;
         };
@@ -5592,6 +5752,7 @@ export interface components {
             provider_target_ref: components["schemas"]["DocumentEmbedProviderRefOut"];
             /** Resolution Status */
             resolution_status: ("resolving" | "resolved" | "unsupported" | "failed") | null;
+            retrieval: components["schemas"]["QuoteRetrieval"] | null;
             /**
              * Source Shape
              * @enum {string}
@@ -5618,6 +5779,8 @@ export interface components {
         DocumentEmbedTargetOut: {
             /** Byline */
             byline: string | null;
+            /** Capture Id */
+            capture_id: string | null;
             /** Href */
             href: string | null;
             /** Kind */
@@ -6244,6 +6407,45 @@ export interface components {
              * @description The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.
              */
             url: string;
+        };
+        /** FromXCaptureOut */
+        FromXCaptureOut: {
+            /**
+             * Accepted Capture Id
+             * Format: uuid
+             */
+            accepted_capture_id: string;
+            /** Created */
+            created: boolean;
+            /** Import Ref */
+            import_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            processing_status: components["schemas"]["ProcessingStatus"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** FromXCaptureRequest */
+        FromXCaptureRequest: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** Destinations */
+            destinations: components["schemas"]["DestinationGuard"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Id
+             * Format: uuid4
+             */
+            id: string;
         };
         /** @enum {string} */
         GenerationApiProvider: "openai" | "anthropic" | "gemini" | "deepseek" | "xai";
@@ -7180,7 +7382,7 @@ export interface components {
              */
             kind: "located";
             /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /**
              * Precision
              * @enum {string}
@@ -7456,6 +7658,8 @@ export interface components {
              * @enum {string}
              */
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Quote Retrievals */
+            quote_retrievals: components["schemas"]["XQuoteProcessingOut"][];
             /** Reader Generation */
             reader_generation: number | null;
             /** Retrieval Status */
@@ -8724,18 +8928,18 @@ export interface components {
         /** PassageCapture */
         "PassageCapture-Input": {
             /** Locator */
-            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
-            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
             quote_exact: string;
         };
         /** PassageCapture */
         "PassageCapture-Output": {
             /** Locator */
-            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
-            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
             quote_exact: string;
         };
@@ -10081,6 +10285,25 @@ export interface components {
             /** Items */
             items: components["schemas"]["SuggestionItemOut"][];
         };
+        /** QuoteRetrieval */
+        QuoteRetrieval: {
+            /** Can Retry */
+            can_retry: boolean;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Message */
+            message: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "recovering" | "failed" | "succeeded";
+        };
         /** ReadableActivation */
         ReadableActivation: {
             /**
@@ -10116,6 +10339,62 @@ export interface components {
              */
             link_id: string;
             position: components["schemas"]["Position"];
+        };
+        /** ReaderCaptureDocumentMapOut */
+        ReaderCaptureDocumentMapOut: {
+            /** Annotations Version */
+            annotations_version: number;
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
+            /** Embeds */
+            embeds: components["schemas"]["DocumentEmbedOut"][];
+            evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Identity */
+            identity: string;
+            /** Markers */
+            markers: components["schemas"]["ReaderDocumentMapMarkerOut"][];
+            /** Publication Generation */
+            publication_generation: null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "empty" | "partial";
+        };
+        /** ReaderCaptureDocumentOut */
+        ReaderCaptureDocumentOut: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** Embeds */
+            embeds: components["schemas"]["DocumentEmbedOut"][];
+            /** Identity */
+            identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_capture";
+            /** Publication Generation */
+            publication_generation: null;
+            /** Sections */
+            sections: components["schemas"]["ReaderSectionOut"][];
+            /** Source Issues */
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
+            /** Title */
+            title: string;
+            /** Toc Nodes */
+            toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
+            /** Units */
+            units: components["schemas"]["ReaderUnitOut"][];
+            x_article_content: components["schemas"]["XArticleContent"] | null;
+            x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
         /** ReaderChildContinuationOut */
         ReaderChildContinuationOut: {
@@ -10161,14 +10440,14 @@ export interface components {
         };
         /** ReaderCursorUnresolved */
         ReaderCursorUnresolved: {
+            /** Capture Id */
+            capture_id: string | null;
             /** Excerpt */
             excerpt: string;
             /** From Generation */
             from_generation: number;
             /** Offset In Excerpt */
             offset_in_excerpt: number;
-            /** Post Media Id */
-            post_media_id: string | null;
             /** Previous Locator */
             previous_locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
             /** Revision */
@@ -10277,7 +10556,7 @@ export interface components {
         /** ReaderEvidenceAnchorOut */
         ReaderEvidenceAnchorOut: {
             /** Locator */
-            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"]) | components["schemas"]["ReaderPdfPageLocatorOut"];
+            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"]) | components["schemas"]["ReaderPdfPageLocatorOut"];
             /** Passage Anchor Id */
             passage_anchor_id: string | null;
         };
@@ -10745,16 +11024,15 @@ export interface components {
         };
         /** ReaderSelectionKey */
         ReaderSelectionKey: {
+            /** Capture Id */
+            capture_id: string | null;
             /**
              * Highlight Id
              * Format: uuid
              */
             highlight_id: string;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
+            /** Media Id */
+            media_id: string | null;
         };
         /** ReaderSelectionOut */
         ReaderSelectionOut: {
@@ -10945,14 +11223,18 @@ export interface components {
         };
         /** ReaderXPostOut */
         ReaderXPostOut: {
-            author: components["schemas"]["XSourceAuthor"];
-            /**
-             * Availability
-             * @enum {string}
-             */
-            availability: "available" | "unavailable";
+            /** Attribution Text */
+            attribution_text: string | null;
+            author: components["schemas"]["XSourceAuthor"] | null;
+            /** Availability */
+            availability: ("available" | "unavailable") | null;
             /** Body Captured At */
             body_captured_at: string | null;
+            /**
+             * Capture Kind
+             * @enum {string}
+             */
+            capture_kind: "complete_post" | "article_excerpt";
             /** Checked At */
             checked_at: string | null;
             /** Checked In Capture */
@@ -10968,6 +11250,10 @@ export interface components {
             /** Logical Post Id */
             logical_post_id: string | null;
             owner: components["schemas"]["ReaderXPostOwnerOut"] | null;
+            /** Parent Source Url */
+            parent_source_url: string | null;
+            /** Parent Title */
+            parent_title: string | null;
             /** Parent Unit Id */
             parent_unit_id: string | null;
             /** Referenced Revision Id */
@@ -10979,6 +11265,8 @@ export interface components {
              * @enum {string}
              */
             relation: "primary" | "quoted" | "replied_to" | "retweeted" | "embedded";
+            /** Saved Media Id */
+            saved_media_id: string | null;
             /** Source Revision Id */
             source_revision_id: string;
             /** Source Url */
@@ -10987,17 +11275,15 @@ export interface components {
         /** ReaderXPostOwnerOut */
         ReaderXPostOwnerOut: {
             /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
              * Fragment Id
              * Format: uuid
              */
             fragment_id: string;
-            /** Generation */
-            generation: number;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
         };
         /** ReaderXReferenceOut */
         ReaderXReferenceOut: {
@@ -11369,6 +11655,31 @@ export interface components {
              */
             kind: "RepairSource";
         };
+        /** ReplaceXCaptureOut */
+        ReplaceXCaptureOut: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Reader Generation */
+            reader_generation: number;
+        };
+        /** ReplaceXCaptureRequest */
+        ReplaceXCaptureRequest: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** Expected Reader Generation */
+            expected_reader_generation: number;
+        };
         /** ReplyInsertion */
         ReplyInsertion: {
             /** Branch Anchor */
@@ -11613,6 +11924,14 @@ export interface components {
              * @constant
              */
             kind: "RetryUpload";
+        };
+        /** RetryXCaptureRequest */
+        RetryXCaptureRequest: {
+            /**
+             * Expected Job Id
+             * Format: uuid
+             */
+            expected_job_id: string;
         };
         /**
          * ReviewMetadataResultAction
@@ -12022,13 +12341,13 @@ export interface components {
         /** SelectionCapture */
         "SelectionCapture-Input": {
             /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
             passage_ref: string | null;
             /** Prefix */
             prefix: string | null;
             /** Publication */
-            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
             quote_exact: string;
             /** Suffix */
@@ -12037,13 +12356,13 @@ export interface components {
         /** SelectionCapture */
         "SelectionCapture-Output": {
             /** Locator */
-            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
             passage_ref: string | null;
             /** Prefix */
             prefix: string | null;
             /** Publication */
-            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
             quote_exact: string;
             /** Suffix */
@@ -12124,7 +12443,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 1;
+            format_revision: 2;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -12141,7 +12460,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 1;
+            format_revision: 2;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -12266,7 +12585,7 @@ export interface components {
             /** Label */
             label: string;
             /** Publication */
-            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+            publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
         };
         /** SourceContentsCapabilities */
         SourceContentsCapabilities: {
@@ -13641,11 +13960,84 @@ export interface components {
              */
             representation: "api_text" | "browser_capture";
         };
+        /** XCaptureArchiveOut */
+        XCaptureArchiveOut: {
+            /** Assets */
+            assets: components["schemas"]["XCaptureAssetOut"][];
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            retrieval: components["schemas"]["QuoteRetrieval"] | null;
+        };
+        /** XCaptureAssetOut */
+        XCaptureAssetOut: {
+            /** Asset Key */
+            asset_key: string;
+            /** Url */
+            url: string | null;
+        };
+        /** XCaptureOffsetsLocator */
+        XCaptureOffsetsLocator: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector?: components["schemas"]["TextQuoteSelector"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "x_capture_offsets";
+        };
+        /** XCapturePublication */
+        XCapturePublication: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_capture";
+        };
+        /** XQuoteProcessingOut */
+        XQuoteProcessingOut: {
+            /**
+             * Occurrence Id
+             * Format: uuid
+             */
+            occurrence_id: string;
+            retrieval: components["schemas"]["QuoteRetrieval"] | null;
+        };
         /**
          * XReaderResumeState
          * @description A displayed occurrence of one canonical X post, inside its reading publication.
          */
         XReaderResumeState: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -13654,11 +14046,6 @@ export interface components {
             locations: components["schemas"]["ReaderTextLocations"];
             /** Occurrence Id */
             occurrence_id: string;
-            /**
-             * Post Media Id
-             * Format: uuid
-             */
-            post_media_id: string;
             /** Source Revision Id */
             source_revision_id: string;
             text: components["schemas"]["ReaderQuoteContext"];
@@ -14201,9 +14588,11 @@ export interface operations {
     };
     get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get: {
         parameters: {
-            query: {
+            query?: {
                 /** @description The key's parent media id */
-                media_id: string;
+                media_id?: string | null;
+                /** @description The key's immutable capture id */
+                capture_id?: string | null;
             };
             header?: never;
             path: {
@@ -17049,6 +17438,39 @@ export interface operations {
             };
         };
     };
+    create_from_x_capture_media_from_x_capture_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromXCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_FromXCaptureOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_proxied_image_media_image_get: {
         parameters: {
             query: {
@@ -17417,6 +17839,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ReaderDocumentMapOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_embedded_quote_media__media_id__embeds__occurrence_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryXCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_QuoteRetrieval_"];
                 };
             };
             /** @description Validation Error */
@@ -17909,7 +18367,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderCaptureDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -18212,6 +18670,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConsumptionOverrideOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_x_capture_media__media_id__x_capture_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceXCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReplaceXCaptureOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19309,7 +19802,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderCaptureDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -20064,6 +20557,166 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    read_archive_x_captures__capture_id__archive_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_XCaptureArchiveOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_asset_x_captures__capture_id__assets__asset_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+                asset_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_capture_map_x_captures__capture_id__document_map_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReaderCaptureDocumentMapOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_capture_x_captures__capture_id__reader_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReaderCaptureDocumentOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_archive_x_captures__capture_id__retry_images_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryXCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_XCaptureArchiveOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

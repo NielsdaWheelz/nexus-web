@@ -176,3 +176,23 @@ class SourceAttemptOut(_Strict):
     media_id: UUID
     import_ref: ImportRef
     settled: bool
+
+
+class FromXCaptureRequest(AcquisitionGuard):
+    id: UUID4
+    capture_id: UUID
+
+
+class FromXCaptureOut(FromUrlOut):
+    accepted_capture_id: UUID
+
+
+class ReplaceXCaptureRequest(_Strict):
+    capture_id: UUID
+    expected_reader_generation: int = Field(ge=1)
+
+
+class ReplaceXCaptureOut(_Strict):
+    media_id: UUID
+    capture_id: UUID
+    reader_generation: int

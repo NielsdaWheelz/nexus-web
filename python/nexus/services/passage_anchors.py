@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import XPostSource
+from nexus.db.models import XPostMedia
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services import authored, library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph.refs import ResourceRef
@@ -143,7 +143,7 @@ def materialize_or_reuse(
 
     if (
         owner_scheme == "media"
-        and db.scalar(select(XPostSource.id).where(XPostSource.media_id == owner_id)) is not None
+        and db.scalar(select(XPostMedia.id).where(XPostMedia.media_id == owner_id)) is not None
     ):
         library_entries.lock_media_for_reference(db, owner_id)
         if not can_read_media(db, user_id, owner_id):

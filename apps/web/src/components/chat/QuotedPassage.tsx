@@ -26,7 +26,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
   const preview = usePaneFreeServerValue<Schema<"ReaderSelectionPreview">>({
     key:
       key &&
-      `chat-reader-selection:${key.mediaId}:${key.highlightId}`,
+      `chat-reader-selection:${key.mediaId ?? key.captureId}:${key.highlightId}`,
     stale: "",
     load: async (signal) => {
       if (!key) throw new Error("A quote preview needs its key");

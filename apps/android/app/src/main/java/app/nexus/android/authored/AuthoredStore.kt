@@ -32,8 +32,19 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,1,0)", account.toString(), UUID.randomUUID().toString())
-        check(replica().getString("account_id") == account.toString())
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,2,0)", account.toString(), UUID.randomUUID().toString())
+        transaction {
+            val state = replica()
+            check(state.getString("account_id") == account.toString())
+            val format = state.getInt("format_revision")
+            if (format != 2) {
+                check(format == 1) { "authored format mismatch" }
+                check(rows("SELECT 1 FROM pending_changes LIMIT 1").length() == 0) { "authored format upgrade requires an empty outbox" }
+                for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations")) run("DELETE FROM $table")
+                run("UPDATE scope_state SET active_revision=NULL,staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1")
+                run("UPDATE replica_state SET replica_id=?,command_seq=0,store_revision=0,lamport=0,server_cursor=0,format_revision=2,provisioning_complete=0 WHERE singleton=1", UUID.randomUUID().toString())
+            }
+        }
     }
     private fun run(sql: String, vararg values: Any?) { rows(sql, *values) }
     private fun rows(sql: String, vararg values: Any?): JSONArray = connection.prepare(sql).use { readRows(it, *values) }

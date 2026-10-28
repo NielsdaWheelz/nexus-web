@@ -839,6 +839,9 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
     for library_id in library_ids:
         library = libraries.access(db, viewer_id, library_id, lock=False)
         library.require_add_content(viewer_id)
+    resource_grants.admit_library_captures(
+        db, grantor_id=viewer_id, media_ids=[media_id], library_ids=[default_id, *library_ids]
+    )
     _ensure_entry_locked(db, default_id, media_id)
     inserted = False
     for library_id in library_ids:
@@ -859,6 +862,9 @@ def assign_libraries_for_media_in_current_transaction(
     default_id = libraries.default_library_id(db, viewer_id)
     libraries.lock_library_rows_in_order(db, [default_id, *targets])
     libraries.resolve_writable_destinations(db, viewer_id, targets)
+    resource_grants.admit_library_captures(
+        db, grantor_id=viewer_id, media_ids=[media_id], library_ids=[default_id, *targets]
+    )
     _ensure_entry_locked(db, default_id, media_id)
     for library_id in targets:
         _ensure_entry_locked(db, library_id, media_id)
@@ -877,7 +883,11 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
         {"u": user_id, "m": media_id},
     ):
         return False
-    return ensure_entry(db, libraries.default_library_id(db, user_id), media_target(media_id))
+    default_id = libraries.default_library_id(db, user_id)
+    resource_grants.admit_library_captures(
+        db, grantor_id=user_id, media_ids=[media_id], library_ids=[default_id]
+    )
+    return ensure_entry(db, default_id, media_target(media_id))
 
 
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
@@ -888,6 +898,12 @@ def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID
     )
     if system is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "System library not found")
+    owner_id = db.execute(
+        text("SELECT owner_user_id FROM libraries WHERE id=:id"), {"id": library_id}
+    ).scalar_one()
+    resource_grants.admit_library_captures(
+        db, grantor_id=owner_id, media_ids=[media_id], library_ids=[library_id]
+    )
     return ensure_entry(db, library_id, media_target(media_id))
 
 

@@ -19,7 +19,7 @@ from nexus.schemas.search_types import SearchPageInfo, SearchResultContextRefOut
 
 
 class SearchResultSourceOut(BaseModel):
-    media_id: UUID
+    media_id: UUID | None
     media_kind: str
     title: str
     contributors: list[ContributorCreditOut]

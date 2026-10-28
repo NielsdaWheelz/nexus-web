@@ -34,6 +34,26 @@ def note_index(db: Session, job: JobRow) -> None:
     )
 
 
+def x_capture_index(db: Session, job: JobRow) -> None:
+    """Keep lexical capture text; stop reporting work after its last job exhausts."""
+    db.execute(
+        text("""
+        UPDATE content_index_states s SET status='failed',status_reason=left(:reason,1000),updated_at=now()
+        FROM fragments f WHERE s.owner_kind='fragment' AND s.owner_id=f.id
+          AND f.x_post_capture_id=:capture_id AND s.status IN ('pending','indexing')
+          AND NOT EXISTS (SELECT 1 FROM background_jobs other
+              WHERE other.kind='x_capture_content_reindex' AND other.id<>:job_id
+                AND other.payload->>'capture_id'=CAST(:capture_id AS text)
+                AND other.status IN ('pending','failed','running'))
+    """),
+        {
+            "capture_id": UUID(job.payload["capture_id"]),
+            "job_id": job.id,
+            "reason": f"{job.error_code}: {job.last_error}",
+        },
+    )
+
+
 def media_teardown(db: Session, job: JobRow) -> None:
     """Media deletion: void the exact intent while its media lives.
 
