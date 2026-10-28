@@ -81,7 +81,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.preventDefault();
     event.stopPropagation();
   };
-  const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
+  const textLabels = ["Ask Nexus", "Add to Today", "Browse…", "Create…"];
 
   const root = (
     <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`}>

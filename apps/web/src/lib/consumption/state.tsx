@@ -131,7 +131,7 @@ function createConsumptionCommands(
   const publish = () => {
     snapshot = {
       undoItems: [...entries.values()].map<ConsumptionUndo>(entry => ({ commandKey: entry.commandKey,
-        target: { kind: "Media", mediaId: entry.mediaId }, title: entry.title, actionLabel: "undo finish",
+        target: { kind: "Media", mediaId: entry.mediaId }, title: entry.title, actionLabel: "Undo finish",
         scopeLabel: null, changedCount: 1, phase: entry.status === "Offered" ? "Available" : entry.status })),
     };
     for (const listener of listeners) listener();
@@ -139,7 +139,7 @@ function createConsumptionCommands(
   const retire = (entry: UndoEntry) => {
     entry.unregister(); entry.retract?.(); entries.delete(entry.commandKey); publish();
   };
-  const retryUndo = (entry: UndoEntry) => ({ label: "undo finish", disabledReason: remoteReady() ? undefined : "requires a connection", onClick: () => void undo(entry) });
+  const retryUndo = (entry: UndoEntry) => ({ label: "Undo finish", disabledReason: remoteReady() ? undefined : "requires a connection", onClick: () => void undo(entry) });
   const invalidate = (revisions: ReadonlyMap<string, number>) => {
     for (const entry of [...entries.values()]) {
       const revision = revisions.get(entry.mediaId);

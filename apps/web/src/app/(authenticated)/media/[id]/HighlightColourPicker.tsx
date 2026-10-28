@@ -13,6 +13,7 @@ import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./media.module.css";
 
 const COLOURS: readonly HighlightColor[] = ["yellow", "green", "blue", "pink", "purple"];
+const COLOUR_LABELS: Record<HighlightColor, string> = { yellow: "Yellow", green: "Green", blue: "Blue", pink: "Pink", purple: "Purple" };
 
 export function Colours({ selected, onSelect, disabledReason = null, persisted = true, size }: {
   readonly selected: HighlightColor | null;
@@ -25,7 +26,7 @@ export function Colours({ selected, onSelect, disabledReason = null, persisted =
   return <div className={styles.colours} data-size={size} role="group" aria-label="highlight colours">
     {COLOURS.map((color) => {
       const reason = disabledReason ?? (persisted && selected === color ? "this colour is already applied." : null);
-      const label = `${color} highlight`;
+      const label = `${COLOUR_LABELS[color]} highlight`;
       const reasonId = `${id}-${color}`;
       return <Fragment key={color}><Tooltip text={reason ? `${label}. ${reason}` : label} renderTrigger={(help) => (
         <button {...help} type="button" className={styles.colour} aria-label={label}
@@ -53,7 +54,7 @@ export function HighlightButton({ selected, persisted, disabledReason, busy, onC
   readonly onFocus?: FocusEventHandler<HTMLButtonElement>;
 }) {
   const id = useId();
-  const label = persisted ? `highlighted ${selected}` : "highlight yellow";
+  const label = persisted ? `Highlighted ${selected}` : "Highlight yellow";
   const reason = disabledReason ?? (persisted ? "this colour is already applied. choose another colour to change it." : null);
   return <>
     <Button iconOnly className={styles.selectionIcon} aria-busy={busy || undefined}
@@ -115,10 +116,10 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
   return <div className={styles.highlightControl}>
     <HighlightButton selected={selected} persisted={persisted} disabledReason={disabledReason} busy={busy} onClick={() => onSelect(selected)} />
     <Button ref={trigger} iconOnly className={styles.selectionIcon}
-        aria-label="choose highlight colour" aria-expanded={open} aria-controls={open ? id : undefined}
+        aria-label="Choose highlight colour" aria-expanded={open} aria-controls={open ? id : undefined}
         aria-disabled={disabledReason !== null || undefined}
         aria-describedby={disabledReason ? `${id}-disclosure-reason` : undefined}
-        tooltip={{ text: disabledReason ? `choose highlight colour. ${disabledReason}` : "choose highlight colour" }}
+        tooltip={{ text: disabledReason ? `Choose highlight colour. ${disabledReason}` : "Choose highlight colour" }}
         onClick={() => setOpen(!open)} icon={<ChevronDown size={16} />}
     />
     {disabledReason ? <span id={`${id}-disclosure-reason`} className="sr-only">{disabledReason}</span> : null}

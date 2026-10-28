@@ -47,10 +47,10 @@ function useOpenAction(item: ImportItem) {
     },
   });
   const action: Command | null = mediaRef !== null && (item.can_read || item.can_play) ? {
-    kind: "command", id: "Open", label: "open", disabled: busy,
+    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
-      ref: mediaRef, id: "Open", label: "open", title: item.title,
+      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, title: item.title,
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
@@ -80,9 +80,9 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
   const ref = mediaId === null ? null : `media:${mediaId}`;
   const busy = useBusyActionIds(ref);
   if (mediaId === null || ref === null || offer === null) return null;
-  const label = ACTION_CATALOG[offer.kind].label;
+  const { label, icon: Icon } = ACTION_CATALOG[offer.kind];
   return {
-    kind: "command", id: offer.kind, label, disabled: busy.has(offer.kind),
+    kind: "command", id: offer.kind, label, icon: <Icon size={16} aria-hidden="true" />, disabled: busy.has(offer.kind),
     disabledReason: busy.has(offer.kind) ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => run({
       ref, id: offer.kind, label, title: "", confirmation: null, tracked: true,
@@ -127,12 +127,12 @@ function useUploadActions(item: ImportItem) {
     },
   });
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
-    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label,
+    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon size={16} aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => { if (!retrying) inputRef.current?.click(); },
   } : null;
   const remove: Command = {
-    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label,
+    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: <ACTION_CATALOG.RemoveUpload.icon size={16} aria-hidden="true" />,
     tone: "danger", disabled: removing, disabledReason: removing ? "Removal is in progress." : undefined,
     onSelect: () => {
       if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`))

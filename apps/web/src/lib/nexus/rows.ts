@@ -265,7 +265,7 @@ export function resourceAction(item: ResourceItem): NexusAction {
 function resourceMenu(ref: string, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "ResourceMenu" }> {
   return {
     kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(ref),
-    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${index + 1}` : "close pane" })),
+    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "Close current pane" : panes.length > 1 ? `Close pane ${index + 1}` : "Close pane" })),
   };
 }
 

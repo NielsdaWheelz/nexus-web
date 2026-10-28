@@ -70,6 +70,12 @@ selection scope while execution keeps the same catalog command ids.
   read/render defect therefore cannot discard another command's recovery.
   unconfirmed podcast, consumption and lectern requests and their loss guards
   therefore survive an action defect.
+- catalog labels and icons travel together into menus and shortcuts. saved and
+  preview playback select the same phase presentation while retaining distinct
+  execution owners. saved lectern shortcuts consume their projector's label/icon,
+  including the disabled offline name; unresolved external acquisition retains
+  its recovery owner. standalone action wording is separate from embedded prose;
+  failure feedback names the literal action without using its spelling as policy.
 - a row ellipsis supplies `action_ref` in either family. when it differs from the
   displayed passage, management appears in `source: {label}`. row composition
   omits loaded open/fork, as do menus on the subject their pane publishes

@@ -157,9 +157,9 @@ function ReadyMap({ reader, evidence, ready }: MapRailProps & {
           const id = JSON.stringify([tick.id, destination, height]);
           const href = reader.navigation?.href(destination);
           const activate = local(tick);
-          return href ? { kind: "link", id, label, href,
+          return href ? { kind: "link", id, label, icon: null, href,
             onActivate: event => activateReaderDestination(reader, destination, event, activate) }
-            : { kind: "command", id, label,
+            : { kind: "command", id, label, icon: null,
               onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, activate) : activate() };
         });
         return <div key={`${doc.identity}:${region.index}`} className={styles.regionBand} style={{ top: region.top, height: region.height }}>
