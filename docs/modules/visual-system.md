@@ -344,7 +344,8 @@ reach through its internal button markup.
 
 `ResourceType` renders decorative, unfocusable, current-color lucide glyphs at
 `--text-md` square with stroke 2. outline markers use muted ink at rest and retain
-control hover/focus/disabled treatment. index prefixes use muted ink with a
+control hover/focus treatment; disabled opening markers remain readable in muted
+ink. index prefixes use muted ink with a
 `--space-1` gap; the glyph does not shrink, while the existing title fragment
 ellipsizes. notes have no index prefix or gap. type adds no control or text line.
 

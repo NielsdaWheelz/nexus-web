@@ -71,7 +71,7 @@ export default function CollectionRow({
     get afterRemoval() { return suppliedActionFocus?.afterRemoval ?? successFocus; },
   };
   useActionFocusRecovery(primaryControlRef, returnFocus);
-  const title = media ? <MediaTitle subject={media.subject} /> : row.title.segments
+  const title = media !== null && parsed === null ? <MediaTitle subject={media.subject} /> : row.title.segments
     ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
   const primary = typeLabel !== null && row.primary.kind !== "static"
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;

@@ -12,8 +12,8 @@ export function ResourceIndexTitle({ scheme, hasArtwork, children }: {
   scheme: ResourceScheme; hasArtwork: boolean; children: ReactNode;
 }) {
   if (scheme === "note_block" || (scheme === "podcast" && hasArtwork)) return <>{children}</>;
-  return <span className={styles.title}>
+  return <span className={styles.title} dir="auto">
     <ResourceTypeIcon scheme={scheme} />
-    <span className={styles.text} dir="auto">{children}</span>
+    <span className={styles.text}>{children}</span>
   </span>;
 }

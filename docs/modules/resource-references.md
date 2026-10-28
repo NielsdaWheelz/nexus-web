@@ -20,6 +20,7 @@ conversation messages retain their message layout.
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
+| `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
 | `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
 | `components/media/MediaIdentity.tsx` | shared index bibliography and passive consumption/remaining-time facts; `MediaFacts` also serves inline search and saved detail |
