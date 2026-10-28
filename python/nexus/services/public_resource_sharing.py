@@ -1,13 +1,14 @@
 """What an anonymous share-link holder may read.
 
 A link resolves to its grant by equality on the stored raw token, and the grant's subject
-passes one readiness gate, the one link creation uses. The gate may only loosen: tightening
-it would break links already handed out. A passing share is its summary, the whole reader
+passes one readiness gate, the one link creation uses. Readiness may only loosen:
+tightening it would break links already handed out. A passing share is its summary, the whole reader
 document projected through the public allowlist (ordinal unit ids, sanitized html,
 source links for unrendered X embeds, no private bindings or source issues), its EPUB
-images by ordinal, and the PDF's bytes; anything else is one masked 404. The media row
-is locked FOR SHARE before its facts are read, so teardown and republication serialize
-with a read and no read mixes generations.
+images by ordinal, and the PDF's bytes; anything else is one masked 404. The media
+family is locked before its facts are read, so teardown and republication serialize
+with a read and no read mixes generations. Native primary captures must all belong
+to this grant's exact manifest before any summary, document or asset is exposed.
 """
 
 from __future__ import annotations
@@ -257,6 +258,24 @@ def _open(db: Session, token: str) -> _Share:
     # Revocation may have committed while _load waited for the subject's family lock.
     current = resource_grants.link_grant(db, token)
     if current is None or (current.subject_scheme, current.subject_id) != subject:
+        _gone()
+    if db.scalar(
+        text("""
+            SELECT EXISTS (
+                SELECT 1 FROM (
+                    SELECT capture_id FROM x_post_media WHERE media_id=:media_id
+                    UNION ALL
+                    SELECT capture_id FROM x_thread_posts WHERE thread_media_id=:media_id
+                ) primary_captures
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM resource_grant_captures manifest
+                    WHERE manifest.grant_id=:grant_id
+                      AND manifest.capture_id=primary_captures.capture_id
+                )
+            )
+        """),
+        {"media_id": share.media_id, "grant_id": grant.id},
+    ):
         _gone()
     return replace(share, public_grant_id=grant.id)
 
