@@ -14,6 +14,11 @@ projection retains ordinary and recovery meaning. the external menu label overri
 its catalog import and the redundant map return block are deleted. shared ui +6;
 media action projection/presentation +1. docs and disposable cases are excluded.
 
+message overflow against `daf605a8d`: -7 authored runtime lines (3 added,
+10 deleted), all in the message footer. removes generic item creation and its
+local composer/state/callback plumbing; named creation elsewhere and authored
+notes/links retain their existing owners. no wire, schema or data change.
+
 pane controls against `84372f7eb`: -291 authored runtime lines (420 added,
 711 deleted), all web source. shared compact density and selection appearance
 replace independent tab/segment/pane paint; native facets and whole-chip removal
