@@ -1,17 +1,20 @@
 "use client";
 
 import { Suspense, useDeferredValue, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
+import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { ServerSeedsSpent } from "@/lib/api/serverState";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
+type LazyPaneRouteId = Exclude<PaneRouteId, "note" | "pageNew" | "page" | "dailyDate">;
 
-// Bodies remain separate chunks; pending code suspends server rendering and
+// Secondary bodies remain separate chunks; pending code suspends server rendering and
 // hydration. Startup updates can still replace streamed markup before hydration;
 // see docs/issues/pane-body-drops-gestures-before-hydration.md.
-const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
+const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
   downloads: () => import("@/app/(authenticated)/downloads/DownloadsPaneBody"),
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
@@ -30,10 +33,6 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
-  pageNew: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
-  page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
-  dailyDate: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
-  note: () => import("@/app/(authenticated)/notes/[blockId]/NotePaneBody"),
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
   settings: () => import("@/app/(authenticated)/settings/SettingsPaneBody"),
@@ -69,9 +68,9 @@ interface ModuleEntry {
 
 // One import and terminal code outcome per route, without account or read data.
 // Failures retain their stage and recover only through an explicit document reload.
-const modules = new Map<PaneRouteId, ModuleEntry>();
+const modules = new Map<LazyPaneRouteId, ModuleEntry>();
 
-function load(id: PaneRouteId): ModuleEntry {
+function load(id: LazyPaneRouteId): ModuleEntry {
   const loaded = modules.get(id);
   if (loaded) return loaded;
   let snapshot: ModuleSnapshot = { kind: "Pending" };
@@ -98,7 +97,13 @@ function load(id: PaneRouteId): ModuleEntry {
   return entry;
 }
 
-function PaneBody({ id }: { readonly id: PaneRouteId }) {
+function PaneBody({ id }: { readonly id: Exclude<PaneRouteId, "pageNew"> }) {
+  if (id === "note") return <><NotePaneBody /><ServerSeedsSpent /></>;
+  if (id === "page" || id === "dailyDate") return <><PagePaneBody /><ServerSeedsSpent /></>;
+  return <LazyPaneBody id={id} />;
+}
+
+function LazyPaneBody({ id }: { readonly id: LazyPaneRouteId }) {
   const entry = load(id);
   const current = useSyncExternalStore(entry.subscribe, entry.getSnapshot, entry.getServerSnapshot);
   // Client module arrival starts interruptible rendering, rather than a Suspense

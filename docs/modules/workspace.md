@@ -72,8 +72,12 @@ reuses its resource and material view or appends a pane. neither entry seeds
 authored text from the server. the authenticated group has one optional catch-all
 page (`[[...path]]/page.tsx`); unknown paths render unsupported panes.
 
+primary note, page and daily authoring code is a workspace prerequisite; its
+bodies still mount only for their actual pane. this increases initial workspace
+code in exchange for removing their navigation-time module load. new-page entry
+normalizes to page, and route-kind keys still distinguish page from daily bodies.
 the pane registry owns one cached `Pending` → `Ready` or `Failed` module outcome
-per route. client navigation renders loading while code is pending, then defers
+per secondary route. client navigation renders loading while code is pending, then defers
 the ready body's render so module arrival does not incur suspense's fallback
 retry delay. import failure keeps its stage and requires document reload. this
 registry holds code, never account data.
