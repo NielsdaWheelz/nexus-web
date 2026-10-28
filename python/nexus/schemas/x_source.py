@@ -113,6 +113,36 @@ class XPostContent(_SourceModel):
         return self
 
 
+class XCompletePostCapture(_SourceModel):
+    kind: Literal["complete_post"]
+    content: XPostContent
+
+
+class XExcerptImage(_SourceModel):
+    asset_key: Nonempty
+    source_url: Nonempty
+    alt_text: str | None
+
+
+class XArticleExcerptCapture(_SourceModel):
+    kind: Literal["article_excerpt"]
+    attribution_text: str | None
+    parent_source_url: str | None
+    parent_title: str | None
+    images: tuple[XExcerptImage, ...]
+
+    @model_validator(mode="after")
+    def validate_image_keys(self) -> XArticleExcerptCapture:
+        if len({image.asset_key for image in self.images}) != len(self.images):
+            raise ValueError("excerpt image keys must be unique")
+        return self
+
+
+type XCapturePayload = Annotated[
+    XCompletePostCapture | XArticleExcerptCapture, Field(discriminator="kind")
+]
+
+
 class XSourcePost(_SourceModel):
     source_revision_id: RevisionId
     logical_post_id: RevisionId | None
@@ -142,14 +172,14 @@ class XSourceCoverage(_SourceModel):
     search_exhausted: bool | None
     limits: tuple[Literal["post_limit", "operation_limit"], ...]
     unresolved_parent_revision_ids: tuple[RevisionId, ...]
-    unchecked_primary_post_media_ids: tuple[UUID, ...]
+    unchecked_primary_post_ids: tuple[UUID, ...]
 
     @model_validator(mode="after")
     def validate_unique(self) -> XSourceCoverage:
         for values in (
             self.limits,
             self.unresolved_parent_revision_ids,
-            self.unchecked_primary_post_media_ids,
+            self.unchecked_primary_post_ids,
         ):
             if len(values) != len(set(values)):
                 raise ValueError("coverage facts must be unique")
@@ -157,7 +187,7 @@ class XSourceCoverage(_SourceModel):
 
 
 class XPriorPost(_SourceModel):
-    media_id: UUID
+    post_id: UUID
     post: XSourcePost
     revision_ids: tuple[RevisionId, ...]
 
@@ -173,23 +203,20 @@ class XPriorPost(_SourceModel):
 
 class XPriorSource(_SourceModel):
     posts: tuple[XPriorPost, ...] = ()
-    primary_post_media_ids: tuple[UUID, ...] = ()
-    root_post_media_id: UUID | None = None
+    primary_post_ids: tuple[UUID, ...] = ()
+    root_post_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_membership(self) -> XPriorSource:
-        ids = {item.media_id for item in self.posts}
+        ids = {item.post_id for item in self.posts}
         aliases = [alias for item in self.posts for alias in item.revision_ids]
         if len(ids) != len(self.posts) or len(aliases) != len(set(aliases)):
             raise ValueError("prior posts and aliases have unique owners")
-        if len(set(self.primary_post_media_ids)) != len(self.primary_post_media_ids):
+        if len(set(self.primary_post_ids)) != len(self.primary_post_ids):
             raise ValueError("prior membership must be unique")
-        if not set(self.primary_post_media_ids) <= ids:
+        if not set(self.primary_post_ids) <= ids:
             raise ValueError("prior members require source evidence")
-        if (
-            self.root_post_media_id is not None
-            and self.root_post_media_id not in self.primary_post_media_ids
-        ):
+        if self.root_post_id is not None and self.root_post_id not in self.primary_post_ids:
             raise ValueError("proved root must be a prior member")
         return self
 

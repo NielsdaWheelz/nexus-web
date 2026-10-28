@@ -337,7 +337,7 @@ export default function TextSurface({
     if (embed.kind === "link_preview") return view.renderEmbed?.(id) ?? <p data-reader-metadata="">
       {embed.display.label}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}
     </p>;
-    return <p data-reader-metadata="">{embed.display.description}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}</p>;
+    return view.renderEmbed?.(id) ?? <p data-reader-metadata="">{embed.display.description}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}</p>;
   }
 
   function renderUnit(unit: TextUnit) {
@@ -353,7 +353,8 @@ export default function TextSurface({
           >
             {unit.xPost ? <div className={styles.postMeta} data-reader-metadata="">
               {unit.xPost.relation !== "primary" ? <p>{({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post", embedded: "embedded post" } as const)[unit.xPost.relation]}</p> : null}
-              <p>{unit.xPost.author.name} · @{unit.xPost.author.username}{unit.xPost.created_at ? ` · ${new Date(unit.xPost.created_at).toLocaleDateString()}` : ""}</p>
+              <p>{unit.xPost.author ? <>{unit.xPost.author.name} · @{unit.xPost.author.username}</> : unit.xPost.attribution_text ?? "captured excerpt"}{unit.xPost.created_at ? ` · ${new Date(unit.xPost.created_at).toLocaleDateString()}` : ""}</p>
+              {unit.xPost.capture_kind === "article_excerpt" ? <p>captured excerpt{unit.xPost.parent_title ? ` · ${unit.xPost.parent_title}` : ""}{unit.xPost.parent_source_url ? <> · <a href={unit.xPost.parent_source_url} target="_blank" rel="noreferrer">source article</a></> : null}</p> : null}
               {unit.xPost.is_edited ? <p>edited on x</p> : null}
               {unit.xPost.availability === "unavailable" ? <p>post unavailable on x</p> : null}
               {unit.xPost.checked_in_capture === false ? <p>saved copy · not checked in this refresh</p> : null}
@@ -386,7 +387,7 @@ export default function TextSurface({
             <div data-reader-text="">
               <HtmlRenderer htmlSanitized={unit.html} headingLevelOffset={1} />
             </div>
-            {doc.embeds.filter((embed) => embed.locator.unit_id === unit.id).map((embed) =>
+            {doc.embeds.filter((embed) => embed.locator.unit_id === unit.id && !embeds.some(([id]) => id === embed.occurrence_key)).map((embed) =>
               <div key={embed.occurrence_key} data-reader-metadata="" data-document-embed-ui="" className={styles.postMeta}>
                 {renderEmbed(embed.occurrence_key)}
               </div>)}
@@ -400,7 +401,7 @@ export default function TextSurface({
                 {reference.availability === "unavailable" ? " · post unavailable on x" : reference.availability === "not_captured" ? " · not captured" : null}
               </p>)}
             </div> : null}
-            {unit.xPost?.parent_unit_id == null ? units.filter((child) => child.xPost?.parent_unit_id === unit.id && child.xPost.embed_occurrence_key === null).map(renderUnit) : null}
+            {units.filter((child) => child.xPost?.parent_unit_id === unit.id && child.xPost.embed_occurrence_key === null).map(renderUnit)}
           </section>
     );
   }
@@ -440,7 +441,7 @@ export default function TextSurface({
       {embeds.map(([id, slot]) => {
         const parent = slot.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
         const children = units.filter((unit) => unit.xPost?.embed_occurrence_key === id && unit.xPost.parent_unit_id === parent);
-        return createPortal(children.length ? children.map(renderUnit) : renderEmbed(id), slot, id);
+        return createPortal(<>{children.map(renderUnit)}{renderEmbed(id)}</>, slot, id);
       })}
     </div>
   );

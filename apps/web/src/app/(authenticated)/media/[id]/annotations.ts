@@ -57,7 +57,11 @@ function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId:
     let resolutions: EvidenceRoot["resolution"][] = [original];
     if (original?.kind === "Resolved") {
       const locator = original.anchor.locator;
-      if (wire.media_id !== mediaId) {
+      if (locator.type === "x_capture_offsets") {
+        const mounted = doc?.kind === "text" ? doc.units.filter(unit => unit.xPost?.owner?.capture_id === locator.capture_id && unit.xPost.owner.fragment_id === locator.fragment_id) : [];
+        resolutions = mounted.length ? mounted.map(unit => ({ ...original, anchor: { ...original.anchor, locator: { ...locator, fragment_id: unit.id } } }))
+          : [{ kind: "Unavailable", reason: "Unanchorable" }];
+      } else if (wire.media_id !== mediaId) {
         const mounted = doc?.kind === "text" && "fragment_id" in locator && "start_offset" in locator && "end_offset" in locator
           ? sourceUnits(doc, mediaId, wire.media_id).filter(entry => wire.publication_generation !== null &&
               entry.generation === wire.publication_generation && entry.fragment === locator.fragment_id &&
@@ -124,8 +128,8 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let stops: (() => void)[] = [];
   let linkReads = 0;
 
-  function remoteMediaIds(mounted: ReaderDocument): string[] {
-    return [...new Set([mediaId, ...(mounted.kind === "text" ? mounted.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.media_id] : []) : [])])];
+  function remoteMediaIds(_mounted: ReaderDocument): string[] {
+    return [mediaId];
   }
 
   function project(remoteReadSucceeded = false) {
@@ -188,10 +192,18 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     if (mounted === null) return;
     if (remote.status === "failed") { remote = { ...remote, retrying: true }; project(); }
     try {
-      const next = await Promise.all(remoteMediaIds(mounted).map(async id => {
-        const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
-        return data;
-      }));
+      const captureIds = mounted.kind === "text" ? [...new Set(mounted.units.flatMap(unit => unit.xPost?.owner && (unit.xPost.relation === "primary" || unit.xPost.relation === "embedded") ? [unit.xPost.owner.capture_id] : []))] : [];
+      const [mediaMaps, captureMaps] = await Promise.all([
+        Promise.all(remoteMediaIds(mounted).map(async id => {
+          const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
+          return data;
+        })),
+        Promise.all(captureIds.map(async id => {
+          const { data } = await apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal });
+          return { ...data, media_id: mediaId, identity: mounted.identity };
+        })),
+      ]);
+      const next = [...mediaMaps, ...captureMaps];
       if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account)) return;
       wires = next;
       project(true);

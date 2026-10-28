@@ -10,10 +10,12 @@ text placeholders (offline web articles are text-only). The zip also carries
 from __future__ import annotations
 
 import json
+import mimetypes
 import time
 import zipfile
 from io import TextIOWrapper
 from pathlib import Path
+from urllib.parse import quote
 from uuid import UUID
 
 from lxml import html
@@ -49,6 +51,7 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
         db,
         media_id=media_id,
         viewer_id=viewer_id,
+        materialize_x_assets=True,
         pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
     )
     if document.kind == "text_part":
@@ -73,12 +76,31 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
             )
         )
     if document.kind != "pdf":
-        document.units = [
-            unit.model_copy(update={"html_sanitized": _without_images(unit.html_sanitized)})
-            if document.kind == "web_article" or unit.x_post is not None
-            else unit
+        captures = {
+            unit.x_post.owner.capture_id
             for unit in document.units
-        ]
+            if unit.x_post is not None and unit.x_post.owner is not None
+        }
+        asset_urls: dict[str, str] = {}
+        if captures:
+            for asset in db.execute(
+                text("""SELECT id, capture_id, asset_key, storage_path, mime
+                    FROM x_post_capture_assets WHERE capture_id=ANY(:ids)"""),
+                {"ids": list(captures)},
+            ):
+                extension = mimetypes.guess_extension(asset.mime) or ""
+                member = f"x-assets/{asset.id}{extension}"
+                objects.append((member, str(asset.storage_path)))
+                asset_urls[
+                    f"/api/x/captures/{asset.capture_id}/assets/{quote(asset.asset_key, safe='')}"
+                ] = member
+        for unit in document.units:
+            if unit.x_post is None:
+                if document.kind == "web_article":
+                    unit.html_sanitized = _without_images(unit.html_sanitized)
+                continue
+            for url, member in asset_urls.items():
+                unit.html_sanitized = unit.html_sanitized.replace(url, f"/nexus-copy/{member}")
     reader = {
         "media": {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)},
         "document": document.model_dump(mode="json"),

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.reader_document_map import (
+    ReaderCaptureDocumentMapOut,
     ReaderDocumentMapOut,
     ReaderDocumentMapStatus,
 )
@@ -111,6 +112,16 @@ def get_reader_document_map(
                 raise AssertionError("Readable document has no reader publication")
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media has no reader publication")
         identity = f"g{generation}"
+        if media_kind == "web_article":
+            from nexus.services.reader_document import build_reader_document
+
+            document = build_reader_document(
+                db,
+                media_id=media_id,
+                viewer_id=viewer_id,
+                pdf_file=lambda: (_ for _ in ()).throw(AssertionError("web document has no pdf")),
+            )
+            identity = document.identity
     else:
         identity = transcript_identity([str(row["id"]) for row in fragments])
 
@@ -153,7 +164,7 @@ def get_reader_document_map(
         viewer_id=viewer_id,
         media_id=media_id,
         canonical_media_id=source_media_id,
-        reading_identity=identity,
+        reading_identity=f"g{generation}" if generation is not None else identity,
         media_kind=scope.source_format if scope is not None else media_kind,
         embeds=embed_rows,
         highlights=highlights.list_highlights_for_media(
@@ -189,4 +200,164 @@ def get_reader_document_map(
         embeds=embed_rows,
         evidence=projection.evidence,
         markers=projection.markers,
+    )
+
+
+def get_capture_document_map(
+    db: Session, *, viewer_id: UUID, capture_id: UUID
+) -> ReaderCaptureDocumentMapOut:
+    """Evidence on exactly the readable capture and its admitted direct context."""
+    from sqlalchemy import select
+
+    from nexus.auth.permissions import highlight_visibility_filter
+    from nexus.db.models import Highlight, HighlightFragmentAnchor
+    from nexus.schemas.reader_document_map import (
+        ReaderDirectFactOut,
+        ReaderDocumentMapMarkerOut,
+        ReaderEvidenceAnchorOut,
+        ReaderEvidenceCountsOut,
+        ReaderEvidenceHighlightOut,
+        ReaderEvidenceOut,
+        ReaderEvidenceResolvedOut,
+        ReaderEvidenceResourceOut,
+        ReaderEvidenceRootOut,
+    )
+    from nexus.schemas.retrieval import XCaptureOffsetsLocator
+    from nexus.services.reader_document import read_capture_document, reading_source_ranges
+    from nexus.services.reader_evidence_markers import build_markers
+    from nexus.services.resource_graph import order
+    from nexus.services.resource_graph.connections import hydrate_connections
+    from nexus.services.resource_items.items import resource_items_out
+
+    document = read_capture_document(db, viewer_id, capture_id)
+    owners = {
+        unit.x_post.owner.fragment_id: unit.x_post.owner.capture_id
+        for unit in document.units
+        if unit.x_post and unit.x_post.owner
+    }
+    ranges: dict[str, tuple[int, int]] = {}
+    total = 0
+    for unit, start, end in reading_source_ranges(document.units):
+        if unit.x_post and unit.x_post.owner:
+            fragment = str(unit.x_post.owner.fragment_id)
+            ranges.setdefault(fragment, (total - start, len(unit.canonical_text)))
+        total += end - start
+    indexes = {key: index for index, key in enumerate(ranges)}
+    rows = db.execute(
+        select(Highlight, HighlightFragmentAnchor)
+        .join(HighlightFragmentAnchor, HighlightFragmentAnchor.highlight_id == Highlight.id)
+        .where(
+            HighlightFragmentAnchor.fragment_id.in_(owners), highlight_visibility_filter(viewer_id)
+        )
+        .order_by(Highlight.created_at, Highlight.id)
+    ).all()
+    refs = [ResourceRef("highlight", highlight.id) for highlight, _ in rows]
+    items = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
+    roots: dict[str, ReaderEvidenceRootOut] = {}
+    for highlight, anchor in rows:
+        ref = f"highlight:{highlight.id}"
+        if ref not in items or anchor.fragment_id not in owners:
+            continue
+        locator = XCaptureOffsetsLocator(
+            type="x_capture_offsets",
+            capture_id=owners[anchor.fragment_id],
+            fragment_id=anchor.fragment_id,
+            start_offset=anchor.start_offset,
+            end_offset=anchor.end_offset,
+            text_quote_selector={
+                "exact": highlight.exact,
+                "prefix": highlight.prefix,
+                "suffix": highlight.suffix,
+            },
+        )
+        roots[ref] = ReaderEvidenceRootOut(
+            ref=ref,
+            content=ReaderEvidenceHighlightOut(
+                item=items[ref],
+                highlight_id=highlight.id,
+                quote=highlight.exact,
+                prefix=highlight.prefix,
+                suffix=highlight.suffix,
+                color=highlight.color,
+                created_at=highlight.created_at,
+                updated_at=highlight.updated_at,
+                author_user_id=highlight.user_id,
+                is_owner=highlight.user_id == viewer_id,
+            ),
+            resolution=ReaderEvidenceResolvedOut(
+                anchor=ReaderEvidenceAnchorOut(locator=locator),
+                order_key=f"fragment:{indexes[str(anchor.fragment_id)]:010d}:{anchor.start_offset:010d}",
+            ),
+            continuation=None,
+            authored_placement=None,
+        )
+    for fragment_id in owners:
+        endpoint = ResourceRef("fragment", fragment_id)
+        edges = [edge for edge, _ in order.ordered(db, viewer_id, endpoint)]
+        connections = hydrate_connections(
+            db, viewer_id, edges, {(endpoint.scheme, endpoint.id)}, "both"
+        )
+        for connection in connections:
+            ref = connection.other.ref
+            root = roots.get(ref)
+            if root is None:
+                root = ReaderEvidenceRootOut(
+                    ref=ref,
+                    content=ReaderEvidenceResourceOut(item=connection.other),
+                    resolution=None,
+                    continuation=None,
+                    authored_placement=None,
+                )
+                roots[ref] = root
+            if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
+                root.direct_facts.append(
+                    ReaderDirectFactOut(
+                        edge_id=connection.edge_id,
+                        origin=connection.origin,
+                        ordinal=connection.ordinal,
+                    )
+                )
+    values = list(roots.values())
+    counts = ReaderEvidenceCountsOut(
+        highlights=len(rows),
+        citations=sum(
+            any(f.origin == "citation" and f.ordinal is not None for f in root.direct_facts)
+            for root in values
+        ),
+        links=sum(
+            any(f.origin not in ("citation", "assistant", "discovery") for f in root.direct_facts)
+            for root in values
+        ),
+        machine_links=sum(
+            any(f.origin in ("assistant", "discovery") for f in root.direct_facts)
+            for root in values
+        ),
+    )
+    markers: list[ReaderDocumentMapMarkerOut] = build_markers(
+        media_id=capture_id,
+        embeds=[],
+        roots=values,
+        fragment_ranges=ranges,
+        fragment_times={},
+        total_fragment_chars=total,
+        page_count=None,
+        pdf_page_heights={},
+    )
+    return ReaderCaptureDocumentMapOut(
+        capture_id=capture_id,
+        publication_generation=None,
+        annotations_version=max(
+            (
+                versions_for_ref(
+                    db, viewer_id=viewer_id, ref=ResourceRef("fragment", fragment)
+                ).get("annotations", 1)
+                for fragment in owners
+            ),
+            default=1,
+        ),
+        identity=document.identity,
+        status="ready" if values else "empty",
+        embeds=[],
+        evidence=ReaderEvidenceOut(apparatus_source=None, roots=values, counts=counts),
+        markers=markers,
     )

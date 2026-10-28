@@ -34,6 +34,7 @@ from nexus.schemas.library import (
     LibraryRole,
     RenameLibraryRequest,
 )
+from nexus.services import resource_grants
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.search import projection
 
@@ -414,6 +415,24 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
 
 def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
     """Join an existing system library; return whether membership changed. Flush only."""
+    from nexus.services.x_source import admit_x_captures_for_accounts
+
+    library = db.execute(
+        text("SELECT id,owner_user_id FROM libraries WHERE system_key=:key"), {"key": system_key}
+    ).one_or_none()
+    if library is None:
+        return False
+    captures = resource_grants.capture_manifest_for_media(
+        db,
+        grantor_id=library.owner_user_id,
+        media_ids=list(
+            db.scalars(
+                text("SELECT media_id FROM library_entries WHERE library_id=:id"),
+                {"id": library.id},
+            )
+        ),
+    )
+    admit_x_captures_for_accounts(db, account_ids=[user_id], capture_ids=captures)
     changed = (
         db.scalar(
             text("""

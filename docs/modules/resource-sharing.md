@@ -7,7 +7,7 @@ Android/web capture ([sharing.md](sharing.md)).
 
 ## Grants
 
-`resource_grants` is the only access-grant table, owned by
+`resource_grants` owns access-grant paths, through
 `services/resource_grants.py`. A row gives its creator and exactly one audience
 (a grantee user, or the holder of its raw `share_token`) read access to one
 media or highlight. The database enforces the shape (0249): the subject scheme
@@ -18,6 +18,20 @@ holds one grant per subject and audience. A grant is also:
   highlight grant opens that highlight and its media;
 - a reference: while any grant names a document media or its highlights, the
   media is not torn down; revoking the last one claims the teardown.
+
+public capture output is pinned in `resource_grant_captures(grant_id,capture_id)`.
+link creation records the exact selected/direct manifest the grantor could read
+before the new grant exists. this table confers no account admission or account
+read authority. public bodies and archived images require both current selection
+and that exact grant's manifest; later unrelated account imports cannot widen it.
+
+an authorized source publisher calls
+`extend_public_media_capture_manifests(db, media_id=..., capture_ids=...)` in its
+publication transaction with the same already-authorized manifest used for account
+admission. reuse supplies its frozen pre-mutation manifest. only active public media
+grants gain the currently selected subset; highlight-grant manifests stay pinned.
+old manifest rows may remain because public reads also require current selection.
+revocation and deduplication delete manifest rows before their grant.
 
 Every grant mutation invalidates audience visibility for exactly the users it
 affects, in the same transaction. Locks go media, then highlight, then grant,
@@ -77,7 +91,8 @@ same masked 404. The share is one response: title, bylines, disclosable source
 URL and the shared highlight (quote, color, and a text anchor naming a
 fragment/segment ordinal or a PDF page and quads). `document` is the reader
 document the signed-in reader mounts (`services/reader_document.py`, built with
-no viewer, so no embeds) rebuilt field by field through the public allowlist: a
+no viewer and the exact public grant's capture manifest) rebuilt field by field
+through the public allowlist: a
 field the private document gains never crosses unseen. Unit ids are ordinals,
 html passes `public_html`, source issues are empty; a PDF's file is
 `/api/public/resource-share/file`. `/s` mounts it in the shared reader

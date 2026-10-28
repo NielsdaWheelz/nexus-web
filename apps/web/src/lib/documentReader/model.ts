@@ -7,7 +7,7 @@ import type { Schema } from "@/lib/api/wire";
 import type { ReaderDestination } from "./location";
 
 export type ReaderDocumentOut =
-  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderPartDocumentOut"> | Schema<"ReaderTranscriptDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
+  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderCaptureDocumentOut"> | Schema<"ReaderPartDocumentOut"> | Schema<"ReaderTranscriptDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
   Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned"> | Schema<"ReaderCursorUnresolved">;
@@ -212,19 +212,18 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     length += end - start;
   };
   const roots = units.filter((unit) => unit.xPost?.parent_unit_id == null);
-  for (const root of roots) {
+  const appendUnit = (root: TextUnit) => {
     let offset = 0;
     for (const child of units.filter((unit) => unit.xPost?.parent_unit_id === root.id)) {
       const slot = child.xPost!.insertion_offset ?? root.length;
       if (slot < offset || slot > root.length) throw new Error("source insertion is outside its ordered parent");
       append(root, offset, slot);
-      append(child, 0, child.length);
+      appendUnit(child);
       offset = slot;
     }
     append(root, offset, root.length);
-  }
-  if (roots.length + units.filter((unit) => roots.some((root) => unit.xPost?.parent_unit_id === root.id)).length !== units.length)
-    throw new Error("reader publication contains context beyond one level");
+  };
+  for (const root of roots) appendUnit(root);
   type PointOut = Schema<"ReaderPointOut">;
   type TocOut = Schema<"ReaderTocNodeOut">;
   const point = (at: PointOut): TextPoint => ({
@@ -251,7 +250,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
   } : null;
   return {
     kind: "text",
-    format: out.kind === "text_part" ? out.source_format === "web_article" ? "web" : "epub" : out.kind === "web_article" ? "web" : out.kind,
+    format: out.kind === "text_part" ? out.source_format === "web_article" ? "web" : "epub" : out.kind === "web_article" || out.kind === "x_capture" ? "web" : out.kind,
     identity: out.identity,
     generation: out.kind === "web_article" || out.kind === "epub" ? out.publication_generation : null,
     part: out.kind === "text_part" ? { mediaId: out.provenance.source_media_id, generation: out.provenance.source_generation } : null,
@@ -369,7 +368,7 @@ export function locatorAt(
   };
   const text = { quote: null, quote_prefix: null, quote_suffix: null };
   if (unit?.xPost?.owner) {
-    return { kind: "x", occurrence_id: at.unit, post_media_id: unit.xPost.owner.media_id,
+    return { kind: "x", occurrence_id: at.unit, capture_id: unit.xPost.owner.capture_id, fragment_id: unit.xPost.owner.fragment_id,
       source_revision_id: unit.xPost.source_revision_id, locations, text };
   }
   if (doc.kind === "text" && doc.format === "epub") {
@@ -408,7 +407,7 @@ export function targetOfLocator(
   }
   const unit = doc.units.find(
     (candidate) => locator.kind === "x"
-      ? candidate.id === locator.occurrence_id && candidate.xPost?.owner?.media_id === locator.post_media_id &&
+      ? candidate.id === locator.occurrence_id && candidate.xPost?.owner?.capture_id === locator.capture_id && candidate.xPost.owner.fragment_id === locator.fragment_id &&
         candidate.xPost.source_revision_id === locator.source_revision_id
       : candidate.id === locator.target.fragment_id,
   );

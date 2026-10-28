@@ -37,7 +37,7 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceExternalSnapshot,
     ResourceViewState,
-    XPostSource,
+    XPostMedia,
 )
 from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS
 from nexus.services.resource_graph.refs import ResourceRef
@@ -89,11 +89,11 @@ def delete_edges_for_deleted_resources(
         db,
         list(
             db.scalars(
-                select(XPostSource.media_id)
+                select(XPostMedia.media_id)
                 .join(
                     ResourceEdge,
                     ResourceEdge.snapshot[("evidence", "target", "owner_ref")].astext
-                    == "media:" + cast(XPostSource.media_id, String),
+                    == "media:" + cast(XPostMedia.media_id, String),
                 )
                 .where(
                     ResourceEdge.id.in_(dying),

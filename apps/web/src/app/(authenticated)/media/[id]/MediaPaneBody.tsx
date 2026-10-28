@@ -418,7 +418,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     return () => stops.forEach((close) => close());
   }, [articleIds, paneVisible, reader]);
   useEffect(() => {
-    if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
+    if (readable && doc && media?.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
   }, [doc, media?.reader_generation, readable, reader]);
   useEffect(() => {
@@ -695,7 +695,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       }
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
-      if (source_identity !== doc.identity) return "Unavailable";
+      if (locator.type === "x_capture_offsets") {
+        if (source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
+        const unit = doc.units.find(item => item.xPost?.owner?.capture_id === locator.capture_id && item.xPost.owner.fragment_id === locator.fragment_id);
+        if (!unit || locator.end_offset > unit.length || locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return "Unavailable";
+      } else if (source_identity !== doc.identity && source_identity !== doc.identity.split(":", 1)[0]) return "Unavailable";
       if (apparatus_reference_id !== null) {
         return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, source_identity, context);
       }
@@ -732,7 +736,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       }
       const current = reader.getState().document;
       if (context.signal.aborted) return "Cancelled";
-      if (current.status !== "ready" || current.doc.identity !== source_identity) return "Unavailable";
+      if (current.status !== "ready" || current.doc.identity !== doc.identity) return "Unavailable";
       setInspection({ ...paint, activationId: context.activationId });
       context.signal.addEventListener("abort", () => {
         setInspection((current) => current?.activationId === context.activationId ? null : current);
@@ -764,6 +768,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   // the host knows its own title and a part's source title; other owners keep their stubs.
   const sourceLabel = useCallback((sourceRef: string) => !media ? null
     : sourceRef === `media:${id}` ? { kind: media.kind, label: media.title }
+    : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
   const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
@@ -979,7 +984,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         renderPostActions={(unit) => unit.xPost ? <PostActions key={unit.id} post={unit.xPost} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
-          return embed ? <EmbedCard embed={embed} /> : null;
+          return embed ? <EmbedCard embed={embed} reader={reader} /> : null;
         }}
         before={
           <>

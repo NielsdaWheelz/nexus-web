@@ -48,6 +48,7 @@ const ROUTES = {
   browse: ["browse", "Browse", Compass],
   browsePreview: ["browse/preview", "Preview", Compass],
   media: ["media/:id", "Media", FileText],
+  xCapture: ["x/captures/:id", "Post", FileText],
   conversations: ["conversations", "Chats", MessageSquare],
   conversationNew: ["conversations/new", "New chat", MessageSquare],
   conversation: ["conversations/:id", "Chat", MessageSquare],
@@ -104,7 +105,7 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate"]);
+const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate", "xCapture"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
@@ -123,6 +124,7 @@ const PENDING_LABEL: Traits<string> = {
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
   media: "Reader",
+  xCapture: "Reader",
   conversationNew: "Chat",
   conversation: "Chat",
   atlas: "NoVerticalScroll",
@@ -189,7 +191,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
-  const section = id === "downloads" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
+  const section = id === "downloads" || id === "xCapture" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
   const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
@@ -202,7 +204,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
     section,
     header: pendingLabel
       ? { kind: "Resource", pendingLabel }
-      : pattern.length === 1
+      : pattern.length === 1 || id === "xCapture"
         ? { kind: "Section", context: "None" }
         : { kind: "Section", context: "Destination", destinationId: section! },
     returnKind,
@@ -350,7 +352,7 @@ export function getPaneRouteIcon(href: string): LucideIcon {
 export function resolveWorkspaceActivationRouteId(href: string): string {
   const route = resolvePaneRouteModel(href);
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
-  const arrival = route.id === "media"
+  const arrival = route.id === "media" || route.id === "xCapture"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
     : route.id === "conversation" ? ["message", "loc"] : [];
   for (const key of arrival) query.delete(key);

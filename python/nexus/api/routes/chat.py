@@ -17,6 +17,7 @@ from nexus.db.session import (
     RepeatableReadDbSession,
     get_session_factory,
 )
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.conversation import (
@@ -244,7 +245,12 @@ def get_reader_selection_preview(
     highlight_id: UUID,
     viewer: ViewerDep,
     db: DbSession,
-    media_id: Annotated[UUID, Query(description="The key's parent media id")],
+    media_id: Annotated[UUID | None, Query(description="The key's parent media id")] = None,
+    capture_id: Annotated[UUID | None, Query(description="The key's immutable capture id")] = None,
 ) -> Data[ReaderSelectionPreview]:
-    key = ReaderSelectionKey(media_id=media_id, highlight_id=highlight_id)
+    if (media_id is None) == (capture_id is None):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Exactly one reading identity is required"
+        )
+    key = ReaderSelectionKey(media_id=media_id, capture_id=capture_id, highlight_id=highlight_id)
     return Data(data=quotes.preview(db, viewer_id=viewer.user_id, key=key))

@@ -250,7 +250,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     options.progress &&
     createProgressSync(options.progress, {
       changed: () => set({ progress: sync!.state() }),
-      generation: () => { const identity = ready()?.doc.identity; return identity?.startsWith("g") ? Number(identity.slice(1)) : null; },
+      generation: () => { const identity = ready()?.doc.identity; return identity?.startsWith("g") ? Number(identity.slice(1).split(":", 1)[0]) : null; },
       remote(snapshot, move) {
         input = { at: -Infinity, direction: "none" };
         if (move) void applySnapshot(snapshot);
@@ -303,14 +303,14 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         freshUsed ? null : options.entry.fresh,
       ]);
       if (controller.signal.aborted) return;
-      if (expectedGeneration !== null && Number(doc.identity.slice(1)) < expectedGeneration) {
+      if (expectedGeneration !== null && Number(doc.identity.slice(1).split(":", 1)[0]) < expectedGeneration) {
         throw new Error("reader response predates the observed publication");
       }
       freshUsed = true;
       const current = ready();
       const displayed = current?.doc.identity === doc.identity
         ? current.doc.kind === "text" && doc.kind === "text"
-          ? { ...current.doc, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
+          ? { ...current.doc, units: doc.units, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
           : { ...current.doc, title: doc.title }
         : doc;
       if (current?.doc.identity === doc.identity && (!recoverPosition || sync?.state().kind !== "LoadFailed")) {

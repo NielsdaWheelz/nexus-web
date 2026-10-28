@@ -355,8 +355,10 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _read(ref, _first_line(row.body)[:120] or "Note", row.body),
     ),
     "fragment": (
-        """SELECT t.id, t.idx, t.canonical_text AS body, m.title
-        FROM fragments t JOIN media m ON m.id = t.media_id
+        """SELECT t.id, t.idx, t.canonical_text AS body,
+            COALESCE(m.title,c.payload #>> '{content,author,name}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
+        FROM fragments t LEFT JOIN media m ON m.id = t.media_id
+        LEFT JOIN x_post_captures c ON c.id=t.x_post_capture_id
         WHERE t.id = ANY(:ids)""",
         lambda ref, row: _read(
             ref, f"{row.title} — fragment {row.idx + 1}", row.body, str(row.title)

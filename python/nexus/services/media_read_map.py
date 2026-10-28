@@ -87,7 +87,7 @@ def _readable(db: Session, viewer_id: UUID, media_id: UUID) -> _Readable | None:
             "SELECT m.kind, m.title, m.processing_status, mts.transcript_state,"
             " mts.transcript_coverage,"
             " (EXISTS (SELECT 1 FROM x_thread_sources x WHERE x.media_id=m.id)"
-            " OR EXISTS (SELECT 1 FROM x_post_sources x WHERE x.media_id=m.id)"
+            " OR EXISTS (SELECT 1 FROM x_post_media x WHERE x.media_id=m.id)"
             " OR EXISTS (SELECT 1 FROM document_embeds e WHERE e.media_id=m.id"
             " AND e.provider='x')) AS has_x_composition FROM media m"
             " LEFT JOIN media_transcript_states mts ON mts.media_id = m.id WHERE m.id = :id"
@@ -204,7 +204,9 @@ def _post_label(post: ReaderXPostOut) -> str:
         "retweeted": "reposted post",
         "embedded": "embedded post",
     }[post.relation]
-    return f"{relation} by {post.author.name} (@{post.author.username})"
+    if post.author is not None:
+        return f"{relation} by {post.author.name} (@{post.author.username})"
+    return f"{relation} · {post.attribution_text or 'captured excerpt'}"
 
 
 def _composed_text(document: ReaderTextBodyOut) -> str:

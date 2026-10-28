@@ -121,10 +121,22 @@ the web carries the returned `source_attempt_id` in an accepted url's media rout
 published upload `current_placements` is the canonical named placement snapshot,
 including removal revision, or null when the media is removed/unavailable. it
 reports current state rather than proving the submitted choices applied. source
-and upload receipts share media lifetime: normal hard teardown deletes them.
-thereafter upload confirmation is 404; a url submission without a surviving
-receipt must pass its original frozen removal guard before any effect. no replay
-ledger or durable command journal extends those receipts. storage/provider i/o
+and upload receipts ordinarily share media lifetime: normal hard teardown deletes
+them. the sole exception is an actor-owned succeeded `x_post` attempt whose entire
+payload is `{capture_id:<uuid>}` for a retained capture, with no job and a finish
+time. this synchronous capture acceptance retains its original `media_id` as a
+historical target after physical media deletion. replay first checks the same
+actor, client attempt id and exact capture payload, then returns the original
+accepted capture, target, created flag and ready outcome. it performs no current
+media lookup, acquisition, destination write or resurrection.
+
+all attempt creation requires an existing media row held `FOR KEY SHARE` through
+commit; `source_attempts.create_attempt` owns this rule because the historical
+target column has no media foreign key. ordinary attempts, supersessions targeting
+the removed media, processing history and published upload support still undergo
+their existing teardown. thereafter upload confirmation is 404; a url submission
+without a surviving receipt must pass its original frozen removal guard before any
+effect. no replay ledger or durable command journal is introduced. storage/provider i/o
 runs outside viewer/library-lock transactions. staged bytes may exist physically
 after expiry, but unpublished confirmation is valid only before
 `upload_url_expires_at`.

@@ -392,7 +392,7 @@ def _candidates(
     per_work: dict[ResourceRef, int] = {}
     for result in results:
         if isinstance(result, SearchResultContentChunkOut):
-            work = ResourceRef(scheme="media", id=result.source.media_id)
+            work = assert_resource_ref(result.owner_resource_ref)
             spans = result.evidence_span_ids
             target = ResourceRef(scheme="evidence_span", id=spans[0]) if spans else work
             label = result.source.title

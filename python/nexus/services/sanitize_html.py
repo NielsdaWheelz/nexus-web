@@ -23,6 +23,7 @@ text svg never draws: its `title`, `desc` and `metadata`, and character data out
 """
 
 import re
+from collections.abc import Mapping
 from urllib.parse import quote, urldefrag, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
@@ -155,9 +156,11 @@ def sanitize_html(
     document_url: str | None,
     allow_reader_apparatus_attrs: bool = False,
     allow_document_embed_attrs: bool = False,
+    capture_assets: Mapping[str, str] | None = None,
 ) -> str:
     """The web policy. Resolve assets against base_url; only document_url identifies
-    local links, which become `#fragment`."""
+    local links, which become `#fragment`. Capture writers supply their declared
+    image URLs mapped to owned archive routes; undeclared capture images have no source."""
     if not html or not html.strip():
         return ""
     try:
@@ -205,7 +208,13 @@ def sanitize_html(
                     _open_outbound(element)
         elif tag == "img" and (src := element.get("src", "")):
             absolute_url = urljoin(base_url, src)
-            if urlparse(absolute_url).scheme.lower() not in {"http", "https"}:
+            if capture_assets is not None:
+                archived = capture_assets.get(absolute_url)
+                if archived is None:
+                    del element.attrib["src"]
+                else:
+                    element.set("src", archived)
+            elif urlparse(absolute_url).scheme.lower() not in {"http", "https"}:
                 del element.attrib["src"]
             else:
                 element.set("src", web_paths.media_image_url(quote(absolute_url, safe="")))

@@ -328,7 +328,7 @@ def respond_to_invitation(
     def attempt() -> None:
         row = db.execute(
             text("""
-                SELECT library_id, role, status FROM library_invitations
+                SELECT library_id, role, status, inviter_user_id FROM library_invitations
                 WHERE id = :id AND invitee_user_id = :viewer_id
             """),
             {"id": invitation_id, "viewer_id": viewer_id},
@@ -339,6 +339,20 @@ def respond_to_invitation(
             return
         if row.status != "pending":
             raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+        if accept:
+            from nexus.services.x_source import admit_x_captures_for_accounts
+
+            captures = resource_grants.capture_manifest_for_media(
+                db,
+                grantor_id=row.inviter_user_id,
+                media_ids=list(
+                    db.scalars(
+                        text("SELECT media_id FROM library_entries WHERE library_id=:id"),
+                        {"id": row.library_id},
+                    )
+                ),
+            )
+            admit_x_captures_for_accounts(db, account_ids=[viewer_id], capture_ids=captures)
         db.execute(text(_ANSWER), {"id": invitation_id, "status": status})
         if accept:
             db.execute(

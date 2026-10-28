@@ -210,7 +210,9 @@ def _capture(
             owner_ref=owner.uri,
             locator=_LOCATOR.validate_python(locator),
             precision=_precision(locator),
-            source_identity=before,
+            source_identity=locator["capture_id"]
+            if locator["type"] == "x_capture_offsets"
+            else before,
         )
     if media and before != source_identities(db, [media]).get(media):
         raise ConflictError(
@@ -247,6 +249,32 @@ def _admitted_evidence(
                 or not can_read_media(db, viewer_id, owner_id)
             ):
                 return None
+        return evidence
+    if target.locator.type == "x_capture_offsets":
+        owner = assert_resource_ref(target.owner_ref)
+        if (
+            owner.scheme != "fragment"
+            or str(owner.id) != str(target.locator.fragment_id)
+            or evidence.quote is None
+        ):
+            return None
+        scoped = media_passages(
+            db,
+            viewer_id=viewer_id,
+            refs=[owner],
+            reading_media_ids={owner.uri: reading_media_id}
+            if reading_media_id is not None
+            else None,
+        ).get(owner.uri)
+        if (
+            scoped is None
+            or scoped.locator is None
+            or scoped.locator["capture_id"] != str(target.locator.capture_id)
+        ):
+            return None
+        words = scoped.quote.exact
+        if words[target.locator.start_offset : target.locator.end_offset] != evidence.quote.exact:
+            return None
         return evidence
     if not target.owner_ref.startswith("media:"):
         return evidence
@@ -549,7 +577,11 @@ def resolve_source_target(
         location=LocatedSourceLocationOut(
             locator=resolved_locator,
             precision="page" if locator["type"] == "pdf_page" else captured.precision,
-            source_identity=reads.identities.get(owner.id),
+            source_identity=(
+                str(resolved_locator.capture_id)
+                if resolved_locator.type == "x_capture_offsets"
+                else reads.identities.get(owner.id)
+            ),
             apparatus_reference_id=apparatus_reference_id,
         ),
     )

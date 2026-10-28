@@ -21,8 +21,7 @@ class _Out(BaseModel):
 
 
 class ReaderXPostOwnerOut(_Out):
-    media_id: UUID
-    generation: int = Field(ge=1)
+    capture_id: UUID
     fragment_id: UUID
 
 
@@ -44,10 +43,15 @@ class ReaderXPostOut(_Out):
     referenced_revision_id: str | None
     checked_in_capture: bool | None
     source_url: str
-    author: XSourceAuthor
+    author: XSourceAuthor | None
+    attribution_text: str | None
+    parent_source_url: str | None
+    parent_title: str | None
+    capture_kind: Literal["complete_post", "article_excerpt"]
+    saved_media_id: UUID | None
     created_at: datetime | None
     is_edited: bool
-    availability: Literal["available", "unavailable"]
+    availability: Literal["available", "unavailable"] | None
     body_captured_at: datetime | None
     checked_at: datetime | None
     references: list[ReaderXReferenceOut]
@@ -120,6 +124,12 @@ class ReaderTextDocumentOut(ReaderTextBodyOut):
 
     kind: Literal["web_article", "epub"]
     publication_generation: int | None = Field(ge=1)
+
+
+class ReaderCaptureDocumentOut(ReaderTextBodyOut):
+    kind: Literal["x_capture"]
+    capture_id: UUID
+    publication_generation: None
 
 
 class ReaderPartUnitOut(ReaderUnitOut):
@@ -201,6 +211,7 @@ class ReaderPdfDocumentOut(_Out):
 
 ReaderDocumentOut = Annotated[
     ReaderTextDocumentOut
+    | ReaderCaptureDocumentOut
     | ReaderPartDocumentOut
     | ReaderTranscriptDocumentOut
     | ReaderPdfDocumentOut,

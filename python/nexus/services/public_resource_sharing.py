@@ -13,9 +13,9 @@ with a read and no read mixes generations.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, NoReturn
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from lxml.html import fragment_fromstring
@@ -90,8 +90,9 @@ _FACTS_SQL = """
            mts.transcript_origin, f.storage_path, f.content_type, f.size_bytes,
            EXISTS (SELECT 1 FROM media_teardown_intents t WHERE t.media_id = m.id) AS tearing_down,
            (EXISTS (SELECT 1 FROM fragments fr WHERE fr.media_id = m.id)
-            OR EXISTS (SELECT 1 FROM x_thread_posts xp JOIN fragments fr ON fr.media_id=xp.post_media_id
-                       WHERE xp.thread_media_id=m.id)) AS has_text,
+            OR EXISTS (SELECT 1 FROM x_thread_posts xp JOIN fragments fr ON fr.x_post_capture_id=xp.capture_id
+                       WHERE xp.thread_media_id=m.id)
+            OR EXISTS (SELECT 1 FROM x_post_media xm JOIN fragments fr ON fr.x_post_capture_id=xm.capture_id WHERE xm.media_id=m.id)) AS has_text,
            EXISTS (SELECT 1 FROM media_source_attempts e WHERE e.media_id = m.id
                    AND e.status = 'succeeded' AND e.source_type IN
                    ('remote_epub_url', 'uploaded_epub_file', 'browser_epub_capture')) AS epub_source,
@@ -117,6 +118,7 @@ class _Share:
     source_label: str | None
     highlight: PublicHighlightOut | None
     pdf: tuple[str, int] | None  # (storage path, size) of a readable PDF
+    public_grant_id: UUID | None = None
 
 
 def _gone() -> NoReturn:
@@ -209,7 +211,7 @@ def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
         start, end = target.start_offset, target.end_offset
         ordinal = row.idx
         if db.scalar(
-            text("""SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)
+            text("""SELECT EXISTS (SELECT 1 FROM x_post_media WHERE media_id=:id)
                     OR EXISTS (SELECT 1 FROM document_embeds WHERE media_id=:id AND provider='x')"""),
             {"id": row.anchor_media_id},
         ):
@@ -256,7 +258,7 @@ def _open(db: Session, token: str) -> _Share:
     current = resource_grants.link_grant(db, token)
     if current is None or (current.subject_scheme, current.subject_id) != subject:
         _gone()
-    return share
+    return replace(share, public_grant_id=grant.id)
 
 
 def link_readiness(db: Session, subject: ResourceRef) -> Readiness | None:
@@ -289,6 +291,8 @@ def _read_document(
             db,
             media_id=share.media_id,
             viewer_id=None,
+            public_grant_id=share.public_grant_id,
+            materialize_x_assets=True,
             pdf_file=lambda: ReaderPdfFileOut(
                 url="/api/public/resource-share/file", expires_at=None
             ),
@@ -335,7 +339,7 @@ def _read_document(
         text("""SELECT fragment_id, occurrence_key, source_shape, resolution_status,
                        canonical_source_url, source_url, error_code
                 FROM document_embeds WHERE media_id=:id AND provider='x'
-                  AND NOT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)
+                  AND NOT EXISTS (SELECT 1 FROM x_post_media WHERE media_id=:id)
                 ORDER BY ordinal, id"""),
         {"id": share.media_id},
     ):
@@ -383,6 +387,7 @@ def _read_document(
                 target=DocumentEmbedTargetOut(
                     status="unanchorable",
                     media_id=None,
+                    capture_id=None,
                     resource_ref=None,
                     href=None,
                     kind=None,
@@ -393,6 +398,7 @@ def _read_document(
                     playback=None,
                 ),
                 error_code=absent_text,
+                retrieval=None,
                 display=DocumentEmbedDisplayOut(
                     mode="pending"
                     if row.resolution_status == "resolving"
@@ -464,6 +470,7 @@ def _read_document(
                 target=DocumentEmbedTargetOut(
                     status="unanchorable",
                     media_id=None,
+                    capture_id=None,
                     resource_ref=None,
                     href=None,
                     kind=None,
@@ -474,6 +481,7 @@ def _read_document(
                     playback=None,
                 ),
                 error_code=absent_text,
+                retrieval=None,
                 display=DocumentEmbedDisplayOut(
                     mode=None,
                     label="x article",
@@ -544,6 +552,11 @@ def _read_document(
                     checked_in_capture=unit.x_post.checked_in_capture,
                     source_url=unit.x_post.source_url,
                     author=unit.x_post.author,
+                    attribution_text=unit.x_post.attribution_text,
+                    parent_source_url=unit.x_post.parent_source_url,
+                    parent_title=unit.x_post.parent_title,
+                    capture_kind=unit.x_post.capture_kind,
+                    saved_media_id=None,
                     created_at=unit.x_post.created_at,
                     is_edited=unit.x_post.is_edited,
                     availability=unit.x_post.availability,
@@ -739,6 +752,20 @@ def _text_manifest(
         }
     )
     assets: list[_PublicAsset] = []
+    captures = {
+        unit.x_post.owner.capture_id
+        for unit in document.units
+        if unit.x_post is not None and unit.x_post.owner is not None
+    }
+    x_assets = {}
+    if captures:
+        for asset in db.execute(
+            text("""SELECT capture_id, asset_key, storage_path, mime, size_bytes
+                FROM x_post_capture_assets WHERE capture_id=ANY(:ids)"""),
+            {"ids": list(captures)},
+        ):
+            url = f"/api/x/captures/{asset.capture_id}/assets/{quote(asset.asset_key, safe='')}"
+            x_assets[url] = asset
     for src in referenced:
         match = re.fullmatch(
             r"/api/media/[0-9a-fA-F-]{36}/assets/([A-Za-z0-9_./-]+)", urlsplit(src).path
@@ -746,7 +773,10 @@ def _text_manifest(
         key = match[1] if match else src
         if any(asset.key == key for asset in assets):
             continue
-        if key in images:
+        if src in x_assets:
+            image = x_assets[src]
+            assets.append(_PublicAsset(src, image.storage_path, image.mime, image.size_bytes, None))
+        elif key in images:
             image = images[key]
             assets.append(
                 _PublicAsset(key, image.storage_path, image.content_type, image.size_bytes, None)
@@ -771,6 +801,8 @@ def _captured_manifest(
         db,
         media_id=share.media_id,
         viewer_id=None,
+        public_grant_id=share.public_grant_id,
+        materialize_x_assets=True,
         pdf_file=lambda: ReaderPdfFileOut(url="/api/public/resource-share/file", expires_at=None),
     )
     if expected_identity is None:

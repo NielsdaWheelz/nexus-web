@@ -5,8 +5,11 @@ the lectern's lock order (viewer, then media). A document left with no rooted re
 teardown intent and one ``media_teardown`` job in the same transaction: the intent hides
 it and blocks new references (I6); the job deletes every row in one transaction, then its
 stored objects. An object a failed delete leaves behind is unowned, and the storage
-orphan sweep reclaims it (I7). Actual x containment propagates retention from
-library/grant/annotation/evidence roots; incidental cycles do not. accepted pieces
+orphan sweep reclaims it (I7). capture evidence and archived x assets outlive
+media publications and are never deleted here. settled actor-owned x capture
+acceptance receipts retain their original target id after physical teardown, so
+response-loss replay cannot reacquire or refile. ordinary source attempts die with
+the media. accepted pieces
 pin one source publication, but only external roots retain the family. visibility
 never follows the reverse storage dependency. final family teardown deletes bound
 candidates and child identities before releasing source fragments/publication. Teardown locks
@@ -32,9 +35,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_media,
     contained_media_ids_cte_sql,
-    non_system_media_ref_exists_sql,
-    retained_x_post_roots_sql,
-    visible_media_ids_cte_sql,
+    personal_media_removal_allowed_sql,
 )
 from nexus.db.retries import (
     TransactionRestart,
@@ -63,6 +64,7 @@ from nexus.services import (
     source_attempts,
     users,
 )
+from nexus.services import source_types as st
 from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.contributor_writes import MediaTarget
@@ -104,12 +106,12 @@ def _lock_kind(db: Session, media_id: UUID) -> str | None:
 
 
 def _references(db: Session, media_id: UUID) -> bool:
-    """whether a durable external root retains this source family or x containment.
+    """whether a durable external root retains this source family.
 
     Incidental cycles have no root and cannot retain themselves. Tombstones hide
     one viewer's content; they do not erase another holder's durable reference.
     """
-    roots = f"""
+    roots = """
         SELECT media_id FROM library_entries WHERE media_id IS NOT NULL
         UNION
         SELECT subject_id FROM resource_grants WHERE subject_scheme = 'media'
@@ -117,8 +119,6 @@ def _references(db: Session, media_id: UUID) -> bool:
         SELECT h.anchor_media_id FROM resource_grants g
         JOIN highlights h ON g.subject_scheme = 'highlight' AND g.subject_id = h.id
         WHERE h.authored_visible
-        UNION
-        SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
     """
     retained = contained_media_ids_cte_sql(roots, include_tearing_down=True)
     return bool(
@@ -389,23 +389,10 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         )
     if kind is None or not can_read_media(db, viewer_id, media_id):
         return
-    source_id = db.scalar(
-        text("SELECT source_media_id FROM media_parts WHERE media_id=:id"), {"id": media_id}
-    )
-    source_id = media_id if source_id is None else source_id
     family_ids = library_entries.media_family_ids(db, [media_id])
-    # A corpus the viewer reaches only through a system library is not theirs to drop.
-    controlled = db.execute(
-        text(f"""SELECT 1 WHERE {non_system_media_ref_exists_sql(":m")}
-            OR EXISTS (SELECT 1 FROM ({retained_x_post_roots_sql()}) retained
-                WHERE retained.user_id = :viewer_id AND retained.media_id = :m)
-            OR (:source != :m AND :source IN ({visible_media_ids_cte_sql()})
-                AND ({non_system_media_ref_exists_sql(":source")}
-                     OR {resource_grants.media_grant_path_exists_sql(":source")}))"""),
-        {"viewer_id": viewer_id, "m": media_id, "source": source_id},
-    ).first()
-    if controlled is None and not resource_grants.media_grant_path_exists(
-        db, viewer_user_id=viewer_id, media_id=media_id
+    if not db.scalar(
+        text(f"SELECT {personal_media_removal_allowed_sql(':m')}"),
+        {"viewer_id": viewer_id, "m": media_id},
     ):
         raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
 
@@ -560,7 +547,6 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     metadata_operations.delete_media_reviews(db, media_id=media_id)
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _run(db, "DELETE FROM document_embeds WHERE media_id = :m", m=media_id)
-    _run(db, "DELETE FROM document_embed_artifact_states WHERE media_id = :m", m=media_id)
     # Embeds elsewhere that resolved to this media now fail: their target is gone.
     _run(
         db,
@@ -612,29 +598,35 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         db, media_id=media_id
     )
     delete_processing_history_in_current_transaction(db, media_id=media_id)
-    # Source rows own attempts; composition/aliases must go before either post or thread.
-    _run(
-        db,
-        "DELETE FROM x_thread_posts WHERE thread_media_id = :m OR post_media_id = :m",
-        m=media_id,
-    )
-    _run(
-        db,
-        "UPDATE x_thread_sources SET root_post_media_id = NULL WHERE root_post_media_id = :m",
-        m=media_id,
-    )
-    _run(db, "DELETE FROM x_post_aliases WHERE post_media_id = :m", m=media_id)
+    # Bindings and primary occurrences are deletable presentations of retained captures.
+    _run(db, "DELETE FROM x_thread_posts WHERE thread_media_id = :m", m=media_id)
+    _run(db, "DELETE FROM x_post_media WHERE media_id = :m", m=media_id)
     for table in (
         "x_thread_sources",
-        "x_post_sources",
         "x_article_sources",
-        "media_source_attempts",
         "media_file",
         "fragments",
         "podcast_episodes",
         "media_teardown_intents",
     ):
         _run(db, f"DELETE FROM {table} WHERE media_id = :m", m=media_id)  # noqa: S608
+    # Only synchronous capture acceptance is independent of the deleted presentation.
+    _run(
+        db,
+        """
+        DELETE FROM media_source_attempts attempt WHERE attempt.media_id=:m
+          AND NOT (
+              attempt.source_type=:x_post AND attempt.status=:succeeded
+              AND attempt.created_by_user_id IS NOT NULL
+              AND attempt.job_id IS NULL AND attempt.finished_at IS NOT NULL
+              AND EXISTS (SELECT 1 FROM x_post_captures capture
+                  WHERE attempt.source_payload=jsonb_build_object('capture_id',capture.id::text))
+          )
+    """,
+        m=media_id,
+        x_post=st.X_POST,
+        succeeded=st.SUCCEEDED,
+    )
     delete_reader_publication(db, media_id=media_id)
     _run(db, "DELETE FROM media WHERE id = :m", m=media_id)
     return paths
@@ -677,13 +669,7 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                     {"m": media_id},
                 )
             )
-            parents = db.scalars(
-                text("""
-                SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = ANY(:ids)
-            """),
-                {"ids": candidates},
-            ).all()
-            library_entries.lock_media_rows_in_order(db, [*candidates, *parents])
+            library_entries.lock_media_rows_in_order(db, candidates)
             intent = db.scalar(
                 text("SELECT id FROM media_teardown_intents WHERE media_id = :m"), {"m": media_id}
             )

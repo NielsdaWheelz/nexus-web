@@ -13,9 +13,10 @@ from collections.abc import Collection
 
 _DERIVED_OWNERS = {
     "highlight": (
-        "LEFT JOIN highlights h ON e.scheme = 'highlight' AND h.id = e.id",
-        None,
-        "h.anchor_media_id",
+        "LEFT JOIN highlights h ON e.scheme = 'highlight' AND h.id = e.id\n"
+        "          LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id",
+        "CASE WHEN h.anchor_media_id IS NOT NULL THEN 'media' WHEN hfa.fragment_id IS NOT NULL THEN 'fragment' END",
+        "COALESCE(h.anchor_media_id,hfa.fragment_id)",
     ),
     "fragment": (
         "LEFT JOIN fragments f ON e.scheme = 'fragment' AND f.id = e.id",

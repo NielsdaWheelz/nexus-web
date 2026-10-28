@@ -15,9 +15,13 @@ from nexus.responses import Data
 from nexus.schemas.media_sources import (
     FromUrlOut,
     FromUrlRequest,
+    FromXCaptureOut,
+    FromXCaptureRequest,
     MediaRepairAdmission,
     MediaRepairRequest,
     RefreshSourceRequest,
+    ReplaceXCaptureOut,
+    ReplaceXCaptureRequest,
     RetrySourceRequest,
     SearchRepairRequest,
     SourceAdmission,
@@ -113,3 +117,34 @@ def repair_media(
         case _:
             assert_never(body)
     return Data(data=admission)
+
+
+@router.post("/media/from-x-capture")
+def create_from_x_capture(
+    body: FromXCaptureRequest, viewer: ViewerDep, db: DbSession
+) -> Data[FromXCaptureOut]:
+    return Data(
+        data=media_source_ingest.accept_x_capture(
+            db=db,
+            viewer_id=viewer.user_id,
+            id=body.id,
+            capture_id=body.capture_id,
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=body.destinations,
+        )
+    )
+
+
+@router.put("/media/{media_id}/x-capture")
+def replace_x_capture(
+    media_id: UUID, body: ReplaceXCaptureRequest, viewer: ViewerDep, db: DbSession
+) -> Data[ReplaceXCaptureOut]:
+    return Data(
+        data=media_source_ingest.replace_x_capture(
+            db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            capture_id=body.capture_id,
+            expected_reader_generation=body.expected_reader_generation,
+        )
+    )

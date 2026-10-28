@@ -256,7 +256,7 @@ export function useSelectionComposer(input: {
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Source", message: "this passage can’t be annotated here." },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.slice("media:".length), sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
+      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
     };
     store.put(entry);
     return entry;

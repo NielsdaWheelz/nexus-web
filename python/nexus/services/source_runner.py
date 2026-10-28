@@ -436,20 +436,6 @@ def _settle(
                 requester_user_id=attempt.created_by_user_id,
                 request_id=request_id,
             )
-        for thread_id, creator_id in db.execute(
-            text("""
-                SELECT m.id, m.created_by_user_id FROM x_thread_sources thread
-                JOIN media m ON m.id = thread.media_id
-                WHERE m.id != :winner AND m.created_by_user_id IS NOT NULL
-                  AND m.id IN (SELECT thread_media_id FROM x_thread_posts
-                               WHERE post_media_id = ANY(:changed))
-                ORDER BY m.id
-            """),
-            {"winner": media_id, "changed": indexed_ids},
-        ):
-            enqueue_metadata_enrichment(
-                db, media_id=thread_id, requester_user_id=creator_id, request_id=request_id
-            )
     for synced_id in (media_id, *outcome.additional_reindex_media_ids):
         _sync_embed_targets(db, synced_id)
     from nexus.services.media_intelligence_lifecycle import ensure_media_unit_in_tx
@@ -457,8 +443,7 @@ def _settle(
     for thread_id in db.scalars(
         text("""
             SELECT media_id FROM x_thread_sources
-            WHERE media_id = ANY(:ids) OR media_id IN (
-                SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = ANY(:ids))
+            WHERE media_id = ANY(:ids)
             ORDER BY media_id
         """),
         {"ids": [media_id, *outcome.additional_reindex_media_ids]},

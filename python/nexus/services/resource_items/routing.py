@@ -145,7 +145,11 @@ def _activations_from_resolved_passages(
             if ref.scheme in canonical_schemes or routes.get(ref.uri, "").startswith("/media/"):
                 routes.pop(ref.uri, None)
             continue
-        if ref.scheme == "reader_apparatus_item":
+        if passage.locator is not None and passage.locator.get("type") == "x_capture_offsets":
+            capture_id = passage.locator["capture_id"]
+            fragment = "highlight" if ref.scheme == "highlight" else "fragment"
+            routes[ref.uri] = f"/x/captures/{capture_id}#{fragment}-{ref.id}"
+        elif ref.scheme == "reader_apparatus_item":
             row = apparatus[ref.id]
             routes[ref.uri] = (
                 f"/media/{passage.owner.id}?{urlencode({'apparatus': row.stable_key, 'apparatus_id': str(ref.id)})}"

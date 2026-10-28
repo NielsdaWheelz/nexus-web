@@ -23,6 +23,7 @@ from nexus.services.contributor_credits import (
 from nexus.services.media_text_scope import (
     highlight_in_reading_scope_sql,
     text_scope_rows_sql,
+    x_capture_scope_rows_sql,
 )
 from nexus.services.notes import page_title_sql
 
@@ -118,23 +119,28 @@ def _source(
 
 _HIGHLIGHT_SCOPE = text_scope_rows_sql("SELECT reading.media_id AS media_id")
 _HIGHLIGHT_READING = (
-    """
+    f"""
     highlights h
     CROSS JOIN LATERAL (
-        SELECT h.anchor_media_id AS media_id
+        SELECT h.anchor_media_id AS media_id WHERE h.anchor_media_id IS NOT NULL
         UNION ALL
         SELECT part.media_id FROM media_parts part
         WHERE part.source_media_id=h.anchor_media_id
+        UNION
+        SELECT occurrence.reading_media_id FROM ({x_capture_scope_rows_sql("SELECT id AS media_id FROM media")}) occurrence
+        JOIN highlight_fragment_anchors anchor ON anchor.fragment_id=occurrence.fragment_id AND anchor.highlight_id=h.id
+        WHERE h.anchor_media_id IS NULL
+        UNION SELECT NULL::uuid WHERE h.anchor_media_id IS NULL
     ) reading
-    JOIN media reading_media ON reading_media.id=reading.media_id
+    LEFT JOIN media reading_media ON reading_media.id=reading.media_id
     LEFT JOIN LATERAL (
         SELECT a.fragment_id,a.start_offset,f.idx FROM highlight_fragment_anchors a
-        JOIN fragments f ON f.id=a.fragment_id AND f.media_id=h.anchor_media_id
+        JOIN fragments f ON f.id=a.fragment_id AND (f.media_id=h.anchor_media_id OR (h.anchor_media_id IS NULL AND f.x_post_capture_id IS NOT NULL))
         WHERE a.highlight_id=h.id ORDER BY f.idx,a.start_offset LIMIT 1
     ) first_anchor ON true
     LEFT JOIN LATERAL (
         SELECT a.fragment_id,a.end_offset,f.idx FROM highlight_fragment_anchors a
-        JOIN fragments f ON f.id=a.fragment_id AND f.media_id=h.anchor_media_id
+        JOIN fragments f ON f.id=a.fragment_id AND (f.media_id=h.anchor_media_id OR (h.anchor_media_id IS NULL AND f.x_post_capture_id IS NOT NULL))
         WHERE a.highlight_id=h.id ORDER BY f.idx DESC,a.end_offset DESC LIMIT 1
     ) last_anchor ON true
     LEFT JOIN LATERAL (
@@ -151,12 +157,10 @@ _HIGHLIGHT_READING = (
     ) last_bound ON true
 """
 )
-_HIGHLIGHT_KEY = "'highlight:' || reading.media_id::text || ':' || h.id::text"
+_HIGHLIGHT_KEY = "'highlight:' || COALESCE(reading.media_id::text,'source') || ':' || h.id::text"
 
 
-_CHUNK_WHERE = (
-    "c.owner_kind='media' AND c.primary_evidence_span_id IS NOT NULL AND c.chunk_text<>''"
-)
+_CHUNK_WHERE = "c.owner_kind IN ('media','fragment') AND c.primary_evidence_span_id IS NOT NULL AND c.chunk_text<>''"
 
 _SOURCES = {
     "media": _source(
@@ -219,13 +223,13 @@ _SOURCES = {
         admission=_HIGHLIGHT_KEY,
         fields={
             "body": "h.exact",
-            "prefix": "CASE WHEN reading.media_id=h.anchor_media_id OR first_anchor.fragment_id IS NULL THEN COALESCE(h.prefix,'')"
+            "prefix": "CASE WHEN reading.media_id IS NULL OR reading.media_id=h.anchor_media_id OR first_anchor.fragment_id IS NULL THEN COALESCE(h.prefix,'')"
             " ELSE right(COALESCE(h.prefix,''),GREATEST(first_anchor.start_offset-first_bound.lo,0)) END",
-            "suffix": "CASE WHEN reading.media_id=h.anchor_media_id OR last_anchor.fragment_id IS NULL THEN COALESCE(h.suffix,'')"
+            "suffix": "CASE WHEN reading.media_id IS NULL OR reading.media_id=h.anchor_media_id OR last_anchor.fragment_id IS NULL THEN COALESCE(h.suffix,'')"
             " ELSE left(COALESCE(h.suffix,''),GREATEST(last_bound.hi-last_anchor.end_offset,0)) END",
         },
-        where="h.authored_visible AND (reading.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'"
-        " AND reading.media_id<>h.anchor_media_id AND "
+        where="h.authored_visible AND ((reading.media_id IS NULL AND h.anchor_media_id IS NULL) OR reading.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'"
+        " AND reading.media_id IS DISTINCT FROM h.anchor_media_id AND "
         + highlight_in_reading_scope_sql("h.id", "reading.media_id")
         + "))",
     ),
@@ -255,18 +259,18 @@ _SOURCES = {
     ),
     "fragment": _source(
         "fragment",
-        "fragments f JOIN media m ON m.id=f.media_id",
+        "fragments f LEFT JOIN media m ON m.id=f.media_id",
         identity="f.id",
-        owner="'media:' || f.media_id::text",
-        admission="'fragment:' || f.media_id::text",
+        owner="CASE WHEN f.x_post_capture_id IS NULL THEN 'media:' || f.media_id::text ELSE 'fragment:' || f.id::text END",
+        admission="CASE WHEN f.x_post_capture_id IS NULL THEN 'fragment:' || f.media_id::text ELSE 'fragment:' || f.id::text END",
         fields={"body": "f.canonical_text"},
-        where="f.canonical_text<>'' AND CASE WHEN f.t_start_ms IS NOT NULL AND f.t_end_ms IS NOT NULL THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms ELSE m.kind<>'pdf' END",
+        where="f.canonical_text<>'' AND CASE WHEN f.x_post_capture_id IS NOT NULL THEN true WHEN f.t_start_ms IS NOT NULL AND f.t_end_ms IS NOT NULL THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms ELSE m.kind<>'pdf' END",
     ),
     "content_chunk": _source(
         "content_chunk",
         "content_chunks c JOIN content_index_states s ON s.owner_kind=c.owner_kind AND s.owner_id=c.owner_id",
         identity="c.id",
-        owner="'media:' || c.owner_id::text",
+        owner="c.owner_kind || ':' || c.owner_id::text",
         revision="s.lexical_revision",
         admission="'content_chunk:' || c.owner_id::text || ':' || s.lexical_revision::text",
         fields={"body": "c.chunk_text"},
@@ -310,11 +314,11 @@ _PUBLISHED_CONTENT_CHUNKS = _source(
     "content_chunk",
     "content_chunks c",
     identity="c.id",
-    owner="'media:' || c.owner_id::text",
+    owner="c.owner_kind || ':' || c.owner_id::text",
     revision="CAST(:published_revision AS bigint)",
     admission="'content_chunk:' || c.owner_id::text || ':' || CAST(:published_revision AS text)",
     fields={"body": "c.chunk_text"},
-    where=f"{_CHUNK_WHERE} AND c.owner_id=CAST(:published_owner_id AS uuid)",
+    where=f"{_CHUNK_WHERE} AND c.owner_id=CAST(:published_owner_id AS uuid) AND c.owner_kind=:published_owner_kind",
 )
 
 
@@ -418,7 +422,9 @@ def refresh(
             db.execute(text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"), params)
 
 
-def publish_content_chunks(db: Session, *, owner_id: UUID, revision: int) -> None:
+def publish_content_chunks(
+    db: Session, *, owner_id: UUID, revision: int, owner_kind: str = "media"
+) -> None:
     """Project the publisher's newly written media revision before its commit.
 
     The caller has set this owner's lexical revision after writing its chunks. Its
@@ -427,8 +433,8 @@ def publish_content_chunks(db: Session, *, owner_id: UUID, revision: int) -> Non
     Its transaction and retry owner also owns this insert and the final commit.
     """
     identities = db.scalars(
-        text("SELECT id FROM content_chunks WHERE owner_kind='media' AND owner_id=:id"),
-        {"id": owner_id},
+        text("SELECT id FROM content_chunks WHERE owner_kind=:kind AND owner_id=:id"),
+        {"id": owner_id, "kind": owner_kind},
     ).all()
     if not identities:
         return
@@ -440,7 +446,12 @@ def publish_content_chunks(db: Session, *, owner_id: UUID, revision: int) -> Non
         ids = identities[start : start + _BATCH]
         db.execute(
             text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"),
-            {"ids": ids, "published_owner_id": owner_id, "published_revision": revision},
+            {
+                "ids": ids,
+                "published_owner_id": owner_id,
+                "published_owner_kind": owner_kind,
+                "published_revision": revision,
+            },
         )
 
 
