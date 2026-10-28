@@ -28,7 +28,7 @@ conversation messages retain their message layout.
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
-| `ResourceComposer.tsx` | independent chat/message context admission using existing insertion primitives |
+| `ResourceComposer.tsx` | chat-context and annotation admission using existing insertion primitives; no message-footer creation |
 | `OutlineInsertionLine.tsx` | one session-owned insertion draft and captured destination |
 | `PageTitleEditor.tsx` | canonical root/inline title editing and text history |
 | `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |

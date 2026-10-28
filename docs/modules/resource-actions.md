@@ -84,7 +84,8 @@ selection scope while execution keeps the same catalog command ids.
   does not erase an authorized relationship.
 - structural insertion/rearrangement/history use the outline session's direct
   command interface, its keys and the touch accessory, never row/header menu shortcuts.
-  independent chat/message admission retains its own composer. no canonical
+  chat-context and annotation admission retain their own composers; message
+  menus do not open generic creation. no canonical
   `LinkResource` verb or global picker is added. action refs never supply missing
   insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
