@@ -10,7 +10,6 @@ then publication/definition/set rows. no provider work runs under these locks.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from dataclasses import dataclass
@@ -42,25 +41,31 @@ from nexus.errors import (
 )
 from nexus.ids import new_uuid7
 from nexus.schemas.media_parts import (
+    CandidateDetail,
     CandidateReceipt,
     CandidateRow,
+    CandidateSummary,
+    ContentsPart,
+    ContentsPlacement,
+    ContentsRemovedPart,
+    ContentsWork,
     PartAction,
     PartCandidateDecision,
     PartCapabilities,
     PartCreate,
+    PartCreationConflict,
     PartDefinition,
     PartFinding,
-    PartListRow,
-    PartPage,
     PartPreview,
+    PartPreviewOut,
     PartReceipt,
-    PartRow,
     PartSectionChoice,
     PartUpdate,
     SectionSelection,
+    SourceContentsCapabilities,
+    SourceContentsOut,
 )
 from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
-from nexus.schemas.reader_document import ReaderPartDocumentOut
 from nexus.services import library_entries, users
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationProof
@@ -209,7 +214,12 @@ def resolve_part_selection(
     db: Session, *, source: Media, selection: SectionSelection
 ) -> ProvedPartSelection:
     """prove one finite section or a continuous, nonoverlapping sibling sequence."""
-    proof = _proof(db, source)
+    return _resolve_selection(db, source=source, selection=selection, proof=_proof(db, source))
+
+
+def _resolve_selection(
+    db: Session, *, source: Media, selection: SectionSelection, proof: NavigationProof
+) -> ProvedPartSelection:
     if (
         selection.source_generation != proof.navigation.generation
         or selection.navigation_key != proof.key
@@ -734,6 +744,10 @@ def decide_candidate(
                 candidate.version += 1
                 part_set.revision += 1
             elif candidate.part_id is not None:
+                if request.expected_navigation_key is not None:
+                    raise _invalid(
+                        "navigation_changed", "restoration requires no reviewed navigation"
+                    )
                 if request.part_id != candidate.part_id:
                     raise _conflict(
                         "identity_conflict", "this proposal already names another piece"
@@ -746,18 +760,23 @@ def decide_candidate(
                 part_set.revision += 1
                 receipt = read_part_receipt(db, media_id=candidate.part_id)
             else:
+                proof = _proof(db, source)
+                if request.expected_navigation_key != proof.key:
+                    raise _conflict(
+                        "navigation_changed", "these sections changed; review this proposal again"
+                    )
                 if (
-                    candidate.source_generation != _proof(db, source).navigation.generation
+                    candidate.source_generation != proof.navigation.generation
                     or candidate.finding is None
                 ):
                     raise _conflict(
                         "source_changed", "this proposal no longer names the current source"
                     )
                 finding = PartFinding.model_validate(candidate.finding)
-                proof = _proof(db, source)
-                extent = resolve_part_selection(
+                extent = _resolve_selection(
                     db,
                     source=source,
+                    proof=proof,
                     selection=SectionSelection(
                         source_generation=candidate.source_generation,
                         navigation_key=proof.key,
@@ -887,46 +906,12 @@ def get_part_definition(db: Session, *, viewer_id: UUID, media_id: UUID) -> Part
         prepared = state is not None and state.section_witness_key == section_witness_key(
             proof.navigation.generation, proof.sections
         )
-        start, end = (
+        recovered = _recover_section_ids(
+            proof,
+            part.source_generation,
             DocumentPoint(part.start_fragment_idx, part.start_offset),
             DocumentPoint(part.end_fragment_idx, part.end_offset),
         )
-        exact = next(
-            (
-                section
-                for section in proof.sections
-                if section.start == start and section.end == end
-            ),
-            None,
-        )
-        recovered = None if exact is None else [exact.section_id]
-        if recovered is None:
-            for first in proof.sections:
-                if first.start != start:
-                    continue
-                siblings = sorted(
-                    (
-                        section
-                        for section in proof.sections
-                        if section.parent_section_id == first.parent_section_id
-                        and start <= section.start < end
-                    ),
-                    key=lambda section: section.start,
-                )
-                if not siblings or siblings[-1].end != end:
-                    continue
-                proposed = SectionSelection(
-                    source_generation=part.source_generation,
-                    navigation_key=proof.key,
-                    section_ids=[section.section_id for section in siblings],
-                )
-                try:
-                    extent = resolve_part_selection(db, source=source, selection=proposed)
-                except ApiError:
-                    continue
-                if extent.start == start and extent.end == end:
-                    recovered = proposed.section_ids
-                    break
         if recovered is not None:
             selection = SectionSelection(
                 source_generation=part.source_generation,
@@ -960,70 +945,196 @@ def get_part_definition(db: Session, *, viewer_id: UUID, media_id: UUID) -> Part
     )
 
 
-def list_parts(
-    db: Session, *, viewer_id: UUID, source_media_id: UUID, limit: int, cursor: str | None
-) -> tuple[list[PartListRow], PartPage]:
+def _recover_section_ids(
+    proof: NavigationProof, generation: int, start: DocumentPoint, end: DocumentPoint
+) -> list[str] | None:
+    """Recover current display membership; this never authorizes rich cuts."""
+    if generation != proof.navigation.generation:
+        return None
+    for section in proof.sections:
+        if section.start == start and section.end == end:
+            return [section.section_id]
+    fragments = {fragment.fragment_idx: fragment for fragment in proof.navigation.fragments}
+    for first in proof.sections:
+        if first.start != start:
+            continue
+        siblings = sorted(
+            (
+                section
+                for section in proof.sections
+                if section.parent_section_id == first.parent_section_id
+            ),
+            key=lambda section: section.start,
+        )
+        selected = [section for section in siblings if start <= section.start < end]
+        if not selected or selected[0] != first or selected[-1].end != end:
+            continue
+        continuous = True
+        for previous, current in zip(selected, selected[1:], strict=False):
+            boundary = previous.end
+            if boundary is None or not (
+                boundary == current.start
+                or (
+                    current.start.fragment_idx == boundary.fragment_idx + 1
+                    and boundary.offset == fragments[boundary.fragment_idx].char_count
+                    and current.start.offset == 0
+                )
+            ):
+                continuous = False
+                break
+        if continuous:
+            return [section.section_id for section in selected]
+    return None
+
+
+def _placement(
+    proof: NavigationProof, generation: int, start: DocumentPoint, end: DocumentPoint
+) -> ContentsPlacement:
+    fragments = {
+        fragment.fragment_idx: fragment.fragment_id for fragment in proof.navigation.fragments
+    }
+    order = {fragment.fragment_id: fragment.fragment_idx for fragment in proof.navigation.fragments}
+    recovered = _recover_section_ids(proof, generation, start, end)
+    nodes = []
+    pending = list(reversed(proof.navigation.toc_nodes))
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        pending.extend(reversed(node.children))
+    anchor = next(
+        (node.id for node in nodes if recovered is not None and node.section_id == recovered[0]),
+        None,
+    )
+    if anchor is None:
+        sections = {section.section_id: section for section in proof.sections}
+        containing = [
+            section
+            for section in proof.sections
+            if section.end is not None and section.start <= start < section.end
+        ]
+
+        def depth(section_id: str) -> int:
+            count = 0
+            parent = sections[section_id].parent_section_id
+            while parent is not None:
+                count += 1
+                parent = sections[parent].parent_section_id
+            return count
+
+        if containing:
+            toc_positions = {}
+            for index, node in enumerate(nodes):
+                if node.section_id is not None:
+                    toc_positions.setdefault(node.section_id, index)
+            deepest = max(
+                containing,
+                key=lambda section: (
+                    depth(section.section_id),
+                    -toc_positions.get(section.section_id, len(nodes)),
+                ),
+            )
+            anchor = next(
+                (node.id for node in nodes if node.section_id == deepest.section_id), None
+            )
+    if anchor is None:
+        preceding = [
+            node
+            for node in nodes
+            if node.target is not None
+            and DocumentPoint(order[node.target.fragment_id], node.target.offset) <= start
+        ]
+        if preceding:
+            anchor = max(
+                preceding,
+                key=lambda node: (order[node.target.fragment_id], node.target.offset)
+                if node.target is not None
+                else (-1, -1),
+            ).id
+    return ContentsPlacement(
+        extent=NavigationTextRangeOut(
+            start=NavigationTextPointOut(
+                fragment_id=fragments[start.fragment_idx], offset=start.offset
+            ),
+            end=NavigationTextPointOut(fragment_id=fragments[end.fragment_idx], offset=end.offset),
+        ),
+        section_ids=recovered,
+        anchor_node_id=anchor,
+    )
+
+
+def _creation_conflict(
+    parts: list[MediaPart],
+    candidates: list[MediaPartCandidate],
+    generation: int,
+    start: DocumentPoint,
+    end: DocumentPoint,
+) -> PartCreationConflict | None:
+    for part in parts:
+        if (
+            part.source_generation,
+            part.start_fragment_idx,
+            part.start_offset,
+            part.end_fragment_idx,
+            part.end_offset,
+        ) == (generation, start.fragment_idx, start.offset, end.fragment_idx, end.offset):
+            return PartCreationConflict(reason="existing_piece", media_id=part.media_id)
+    for candidate in candidates:
+        if candidate.part_id is not None and (
+            candidate.source_generation,
+            candidate.start_fragment_idx,
+            candidate.start_offset,
+            candidate.end_fragment_idx,
+            candidate.end_offset,
+        ) == (generation, start.fragment_idx, start.offset, end.fragment_idx, end.offset):
+            return PartCreationConflict(reason="bound_candidate", media_id=candidate.part_id)
+    return None
+
+
+def _source_bindings(
+    db: Session, source_media_id: UUID
+) -> tuple[list[MediaPart], list[MediaPartCandidate]]:
+    return (
+        list(
+            db.scalars(
+                select(MediaPart)
+                .where(MediaPart.source_media_id == source_media_id)
+                .order_by(MediaPart.media_id)
+            )
+        ),
+        list(
+            db.scalars(
+                select(MediaPartCandidate)
+                .where(MediaPartCandidate.source_media_id == source_media_id)
+                .order_by(MediaPartCandidate.id)
+            )
+        ),
+    )
+
+
+def list_parts(db: Session, *, viewer_id: UUID, source_media_id: UUID) -> SourceContentsOut:
     if not can_read_media(db, viewer_id, source_media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
     source = db.get(Media, source_media_id)
     assert source is not None
+    part_set = db.get(MediaPartSet, source_media_id)
+    revision = 0 if part_set is None else part_set.revision
     blocked = part_source_block_reason(db, media=source)
     if blocked is not None:
         unavailable = PartAction(allowed=False, reason=blocked)
-        return [], PartPage(
-            next_cursor=None,
-            source_generation=None,
+        return SourceContentsOut(
+            navigation=None,
             navigation_key=None,
-            set_revision=0,
+            set_revision=revision,
+            section_choices=[],
+            works=[],
+            candidates=[],
             operation=None,
             preparation=None,
-            section_choices=[] if cursor is None else None,
-            capabilities=PartCapabilities(
-                create=unavailable,
-                discover=unavailable,
-                edit_bounds=unavailable,
-                edit_metadata=unavailable,
-            ),
+            capabilities=SourceContentsCapabilities(create=unavailable, discover=unavailable),
         )
     proof = _proof(db, source)
-    part_set = db.get(MediaPartSet, source_media_id)
-    revision = 0 if part_set is None else part_set.revision
-    after = None
-    if cursor is not None:
-        try:
-            saved = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-            if saved[:4] != [
-                str(source_media_id),
-                proof.navigation.generation,
-                revision,
-                proof.key,
-            ]:
-                raise _conflict("page_changed", "these pieces changed; reload the list")
-            after = UUID(saved[4])
-        except (ValueError, TypeError, IndexError) as error:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_CURSOR, "invalid piece cursor"
-            ) from error
     creator = source.created_by_user_id == viewer_id
-    candidates = db.scalars(
-        select(MediaPartCandidate)
-        .where(
-            MediaPartCandidate.source_media_id == source_media_id,
-            MediaPartCandidate.source_generation == proof.navigation.generation,
-            text(
-                "((finding->>'verdict') IS DISTINCT FROM 'not_independent' OR part_id IS NOT NULL OR user_decision IS NOT NULL)"
-            ),
-            text("(:creator OR part_id IN (" + visible_media_ids_cte_sql() + "))"),
-            MediaPartCandidate.id > after if after is not None else text("TRUE"),
-        )
-        .order_by(MediaPartCandidate.id)
-        .limit(limit + 1),
-        {"creator": creator, "viewer_id": viewer_id},
-    ).all()
-    from nexus.services.resource_graph.refs import ResourceRef
-    from nexus.services.resource_items.items import resource_items_out
-
-    page = candidates[:limit]
+    parts, candidates = _source_bindings(db, source_media_id)
     visible_ids = set(
         db.scalars(
             text(
@@ -1031,58 +1142,82 @@ def list_parts(
                 + visible_media_ids_cte_sql()
                 + ") visible WHERE media_id=ANY(:ids)"
             ),
-            {
-                "viewer_id": viewer_id,
-                "ids": [candidate.part_id for candidate in page if candidate.part_id is not None],
-            },
+            {"viewer_id": viewer_id, "ids": [part.media_id for part in parts]},
         )
     )
-    items = resource_items_out(
+    titles = dict(
+        db.execute(
+            select(Media.id, Media.title).where(Media.id.in_([part.media_id for part in parts]))
+        )
+        .tuples()
+        .all()
+    )
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.routing import resource_activations_for_refs
+
+    activations = resource_activations_for_refs(
         db, viewer_id=viewer_id, refs=[ResourceRef("media", part_id) for part_id in visible_ids]
     )
-    items_by_id = {UUID(item.ref.split(":", 1)[1]): item for item in items}
-    versions = dict(
-        db.execute(
-            select(MediaPart.media_id, MediaPart.version).where(MediaPart.media_id.in_(visible_ids))
+    bound = {
+        candidate.part_id: candidate for candidate in candidates if candidate.part_id is not None
+    }
+    works: list[ContentsWork] = []
+    for part in parts:
+        if part.media_id not in visible_ids and not creator:
+            continue
+        placement = _placement(
+            proof,
+            part.source_generation,
+            DocumentPoint(part.start_fragment_idx, part.start_offset),
+            DocumentPoint(part.end_fragment_idx, part.end_offset),
         )
-        .tuples()
-        .all()
-    )
-    bound_titles = dict(
-        db.execute(
-            select(Media.id, Media.title).where(
-                Media.id.in_(
-                    [candidate.part_id for candidate in page if candidate.part_id is not None]
+        if part.media_id in visible_ids:
+            works.append(
+                ContentsPart(
+                    media_id=part.media_id,
+                    title=titles[part.media_id],
+                    activation=activations[ResourceRef("media", part.media_id).uri],
+                    placement=placement,
                 )
             )
+        else:
+            candidate = bound[part.media_id]
+            works.append(
+                ContentsRemovedPart(
+                    media_id=part.media_id,
+                    title=titles[part.media_id],
+                    candidate_id=candidate.id,
+                    candidate_version=candidate.version,
+                    placement=placement,
+                )
+            )
+    conflict_parts = parts if creator else [part for part in parts if part.media_id in visible_ids]
+    conflict_candidates = candidates if creator else []
+    summaries = []
+    for candidate in candidates if creator else []:
+        if (
+            candidate.part_id is not None
+            or candidate.finding is None
+            or candidate.source_generation != proof.navigation.generation
+        ):
+            continue
+        finding = PartFinding.model_validate(candidate.finding)
+        if finding.verdict == "not_independent" and candidate.user_decision != "rejected":
+            continue
+        start = DocumentPoint(candidate.start_fragment_idx, candidate.start_offset)
+        end = DocumentPoint(candidate.end_fragment_idx, candidate.end_offset)
+        conflict = _creation_conflict(parts, [], candidate.source_generation, start, end)
+        if conflict is not None:
+            continue
+        summaries.append(
+            CandidateSummary(
+                id=candidate.id,
+                version=candidate.version,
+                title=finding.title,
+                user_decision=cast(Literal["rejected"] | None, candidate.user_decision),
+                placement=_placement(proof, candidate.source_generation, start, end),
+            )
         )
-        .tuples()
-        .all()
-    )
-    rows: list[PartListRow] = [
-        PartRow(item=items_by_id[candidate.part_id], version=versions[candidate.part_id])
-        if candidate.part_id is not None and candidate.part_id in visible_ids
-        else _candidate_row(
-            candidate,
-            bound_title=None if candidate.part_id is None else bound_titles[candidate.part_id],
-        )
-        for candidate in page
-    ]
-    next_cursor = (
-        base64.urlsafe_b64encode(
-            json.dumps(
-                [
-                    str(source_media_id),
-                    proof.navigation.generation,
-                    revision,
-                    proof.key,
-                    str(page[-1].id),
-                ]
-            ).encode()
-        ).decode()
-        if len(candidates) > limit
-        else None
-    )
     state = db.scalar(
         select(ContentIndexState).where(
             ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == source_media_id
@@ -1091,52 +1226,124 @@ def list_parts(
     prepared = state is not None and state.section_witness_key == section_witness_key(
         proof.navigation.generation, proof.sections
     )
-    choices = (
-        None
-        if cursor is not None
-        else [
-            PartSectionChoice(
-                section_id=section.section_id,
-                eligible=prepared
-                and section.end is not None
-                and section.start_cut is not None
-                and section.end_cut is not None,
-                reason="preparing_structure"
-                if not prepared
-                else "unknown_end"
-                if section.end is None
-                else "unproved_structure"
-                if section.start_cut is None or section.end_cut is None
-                else None,
-            )
-            for section in proof.sections
-        ]
-    )
+    choices = [
+        PartSectionChoice(
+            section_id=section.section_id,
+            eligible=prepared
+            and section.end is not None
+            and section.start_cut is not None
+            and section.end_cut is not None,
+            reason="preparing_structure"
+            if not prepared
+            else "unknown_end"
+            if section.end is None
+            else "unproved_structure"
+            if section.start_cut is None or section.end_cut is None
+            else None,
+            creation_conflict=None
+            if section.end is None
+            else _creation_conflict(
+                conflict_parts,
+                conflict_candidates,
+                proof.navigation.generation,
+                section.start,
+                section.end,
+            ),
+        )
+        for section in proof.sections
+    ]
     from nexus.services.imports import read_media_search_obligation
     from nexus.services.part_discovery import read_part_operation
 
-    preparation = read_media_search_obligation(db, viewer_id=viewer_id, media_id=source_media_id)
     operation = read_part_operation(db, source_media_id=source_media_id)
     capabilities = _capabilities(
         creator=creator, prepared=prepared, root=creator, source_context=True
     )
-    if operation is not None and operation.status in ("pending", "running", "failed"):
+    if creator and operation is not None and operation.status in ("pending", "running", "failed"):
         capabilities.discover = PartAction(allowed=False, reason="active")
-    return rows, PartPage(
-        next_cursor=next_cursor,
-        source_generation=proof.navigation.generation,
+    return SourceContentsOut(
+        navigation=proof.navigation,
         navigation_key=proof.key,
         set_revision=revision,
-        operation=operation,
-        preparation=preparation,
         section_choices=choices,
-        capabilities=capabilities,
+        works=works,
+        candidates=summaries,
+        operation=operation,
+        preparation=read_media_search_obligation(db, viewer_id=viewer_id, media_id=source_media_id),
+        capabilities=SourceContentsCapabilities(
+            create=capabilities.create, discover=capabilities.discover
+        ),
+    )
+
+
+def get_candidate_detail(
+    db: Session, *, viewer_id: UUID, source_media_id: UUID, candidate_id: UUID
+) -> CandidateDetail:
+    source = _source(db, viewer_id, source_media_id, creator=True)
+    candidate = db.scalar(
+        select(MediaPartCandidate).where(
+            MediaPartCandidate.id == candidate_id,
+            MediaPartCandidate.source_media_id == source_media_id,
+        )
+    )
+    if candidate is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "proposal not found")
+    if candidate.part_id is not None:
+        raise _conflict("published_piece", "this proposal already has a piece; reload contents")
+    if candidate.finding is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "proposal not found")
+    proof = _proof(db, source)
+    finding = PartFinding.model_validate(candidate.finding)
+    selection = None
+    accept = PartAction(allowed=False, reason="navigation_changed")
+    try:
+        extent = _resolve_selection(
+            db,
+            source=source,
+            proof=proof,
+            selection=SectionSelection(
+                source_generation=candidate.source_generation,
+                navigation_key=proof.key,
+                section_ids=finding.section_ids,
+            ),
+        )
+    except (ConflictError, InvalidRequestError) as error:
+        reason = None if error.details is None else error.details.get("reason")
+        accept = PartAction(
+            allowed=False,
+            reason=reason
+            if reason in ("preparing_structure", "unknown_end", "unproved_structure")
+            else "navigation_changed",
+        )
+    else:
+        if extent.range_key == candidate.range_key:
+            selection = extent.selection
+            parts, candidates = _source_bindings(db, source_media_id)
+            conflict = _creation_conflict(
+                parts, candidates, extent.source_generation, extent.start, extent.end
+            )
+            accept = PartAction(
+                allowed=conflict is None and finding.title is not None,
+                reason=conflict.reason
+                if conflict is not None
+                else "missing_title"
+                if finding.title is None
+                else None,
+            )
+    return CandidateDetail(
+        id=candidate.id,
+        version=candidate.version,
+        source_generation=candidate.source_generation,
+        finding=finding,
+        user_decision=cast(Literal["rejected"] | None, candidate.user_decision),
+        selection=selection,
+        accept=accept,
     )
 
 
 def preview_part(
     db: Session, *, viewer_id: UUID, source_media_id: UUID, request: PartPreview
-) -> ReaderPartDocumentOut:
+) -> PartPreviewOut:
     """a transient exact document; never publish, file, consume or annotate it."""
     from nexus.services.media_text_scope import read_part_preview_scope
     from nexus.services.reader_document import build_part_document
@@ -1152,7 +1359,13 @@ def preview_part(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    return document.model_copy(update={"identity": "preview:" + identity})
+    parts, candidates = _source_bindings(db, source_media_id)
+    return PartPreviewOut(
+        document=document.model_copy(update={"identity": "preview:" + identity}),
+        creation_conflict=_creation_conflict(
+            parts, candidates, extent.source_generation, extent.start, extent.end
+        ),
+    )
 
 
 def observe_part_finding(

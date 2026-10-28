@@ -20,3 +20,14 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+.rangeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-1);
+}
+.rangeTitle { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
+.rangeTitle > a, .rangeTitle > button { color: var(--reader-accent, var(--accent)); }
+.rangeTitle > small, .rowNote { display: block; color: var(--ink-faint); font-size: var(--text-sm); }
+.rowNote { padding-inline: var(--space-2); }
+.rangeRow > :last-child:not(:first-child) { flex: 0 0 auto; white-space: nowrap; }

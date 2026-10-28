@@ -293,6 +293,15 @@ export function transcriptChapterAtPoint(doc: TextDocument, point: TextPoint): T
   return chapters.length === 1 ? chapters[0] : null;
 }
 
+/** Prepare ordinary text's last-start index once; equal starts retain source order. */
+export function textSectionLookup<T extends { readonly at: TextPoint | null }>(
+  sections: readonly T[], offset: (point: TextPoint) => number,
+): (point: TextPoint) => T | null {
+  const ordered = sections.flatMap(section => section.at === null ? [] : [{ section, at: offset(section.at) }])
+    .sort((a, b) => a.at - b.at);
+  return point => ordered.findLast(entry => entry.at <= offset(point))?.section ?? null;
+}
+
 export function structureOf(
   doc: ReaderDocument,
   pages: number | null,
@@ -312,9 +321,7 @@ export function structureOf(
     const range = doc.ranges.findLast((range) => range.unit === p.unit && range.start <= p.offset);
     return range ? range.position + Math.min(p.offset, range.end) - range.start : 0;
   };
-  const sections = doc.sections
-    .flatMap((section) => section.at === null ? [] : [{ section, at: offset(section.at) }])
-    .sort((a, b) => a.at - b.at);
+  const sectionAt = textSectionLookup(doc.sections, offset);
   return {
     length: doc.length,
     fraction: (p) =>
@@ -323,7 +330,7 @@ export function structureOf(
       p.kind === "text"
         ? doc.transcriptNavigation !== null
           ? transcriptChapterAtPoint(doc, p)
-          : (sections.findLast((entry) => entry.at <= offset(p))?.section ?? null)
+          : sectionAt(p)
         : null,
     unit: (id) => units.get(id),
   };

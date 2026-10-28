@@ -6,8 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.imports import ImportObligation
-from nexus.schemas.reader import NavigationTextRangeOut
-from nexus.schemas.resource_items import ResourceItemOut
+from nexus.schemas.reader import MediaNavigationOut, NavigationTextRangeOut
+from nexus.schemas.reader_document import ReaderPartDocumentOut
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
 PartBlockReason = Literal[
@@ -18,6 +19,10 @@ PartBlockReason = Literal[
     "unknown_end",
     "unproved_structure",
     "active",
+    "navigation_changed",
+    "missing_title",
+    "existing_piece",
+    "bound_candidate",
 ]
 
 
@@ -80,11 +85,14 @@ class PartCandidateDecision(_Closed):
     expected_version: int = Field(ge=1)
     decision: Literal["accepted", "rejected"]
     part_id: UUID | None
+    expected_navigation_key: str | None
 
     @model_validator(mode="after")
     def decision_identity(self) -> "PartCandidateDecision":
         if (self.decision == "accepted") != (self.part_id is not None):
             raise ValueError("acceptance requires part_id; rejection requires null part_id")
+        if self.decision == "rejected" and self.expected_navigation_key is not None:
+            raise ValueError("rejection requires null expected_navigation_key")
         return self
 
 
@@ -122,12 +130,6 @@ class PartReceipt(_Closed):
     set_revision: int
 
 
-class PartRow(_Closed):
-    kind: Literal["part"] = "part"
-    item: ResourceItemOut
-    version: int
-
-
 class CandidateRow(_Closed):
     kind: Literal["candidate"] = "candidate"
     id: UUID
@@ -136,9 +138,6 @@ class CandidateRow(_Closed):
     user_decision: Literal["accepted", "rejected"] | None
     part_id: UUID | None
     bound_title: str | None
-
-
-PartListRow = Annotated[PartRow | CandidateRow, Field(discriminator="kind")]
 
 
 class CandidateReceipt(_Closed):
@@ -168,21 +167,82 @@ class PartCapabilities(_Closed):
     edit_metadata: PartAction
 
 
+class PartCreationConflict(_Closed):
+    reason: Literal["existing_piece", "bound_candidate"]
+    media_id: UUID
+
+
 class PartSectionChoice(_Closed):
     section_id: str
     eligible: bool
     reason: PartBlockReason | None
+    creation_conflict: PartCreationConflict | None
 
 
-class PartPage(_Closed):
-    next_cursor: str | None
-    source_generation: int | None
+class ContentsPlacement(_Closed):
+    extent: NavigationTextRangeOut
+    section_ids: list[str] | None
+    anchor_node_id: str | None
+
+
+class ContentsPart(_Closed):
+    kind: Literal["part"] = "part"
+    media_id: UUID
+    title: str
+    activation: ResourceActivationOut
+    placement: ContentsPlacement
+
+
+class ContentsRemovedPart(_Closed):
+    kind: Literal["removed_part"] = "removed_part"
+    media_id: UUID
+    title: str
+    candidate_id: UUID
+    candidate_version: int
+    placement: ContentsPlacement
+
+
+ContentsWork = Annotated[ContentsPart | ContentsRemovedPart, Field(discriminator="kind")]
+
+
+class CandidateSummary(_Closed):
+    id: UUID
+    version: int
+    title: str | None
+    user_decision: Literal["rejected"] | None
+    placement: ContentsPlacement
+
+
+class CandidateDetail(_Closed):
+    id: UUID
+    version: int
+    source_generation: int
+    finding: PartFinding
+    user_decision: Literal["rejected"] | None
+    selection: SectionSelection | None
+    accept: PartAction
+
+
+class SourceContentsCapabilities(_Closed):
+    create: PartAction
+    discover: PartAction
+
+
+class SourceContentsOut(_Closed):
+    navigation: MediaNavigationOut | None
     navigation_key: str | None
     set_revision: int
+    section_choices: list[PartSectionChoice]
+    works: list[ContentsWork]
+    candidates: list[CandidateSummary]
     operation: PartOperation | None
     preparation: ImportObligation | None
-    section_choices: list[PartSectionChoice] | None
-    capabilities: PartCapabilities
+    capabilities: SourceContentsCapabilities
+
+
+class PartPreviewOut(_Closed):
+    document: ReaderPartDocumentOut
+    creation_conflict: PartCreationConflict | None
 
 
 class PartDefinition(_Closed):

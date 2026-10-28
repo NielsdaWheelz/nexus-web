@@ -2042,23 +2042,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/navigation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Navigation */
-        get: operations["get_navigation_media__media_id__navigation_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/part": {
         parameters: {
             query?: never;
@@ -2307,7 +2290,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Candidate */
+        get: operations["get_candidate_media__source_media_id__part_candidates__candidate_id__get"];
         /** Decide Candidate */
         put: operations["decide_candidate_media__source_media_id__part_candidates__candidate_id__put"];
         post?: never;
@@ -3632,6 +3616,23 @@ export interface components {
             revision: components["schemas"]["OrderRevision"];
             state: components["schemas"]["QueueState"];
         };
+        /** CandidateDetail */
+        CandidateDetail: {
+            accept: components["schemas"]["PartAction"];
+            finding: components["schemas"]["PartFinding"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            selection: components["schemas"]["SectionSelection"] | null;
+            /** Source Generation */
+            source_generation: number;
+            /** User Decision */
+            user_decision: "rejected" | null;
+            /** Version */
+            version: number;
+        };
         /** CandidateReceipt */
         CandidateReceipt: {
             candidate: components["schemas"]["CandidateRow"];
@@ -3650,14 +3651,30 @@ export interface components {
              */
             id: string;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Kind
+             * @default candidate
+             * @constant
              */
             kind: "candidate";
             /** Part Id */
             part_id: string | null;
             /** User Decision */
             user_decision: ("accepted" | "rejected") | null;
+            /** Version */
+            version: number;
+        };
+        /** CandidateSummary */
+        CandidateSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            placement: components["schemas"]["ContentsPlacement"];
+            /** Title */
+            title: string | null;
+            /** User Decision */
+            user_decision: "rejected" | null;
             /** Version */
             version: number;
         };
@@ -4497,6 +4514,54 @@ export interface components {
             completion: components["schemas"]["CompletionStatsSectionOut"];
             retained_artifacts: components["schemas"]["RetainedArtifactsOut"];
         };
+        /** ContentsPart */
+        ContentsPart: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "part";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            placement: components["schemas"]["ContentsPlacement"];
+            /** Title */
+            title: string;
+        };
+        /** ContentsPlacement */
+        ContentsPlacement: {
+            /** Anchor Node Id */
+            anchor_node_id: string | null;
+            extent: components["schemas"]["NavigationTextRangeOut"];
+            /** Section Ids */
+            section_ids: string[] | null;
+        };
+        /** ContentsRemovedPart */
+        ContentsRemovedPart: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Candidate Version */
+            candidate_version: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "removed_part";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            placement: components["schemas"]["ContentsPlacement"];
+            /** Title */
+            title: string;
+        };
         /** ContextItemOut */
         ContextItemOut: {
             /** Admission Edge Ids */
@@ -4827,12 +4892,6 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
         };
-        /** DataPage[Annotated[Union[PartRow, CandidateRow], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], PartPage] */
-        DataPage_Annotated_Union_PartRow__CandidateRow___FieldInfo_annotation_NoneType__required_True__discriminator__kind____PartPage_: {
-            /** Data */
-            data: (components["schemas"]["PartRow"] | components["schemas"]["CandidateRow"])[];
-            page: components["schemas"]["PartPage"];
-        };
         /** Data[AcceptedChanges] */
         Data_AcceptedChanges_: {
             data: components["schemas"]["AcceptedChanges"];
@@ -4875,6 +4934,10 @@ export interface components {
         /** Data[BrowserSessionOut] */
         Data_BrowserSessionOut_: {
             data: components["schemas"]["BrowserSessionOut"];
+        };
+        /** Data[CandidateDetail] */
+        Data_CandidateDetail_: {
+            data: components["schemas"]["CandidateDetail"];
         };
         /** Data[CandidateReceipt] */
         Data_CandidateReceipt_: {
@@ -5064,10 +5127,6 @@ export interface components {
         Data_MediaFileOut_: {
             data: components["schemas"]["MediaFileOut"];
         };
-        /** Data[MediaNavigationOut] */
-        Data_MediaNavigationOut_: {
-            data: components["schemas"]["MediaNavigationOut"];
-        };
         /** Data[MediaOut] */
         Data_MediaOut_: {
             data: components["schemas"]["MediaOut"];
@@ -5107,6 +5166,10 @@ export interface components {
         /** Data[PartOperation] */
         Data_PartOperation_: {
             data: components["schemas"]["PartOperation"];
+        };
+        /** Data[PartPreviewOut] */
+        Data_PartPreviewOut_: {
+            data: components["schemas"]["PartPreviewOut"];
         };
         /** Data[PartReceipt] */
         Data_PartReceipt_: {
@@ -5196,10 +5259,6 @@ export interface components {
         Data_ReaderDocumentMapOut_: {
             data: components["schemas"]["ReaderDocumentMapOut"];
         };
-        /** Data[ReaderPartDocumentOut] */
-        Data_ReaderPartDocumentOut_: {
-            data: components["schemas"]["ReaderPartDocumentOut"];
-        };
         /** Data[ReaderProfileOut] */
         Data_ReaderProfileOut_: {
             data: components["schemas"]["ReaderProfileOut"];
@@ -5259,6 +5318,10 @@ export interface components {
         /** Data[SourceAttemptOut] */
         Data_SourceAttemptOut_: {
             data: components["schemas"]["SourceAttemptOut"];
+        };
+        /** Data[SourceContentsOut] */
+        Data_SourceContentsOut_: {
+            data: components["schemas"]["SourceContentsOut"];
         };
         /** Data[SourceTargetOut] */
         Data_SourceTargetOut_: {
@@ -8349,7 +8412,7 @@ export interface components {
             /** Allowed */
             allowed: boolean;
             /** Reason */
-            reason: ("not_creator" | "unsupported_source" | "not_ready" | "preparing_structure" | "unknown_end" | "unproved_structure" | "active") | null;
+            reason: ("not_creator" | "unsupported_source" | "not_ready" | "preparing_structure" | "unknown_end" | "unproved_structure" | "active" | "navigation_changed" | "missing_title" | "existing_piece" | "bound_candidate") | null;
         };
         /** PartCandidateDecision */
         PartCandidateDecision: {
@@ -8358,6 +8421,8 @@ export interface components {
              * @enum {string}
              */
             decision: "accepted" | "rejected";
+            /** Expected Navigation Key */
+            expected_navigation_key: string | null;
             /** Expected Version */
             expected_version: number;
             /** Part Id */
@@ -8399,6 +8464,19 @@ export interface components {
             selection: components["schemas"]["SectionSelection"];
             /** Title */
             title: string;
+        };
+        /** PartCreationConflict */
+        PartCreationConflict: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "existing_piece" | "bound_candidate";
         };
         /** PartDefinition */
         PartDefinition: {
@@ -8489,22 +8567,6 @@ export interface components {
             /** Total Sections */
             total_sections: number;
         };
-        /** PartPage */
-        PartPage: {
-            capabilities: components["schemas"]["PartCapabilities"];
-            /** Navigation Key */
-            navigation_key: string | null;
-            /** Next Cursor */
-            next_cursor: string | null;
-            operation: components["schemas"]["PartOperation"] | null;
-            preparation: components["schemas"]["ImportObligation"] | null;
-            /** Section Choices */
-            section_choices: components["schemas"]["PartSectionChoice"][] | null;
-            /** Set Revision */
-            set_revision: number;
-            /** Source Generation */
-            source_generation: number | null;
-        };
         /** PartPrepare */
         PartPrepare: {
             /** Expected Source Generation */
@@ -8518,6 +8580,11 @@ export interface components {
         /** PartPreview */
         PartPreview: {
             selection: components["schemas"]["SectionSelection"];
+        };
+        /** PartPreviewOut */
+        PartPreviewOut: {
+            creation_conflict: components["schemas"]["PartCreationConflict"] | null;
+            document: components["schemas"]["ReaderPartDocumentOut"];
         };
         /** PartReceipt */
         PartReceipt: {
@@ -8533,23 +8600,13 @@ export interface components {
             /** Version */
             version: number;
         };
-        /** PartRow */
-        PartRow: {
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "part";
-            /** Version */
-            version: number;
-        };
         /** PartSectionChoice */
         PartSectionChoice: {
+            creation_conflict: components["schemas"]["PartCreationConflict"] | null;
             /** Eligible */
             eligible: boolean;
             /** Reason */
-            reason: ("not_creator" | "unsupported_source" | "not_ready" | "preparing_structure" | "unknown_end" | "unproved_structure" | "active") | null;
+            reason: ("not_creator" | "unsupported_source" | "not_ready" | "preparing_structure" | "unknown_end" | "unproved_structure" | "active" | "navigation_changed" | "missing_title" | "existing_piece" | "bound_candidate") | null;
             /** Section Id */
             section_id: string;
         };
@@ -12060,6 +12117,28 @@ export interface components {
             label: string;
             /** Publication */
             publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"]) | null;
+        };
+        /** SourceContentsCapabilities */
+        SourceContentsCapabilities: {
+            create: components["schemas"]["PartAction"];
+            discover: components["schemas"]["PartAction"];
+        };
+        /** SourceContentsOut */
+        SourceContentsOut: {
+            /** Candidates */
+            candidates: components["schemas"]["CandidateSummary"][];
+            capabilities: components["schemas"]["SourceContentsCapabilities"];
+            navigation: components["schemas"]["MediaNavigationOut"] | null;
+            /** Navigation Key */
+            navigation_key: string | null;
+            operation: components["schemas"]["PartOperation"] | null;
+            preparation: components["schemas"]["ImportObligation"] | null;
+            /** Section Choices */
+            section_choices: components["schemas"]["PartSectionChoice"][];
+            /** Set Revision */
+            set_revision: number;
+            /** Works */
+            works: (components["schemas"]["ContentsPart"] | components["schemas"]["ContentsRemovedPart"])[];
         };
         /** SourceCountedProgress */
         SourceCountedProgress: {
@@ -17450,37 +17529,6 @@ export interface operations {
             };
         };
     };
-    get_navigation_media__media_id__navigation_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_MediaNavigationOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_part_media__media_id__part_get: {
         parameters: {
             query?: never;
@@ -17975,6 +18023,38 @@ export interface operations {
             };
         };
     };
+    get_candidate_media__source_media_id__part_candidates__candidate_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_media_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CandidateDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     decide_candidate_media__source_media_id__part_candidates__candidate_id__put: {
         parameters: {
             query?: never;
@@ -18048,10 +18128,7 @@ export interface operations {
     };
     list_parts_media__source_media_id__parts_get: {
         parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 source_media_id: string;
@@ -18066,7 +18143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DataPage_Annotated_Union_PartRow__CandidateRow___FieldInfo_annotation_NoneType__required_True__discriminator__kind____PartPage_"];
+                    "application/json": components["schemas"]["Data_SourceContentsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -18171,7 +18248,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ReaderPartDocumentOut_"];
+                    "application/json": components["schemas"]["Data_PartPreviewOut_"];
                 };
             };
             /** @description Validation Error */
