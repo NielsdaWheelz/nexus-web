@@ -171,11 +171,15 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 completed_at=row["completed_at"],
                 changed_fields=result["changed_fields"],
                 unresolved_fields=result["unresolved_fields"],
+                container_report=result["container_report"],
             )
             return MetadataCompletedOperation(**common, outcome=outcome)
         case "no_findings":
             return MetadataNoFindingsOperation(
-                **common, completed_at=row["completed_at"], reviewed_at=row["reviewed_at"]
+                **common,
+                completed_at=row["completed_at"],
+                reviewed_at=row["reviewed_at"],
+                container_report=result["container_report"],
             )
         case "failed":
             return MetadataFailedOperation(

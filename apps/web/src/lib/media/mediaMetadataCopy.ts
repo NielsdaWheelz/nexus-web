@@ -70,6 +70,9 @@ export function metadataOperationSummary(
         ? `${name} will retry ${formatTime(operation.until)}`
         : `${name} will retry`;
     case "no_findings":
+      if (operation.container_report !== null) return operation.reviewed_at !== null
+        ? "no piece metadata established · reviewed"
+        : "no piece metadata established";
       return operation.reviewed_at !== null
         ? "no metadata found · reviewed"
         : "no metadata found";

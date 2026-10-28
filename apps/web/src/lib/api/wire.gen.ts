@@ -4497,6 +4497,21 @@ export interface components {
             completion: components["schemas"]["CompletionStatsSectionOut"];
             retained_artifacts: components["schemas"]["RetainedArtifactsOut"];
         };
+        /** ContainerDiscrepancy */
+        ContainerDiscrepancy: {
+            /** Explanation */
+            explanation: string;
+            field: components["schemas"]["ContainerDiscrepancyField"];
+        };
+        /** @enum {string} */
+        ContainerDiscrepancyField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language";
+        /** ContainerReport */
+        ContainerReport: {
+            /** Discrepancies */
+            discrepancies: components["schemas"]["ContainerDiscrepancy"][];
+            /** Source Title */
+            source_title: string;
+        };
         /** ContextItemOut */
         ContextItemOut: {
             /** Admission Edge Ids */
@@ -7249,6 +7264,7 @@ export interface components {
             /** Original Published Date */
             original_published_date: string | null;
             part_source: components["schemas"]["MediaPartSourceOut"] | null;
+            part_source_edition: components["schemas"]["PartSourceEditionOut"] | null;
             /** Part Version */
             part_version: number | null;
             playback_source: components["schemas"]["PlaybackSourceOut"] | null;
@@ -7465,6 +7481,7 @@ export interface components {
              * Format: date-time
              */
             completed_at: string;
+            container_report: components["schemas"]["ContainerReport"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7583,6 +7600,7 @@ export interface components {
              * Format: date-time
              */
             completed_at: string;
+            container_report: components["schemas"]["ContainerReport"] | null;
             /**
              * Created At
              * Format: date-time
@@ -8558,6 +8576,15 @@ export interface components {
             reason: ("not_creator" | "unsupported_source" | "not_ready" | "preparing_structure" | "unknown_end" | "unproved_structure" | "active") | null;
             /** Section Id */
             section_id: string;
+        };
+        /** PartSourceEditionOut */
+        PartSourceEditionOut: {
+            /** Isbn */
+            isbn: string | null;
+            /** Published Date */
+            published_date: string | null;
+            /** Publisher */
+            publisher: string | null;
         };
         /** PartUpdate */
         PartUpdate: {

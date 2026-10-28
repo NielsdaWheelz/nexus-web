@@ -4,7 +4,7 @@
 // server's metadata stream ends once nothing is unfinished, so a view is followed while
 // research can change it: from a mount (one short read when idle), an admission (answered
 // or lost), a review, a reconnect or a settled import, to its run's end even after its
-// pane closes. A new stamp whose run changed a summary field publishes "Metadata".
+// pane closes. A new stamp whose run changed metadata publishes "Metadata".
 
 import { useCallback, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -36,12 +36,6 @@ interface AccountScope {
   controller: AbortController;
 }
 let account: AccountScope | null = null;
-const SUMMARY_FIELDS = new Set<string>([
-  "title",
-  "contributors",
-  "original_published_date",
-]);
-
 function entryFor(accountId: string, mediaId: string): Entry {
   const key = `${accountId}:${mediaId}`;
   let entry = entries.get(key);
@@ -74,7 +68,7 @@ function receive(entry: Entry, view: MetadataEnrichmentView): void {
     latest.outcome.completed_at === view.last_enriched_at
       ? latest.outcome.changed_fields
       : null;
-  if (fields === null || fields.some((field) => SUMMARY_FIELDS.has(field)))
+  if (fields === null || fields.length > 0)
     publishChange("Metadata");
 }
 

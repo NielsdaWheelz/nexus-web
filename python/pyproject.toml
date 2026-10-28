@@ -55,10 +55,10 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "5d52e6a266c9769dafa318a24c21236db8929903" }
+universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "c4bb0b3ce97424b7f2b6d8004e57f08009d64892" }
 provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "2ab70c1ffbb26c60bd1a7d2af48582d59fb01759" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "4affac70f8a00b2efe6721694dab5cf278a1e80d" }
-llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "5a37102bc73c1af0c23e63c5b70df320661f63ed" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "adbb99547ff57a56b1df3b586119de870bbc23b3" }
+llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "c6a2b299f7a92c39d545960a6f2e5f30730e0fc3" }
 
 [tool.ruff]
 target-version = "py312"
