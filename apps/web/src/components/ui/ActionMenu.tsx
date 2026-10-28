@@ -449,7 +449,9 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     dismissOnNavigation: true,
     onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab" && reason !== "navigation"),
     inside: () => [menu.ref.current, root.current],
+    returnFocus: true,
     returnFocusTo: () => returnFocusTo?.() ?? trigger.current,
+    skipReturnFocus: () => skipReturn.current,
   });
   const change = (next: Invocation | null) => {
     current.current = next;

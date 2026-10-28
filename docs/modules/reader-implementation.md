@@ -67,6 +67,22 @@ lib/find               useFind, FindBar contract, highlightPainter (shared by ev
 `lib/panes` or `lib/workspace` (eslint `no-restricted-imports`): hosts adapt the
 workspace to the ports, the primitive never reaches for it.
 
+`MapRail` owns its 32px width; hosts consume its exported width. passive ticks
+retain exact positions and semantic structure/evidence lanes. unrounded track
+height defines full-width 24px hit regions, with the terminal remainder merged;
+tracks shorter than 24px have no interactive regions. singletons use `ReaderLink`,
+clusters use the existing action menu with individually named destinations.
+semantic marker kind supplies names independently of paint tone. descriptions
+normalize whitespace and bound evidence to 120 graphemes without changing source
+content. identical displayed names remain distinct choices.
+
+source destinations inspect and focus the reading surface; evidence retains its
+host-owned connections action. menu meaning includes the canonical destination
+and track height; changed meaning retires an invocation instead of retargeting
+it. opening/dismissing a chooser never adopts progress. controls removed during
+regrouping return focus to the surviving map without scrolling. the shelf uses
+the same map and local commands without workspace navigation.
+
 the runtime is a plain object; react reads it through `subscribe`/`getState`
 (`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`identity`, `capture`,
 `captureSelection`, `position`, `find`, pdf `setZoom`) and report viewports and input.
@@ -687,7 +703,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
