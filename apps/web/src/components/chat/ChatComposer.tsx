@@ -54,14 +54,14 @@ export default function ChatComposer(props: {
   // A new chat's unresolved first send holds its text and model; an existing chat's
   // command retries its frozen request, so the draft stays editable.
   const locked = own?.command.kind === "Send" && own.command.request.destination.kind === "New";
-  const [incomplete, setIncomplete] = useState<Extract<SelectionEditor, { kind: "ModelRequired" | "EffortRequired" }> | null>(null);
+  const [unresolved, setUnresolved] = useState<Extract<SelectionEditor, { kind: "DefaultUnavailable" }> | null>(null);
   // An untouched draft follows the answer it replies to, else the catalog seed.
   const followed = draft.selection ?? (props.scope === "new" || historyReady ? (inherited ?? catalog?.chat_seed.selection) : null) ?? null;
   // the model controls show the request in flight (and a held new-chat send) as sent
   const frozen = own?.command.kind === "Send" && (locked || own.kind === "Busy") ? own.command.request.selection : null;
   const selection: SelectionEditor = frozen
     ? { kind: "Selected", selection: frozen }
-    : (incomplete ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
+    : (unresolved ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [ready, setReady] = useState(false);
@@ -79,6 +79,7 @@ export default function ChatComposer(props: {
   useLayoutEffect(() => {
     if (!readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
     // no await: the exact visit's delivery and both draft fields transfer together.
+    setUnresolved(null);
     setDraft({ text: readerEntry.entry.text, selection: readerEntry.entry.selection });
     claim(readerEntry);
   }, [readerEntry, claim, setDraft]);
@@ -96,7 +97,7 @@ export default function ChatComposer(props: {
   const submit = async (openIntent: OpenIntent = "default") => {
     if (!canSend || selection.kind !== "Selected") return;
     setError(null);
-    const submitted = draft.text;
+    const submitted = draft;
     const request: DraftRequest = {
       destination: target.kind === "New" ? { kind: "New" } : {
         kind: "Existing",
@@ -104,7 +105,7 @@ export default function ChatComposer(props: {
         insertion: target.kind === "Empty" ? { kind: "Empty" }
           : { kind: "Reply", parent_message_id: target.parentId, branch_anchor: target.anchor },
       },
-      content: submitted,
+      content: submitted.text,
       selection: selection.selection,
       reader_selection: quoted ? { key: quoted.key, revision: quoted.revision } : null,
     };
@@ -193,9 +194,12 @@ export default function ChatComposer(props: {
             value={selection}
             onChange={(next) => {
               if (next.kind === "Selected") {
-                setIncomplete(null);
+                setUnresolved(null);
                 setSelection(next.selection);
-              } else if (next.kind !== "Uninitialized") setIncomplete(next);
+              } else if (next.kind === "DefaultUnavailable") {
+                setUnresolved(next);
+                setSelection(null);
+              }
             }}
             disabled={!inputReady || frozen !== null}
           />
@@ -219,9 +223,6 @@ export default function ChatComposer(props: {
           <FeedbackStatus
             content={{ tone: "Neutral", title: reason }}
             announcement="Polite"
-            actions={selection.kind === "Selected"
-              ? [{ label: "refresh", onClick: catalogRead.refetch, busy: catalogRead.status === "ready" && catalogRead.refreshing }]
-              : undefined}
           />
         ) : null}
       </div>

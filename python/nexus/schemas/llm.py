@@ -22,6 +22,7 @@ def _aware(value: datetime) -> datetime:
 
 ModelKey = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\s]+$")]
 ReasoningKey = Annotated[str, Field(pattern=r"^[!-~]{1,64}$")]
+ReasoningMode = Annotated[str, Field(min_length=1, max_length=64)]
 
 
 class CodexPersonalSelection(_Frozen):
@@ -64,7 +65,7 @@ class ProcessorChain(_Frozen):
 class SelectionPresentation(_Frozen):
     route_label: str = Field(min_length=1, max_length=128)
     model_label: str = Field(min_length=1, max_length=256)
-    reasoning_label: str = Field(min_length=1, max_length=128)
+    reasoning_label: str = Field(min_length=1, max_length=131)
     billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
     privacy: PrivacyDisclosure
     processor_chain: ProcessorChain
@@ -138,12 +139,20 @@ class ProviderApiRoute(_Frozen):
 
 class GenerationReasoningRow(_Frozen):
     key: ReasoningKey
-    label: str = Field(min_length=1, max_length=256)
-    mode: str | None = Field(min_length=1, max_length=64)
+    mode: ReasoningMode | None
+    mode_label: str | None = Field(min_length=1, max_length=64)
     effort: str = Field(min_length=1, max_length=64)
+    effort_label: str = Field(min_length=1, max_length=64)
     effort_order: int = Field(ge=0)
+    chat_default: bool
     readiness: Readiness
     chat_state: SelectionState
+
+    @model_validator(mode="after")
+    def _mode_has_label(self) -> Self:
+        if (self.mode is None) != (self.mode_label is None):
+            raise ValueError("generation mode and its label must be absent together")
+        return self
 
 
 class GenerationModelRow(_Frozen):
@@ -156,11 +165,10 @@ class GenerationModelRow(_Frozen):
     effective_chat_output_budget_tokens: int = Field(gt=0)
     readiness: Readiness
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
-    source_default_reasoning: str | None
     reasoning: tuple[GenerationReasoningRow, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _default_names_one_row(self) -> Self:
+    def _reasoning_rows_valid(self) -> Self:
         keys = [row.key for row in self.reasoning]
         if len(set(keys)) != len(keys):
             raise ValueError("generation reasoning rows must be unique")
@@ -168,10 +176,19 @@ class GenerationModelRow(_Frozen):
             raise ValueError("generation efforts must be unique within each mode")
         if len({(row.mode, row.effort_order) for row in self.reasoning}) != len(keys):
             raise ValueError("generation effort ordinals must be unique within each mode")
-        default = self.source_default_reasoning
-        if default is not None and default not in keys:
-            raise ValueError("source default must name a reasoning row")
+        default_modes = [row.mode for row in self.reasoning if row.chat_default]
+        if len(set(default_modes)) != len(default_modes):
+            raise ValueError("generation chat defaults must be unique within each mode")
+        labels: dict[str | None, str | None] = {}
+        for row in self.reasoning:
+            if labels.setdefault(row.mode, row.mode_label) != row.mode_label:
+                raise ValueError("generation mode labels must be consistent")
         return self
+
+
+class GenerationModelDefault(_Frozen):
+    model_key: ModelKey
+    mode: ReasoningMode | None
 
 
 class GenerationCatalogRoute(_Frozen):
@@ -181,6 +198,7 @@ class GenerationCatalogRoute(_Frozen):
     billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
     privacy: PrivacyDisclosure
     processor_chain: ProcessorChain
+    default_model: GenerationModelDefault
     models: tuple[GenerationModelRow, ...]
 
 

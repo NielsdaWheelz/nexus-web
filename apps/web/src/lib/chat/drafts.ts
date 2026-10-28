@@ -1,7 +1,7 @@
 "use client";
 
 // Unsent text and model choice live only in memory, per account, pane and chat.
-// Pane retirement forgets its drafts; acceptance spends only the submitted text.
+// Pane retirement forgets its drafts; acceptance spends only unchanged submitted fields.
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
@@ -77,7 +77,10 @@ export function useChatDraft(scope: string, viewId: string) {
       setText: (text: string) => write({ ...entry.value, text }),
       setSelection: (selection: Selection | null) => write({ ...entry.value, selection }),
       seed: (text: string) => write({ ...entry.value, text }),
-      spend: (submitted: string) => write({ text: entry.value.text === submitted ? "" : entry.value.text, selection: null }),
+      spend: (submitted: Draft) => write({
+        text: entry.value.text === submitted.text ? "" : entry.value.text,
+        selection: entry.value.selection === submitted.selection ? null : entry.value.selection,
+      }),
     };
   }, [entry]);
   return { draft, owner: key, ...commands };
