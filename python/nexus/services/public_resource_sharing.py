@@ -126,7 +126,9 @@ def _gone() -> NoReturn:
 def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
     """The one readiness gate; a passing subject's facts."""
     media = (
-        ":id" if scheme == "media" else "(SELECT anchor_media_id FROM highlights WHERE id = :id)"
+        ":id"
+        if scheme == "media"
+        else "(SELECT anchor_media_id FROM highlights WHERE id = :id AND authored_visible)"
     )
     media_id = db.execute(
         text(f"SELECT m.id FROM media m WHERE m.id = {media}"), {"id": subject_id}
@@ -192,7 +194,8 @@ def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
     row = db.execute(
         text(
             "SELECT h.exact, h.color, h.anchor_media_id, f.idx FROM highlights h LEFT JOIN fragments f"
-            " ON f.id = :fragment_id AND f.media_id = h.anchor_media_id WHERE h.id = :id"
+            " ON f.id = :fragment_id AND f.media_id = h.anchor_media_id"
+            " WHERE h.id = :id AND h.authored_visible"
         ),
         {"id": highlight_id, "fragment_id": None if on_pdf else target.fragment_id},
     ).one_or_none()
@@ -296,6 +299,7 @@ def _read_document(
         return ReaderPdfDocumentOut(
             kind="pdf",
             identity=document.identity,
+            publication_generation=None,
             title=document.title,
             page_count=document.page_count,
             file=document.file,
@@ -622,6 +626,7 @@ def _read_document(
     return ReaderTextDocumentOut(
         **body.model_dump(),
         kind=document.source_format if document.kind == "text_part" else document.kind,
+        publication_generation=None,
     )
 
 

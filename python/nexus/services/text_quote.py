@@ -236,7 +236,7 @@ def resolve_owner_quote(
         return _EMPTY_EXACT
     if owner_scheme == "note_block":
         body_text = db.execute(
-            select(NoteBlock.body_text).where(NoteBlock.id == owner_id)
+            select(NoteBlock.body_text).where(NoteBlock.id == owner_id, NoteBlock.authored_visible)
         ).scalar_one_or_none()
         if body_text is None:
             return _NO_MATCH

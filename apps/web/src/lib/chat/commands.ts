@@ -5,6 +5,7 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
+import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
 import type { WorkGuard, WorkScope } from "@/lib/unsavedWork";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
@@ -146,7 +147,7 @@ function owner(accountId: string, key: string, conversationId: string | null) {
     entry = { accountId, key, owner: createCommands(conversationId, () => currentAccount === accountId, () => {
       if (!workGuard) throw new Error("chat commands require their work guard");
       return workGuard.confirmLoss({ scopes: [], ownerIds: [commandOwnerId(accountId, key)] });
-    }), release: null };
+    }, accountId), release: null };
     owners.set(`${accountId}:${key}`, entry);
     registerCommand(entry);
   }
@@ -240,7 +241,7 @@ export async function confirmChatDeletion(
   );
 }
 
-function createCommands(conversationId: string | null, accountActive: () => boolean = () => true, confirmDiscard: () => boolean = () => false) {
+function createCommands(conversationId: string | null, accountActive: () => boolean = () => true, confirmDiscard: () => boolean = () => false, accountId: string | null = null) {
   let state: CommandState = IDLE_COMMAND;
   let pending: {
     command: ChatCommand;
@@ -252,6 +253,8 @@ function createCommands(conversationId: string | null, accountActive: () => bool
      */
     accepted: AcceptedReceipt | null;
     onAcceptance: (() => void) | null;
+    authored_prefix: Promise<string> | null;
+    fence: AbortController;
   } | null = null;
   let running: Promise<CommandOutcome> | null = null;
   let cleared = false;
@@ -364,6 +367,10 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     try {
       let deleted = false;
       if (command.kind === "Send" || command.kind === "Repeat") {
+        if(accountId!==null && attempt.authored_prefix!==null) {
+          await waitForAuthoredContext(accountId,attempt.authored_prefix,attempt.fence);
+          if(!isActive()||pending!==attempt)return {kind:"Handled"};
+        }
         if (command.kind === "Repeat" && command.implicit && !attempt.unconfirmed) {
           const catalog = await readCatalog(null);
           if (!isActive() || pending !== attempt) return { kind: "Handled" };
@@ -413,6 +420,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       return reconcile();
     } catch (error) {
       if (!isActive() || pending !== attempt) return { kind: "Handled" };
+      if (error instanceof AuthoredContextError) return refuse({tone:"Warning",title:"message wasn’t sent",message:error.message},null,false);
       if (isApiError(error) && error.code === "E_CONVERSATION_CHANGED") return conflict();
       const failure = chatFailure(error, command.kind === "Repeat" ? "response could not be repeated" : "chat change failed");
       if (failure.kind === "Defect") {
@@ -476,7 +484,9 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         command.kind === "Send" ? JSON.stringify(command.request)
         : command.kind === "Repeat" ? JSON.stringify({ selection: command.selection, expected_revision: command.expectedRevision })
         : null;
-      pending = { command, body, unconfirmed: false, accepted: null, onAcceptance };
+      const authored_prefix=accountId!==null && (command.kind==="Send"||command.kind==="Repeat") ? getWritingRuntime(accountId).committedPrefix() : null;
+      void authored_prefix?.catch(()=>{});
+      pending = { command, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
       return run(send);
     },
     /** Unconfirmed resends the frozen command; RefreshRequired rereads the tree. */
@@ -505,6 +515,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     },
     resume() { cleared = false; },
     clear() {
+      pending?.fence.abort(new DOMException("chat owner closed","AbortError"));
       cleared = true;
       pending = null;
       running = null;
@@ -515,4 +526,27 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       listeners.clear();
     },
   };
+}
+
+class AuthoredContextError extends Error {}
+/** Wait through one finite local source prefix, never account-wide currentness.
+ * No prompt is submitted until its linked writing has reached server projection. */
+async function waitForAuthoredContext(accountId:string,prefix:Promise<string>,controller:AbortController):Promise<void> {
+  const runtime=getWritingRuntime(accountId);
+  const store=await runtime.store;
+  const deadline=setTimeout(()=>controller.abort(new AuthoredContextError("linked notes haven’t finished syncing. try sending again.")),30_000);
+  let aborted:()=>void=()=>{};
+  try {
+    const cancelled=new Promise<never>((_resolve,reject)=>{
+      aborted=()=>reject(controller.signal.reason??new DOMException("cancelled","AbortError"));
+      if(controller.signal.aborted)aborted();else controller.signal.addEventListener("abort",aborted,{once:true});
+    });
+    const sequence=await Promise.race([prefix,cancelled]);
+    await store.whenUploaded(sequence,controller.signal);
+  } catch(error) {
+    if(controller.signal.aborted)throw controller.signal.reason;
+    throw error instanceof AuthoredContextError?error:new AuthoredContextError("couldn’t sync your linked notes. try sending again.");
+  } finally {
+    clearTimeout(deadline);controller.signal.removeEventListener("abort",aborted);
+  }
 }

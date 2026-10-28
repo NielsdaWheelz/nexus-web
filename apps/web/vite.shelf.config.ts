@@ -22,6 +22,6 @@ export default defineConfig({
       },
     },
   ],
-  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  resolve: { dedupe: ["yjs", "prosemirror-model", "prosemirror-state", "prosemirror-view"], alias: { "@": path.resolve(__dirname, "src") } },
   build: { outDir, emptyOutDir: true, assetsDir: "assets", sourcemap: false },
 });

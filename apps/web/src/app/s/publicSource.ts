@@ -3,7 +3,7 @@
 // header, on requests that send no credentials, skip every cache and refuse
 // redirects. The pdf's bytes ride it too: pdf.js's own fetches send cookies.
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
-import { ApiError, readResponse } from "@/lib/api/client";
+import { ApiError, readResponse, captureApiAccount, observeApiFailure } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
@@ -18,14 +18,18 @@ export async function publicFetch(
   signal: AbortSignal,
   headers: Record<string, string> = {},
 ): Promise<Response> {
+  const account = captureApiAccount();
   try {
-    return await fetch(`${SHARE_API}${path}`, {
+    const response = await fetch(`${SHARE_API}${path}`, {
       headers: { ...headers, "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Share-Token": token },
       credentials: "omit",
       cache: "no-store",
       redirect: "error",
       signal,
     });
+    // A build mismatch is a document fact even on an anonymous share.
+    if (response.status === 426) observeApiFailure(new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision"), account);
+    return response;
   } catch (error) {
     if (isAbortError(error)) throw error;
     throw new ApiError(0, "E_NETWORK", "Network request failed");

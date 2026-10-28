@@ -161,10 +161,6 @@ export const ACTION_CATALOG = {
     label: "Add note…",
     icon: NotebookPen,
     group: "CreateTransform",
-    states: {
-      Absent: { label: "Add note…", icon: NotebookPen },
-      Present: { label: "Edit note…", icon: NotebookPen },
-    },
   },
   EditHighlightBounds: {
     label: "Edit bounds",
@@ -288,7 +284,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight? Its note is kept. This can’t be undone.",
+      body: "Delete this highlight? Its notes are kept. This can’t be undone.",
     },
   },
   DeletePage: {
@@ -298,6 +294,15 @@ export const ACTION_CATALOG = {
     confirmation: {
       title: "Delete page?",
       body: "Delete “{title}”? Its notes are kept.",
+    },
+  },
+  DeleteNote: {
+    label: "Delete note",
+    icon: Trash2,
+    group: "Danger",
+    confirmation: {
+      title: "Delete note?",
+      body: "Delete “{title}”? Pages and notes linked to it are kept.",
     },
   },
 } as const satisfies Record<string, Entry>;

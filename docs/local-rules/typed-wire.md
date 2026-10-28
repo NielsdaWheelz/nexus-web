@@ -18,8 +18,7 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   the name is not ours: a header, a python keyword (`from`), a provider's
   schema field, an opaque sealed payload.
 - users, library invitations, resource grants and consumption exclusions are
-  addressed by plain uuids, and activity devices by their opaque stored id
-  (owner decisions 2026-10-10, 2026-10-13); this overrides the sealed-handle default of
+  addressed by plain uuids, (owner decisions 2026-10-10, 2026-10-13); this overrides the sealed-handle default of
   [../rules/keys-and-identities.md](../rules/keys-and-identities.md) for them.
   share tokens, upload sessions and discovery targets stay sealed.
 - absence is `null`: an optional value is `T | None` in python and `T | null`
@@ -89,3 +88,13 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
 a slice that rewrites routes types all of its routes and deletes their web
 decoders in the same PR. until every slice has run, typed and untyped routes
 coexist; [../reauthoring.md](../reauthoring.md) lists the areas still to run.
+
+## authored replication
+
+`schemas/authored.py` closes every resource/change/register variant and streamed
+snapshot record. generated snapshot models join the explicit wire registrations.
+source counters, feed cursors and lamports are distinct decimal-string int64s;
+absence remains explicit null. every authenticated authored route additionally
+requires `X-Nexus-Account`, an assertion matching the verified viewer, never an
+account selector. the shared node package owns persisted device/semantic types;
+platform adapters validate their persisted and bridge boundaries.

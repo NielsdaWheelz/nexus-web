@@ -1,10 +1,11 @@
 "use client";
 
 // One account's synchronous loss decision. Owners retain their own input and
-// requests; this registry reads their current risks and never stores either.
+// requests; this registry reads their risks and optional text exports, never input.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { hasUnsettledWriting } from "@/lib/notes/writes";
+import { hasUncommittedWriting } from "@/lib/notes/runtime";
+import { holdWireReload } from "@/lib/api/client";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -20,11 +21,14 @@ export interface WorkOwner {
   readonly id: string;
   readonly scope: WorkScope;
   read(): WorkRisk;
+  /** Fresh text from this owner; an empty export is distinct from no export. */
+  readCopyText?(): string | null;
   subscribe(listener: () => void): () => void;
 }
 export interface WorkGuard {
   register(owner: WorkOwner): () => void;
   confirmLoss(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
+  readCopyText(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): string | null;
   confirmDocumentExit(): boolean;
   hasWork(): boolean;
 }
@@ -74,16 +78,16 @@ function createWorkRegistry() {
     event.preventDefault();
     event.returnValue = "";
   }
-  const confirm = (value: WorkRisk): boolean => {
+  const confirm = (value: WorkRisk, message: string | null = null): boolean => {
     if (securityTeardownStarted()) return true;
     if (!active) return false;
-    if (!risky(value)) return true;
+    if (!risky(value) && message === null) return true;
     return window.confirm([
       value.changed ? "unsaved changes may be lost." : null,
       value.unconfirmed ? "a request is unconfirmed. it may already have started work." : null,
       value.stopsBrowserWork ? "unfinished uploads and other browser work will stop." : null,
       value.unconfirmed || value.stopsBrowserWork ? "accepted server work is not cancelled." : null,
-      "leave anyway?",
+      message ?? "leave anyway?",
     ].filter(value => value !== null).join("\n\n"));
   };
   const guard: WorkGuard = {
@@ -102,6 +106,15 @@ function createWorkRegistry() {
     },
     confirmLoss: ({ scopes, ownerIds }) => confirm(risk(owner =>
       ownerIds.includes(owner.id) || scopes.some(scope => matches(scope, owner.scope)))),
+    readCopyText: ({ scopes, ownerIds }) => {
+      const texts: string[] = [];
+      for (const { owner } of owners.values()) {
+        if (!ownerIds.includes(owner.id) && !scopes.some(scope => matches(scope, owner.scope))) continue;
+        const text = owner.readCopyText?.() ?? null;
+        if (text !== null) texts.push(text);
+      }
+      return texts.length ? texts.join("\n\n") : null;
+    },
     confirmDocumentExit: () => confirm(risk(() => true)),
     hasWork: () => risky(risk(() => true)),
   };
@@ -117,14 +130,14 @@ function createWorkRegistry() {
   };
   return {
     guard,
-    async signOut(purge: () => Promise<void>, submit: () => void): Promise<boolean> {
-      if (!active || signingOut || !guard.confirmDocumentExit()) return false;
+    async signOut(purge: (confirm: (message: string | null) => boolean) => Promise<void>, submit: () => void): Promise<boolean> {
+      if (!active || signingOut) return false;
       const operation = {};
       signingOut = operation;
       previousInert = document.body.inert;
       document.body.inert = true;
       try {
-        await purge();
+        await purge(message => confirm(risk(() => true), message));
         if (!active || signingOut !== operation) return false;
         signOutUnload = true;
         refresh();
@@ -156,7 +169,11 @@ const WorkContext = createContext<ReturnType<typeof createWorkRegistry> | null>(
 
 export function WorkProvider({ children }: { children: ReactNode }) {
   const [registry] = useState(createWorkRegistry);
-  useLayoutEffect(() => registry.mount(), [registry]);
+  useLayoutEffect(() => {
+    const unmount = registry.mount();
+    const releaseReload = holdWireReload(() => reloadStrandsWriting(registry.guard));
+    return () => { releaseReload(); unmount(); };
+  }, [registry]);
   return <WorkContext value={registry}>{children}</WorkContext>;
 }
 
@@ -175,5 +192,5 @@ export function useGuardedSignOut() {
 
 /** Automatic exits also retain admitted explicit writing, without adding a user-exit warning. */
 export function reloadStrandsWriting(guard: WorkGuard): boolean {
-  return guard.hasWork() || hasUnsettledWriting();
+  return guard.hasWork() || hasUncommittedWriting();
 }

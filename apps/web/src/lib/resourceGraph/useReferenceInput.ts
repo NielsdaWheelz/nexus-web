@@ -4,37 +4,30 @@
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
-import type { Schema } from "@/lib/api/wire";
-import { ApiError } from "@/lib/api/client";
-import type { OutlinePosition } from "@/lib/notes/outline";
-import { type NoteBody } from "@/lib/notes/noteBody";
-import { readText, type TextEditBase } from "@/lib/notes/texts";
-import { admitWriting, captureLane, readWriting, type AuthoredSnapshot, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/writes";
+import type { NoteBody } from "@nexus/authored/body";
+import type { TextEditBase } from "@/lib/notes/editorTypes";
+
 import type { ResourceItem } from "@/lib/resources/items";
 import {
-  type InsertionSource,
+  type LinkTarget,
 } from "./links";
 import {
   targetKey,
   useLinkTargets,
   type LinkTargetResult,
 } from "./useLinkTargets";
-import { useResourceDraft } from "./useResourceDraft";
+import { useEditorDraft } from "@/lib/notes/editorHost";
 
 export interface ReferenceInputHost {
-  textRef?: string;
-  source: InsertionSource | null;
-  onSelected(target: Schema<"InsertLink">["target"], item: ResourceItem, authored: readonly AuthoredSnapshot[]): void;
+  source_ref: string | null;
+  onSelected(target: LinkTarget, item: ResourceItem): void;
   label: string;
-  position: OutlinePosition | null;
   onActiveChange?(active: boolean): void;
 }
-type ReferenceContext = { source: InsertionSource | null; resource_ref: string | null; position: OutlinePosition | null };
-function referenceContext(host: ReferenceInputHost): ReferenceContext {
-  return { source: structuredClone(host.source), resource_ref: host.textRef ?? null, position: host.position === null ? null : { ...host.position } };
-}
+type ReferenceContext = { source_ref: string | null };
+function referenceContext(host: ReferenceInputHost): ReferenceContext { return { source_ref: host.source_ref }; }
 type State = {
+  row_id: string | null;
   context: ReferenceContext;
   message: string | null;
   raw: string;
@@ -44,53 +37,29 @@ type State = {
   active: SearchActive;
 };
 
-/** Admission freezes source, target and placement with the authored snapshots. */
-export function queueReferenceInsertion({ input, prelude, authored = [], dependency = null }: {
-  input: Omit<Schema<"InsertLink">, "position"> & { position: OutlinePosition | null };
-  prelude: readonly WritingCommand[];
-  authored?: Parameters<typeof admitWriting>[1];
-  dependency?: LaneDependency | null;
-}) {
-  const ref = input.position?.expected_links_version === null ? input.position.proof.source_ref :
-    input.source.kind === "resource" ? input.source.ref : input.source.kind === "daily_page" ? `page:${input.source.page_id}` : null;
-  let position: WritingPosition | null = null;
-  if (input.position !== null) {
-    if (input.position.expected_links_version === null) position = {
-      after: input.position.after, predecessor: { kind: "insertion", ...input.position.proof },
-    };
-    else {
-      if (ref === null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "the captured destination cannot supply a placement version");
-      position = { after: input.position.after, expected_links_version: dependency ?? captureLane(ref, "links", input.position.expected_links_version) };
-    }
-  }
-  return admitWriting({ kind: "outline", commands: [...prelude, { ...input, position }] }, authored);
-}
 export function useReferenceInput(
   editorKey: string,
   host: ReferenceInputHost | null,
   pickerOpen: boolean,
+  input: {
+    row_id: string | null;
+    prepareAccept(): boolean;
+    accepted(row_id: string | null, base: NoteBody): void;
+  },
 ) {
-  const paneActive = usePaneIsActive();
-  const draft = useResourceDraft<{ state: State | null; completion: number }>(
+  const row_id = input.row_id;
+  const paneActive = pickerOpen;
+  const draft = useEditorDraft<State | null>(
     `Resources.ReferenceDraft:${editorKey}`,
-    () => ({ state: null, completion: 0 }),
+    () => null,
   );
-  const { state, completion } = draft.value;
+  const state = draft.value;
   const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
-  const paused = readWriting().paused;
+  const paused = false;
   const hasHost = host !== null;
-  function set(next: State | null, completed = false) {
-    if (readWriting().paused) return;
-    draft.set(previous => ({ state: next, completion: previous.completion + (completed ? 1 : 0) }));
-  }
-  const source = state?.host.source;
-  const sourceRef =
-    source?.kind === "resource"
-      ? source.ref
-      : source?.kind === "passage"
-        ? source.candidate_ref
-        : null;
+  const set = draft.set;
+  const sourceRef = state?.host.source_ref ?? null;
   const search = useLinkTargets(
     state?.raw ?? "",
     sourceRef,
@@ -99,21 +68,21 @@ export function useReferenceInput(
     sourceRef,
   );
   const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
-  const admitted = pickerOpen && state !== null && !paused && search.querySettled && !search.minimum && search.list.current;
+  const admitted = pickerOpen && state !== null && state.row_id === row_id && !paused && search.querySettled && !search.minimum && search.current;
   const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
     firstExistingKey: options[0]?.key ?? null, active: state?.active ?? null });
   const selected = admitted ? reconciled?.key ?? null : null;
   useEffect(() => {
-    const value = draft.read().state;
+    const value = draft.read();
     if (value && value === state && value.active !== reconciled) set({ ...value, active: reconciled });
     // Selection belongs to the reference draft; reconciliation changes no text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, reconciled]);
   const bindings = useSearchOptions({ listId, label: `link from ${state?.host.label ?? "editor"}`,
-    open: pickerOpen && state !== null, options, activeKey: selected,
+    open: pickerOpen && state !== null && state.row_id === row_id, options, activeKey: selected,
     onActiveChange(key) {
-      const value = draft.read().state;
+      const value = draft.read();
       if (value && value === state) set({ ...value, active: { context, key } });
     },
     onActivate(key) { accept(search.items.find(item => targetKey(item) === key)); },
@@ -126,9 +95,11 @@ export function useReferenceInput(
     return () => report?.(false);
   }, [active, draft.owner, hasHost]);
   function accept(target: LinkTargetResult | undefined) {
-    const value = draft.read().state;
+    if (!input.prepareAccept()) return;
+    const value = draft.read();
     if (
       !value ||
+      value.row_id !== row_id ||
       !admitted ||
       value.message !== null ||
       value.raw !== state?.raw ||
@@ -136,7 +107,7 @@ export function useReferenceInput(
       !search.items.includes(target)
     )
       return;
-    if (readWriting().paused || host === null) return;
+    if (host === null) return;
     const current = referenceContext(host);
     const frozen = value.context;
     if (JSON.stringify(current) !== JSON.stringify(frozen)) {
@@ -148,58 +119,41 @@ export function useReferenceInput(
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
         : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target };
-    owner.onSelected(selectedTarget, target.item, []);
-    set(null, true);
+    set(null);
+    input.accepted(value.row_id, value.base);
+    owner.onSelected(selectedTarget, target.item);
   }
 
   return {
     state,
     owner: draft.owner,
-    completion,
     search: { ...search, items: admitted ? search.items : [] },
     selected,
     bindings,
+    acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },
     isReady: () => true,
     reviewPosition() {
-      const value = draft.read().state;
+      const value = draft.read();
       const context = host ? referenceContext(host) : null;
-      if (value && context && host && !readWriting().paused) {
-        set({ ...value, context, host, message: null });
+      if (value && context && host) {
+        set({ ...value, row_id, context, host, message: null });
       }
     },
-    getState: () => draft.read().state,
-    begin(base: NoteBody) {
-      const context = host ? referenceContext(host) : null;
-      if (host && context && draft.read().state === null) {
-        const acked = host.textRef ? readText(host.textRef)?.acked : null;
-        set({
-          context, message: null,
-          raw: "@",
-          base,
-          editBase: host.textRef
-            ? {
-                value: base,
-                acknowledged:
-                  acked && typeof acked.value !== "string"
-                    ? { value: acked.value, version: acked.version }
-                    : null,
-              }
-            : null,
-            host: {
-            ...host,
-            source: structuredClone(host.source),
-            position: host.position === null ? null : { ...host.position },
-          },
+    getState: draft.read,
+    begin(base: NoteBody, field_id: string | null = row_id, suppliedHost: ReferenceInputHost | null = host) {
+      const context = suppliedHost ? referenceContext(suppliedHost) : null;
+      if (suppliedHost && context && draft.read() === null) {
+        set({ row_id: field_id, context, message: null, raw: "@", base, editBase: null, host: { ...suppliedHost },
           active: null,
         });
       }
     },
     edit(raw: string) {
-      const value = draft.read().state;
+      const value = draft.read();
       if (value) set({ ...value, raw });
     },
     literal() {
-      if (readWriting().paused || draft.read().state === null) return false;
+      if (draft.read() === null) return false;
       set(null);
       return true;
     },

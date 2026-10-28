@@ -45,7 +45,9 @@ from nexus.services.media_text_scope import (
     highlight_in_reading_scope_sql,
     text_scope_rows_sql,
 )
+from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.context import context_facts_sql
+from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.locations import (
     media_passages,
@@ -263,22 +265,22 @@ SOURCES: dict[str, str] = {
         FROM contributors c JOIN ({contributor_fts_text_sql()}) fts ON fts.contributor_id = c.id
         WHERE EXISTS (SELECT 1 FROM ({visible_content_credit_rows_sql()}) vc
             WHERE vc.contributor_id = c.id {{where}})""",
-    "page": """SELECT 'page' AS type, p.id, p.title AS label, to_tsvector('english', p.title)
-            AS doc, p.title AS text, p.title, 'page' AS source_label
-        FROM pages p WHERE p.user_id = :viewer_id {where}""",
+    "page": f"""SELECT 'page' AS type, p.id, page.title AS label,
+            to_tsvector('english', page.title) AS doc, page.title AS text, page.title,
+            'page' AS source_label
+        FROM pages p CROSS JOIN LATERAL (SELECT {page_title_sql("p")} AS title) page
+        WHERE p.user_id = :viewer_id AND p.authored_visible {{where}}""",
     "note_block": f"""SELECT 'note_block' AS type, nb.id, nb.body_text AS label,
             to_tsvector('english', nb.body_text) AS doc, ann.cosine, nb.body_text AS text,
             nb.body_text, 'Note' AS title, 'note' AS source_label,
             jsonb_build_object('type', 'note_block_offsets', 'block_id', nb.id, 'start_offset', 0,
                 'end_offset', char_length(nb.body_text),
                 'text_quote_selector', jsonb_build_object('exact', nb.body_text),
-                'body_version', COALESCE((SELECT v.version FROM resource_versions v
-                    WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block'
-                    AND v.resource_id=nb.id AND v.lane='body'),1)) AS locator
+                'body_version', NULL) AS locator
         FROM note_blocks nb LEFT JOIN (SELECT cc.owner_id, max(ann.cosine) AS cosine
             FROM {_ANN} JOIN content_chunks cc ON cc.id = ann.id GROUP BY cc.owner_id) ann
             ON ann.owner_id = nb.id
-        WHERE nb.user_id = :viewer_id AND nb.body_text <> '' {{where}}""",
+        WHERE nb.user_id = :viewer_id AND nb.authored_visible AND nb.body_text <> '' {{where}}""",
     "highlight": f"""SELECT 'highlight' AS type,h.id,h.exact AS label,
             to_tsvector('english',concat_ws(' ',h.exact,quote.prefix,quote.suffix)) AS doc,
             h.exact AS text,h.exact,COALESCE(h.color,'yellow') AS color,
@@ -378,7 +380,8 @@ SOURCES: dict[str, str] = {
         CROSS JOIN LATERAL (SELECT CASE WHEN es.owner_kind='media' THEN ({_SPAN_OWNER}) END AS media_id) reading
         LEFT JOIN media m ON m.id=reading.media_id
         WHERE (reading.media_id IS NOT NULL OR (es.owner_kind='note_block'
-            AND es.owner_id IN (SELECT id FROM note_blocks WHERE user_id=:viewer_id))) {{where}}""",
+            AND es.owner_id IN (SELECT id FROM note_blocks
+                WHERE user_id=:viewer_id AND authored_visible))) {{where}}""",
     "gutenberg": """SELECT 'gutenberg' AS type, pg.ebook_id AS id, pg.title AS label,
             to_tsvector('english', concat_ws(' ', pg.title, credit.names, pg.subjects,
                 pg.bookshelves)) AS doc, COALESCE(pg.bookshelves, pg.subjects) AS text
@@ -426,14 +429,17 @@ SOURCES: dict[str, str] = {
 CREDITED = {"media": "m.id", "podcast": "p.id", "contributor": "vc", "content_chunk": "m.id"}
 SEMANTIC = {
     "note_block": """cc.owner_kind = 'note_block' AND EXISTS (SELECT 1 FROM note_blocks nb
-        WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id {where})""",
+        WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id AND nb.authored_visible {where})""",
     "content_chunk": f"cc.owner_kind='media' AND {_CHUNK_MEMBER}",
 }
+# A note attached to a readable highlight by any live authored link, either direction.
 _HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
-    JOIN highlights h ON h.id = edge.source_id AND edge.source_scheme = 'highlight'
-    WHERE edge.user_id = :viewer_id AND edge.origin = 'highlight_note'
-      AND edge.target_scheme = 'note_block' AND edge.target_id = nb.id
-      AND {highlight_readability_sql("h")})"""
+    JOIN highlights h ON (edge.source_scheme = 'highlight' AND h.id = edge.source_id
+            AND edge.target_scheme = 'note_block' AND edge.target_id = nb.id)
+        OR (edge.target_scheme = 'highlight' AND h.id = edge.target_id
+            AND edge.source_scheme = 'note_block' AND edge.source_id = nb.id)
+    WHERE edge.user_id = :viewer_id AND {authored_link_sql("edge")}
+      AND {edge_live_sql("edge")} AND {highlight_readability_sql("h")})"""
 
 
 class Hit(NamedTuple):
@@ -686,7 +692,7 @@ def hydrate(
         "evidence_span",
         "reader_apparatus_item",
     ):
-        identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, (SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.media_id AND v.lane='body') AS note_body_version"
+        identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, NULL::bigint AS note_body_version"
     ctes, scope_params = _ctes(reading_media_id=reading_media_id)
     sql = f"""{ctes} SELECT s.* {identity}
         FROM ({SOURCES[family].replace("{where}", _STRICT_ADMISSION.get(family, ""))}) s
@@ -880,7 +886,7 @@ def discovery_eligible(
         owner = "'conversation:' || s.conversation_id::text" if family == "message" else ref
         admission = key
         if family == "note_block":
-            admission += " || ':' || COALESCE((SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.id AND v.lane='body'),1)::text"
+            admission += " || ':' || encode(digest(convert_to(s.text,'UTF8'),'sha256'),'hex')"
         name = "NULL::text" if family in prose else "s.label"
         tier = f"CASE WHEN lower({name})=lower(:q) THEN 3 WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"
         reading = "s.reading_media_id" if family == "highlight" else "NULL::uuid"

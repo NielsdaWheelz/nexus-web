@@ -20,8 +20,7 @@ import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivatio
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { hasActiveModal, OverlayContext } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { createWorkspaceSignals } from "./workspaceSignals";
-import { ActivitySurface } from "./Activity";
+import { createTransientFeedback } from "./transient";
 import WorkspaceFeedback from "./WorkspaceFeedback";
 import styles from "./Feedback.module.css";
 
@@ -35,7 +34,7 @@ export interface FeedbackContent {
   /** Only a page reload can continue: the signal offers that alone, never its owner's actions. */
   reload?: true;
 }
-/** commandKey preserves an exact frozen command across offer/condition handoffs. */
+/** commandKey names an exact command, so a held control never silently changes meaning. */
 export type FeedbackAction =
   | { label: string; onClick: (intent: OpenIntent) => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never; onActivate?: never }
   | { label: string; href: string; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
@@ -51,32 +50,12 @@ export type FeedbackNoticeProps = FeedbackProps & {
   occurrence?: object;
   onDismiss?: () => void;
 };
-export type WorkspaceNotice = FeedbackProps & { needsAttention: boolean };
-export interface WorkspaceCondition extends WorkspaceNotice {
-  priority: "Write" | "Action" | "Status";
-}
-export type OfferInput = WorkspaceNotice & {
-  key: string;
-  undo: "Invite" | "Retain" | null;
-  onDismiss: (() => void) | null;
-};
-export interface FeedbackOffer {
-  update(notice: WorkspaceNotice): void;
-  withdraw(): void;
-}
-export interface FeedbackCondition {
-  update(notice: WorkspaceCondition): void;
-  withdraw(): void;
-}
 export interface FeedbackContextValue {
-  receipt(content: Pick<FeedbackContent, "tone" | "title">): void;
-  /** settlement removes its current condition; the short fact is presentation only. */
-  settleCondition(input: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }): void;
-  offer(input: OfferInput): FeedbackOffer;
-  /** A live command owner retains required recovery through its exact settlement. */
-  retainCondition(input: WorkspaceCondition & { key: string }): FeedbackCondition;
+  /** One discrete action's outcome. Durable failures belong to their owner's surface.
+   * The returned retraction withdraws it, waiting or visible, once its state resolves. */
+  receipt(content: FeedbackContent, action?: FeedbackAction): () => void;
 }
-export const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
+const FeedbackContext = createContext<ReturnType<typeof createTransientFeedback> | null>(null);
 const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);
 
 /** The existing pane projects its focus target and announcement permission. */
@@ -100,7 +79,7 @@ export function FeedbackProvider({ children, returnFocus }: {
   children: ReactNode;
   returnFocus?: () => HTMLElement | null;
 }) {
-  const [signals] = useState(createWorkspaceSignals);
+  const [signals] = useState(createTransientFeedback);
   useLayoutEffect(() => {
     signals.resume();
     return signals.dispose;
@@ -112,7 +91,6 @@ export function FeedbackProvider({ children, returnFocus }: {
   return <FeedbackContext value={signals}>
     <div className={styles.viewport} data-workspace-feedback-root>{children}</div>
     <WorkspaceFeedback signals={signals} fallbackFocus={returnFocus} />
-    <ActivitySurface signals={signals} fallbackFocus={returnFocus} />
   </FeedbackContext>;
 }
 
@@ -120,28 +98,6 @@ export function useFeedback(): FeedbackContextValue {
   const signals = useContext(FeedbackContext);
   if (!signals) throw new Error("useFeedback must be used within a FeedbackProvider");
   return signals;
-}
-
-/** Updating content does not tear down its registration or focused action. */
-export function useWorkspaceCondition(key: string, notice: WorkspaceCondition | null): void {
-  const signals = useContext(FeedbackContext);
-  if (!signals) throw new Error("useWorkspaceCondition must be used within a FeedbackProvider");
-  const [token] = useState(() => ({}));
-  const attached = useRef<{ owner: typeof signals; key: string } | null>(null);
-  useLayoutEffect(() => { signals.condition(key, token, notice); }, [signals, key, token, notice]);
-  useLayoutEffect(() => {
-    const attachment = { owner: signals, key };
-    attached.current = attachment;
-    return () => {
-      if (attached.current === attachment) attached.current = null;
-      // StrictMode reattaches this owner/key before the microtask. A real
-      // departure still withdraws, fenced against a newer publication.
-      queueMicrotask(() => {
-        if (attached.current?.owner !== signals || attached.current.key !== key)
-          signals.withdrawCondition(key, token);
-      });
-    };
-  }, [signals, key, token]);
 }
 
 export function FeedbackStatus(props: FeedbackProps) {
@@ -162,16 +118,13 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
 
 export function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, dismissLabel, dismissText, dismissBlocked, activityId, plain = false, focusable = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
+  onDismiss, dismissLabel, dismissBlocked, plain = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
   dismissLabel?: string;
-  dismissText?: string;
   dismissBlocked?: boolean;
-  activityId?: number;
   plain?: boolean;
-  focusable?: boolean;
   surfaceState?: boolean;
   occurrence?: object;
   announcementOccurrence?: object;
@@ -229,8 +182,6 @@ export function Signal({
   return <article
     ref={root}
     className={`${styles.signal} ${styles[content.tone]} ${className}`}
-    tabIndex={focusable ? -1 : undefined}
-    data-activity-entry={activityId}
     aria-labelledby={titleId}
   >
     <div ref={setSummaryElement} className={styles.summary}>
@@ -251,7 +202,8 @@ export function Signal({
         </Button> : null}
         {onDismiss ? <Button
           className={styles.control}
-          {...(dismissText === undefined ? { iconOnly: true as const, icon: <X /> } : { children: dismissText })}
+          iconOnly
+          icon={<X />}
           aria-label={dismissLabel ?? `dismiss: ${content.title}`}
           aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
           onClick={() => onDismiss()}

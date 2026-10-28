@@ -22,9 +22,15 @@ server components: callFastAPI ────────────────�
   requestId?, details?, retryAfterMs?}`; status 0 `E_NETWORK` is a transport failure. Every
   call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
   and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
-  request id comes from the body, else the `x-request-id` header). A 426 reloads
-  the tab once per (tab, build), unless authored memory or incompatible/sealed
-  pending writing holds reload: a `sessionStorage` marker holds the bundle's
+  request id comes from the body, else the `x-request-id` header). decoding is
+  pure: the request owner observes failures under its captured account assertion.
+  retired-account answers become cancellation and cannot change admission. demand
+  requests may test unavailable browser reachability; checking, sign-in and update
+  fences remain closed, and native admission remains native-owned. background
+  readiness stays separate. parsed current-account success can restore browser
+  readiness; a transport failure cannot downgrade terminal admission. a 426 reloads
+  the tab once per (tab, build), unless uncommitted writing or incompatible/sealed
+  submitted work holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
   every 426 reads "Nexus was updated. Reload this page to continue."
   (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
@@ -32,6 +38,10 @@ server components: callFastAPI ────────────────�
   shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
+  the existing work provider binds this automatic-reload decision to its current
+  loss risks and admitted writing. it does not issue a beforeunload prompt to
+  obtain permission for an automatic reload, or queue a deferred reload; normal
+  later checks and the explicit reload action retain their existing ownership.
   structured api calls assign `X-Request-ID` before dispatch, preserve a supplied
   id and enforce `cache: "no-store"`. independent application read owners are not
   coordinated by the browser http cache. search manual reads have one aggregate
@@ -78,8 +88,8 @@ server components: callFastAPI ────────────────�
   until its own snapshot exists. `requestedKey` names that requested scope, even
   before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
   refresh supersedes; periodic `revalidate()` waits behind admitted reads and
-  coalesces observations. `usePagePrefix` belongs only to explicit authored
-  outline branches.
+  coalesces observations. these hooks serve server-owned domains. authored
+  resources, adjacency, search and references always query the durable local owner.
   installed catalog loaders are explicit local reads, separate from `apiFetch`.
   values, lists and retained snapshots identify their live/catalog source; a
   complete saved result stages a complete live reread before promotion. local
@@ -100,6 +110,8 @@ server components: callFastAPI ────────────────�
   without one counts as a failure. A delivered event resets the count. exhaustion
   retains the final normalized error, including its code and available request id.
   installed admission suspends the same owner/cursor without spending its budget.
+  an account stream retains its original account assertion through reconnect and
+  stops delivery when that owner retires; a readiness event never retargets it.
 - `proxy.ts` (server only): `proxySession(request, path, lane)`,
   `proxyShare`, `proxyExtension`. The session lane refuses a cross-origin
   mutation (403), resolves the session before reading a body (ended → 401 and
@@ -203,3 +215,22 @@ updated; the extension shows "Update the Nexus extension to keep capturing."
   an asset answer that writes no cookie, which keeps FastAPI's own policy.
 - I10 a wire mismatch is refused with 426 before routing, on every lane that
   carries a client build.
+
+## authored transport
+
+all authenticated `/authored` routes require `X-Nexus-Account` matching the verified
+viewer. the header is a local-binding assertion, never another identity authority;
+wrong or missing assertions return 403 before a transaction. wire mismatch remains
+426, invalid authored schema 400, source gaps/foreign identities 409.
+
+`POST /authored/replicas` admits a fresh replica; `POST /authored/changes` retries
+immutable contiguous source commands. accepted prefixes are compared and skipped.
+`GET /authored/changes?after=…` captures one head and returns a bounded complete
+ascending prefix, never a cursor past unapplied commands.
+
+`GET /authored/snapshot` uses a dedicated streaming bff route with `Stream`,
+`maxDuration=300`, no buffering and no-store/no-transform. its ndjson header and
+footer repeat the same repeatable-read head/lamport; the footer includes exact
+counts. cancellation closes its server transaction even if the iterator is
+suspended. the existing 280-second stream deadline still applies. writing-stream
+`state {revision}` now carries the account feed head and is only a catch-up hint.

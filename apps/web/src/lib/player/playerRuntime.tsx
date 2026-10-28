@@ -27,7 +27,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
-import { useFeedback, useWorkspaceCondition, type FeedbackOffer, type WorkspaceCondition } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { actionFailure } from "@/lib/actions/catalog";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -701,9 +701,11 @@ export function GlobalPlayerProvider({
   const report = useCallback((error: unknown) => {
     if (handleUnauthenticatedApiError(error)) return;
     if (!(error instanceof QueueCommandError) && (!isApiError(error) || isSameSystemApiDefect(error))) { fail({ error }); return; }
+    // The queue surface keeps the failure below; the receipt reports this command once.
+    if (isApiError(error)) feedback.receipt(actionFailure("Playback", "play", error));
     if (queueViewRef.current.failure !== null && queueViewRef.current.error !== null) return;
     publishQueue({ ...queueViewRef.current, phase: browser.current?.uncertain() || engineRef.current?.queue?.uncertain() ? "Uncertain" : "Ready", error: error instanceof QueueCommandError ? error.message : isApiError(error) ? actionFailure("Playback", "play", error).title : "couldn’t change playback", failure: { kind: browser.current?.uncertain() || engineRef.current?.queue?.uncertain() ? "Save" : "Coordination" } });
-  }, [fail, publishQueue]);
+  }, [fail, feedback, publishQueue]);
 
   const indexRead = useRef<{ readonly target: Engine; readonly header: QueueHeader; readonly promise: Promise<void> } | null>(null);
   const nativeRefresh = useCallback((target: Engine, header: QueueHeader | null, retry = false): Promise<void> => {
@@ -1259,39 +1261,6 @@ export function GlobalPlayerProvider({
       retryPlaybackPreferences: () => requestPreferences({}),
     };
   }, [enqueue, play, createQueue, queueCommand, onExplicitPlay, publishPreferences, publishQueue, syncPreferences, androidShell, mirroredEngine, requestPreferences, retainCurrent, retirePending, route, report, readNativeQueue, fail]);
-  const operationNotice = useMemo<WorkspaceCondition | null>(() => {
-    const common = { announcement: "Polite" as const, needsAttention: false, priority: "Write" as const };
-    if (queueView.phase === "Preparing") return { ...common, content: { tone: "Neutral", title: "preparing queue…" },
-      actions: [{ label: "cancel", onClick: commands.cancelQueuePreparation }] };
-    if (queueView.phase === "Saving") return { ...common, content: { tone: "Neutral", title: "saving queue…" } };
-    if (queueView.phase === "Uncertain") return { ...common, needsAttention: true,
-      content: { tone: "Warning", title: "couldn’t confirm queue change" }, actions: [{ label: "check queue", onClick: commands.checkQueue }] };
-    if (queueView.error !== null && queueView.failure !== null) return { ...common, priority: "Action", needsAttention: true,
-      content: { tone: "Warning", title: queueView.error },
-      ...(queueView.failure.kind === "Episode" ? {} : { actions: [{ label: queueView.failure.kind === "Preparation" ? "retry" : "check queue", onClick: commands.checkQueue }] as const }) };
-    return null;
-  }, [commands, queueView.phase, queueView.error, queueView.failure]);
-  useWorkspaceCondition("player-queue-operation", operationNotice);
-  const undoOffer = useRef<{ readonly key: string; readonly offer: FeedbackOffer } | null>(null);
-  const offeredUndo = useRef<string | null>(null);
-  useEffect(() => {
-    if (queueView !== queueViewRef.current) return;
-    const header = queueView.header;
-    const key = header !== null && queueView.canRestore ? `${accountId}:${header.queue_id}:${header.revision}` : null;
-    if (undoOffer.current?.key !== key) { undoOffer.current?.offer.withdraw(); undoOffer.current = null; }
-    if (key === null || header === null) return;
-    const request: QueueRequest = { queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "restore" } };
-    const notice = { needsAttention: false, announcement: "Polite" as const, content: { tone: "Neutral" as const, title: "queue replaced" },
-      actions: [{ label: "restore previous queue", commandKey: key, busy: queueView.phase === "Saving",
-        disabledReason: queueView.phase === "Uncertain" ? "check queue before restoring" : undefined,
-        onClick: () => { void queueCommand(request).catch(() => {}); } }] as const };
-    if (undoOffer.current?.key === key) { undoOffer.current.offer.update(notice); return; }
-    if (offeredUndo.current === key) return;
-    offeredUndo.current = key;
-    undoOffer.current = { key, offer: feedback.offer({ key: "player-queue-undo", undo: "Invite", onDismiss: null, ...notice }) };
-  }, [accountId, feedback, queueCommand, queueView]);
-  useEffect(() => () => { undoOffer.current?.offer.withdraw(); undoOffer.current = null; offeredUndo.current = null; }, [accountId]);
-
   navigation.current = { ...commands, failure: report, terminal: async input => {
     const target = engineRef.current;
     const before = browser.current?.snapshot().saved;

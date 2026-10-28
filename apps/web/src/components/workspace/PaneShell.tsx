@@ -19,7 +19,6 @@ import {
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
-import { ActivityControl } from "@/components/feedback/Activity";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -233,7 +232,7 @@ function PaneView({
   const { platform } = useRenderEnvironment();
   const touchCapable = useTouchCapable();
   const [commandsBottom, setCommandsBottom] = useState(0);
-  const outlineCommands = touchCapable && isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
+  const outlineCommands = touchCapable && isActive && !hasActiveInteractionOwner() && state.outlineCommands?.touchVisible ? state.outlineCommands : null;
   useLayoutEffect(() => {
     if (!outlineCommands) {setCommandsBottom(0); return;}
     const measure = () => {
@@ -419,7 +418,6 @@ function PaneView({
       paneActions={paneActions}
       menuActions={menuActions}
       resourceRef={body?.resourceRef}
-      workspaceAction={isMobile ? <ActivityControl /> : null}
       navigation={{
         back: adjacent(pane.history.back.at(-1)),
         forward: adjacent(pane.history.forward[0]),
@@ -615,7 +613,10 @@ function PaneView({
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
         {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
-          <OutlineCommands publication={outlineCommands} current={() => isActive && !hasActiveInteractionOwner() ? chrome.get().outlineCommands : null}/>
+          <OutlineCommands publication={outlineCommands} current={() => {
+            const current = chrome.get().outlineCommands;
+            return touchCapable && isActive && !hasActiveInteractionOwner() && current?.touchVisible ? current : null;
+          }}/>
         </div> : null}
         {isMobile || isMaximized ? null : (
           <ResizeHandle

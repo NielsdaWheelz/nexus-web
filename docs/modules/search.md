@@ -89,6 +89,12 @@ activation opens that reading identity. a piece never authorizes neighbouring
 text or the whole source. among admitted readings, the source wins owner choice;
 otherwise the smallest eligible piece and its id break ties.
 
+local authored search follows the same owner rule, including global search.
+replicated workspace membership is distinct from retained reading permission.
+highlight and media-passage rows carry their selected reading into activation;
+canonical identities, quotes and locators remain unchanged. ordinary owned
+notes/pages remain searchable while source inputs hydrate.
+
 highlight context has one derived native variant per admissible reading identity.
 piece variants clip prefix/suffix before matching and scoring; their canonical
 highlight ref remains singular. the extra rows change corpus statistics and add

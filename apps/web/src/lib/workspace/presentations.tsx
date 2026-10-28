@@ -1,370 +1,163 @@
 "use client";
-
-// Titles belong to the workspace, not to mounted readers. One account-scoped
-// read resolves current locators; visits retain only settled display evidence.
-import {
-  Component,
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+/** Authored titles come from the local graph, even online. Other resource labels
+ * retain their server/catalog owner. Saved visit hints are display evidence only. */
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { watchWritingResource, type WritingWatch, type WritingVersions } from "@/lib/api/writingReceive";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { useAuthoredStore } from "@/lib/authored/provider";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { mediaKindLabel } from "@/lib/media/kind";
-import { readTextTitle, useTextTitleRevision, type TextTitle } from "@/lib/notes/texts";
-import {
-  panePresentationLocatorKey,
-  resolvePaneRouteModel,
-  type PanePresentationLocator,
-  type ResolvedPaneRouteModel,
-} from "@/lib/panes/paneRouteModel";
-import { reportClientDefect } from "@/lib/telemetry/clientDefects";
-import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
 import type { PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-
-type Response = ApiJson<"/me/workspace-presentations", "post">;
-type Item = Response["data"]["items"][number];
-type Canonical = NonNullable<Item["presentation"]>;
-type ReadStatus = "Loading" | "Ready" | "Failed";
-interface TitleResult {
-  items: Item[];
-  generations: ReadonlyMap<WritingWatch, { ref: string; generation: number }>;
-}
-
-export type PanePresentation = {
-  title: string;
-  /** The real name `title` shows; null while `title` is a placeholder (kind noun, loading, unavailable, untitled). */
-  name: string | null;
-  detail: string | null;
-  status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed";
-};
-
+import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
+import type { OutlineRootMetadata } from "@/components/notes/LocalOutline";
+type Canonical = Schema<"WorkspacePresentationOut">;
+interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
-
-interface Presentations {
-  forVisit(visit: PaneVisit): PanePresentation;
-  resourceRefForVisit(visit: PaneVisit): string | null;
-  retryTitles(): void;
-}
+export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
-
-/** The route's own noun (a daily page is a page), unless media names its kind. */
-function kindOf(route: ResolvedPaneRouteModel, canonical: Canonical | null | undefined): string {
-  if (canonical && canonical.media_kind !== null) return mediaKindLabel(canonical.media_kind);
-  return route.id === "dailyDate" ? "page" : route.defaultLabel.toLowerCase();
+type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
+const PublisherContext = createContext<PublishTitle | null>(null);
+function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
+  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
 }
-
-function metadata(canonical: Canonical, kind: string): string {
-  const authors = selectMediaAuthors(canonical.contributors).flatMap(credit => {
-    const name = creditName(credit);
-    return name ? [name.label] : [];
-  });
-  const byline = authors.length
-    ? `${authors.slice(0, 2).join(", ")}${authors.length > 2 ? ` +${authors.length - 2}` : ""}`
-    : canonical.source_label;
-  return byline ? `${byline} · ${kind}` : kind;
+/** A successful root read supplies title evidence; unknown/error is never absence. */
+export function useNoteRootTitle(ref: string, rootRead: OutlineRootMetadata): void {
+  const publish = useContext(PublisherContext);
+  if (!publish) throw new Error("note root titles require their account provider");
+  useEffect(() => {
+    if (!rootRead.known || rootRead.ref !== ref || rootRead.store_revision === null) return;
+    publish(panePresentationLocatorKey({kind: "resource_ref", ref}), titleFacts(rootRead.resource), rootRead.store_revision);
+  }, [ref, rootRead, publish]);
 }
-
-function textFor(
-  route: ResolvedPaneRouteModel,
-  canonical: Canonical | null | undefined,
-  dailyRefs: ReadonlyMap<string, string>,
-): TextTitle | null {
-  const locator = route.titleLocator;
-  const ref = canonical?.resource_ref ?? (
-    locator?.kind === "resource_ref" ? locator.ref
-      : locator?.kind === "daily_date" ? dailyRefs.get(locator.local_date) : null
-  );
-  return ref && (ref.startsWith("page:") || ref.startsWith("note_block:")) ? readTextTitle(ref) : null;
-}
-
-/** Canonical and acknowledged text use the same version lane for display and hints. */
-function settledTitle(canonical: Canonical | null | undefined, text: TextTitle | null): string | null {
-  const acknowledged = !text?.gone ? text?.acknowledged : null;
-  if (acknowledged && (canonical?.text_version == null || acknowledged.version >= canonical.text_version)) {
-    return acknowledged.title;
-  }
-  return canonical?.title ?? null;
-}
-
-async function readTitles(locators: readonly PanePresentationLocator[], signal: AbortSignal): Promise<Item[]> {
-  const items: Item[] = [];
-  // Panes are uncapped. Keep each request within the endpoint's real limit,
-  // with one read lifecycle and bounded concurrency across the whole workspace.
-  for (let offset = 0; offset < locators.length; offset += 100) {
-    const request: Schema<"WorkspacePresentationsRequest"> = { locators: locators.slice(offset, offset + 100) };
-    const response = await apiFetch<Response>("/api/me/workspace-presentations", {
-      method: "POST", body: JSON.stringify(request), signal,
-    });
-    items.push(...response.data.items);
-  }
-  return items;
-}
-
-function TitleRead(props: {
-  requestKey: string;
-  locators: readonly PanePresentationLocator[];
-  watches: { readonly current: ReadonlyMap<string, WritingWatch> };
-  publish(key: string, status: ReadStatus, result: TitleResult | null): void;
+function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
+/** One locator owns one bounded read; sibling pane changes do not restart it. */
+function AuthoredTitleSubscription({ store, locatorKey, kind, value, publish }: {
+  store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string;
+  publish: PublishTitle;
 }) {
-  const read = usePaneFreeServerValue({
-    key: `workspace-presentations:${props.requestKey}`,
-    stale: "",
-    load: async signal => {
-      const generations = new Map([...props.watches.current].map(([ref, watch]) => [watch, { ref, generation: watch.capture() }]));
-      return { items: await readTitles(props.locators, signal), generations };
-    },
-  });
-  const result = read.status === "ready" ? read.data : null;
-  const status = read.status === "failed" || (read.status === "ready" && read.error)
-    ? "Failed" : read.status === "ready" ? "Ready" : "Loading";
-  const { requestKey, publish } = props;
-  useEffect(() => publish(requestKey, status, result), [requestKey, status, result, publish]);
+  useEffect(() => store.subscribe(kind === "daily" ? { kind: "daily", local_date: value } : { kind: "resource", ref: value }, result => {
+    publish(locatorKey, titleFacts(result.rows[0]?.resource ?? null), result.store_revision);
+  }, reportError), [store, locatorKey, kind, value, publish]);
   return null;
 }
-
-class TitleReadBoundary extends Component<{
-  requestKey: string;
-  failed(key: string): void;
-  children: ReactNode;
-}, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(error: unknown, info: ErrorInfo): void {
-    reportClientDefect(error, { paneId: "workspace-titles", visitId: "workspace-titles", componentStack: info.componentStack ?? "" });
-    this.props.failed(this.props.requestKey);
-  }
-  render() { return this.state.failed ? null : this.props.children; }
-}
-
-export function WorkspacePresentationsProvider(props: { accountId: string; children: ReactNode }) {
-  const { state, dailyPageByPaneId, setVisitTitleHint } = useWorkspaceStore();
-  const textRevision = useTextTitleRevision();
+export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
+  const { state, setVisitTitleHint } = useWorkspaceStore();
+  const store = useAuthoredStore();
   const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
   const { observation } = useImports();
   const foreground = useRefreshStamp(true, 0);
-  const [revision, setRevision] = useState(0);
-  const latestKey = useRef<string | null>(null);
-  const watches = useRef(new Map<string, WritingWatch>());
-  const retryTitles = useCallback(() => {
-    // invalidate immediately; a reply cannot publish before react commits the rerender.
-    latestKey.current = null;
-    setRevision(value => value + 1);
-  }, []);
-  const dailyRefs = useMemo(() => {
-    const refs = new Map<string, string>();
-    for (const pane of state.panes) {
-      const known = dailyPageByPaneId.get(pane.id);
-      if (known?.routeKey === resolvePaneRouteModel(pane.current_visit.href).routeKey && known.value.pageId) {
-        refs.set(known.value.localDate, `page:${known.value.pageId}`);
-      }
-    }
-    return refs;
-  }, [state.panes, dailyPageByPaneId]);
+  const [attempt, retry] = useState(0);
   const locators = useMemo(() => {
-    const unique = new Map<string, PanePresentationLocator>();
-    for (const pane of state.panes) {
-      const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator;
-      if (locator) unique.set(panePresentationLocatorKey(locator), locator);
-    }
-    return [...unique].sort(([a], [b]) => a.localeCompare(b)).map(([, locator]) => locator);
+    const result = new Map<string, PanePresentationLocator>();
+    for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
+    return [...result.values()];
   }, [state.panes]);
-  const retained = useMemo(() => new Set(locators.map(panePresentationLocatorKey)), [locators]);
-  const locatorSignature = JSON.stringify([...retained]);
-  const requestKey = locators.length === 0 ? null
-    : JSON.stringify([props.accountId, locatorSignature, changes, observation, foreground, revision]);
-  latestKey.current = requestKey;
-  const [read, setRead] = useState<{
-    key: string | null;
-    status: ReadStatus;
-    facts: ReadonlyMap<string, Canonical | null>;
-  }>(() => ({ key: null, status: "Loading", facts: new Map() }));
-  const publish = useCallback((key: string, status: ReadStatus, result: TitleResult | null) => {
-    if (latestKey.current !== key) return;
-    if (status === "Ready" && result) {
-      const facts = new Map(result.items.flatMap(item => item.presentation?.resource_ref ? [[item.presentation.resource_ref, item.presentation] as const] : []));
-      for (const [watch, { ref, generation }] of result.generations) {
-        const fact = facts.get(ref);
-        const lane = ref.startsWith("page:") ? "title_version" : ref.startsWith("note_block:") ? "body_version" : null;
-        if (lane !== null && fact?.text_version != null) watch.adopt({ [lane]: fact.text_version }, generation);
-      }
-    }
-    setRead(previous => ({
-      key,
-      status,
-      facts: status === "Ready" && result
-        ? new Map(result.items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]))
-        : previous.facts,
-    }));
-  }, []);
-  const failed = useCallback((key: string) => publish(key, "Failed", null), [publish]);
-  useEffect(() => {
-    setRead(previous => {
-      if ([...previous.facts.keys()].every(key => retained.has(key))) return previous;
-      return { ...previous, facts: new Map([...previous.facts].filter(([key]) => retained.has(key))) };
+  const activeVisit = state.panes.find(pane => pane.id === state.active_primary_pane_id)?.current_visit;
+  const activeRoute = activeVisit ? resolvePaneRouteModel(activeVisit.href) : null;
+  const activeNote = activeRoute?.id === "note" && activeRoute.titleLocator?.kind === "resource_ref" ? activeRoute.titleLocator.ref : null;
+  const [local, setLocal] = useState<{entries: Map<string, {facts: TitleFacts | null; store_revision: string}>; semanticRevision: number}>(() => ({entries: new Map(), semanticRevision: 0}));
+  const publishLocal = useCallback<PublishTitle>((key, facts, storeRevision) => {
+    setLocal(previous => {
+      const before = previous.entries.get(key);
+      const order = before ? BigInt(storeRevision) - BigInt(before.store_revision) : null;
+      if (order !== null && order < 0n) return previous;
+      const old = before?.facts;
+      const unchanged = old === facts || old !== undefined && old !== null && facts !== null && old.ref === facts.ref && old.title === facts.title && old.local_date === facts.local_date;
+      if (order === 0n && unchanged) return previous;
+      // justify-service-invariant-check: one account revision has one canonical caption per locator.
+      if (order === 0n) throw new Error("title facts disagree at the same store revision");
+      return {entries: new Map(previous.entries).set(key, {facts, store_revision: storeRevision}), semanticRevision: previous.semanticRevision + (unchanged ? 0 : 1)};
     });
-  }, [retained]);
-
-  const watched = useMemo(() => {
-    const refs = new Map<string, number | null>();
-    for (const locator of locators) {
-      const canonical = read.facts.get(panePresentationLocatorKey(locator));
-      const ref = canonical?.resource_ref ?? (locator.kind === "resource_ref" ? locator.ref : null);
-      if (ref && /^(page|note_block|media|highlight):/.test(ref)) refs.set(ref, canonical?.text_version ?? null);
+  }, []);
+  const remoteLocators = locators.filter(locator => !authored(locator));
+  const remoteKey = JSON.stringify([accountId, remoteLocators, changes, observation, foreground, attempt]);
+  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: "", load: async signal => {
+    const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
+    for (let offset = 0; offset < remoteLocators.length; offset += 100) {
+      const result = await apiFetch<ApiJson<"/me/workspace-presentations", "post">>("/api/me/workspace-presentations", { method: "POST", body: JSON.stringify({ locators: remoteLocators.slice(offset, offset + 100) }), signal });
+      items.push(...result.data.items);
     }
-    return refs;
-  }, [locators, read.facts]);
-  useEffect(() => {
-    const owned = watches.current;
-    return () => { for (const current of owned.values()) current.stop(); owned.clear(); };
-  }, [props.accountId]);
-  useEffect(() => {
-    const owned = watches.current;
-    for (const [ref, current] of owned) {
-      if (watched.has(ref)) continue;
-      current.stop(); owned.delete(ref);
-    }
-    for (const [ref, version] of watched) {
-      if (owned.has(ref)) continue;
-      const lane = ref.startsWith("page:") ? "title_version" : ref.startsWith("note_block:") ? "body_version" : null;
-      const current = watchWritingResource({ accountId: props.accountId, ref, lanes: lane === null ? [] : [lane],
-        invalidate: retryTitles,
-        acknowledge(ack) {
-          const versions: WritingVersions = {};
-          const text = readTextTitle(ref);
-          if (lane === "body_version") {
-            const note = ack.notes.find(note => `note_block:${note.id}` === ref);
-            if (note && text?.acknowledged && text.acknowledged.version >= note.body_version)
-              versions.body_version = note.body_version;
-          } else if (lane === "title_version") {
-            const page = ack.pages.find(page => `page:${page.id}` === ref);
-            if (page && text?.acknowledged && text.acknowledged.version >= page.title_version)
-              versions.title_version = page.title_version;
-          }
-          return versions;
-        },
-      });
-      if (lane !== null && version !== null) current.adopt({ [lane]: version }, current.capture());
-      owned.set(ref, current);
-    }
-  }, [props.accountId, watched, retryTitles]);
-  useEffect(() => subscribeLinkMutations(change => {
-    if (change.kind === "resource_deleted" && watches.current.has(change.ref)) retryTitles();
-  }), [retryTitles]);
-
-  const status = read.key === requestKey ? read.status : "Loading";
+    return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
+  } });
+  const remoteFacts = remote.status === "ready" ? remote.data : null;
+  const remoteStatus = remote.status;
+  const remoteFailed = remote.status === "failed" || remote.status === "ready" && Boolean(remote.error);
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
-    if (route.labelMode === "static") return { title: route.defaultLabel, name: route.defaultLabel, detail: null, status: "Ready" };
-    let kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
-    if (!route.titleKey) return { title: `unavailable ${kind}`, name: null, detail: "unavailable", status: "Unavailable" };
-    const current = retained.has(route.titleKey);
-    const canonical = current ? read.facts.get(route.titleKey) : undefined;
-    // Saved titles are display evidence only: never canonical facts, versions or
-    // writer acknowledgements. An authoritative missing result still wins.
-    let savedTitle: string | null = null;
-    if (canonical === undefined && catalog !== null && route.titleLocator?.kind === "resource_ref") {
-      const [scheme, id] = route.titleLocator.ref.split(":");
-      if (scheme === "media") {
-        const summary = catalog.media.get(id)?.summary;
-        if (summary) { savedTitle = summary.title; kind = mediaKindLabel(summary.media_kind); }
-      } else if (scheme === "library") savedTitle = catalog.libraries.get(id)?.value.name ?? null;
-      else if (scheme === "podcast") savedTitle = catalog.shows.get(id)?.detail.podcast.title ?? null;
-      else if (scheme === "page") savedTitle = catalog.notes.get(id)?.title ?? null;
-      else if (scheme === "conversation") savedTitle = catalog.chats.get(id)?.title ?? null;
+    if (route.labelMode === "static") return { title: route.defaultLabel, name:route.defaultLabel, detail: null, status: "Ready" };
+    const locator = route.titleLocator;
+    const kind = route.id === "dailyDate" ? "page" : route.defaultLabel.toLowerCase();
+    if (!locator) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "unavailable", status: "Unavailable" };
+    const key = panePresentationLocatorKey(locator);
+    if (authored(locator)) {
+      const resource = local.entries.get(key)?.facts;
+      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
+      if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate"?route.defaultLabel:visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
+      const title = resource.title;
+      const name = title.trim() ? title : resource.local_date !== null ? route.defaultLabel : null;
+      return { title: name ?? route.defaultLabel, name, detail: kind, status: "Ready" };
     }
-    const text = textFor(route, canonical, dailyRefs);
-    const live = text && !text.gone && text.unsettled ? text : null;
-    const settled = settledTitle(canonical, text);
-    const title = live?.title ?? settled ?? savedTitle ?? visit.title_hint;
-    const name = title?.trim() ? title : null;
-    const named = title === null ? null : name ?? `untitled ${kind}`;
-    if (live && live.acknowledged === null) {
-      return { title: named ?? `untitled ${kind}`, name, detail: "unsaved", status: "Unsaved" };
+    const canonical: Canonical | null | undefined = remoteFacts?.get(key);
+    let saved: string | null = null;
+    if (canonical === undefined && catalog && locator.kind === "resource_ref") {
+      const [scheme, id] = locator.ref.split(":");
+      if (scheme === "media") saved = catalog.media.get(id)?.summary.title ?? null;
+      else if (scheme === "library") saved = catalog.libraries.get(id)?.value.name ?? null;
+      else if (scheme === "podcast") saved = catalog.shows.get(id)?.detail.podcast.title ?? null;
+      else if (scheme === "conversation") saved = catalog.chats.get(id)?.title ?? null;
     }
-    if (!current) {
-      return named
-        ? { title: named, name, detail: live ? "unsaved" : kind, status: live ? "Unsaved" : "Ready" }
-        : { title: kind, name: null, detail: "open to load title", status: "Unresolved" };
+    const rawName=canonical?.title ?? saved ?? visit.title_hint;
+    const name=rawName?.trim()?rawName:null;
+    const title=rawName??kind;
+    if (canonical) {
+      const noun = canonical.media_kind ? mediaKindLabel(canonical.media_kind) : kind;
+      const authors = selectMediaAuthors(canonical.contributors).flatMap(credit => { const name = creditName(credit); return name ? [name.label] : []; });
+      const byline = authors.slice(0, 2).join(", ") || canonical.source_label;
+      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, status: "Ready" };
     }
-    if (savedTitle !== null) return { title: named ?? `untitled ${kind}`, name, detail: kind, status: "Ready" };
-    if (status === "Failed") return {
-      title: named ?? kind,
-      name,
-      detail: named ? "couldn’t refresh title" : "couldn’t load title",
-      status: "Failed",
-    };
-    if (status === "Loading") return {
-      title: named ?? "loading title…",
-      name,
-      detail: named ? "loading title…" : kind,
-      status: "Loading",
-    };
-    if (canonical === null) return {
-      title: live ? live.title.trim() ? live.title : `untitled ${kind}`
-        : visit.title_hint ?? `unavailable ${kind}`,
-      name: live ? name : visit.title_hint,
-      detail: live || visit.title_hint ? "removed or no longer accessible" : "unavailable",
-      status: "Unavailable",
-    };
-    if (live) return { title: named ?? `untitled ${kind}`, name, detail: "unsaved", status: "Unsaved" };
-    return { title: named ?? `untitled ${kind}`, name, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
-  }, [read.facts, retained, dailyRefs, status, catalog]);
-  const resourceRefForVisit = useCallback((visit: PaneVisit): string | null => {
-    const route = resolvePaneRouteModel(visit.href);
-    const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
-    return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
-  }, [read.facts, retained]);
-  // local titles notify consumers directly; context tracks canonical presentation state.
-  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }),
-    [forVisit, resourceRefForVisit, retryTitles]);
-
+    if (saved !== null) return { title, name, detail: kind, status: "Ready" };
+    if (remoteFailed) return { title, name, detail: "couldn’t refresh title", status: "Failed" };
+    if (remoteStatus !== "ready") return { title, name, detail: "loading title…", status: "Loading" };
+    return { title, name, detail: "removed or no longer accessible", status: "Unavailable" };
+    // Facts change only with semanticRevision; newer watermarks keep this callback's facts equivalent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [local.semanticRevision, remoteFacts, remoteStatus, remoteFailed, catalog]);
+  const resourceRefForVisit = useCallback((visit: PaneVisit) => {
+    const locator = resolvePaneRouteModel(visit.href).titleLocator;
+    if (!locator) return null;
+    const key = panePresentationLocatorKey(locator);
+    return local.entries.get(key)?.facts?.ref ?? remoteFacts?.get(key)?.resource_ref ?? (locator.kind === "resource_ref" ? locator.ref : null);
+    // Watermark-only entries changes cannot change any published resource ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [local.semanticRevision, remoteFacts]);
+  const retryTitles = useCallback(() => retry(value => value + 1), []);
+  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }), [forVisit, resourceRefForVisit, retryTitles]);
   useEffect(() => {
     for (const pane of state.panes) {
-      const visit = pane.current_visit;
-      const route = resolvePaneRouteModel(visit.href);
-      if (!route.titleLocator || !route.titleKey || !retained.has(route.titleKey)) continue;
-      const canonical = read.facts.get(route.titleKey);
-      const title = settledTitle(canonical, textFor(route, canonical, dailyRefs));
-      if (title === null) continue;
-      setVisitTitleHint({ paneId: pane.id, visitId: visit.id, titleKey: route.titleKey, title });
+      const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);
+      if (!route.titleKey) continue;
+      const presentation = forVisit(visit);
+      if (presentation.status === "Ready") setVisitTitleHint({ paneId: pane.id, visitId: visit.id, titleKey: route.titleKey, title: presentation.title });
     }
-  }, [state.panes, read.facts, retained, textRevision, dailyRefs, setVisitTitleHint]);
-
-  return (
-    <Context value={value}>
-      {requestKey !== null ? (
-        <TitleReadBoundary key={requestKey} requestKey={requestKey} failed={failed}>
-          <TitleRead requestKey={requestKey} locators={locators} watches={watches} publish={publish} />
-        </TitleReadBoundary>
-      ) : null}
-      {props.children}
-    </Context>
-  );
+  }, [state.panes, forVisit, setVisitTitleHint]);
+  return <PublisherContext value={publishLocal}><Context value={value}>
+    {locators.map(locator => {
+      if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref" || locator.kind === "resource_ref" && locator.ref === activeNote) return null;
+      const key = panePresentationLocatorKey(locator);
+      return <AuthoredTitleSubscription key={key} store={store} locatorKey={key}
+        kind={locator.kind === "daily_date" ? "daily" : "resource"}
+        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} publish={publishLocal} />;
+    })}
+    {children}
+  </Context></PublisherContext>;
 }
-
-export function useWorkspacePresentations(): Presentations {
-  const value = useContext(Context);
-  const revision = useTextTitleRevision();
-  const presentations = useMemo(() => {
-    void revision;
-    return value === null ? null : { ...value };
-  }, [value, revision]);
-  if (!presentations) throw new Error("workspace presentations require their account provider");
-  return presentations;
-}
+export function useWorkspacePresentations(): Presentations { const value = useContext(Context); if (!value) throw new Error("workspace presentations require their account provider"); return value; }

@@ -2,8 +2,7 @@
 
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
-// flight, latest wins; a failed save keeps the change and offers Retry. Without
-// remote admission a change is refused with a notice, never written later.
+// flight, latest wins; a failed save keeps the change and offers Retry.
 import {
   createContext,
   useCallback,
@@ -17,7 +16,7 @@ import {
 import { remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
-import { useFeedback, useWorkspaceCondition, type FeedbackOffer } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -29,7 +28,6 @@ export interface ReaderProfileCapability {
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
     | { readonly state: "SaveFailed"; readonly failure: unknown };
-  /** Whether a change is accepted; every refused change is reported. */
   readonly editable: boolean;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
@@ -43,7 +41,6 @@ export interface ReaderProfileCapability {
 
 const ReaderContext = createContext<ReaderProfileCapability | null>(null);
 const SAVE_DELAY_MS = 300;
-const FEEDBACK_KEY = "reader-profile-save";
 
 export function ReaderProvider({
   initialProfile,
@@ -55,7 +52,7 @@ export function ReaderProvider({
   const refreshSettings = useSettingsRefresh();
   const feedback = useFeedback();
   const editable = useRemoteAdmission() === "Ready";
-  const refused = useRef<FeedbackOffer | null>(null);
+  const failureReport = useRef<(() => void) | null>(null);
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
@@ -64,7 +61,6 @@ export function ReaderProvider({
   const timer = useRef<number | undefined>(undefined);
   const sending = useRef(false);
   const live = useRef(true);
-  const [busy, setBusy] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   useEffect(() => {
@@ -77,7 +73,7 @@ export function ReaderProvider({
     if (!live.current || sending.current || Object.keys(patch).length === 0) return;
     unsent.current = {};
     sending.current = true;
-    setBusy(true);
+    failureReport.current?.(); failureReport.current = null;
     try {
       const saved = await apiFetch<ApiJson<"/me/reader-profile", "patch">>(
         "/api/me/reader-profile",
@@ -95,26 +91,19 @@ export function ReaderProvider({
       if (!live.current) return;
       unsent.current = { ...patch, ...unsent.current };
       handleUnauthenticatedApiError(failure);
-      if (!isApiError(failure) || isSameSystemApiDefect(failure)) setDefect({ error: failure });
-      else setPersistence({ state: "SaveFailed", failure });
-    } finally {
-      if (live.current) setBusy(sending.current);
+      if (!isApiError(failure) || isSameSystemApiDefect(failure)) return setDefect({ error: failure });
+      // The settings pane keeps the failure; this reports it once wherever it was changed.
+      setPersistence({ state: "SaveFailed", failure });
+      failureReport.current = feedback.receipt({ tone: "Warning", title: "reader settings not synced",
+        message: "your settings are applied in this tab. retry to sync them.", requestId: failure.requestId },
+      { label: "retry", onClick: () => void send() });
     }
-  }, [refreshSettings]);
+  }, [feedback, refreshSettings]);
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
       if (!remoteReady()) {
-        // A fresh offer, not a replacement: only a new entry raises attention.
-        refused.current?.withdraw();
-        refused.current = feedback.offer({
-          key: "reader-profile-refused",
-          announcement: "Polite",
-          needsAttention: true,
-          undo: null,
-          onDismiss: null,
-          content: { tone: "Neutral", title: "changing reader settings requires a connection" },
-        });
+        feedback.receipt({ tone: "Neutral", title: "changing reader settings requires a connection" });
         return;
       }
       setProfile((current) => ({ ...current, ...patch }));
@@ -127,12 +116,6 @@ export function ReaderProvider({
   );
 
   useEffect(() => {
-    if (!editable) return;
-    refused.current?.withdraw();
-    refused.current = null;
-  }, [editable]);
-
-  useEffect(() => {
     live.current = true;
     const flush = () => void send();
     window.addEventListener("pagehide", flush);
@@ -142,20 +125,6 @@ export function ReaderProvider({
       window.removeEventListener("pagehide", flush);
     };
   }, [send]);
-
-  const failure = persistence.state === "SaveFailed" ? persistence.failure : null;
-  useWorkspaceCondition(FEEDBACK_KEY, persistence.state === "SaveFailed" ? {
-    needsAttention: true,
-    priority: "Write",
-    announcement: "Polite",
-    content: {
-      tone: "Warning",
-      title: "reader settings not synced",
-      message: "your settings are applied in this tab. retry to sync them.",
-      requestId: isApiError(failure) ? failure.requestId : undefined,
-    },
-    actions: [{ label: "retry", onClick: () => void send(), busy }],
-  } : null);
 
   const value = useMemo<ReaderProfileCapability>(
     () => ({

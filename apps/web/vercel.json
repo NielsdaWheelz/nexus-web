@@ -1,3 +1,4 @@
 {
+  "installCommand": "bun install --frozen-lockfile --cwd ../../node/authored && bun install --frozen-lockfile",
   "buildCommand": "bun run build:next"
 }

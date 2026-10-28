@@ -4,6 +4,8 @@ Edits hold note → queue → index state, raise the revision and coalesce waiti
 Both publications recheck that revision, exact claim and source body. Text commits
 before provider work and survives failures; retries embed its existing ids. Completed
 outcomes replay without changing ids, timestamps or connection-discovery effects.
+Only a visible note publishes: a semantically deleted note raises its revision and
+leaves search with its rows and identities intact, and revival reindexes it.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "note_reindex_job"
-_BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id"
+_BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id AND authored_visible"
 
 
 def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> None:
@@ -65,6 +67,18 @@ def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> No
         queue.reset_unclaimed_job(db, job_id=waiting[0].id, kind=JOB_KIND, payload=payload)
     else:
         queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
+
+
+def hide_note_index(db: Session, *, note_block_id: UUID) -> None:
+    """Withdraw a semantically deleted note's text from search, keeping index identity.
+
+    Raising the revision makes its retained chunks inadmissible and supersedes any
+    running publication; no job is queued. The projection holds the note row. Revival
+    calls ``enqueue_note_reindex``, which raises the revision again and republishes.
+    """
+    mark_content_index_pending(
+        db, owner=IndexOwner("note_block", note_block_id), reason="authored_hidden"
+    )
 
 
 def run_note_reindex_job(

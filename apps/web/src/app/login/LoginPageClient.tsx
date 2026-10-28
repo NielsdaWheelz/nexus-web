@@ -14,9 +14,9 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
+import { beginBrowserSignIn } from "@/lib/authored/binding";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import {
@@ -109,9 +109,9 @@ function GoogleMark() {
 // with a redirect to the provider's origin, and chromium holds a form
 // submission's whole redirect chain to the csp's form-action 'self'. in the
 // android shell the same intent goes to the native owner as a deep link.
-// without a resolved return target there is no destination: the link stays
-// named but carries no href.
-function ProviderLink({
+// browser starts await account admission, so an explicit button owns navigation.
+// without a resolved return target there is no destination and it is disabled.
+function ProviderButton({
   provider,
   nextPath,
   handoff,
@@ -122,24 +122,28 @@ function ProviderLink({
   handoff: HandoffContext | null;
   disabled: boolean;
 }) {
-  const destination = disabled || nextPath === null
-    ? { href: null, "aria-disabled": true } as const
-    : {
-        href: handoff && provider === "google"
-          ? nativeGoogleDeepLink(nextPath, handoff)
-          : oauthPath(provider, nextPath, handoff),
-      };
-  return (
-    <ButtonLink
-      {...destination}
+  const [localFailure, setLocalFailure] = useState<Error | null>(null);
+  const href = disabled || nextPath === null ? null : handoff && provider === "google"
+    ? nativeGoogleDeepLink(nextPath, handoff)
+    : oauthPath(provider, nextPath, handoff);
+  return <>
+    <Button
+      type="button"
+      disabled={href === null}
+      onClick={() => {
+        if (href === null) return;
+        if (handoff !== null) { window.location.assign(href); return; }
+        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(error => setLocalFailure(error));
+      }}
       emphasis={provider === "google" ? "strong" : undefined}
       size="comfortable"
       icon={provider === "google" ? <GoogleMark /> : <GitHubMark />}
       tabIndex={disabled ? -1 : undefined}
     >
       {`Continue with ${PROVIDER_NAMES[provider]}`}
-    </ButtonLink>
-  );
+    </Button>
+    {localFailure ? <FeedbackNotice announcement="Polite" content={{ tone: "Danger", title: "couldn’t open local account storage", message: localFailure.message }} /> : null}
+  </>;
 }
 
 function Disclosure({
@@ -264,7 +268,7 @@ export default function LoginPageClient({
           </div>
         ) : null}
 
-        <ProviderLink
+        <ProviderButton
           provider="google"
           nextPath={completedTarget}
           handoff={handoff}
@@ -284,7 +288,7 @@ export default function LoginPageClient({
             noValidate
             onSubmit={(event) => {
               if (target.kind === "Pending") return event.preventDefault();
-              void submit(event, target.target, { validate });
+              void submit(event, target.target, { validate, beforeSubmit: handoff === null ? beginBrowserSignIn : undefined });
             }}
           >
             {completedTarget === null || completedTarget === DEFAULT_RETURN_TARGET ? null : (
@@ -381,7 +385,7 @@ export default function LoginPageClient({
           pending={controlsPending}
         >
           <div className={authStyles.methodBody}>
-            <ProviderLink
+            <ProviderButton
               provider="github"
               nextPath={completedTarget}
               handoff={handoff}

@@ -188,3 +188,72 @@
     background: Highlight;
   }
 }
+
+.annotationQuote {
+  color: inherit;
+  background: var(--accent-muted);
+  border-radius: var(--radius-xs);
+  box-decoration-break: clone;
+  white-space: pre-wrap;
+}
+
+.annotationQuote[data-color="yellow"] {
+  background: var(--highlight-yellow);
+}
+
+.annotationQuote[data-color="green"] {
+  background: var(--highlight-green);
+}
+
+.annotationQuote[data-color="blue"] {
+  background: var(--highlight-blue);
+}
+
+.annotationQuote[data-color="pink"] {
+  background: var(--highlight-pink);
+}
+
+.annotationQuote[data-color="purple"] {
+  background: var(--highlight-purple);
+}
+
+.attachedNotes {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachedNote {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-1);
+}
+
+.annotationList ul {
+  display: grid;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compactAnnotation {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.compactAnnotation textarea {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-1);
+  font: inherit;
+}
+
+.compactActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

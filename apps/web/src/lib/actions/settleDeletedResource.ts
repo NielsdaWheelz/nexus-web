@@ -1,4 +1,4 @@
-import { hasUnsavedOutline } from "@/lib/notes/useOutlineSession";
+import { hasUncommittedWriting } from "@/lib/notes/runtime";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceStoreValue } from "@/lib/workspace/store";
 
@@ -23,7 +23,7 @@ export function settleDeletedResourcePanes(input: {
       return locator?.kind === "resource_ref" && locator.ref === input.deletedRef;
     })
     .map((pane) => pane.id);
-  if (hasUnsavedOutline(input.deletedRef)) return;
+  if (hasUncommittedWriting()) return;
   settleDeletedPanes({
     paneIds,
     fallbackPaneId: paneIds.includes(state.active_primary_pane_id) ? state.active_primary_pane_id : null,

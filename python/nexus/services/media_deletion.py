@@ -21,11 +21,11 @@ placements or unprocessed additions must pass the original guards.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -36,7 +36,6 @@ from nexus.auth.permissions import (
     retained_x_post_roots_sql,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import Highlight
 from nexus.db.retries import (
     TransactionRestart,
     integrity_constraint_name,
@@ -60,7 +59,6 @@ from nexus.services import (
     library_entries,
     media_intelligence_lifecycle,
     metadata_operations,
-    passage_anchors,
     resource_grants,
     source_attempts,
     users,
@@ -93,7 +91,7 @@ _CHILD_TABLES = (
     "podcast_episode_chapters",
     "media_source_supersessions",
 )
-_HIGHLIGHTS_OF_MEDIA = "SELECT id FROM highlights WHERE anchor_media_id = :m"
+_HIGHLIGHTS_OF_MEDIA_SQL = text("SELECT id FROM highlights WHERE anchor_media_id = :m")
 
 
 def _run(db: Session, sql: str, **params: object) -> None:
@@ -118,6 +116,7 @@ def _references(db: Session, media_id: UUID) -> bool:
         UNION
         SELECT h.anchor_media_id FROM resource_grants g
         JOIN highlights h ON g.subject_scheme = 'highlight' AND g.subject_id = h.id
+        WHERE h.authored_visible
         UNION
         SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
     """
@@ -168,6 +167,31 @@ def claim_document_teardown_if_unreferenced_locked(db: Session, media_id: UUID) 
         return False
     _claim_teardown(db, media_id)
     return True
+
+
+def lock_highlight_sources(db: Session, highlight_ids: Sequence[UUID]) -> list[UUID]:
+    """Lock the source families of highlights about to become hidden; return their media.
+
+    The authored projection calls this under the account head and before it writes those
+    highlights or publishes keywords: a live highlight on an X post, or a live highlight
+    carrying a grant, is a teardown root. Flush-free; may raise ``TransactionRestart``.
+    """
+    media_ids = db.scalars(
+        text(
+            "SELECT DISTINCT anchor_media_id FROM highlights"
+            " WHERE id = ANY(:ids) AND anchor_media_id IS NOT NULL"
+        ),
+        {"ids": list(highlight_ids)},
+    ).all()
+    return library_entries.lock_media_rows_in_order(db, list(media_ids)) if media_ids else []
+
+
+def release_highlight_sources(db: Session, media_ids: Sequence[UUID]) -> None:
+    """After the projection hid the highlights: claim each source whose final retainer they
+    were. Another library entry, grant, live highlight or passage root keeps the bytes;
+    the caller still holds the locks taken by ``lock_highlight_sources``."""
+    for media_id in sorted(set(media_ids)):
+        claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -349,7 +373,6 @@ def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> Non
 
 
 def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    from nexus.services import highlights
     from nexus.services.consumption import lectern
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
@@ -425,21 +448,13 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     reject_removed_part(db, viewer_id=viewer_id, media_id=media_id)
     remaining_scope = any(can_read_media(db, viewer_id, member) for member in family_ids)
     if not remaining_scope:
-        evidence_media_id = source_id
-        # The viewer's own reviews, highlights, anchors and retrieval references; the media
-        # may live on for other holders, so graph cleanup stays scoped to what goes here.
+        # The viewer's own reviews and retrieval references; the media may live on for
+        # other holders. Authored highlights and passages are independent writing that
+        # keeps its literal quotes without the source, so they stay.
         for family_id in family_ids:
             metadata_operations.delete_viewer_media_reviews(
                 db, viewer_id=viewer_id, media_id=family_id
             )
-            passage_anchors.delete_for_owner(
-                db, owner_scheme="media", owner_id=family_id, user_id=viewer_id
-            )
-        own_highlights = db.scalars(
-            select(Highlight)
-            .where(Highlight.user_id == viewer_id, Highlight.anchor_media_id == evidence_media_id)
-            .order_by(Highlight.id)
-        ).all()
         _run(
             db,
             """
@@ -451,8 +466,6 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
             u=viewer_id,
             family=family_ids,
         )
-        for highlight in own_highlights:
-            highlights.delete_highlight_rows(db, highlight)
     if kind in _DOCUMENT_KINDS and not _references(db, media_id):
         _claim_teardown(db, media_id)
     elif can_read_media(db, viewer_id, media_id):
@@ -560,11 +573,11 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         """,
         m=media_id,
     )
-    # One graph cleanup per destroyed ref; cited edges sourced elsewhere keep their snapshots.
-    highlight_owners = db.execute(
-        select(Highlight.id, Highlight.user_id).where(Highlight.anchor_media_id == media_id)
-    ).all()
-    highlight_ids = [id for id, _ in highlight_owners]
+    # One machine-fact cleanup per destroyed ref; cited edges sourced elsewhere keep their
+    # snapshots. Authored highlights, their anchor projections, passages and links are
+    # independent writing: they keep their literal captures and dangle unreadably here, so
+    # only their search occurrences withdraw.
+    highlight_ids = db.scalars(_HIGHLIGHTS_OF_MEDIA_SQL, {"m": media_id}).all()
     fragment_ids = db.scalars(
         text("SELECT id FROM fragments WHERE media_id = :m"), {"m": media_id}
     ).all()
@@ -573,34 +586,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     ).all()
     for ref in (
         ResourceRef(scheme="media", id=media_id),
-        *(ResourceRef(scheme="highlight", id=highlight_id) for highlight_id in highlight_ids),
         *(ResourceRef(scheme="fragment", id=fragment_id) for fragment_id in fragment_ids),
     ):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
-    for highlight_id, owner_id in highlight_owners:
-        cleanup.delete_resource_protocol_state(
-            db, viewer_id=owner_id, ref=ResourceRef("highlight", highlight_id)
-        )
     _run(db, "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :m", m=media_id)
-    passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id)
-    _run(
-        db,
-        f"DELETE FROM highlight_pdf_quads WHERE highlight_id IN ({_HIGHLIGHTS_OF_MEDIA})",
-        m=media_id,
-    )
-    _run(
-        db,
-        f"""DELETE FROM highlight_pdf_anchors
-            WHERE media_id = :m OR highlight_id IN ({_HIGHLIGHTS_OF_MEDIA})""",
-        m=media_id,
-    )
-    # By highlight, not fragment: a refresh can leave anchors on replaced fragments.
-    _run(
-        db,
-        f"DELETE FROM highlight_fragment_anchors WHERE highlight_id IN ({_HIGHLIGHTS_OF_MEDIA})",
-        m=media_id,
-    )
-    _run(db, "DELETE FROM highlights WHERE anchor_media_id = :m", m=media_id)
     media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))

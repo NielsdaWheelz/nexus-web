@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import { readNativeKeyboardVisibility, subscribeNativeKeyboardVisibility } from "@/lib/native/client";
 
 // The iOS keyboard shim. Android and Firefox resize the layout viewport
 // (interactive-widget=resizes-content), so the bottom inset reads ~0 there.
@@ -58,6 +59,11 @@ function subscribe(onChange: () => void): () => void {
 
 export function useKeyboardInset(): typeof ZERO {
   return useSyncExternalStore(subscribe, read, () => ZERO);
+}
+
+/** Exact installed-app signal; browsers retain null instead of guessing from an inset. */
+export function useNativeKeyboardVisibility(): boolean | null {
+  return useSyncExternalStore(subscribeNativeKeyboardVisibility, readNativeKeyboardVisibility, () => null);
 }
 
 /** While active, the newest report owns --mobile-overlay-keyboard-inset. */

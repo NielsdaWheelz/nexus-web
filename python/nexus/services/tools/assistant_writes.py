@@ -28,7 +28,7 @@ from nexus.schemas.assistant_writes import (
     TargetKind,
 )
 from nexus.schemas.resource_graph import ConnectionCreationOut
-from nexus.services import library_entries, users, writing
+from nexus.services import library_entries, users
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
@@ -257,6 +257,6 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
             text("UPDATE tool_calls SET reverted_at = clock_timestamp() WHERE id = :id"),
             {"id": tool_call_id},
         )
-        record_input_change(db, owners=owners | writing.input_owners(db))
+        record_input_change(db, owners=owners)
 
     retry_serializable(db, "undo_assistant_write", attempt)

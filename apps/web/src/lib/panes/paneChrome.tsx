@@ -15,7 +15,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type {OutlineCommand, OutlineCommandState} from "@/lib/notes/useOutlineSession";
+import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorTypes";
 import type { FindController } from "@/lib/find/useFind";
 import { FIND_QUERY_LIMIT } from "@/lib/find/find";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
@@ -129,10 +129,10 @@ export interface PaneLayout {
 /** Only the interacting outline publishes commands; route chrome keeps its owner. */
 export interface PaneOutlineCommands {
   readonly session: string;
-  readonly insertLabel: string;
+  /** Touch presentation is independent of keyboard command capability. */
+  readonly touchVisible: boolean;
   commandState(command: OutlineCommand): OutlineCommandState;
   executeCommand(command: OutlineCommand): void;
-  done(): void;
 }
 
 export interface PaneChromeState {

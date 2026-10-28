@@ -35,6 +35,7 @@ import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
 import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import QueuePanel from "./QueuePanel";
 import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
@@ -262,6 +263,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const modeChanged = priorMode.current !== isMobile;
   const mobileViewport = useMobileViewport();
   const textEntryFocused = useRootTextEntryFocused();
+  const nativeKeyboard = useNativeKeyboardVisibility();
   const [picker, setPicker] = useState<{ readonly subject: string; readonly kind: "Playback" | "Chapters" } | null>(null);
   const shownPicker = (isMobile || presentation.visible) && !modeChanged && state.kind === "Loaded" && picker !== null && picker.subject === playbackSubject ? picker.kind : null;
   const panelOpen = shownPicker === "Playback";
@@ -341,7 +343,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const sheetShown = !modeChanged && isMobile && sheetOpen;
   const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
   currentSurface.current = { sheetShown, playbackSubject, desktopVisible: presentation.visible };
-  const suppressed = isMobile ? sheetShown || textEntryFocused : !presentation.visible;
+  const suppressed = isMobile ? sheetShown || (textEntryFocused && nativeKeyboard !== false) : !presentation.visible;
   const setFooter = useCallback((element: HTMLElement | null) => {
     footerRef.current = element;
     presentation.regionRef.current = isMobile ? null : element;

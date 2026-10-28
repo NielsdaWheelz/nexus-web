@@ -52,6 +52,7 @@ import choiceField from "./ChoiceField.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
+const TRAILING_INDEX = 10_000;
 // Moving focus into a sheet can dismiss the IME. Admit after its geometry quiets;
 // there is no portable keyboard-transition completion event.
 const MOBILE_ADMISSION_QUIET_MS = 150;
@@ -113,6 +114,7 @@ type Invocation = {
   readonly meaning: string | null;
   readonly geometry: readonly number[] | null;
   readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
+  readonly side: "above" | "below" | null;
 };
 
 /** Displayed meaning excludes closures, availability and a choice's live value;
@@ -145,8 +147,8 @@ function viewportGeometry(): string {
   ]);
 }
 
-/** Scroll is intentional; sheet entry/drag transforms do not change content coordinates. */
-function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): readonly number[] {
+/** The trailing region may change after publication; only published rows define geometry. */
+function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, published: boolean): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
   let panelX = box.x;
@@ -161,7 +163,7 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): read
     panelY = origin.top + parent.clientTop + panel.offsetTop - parent.scrollTop;
   }
   const position = anchor.getBoundingClientRect();
-  const rows = [...body.querySelectorAll<HTMLElement>("[data-menu-row]")].map((row) => {
+  const rows = [...body.querySelectorAll<HTMLElement>(published ? "[data-menu-published] [data-menu-row]" : "[data-menu-row]")].map((row) => {
     const rect = row.getBoundingClientRect();
     let x = rect.left - box.left;
     let y = rect.top - box.top;
@@ -170,13 +172,31 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): read
       y += parent.scrollTop;
       if (parent === panel) break;
     }
-    return [x, y, rect.width, rect.height];
+    return published ? [panelX + x, panelY + y, rect.width, rect.height] : [x, y, rect.width, rect.height];
   });
-  return [
+  return published ? [position.x, position.y, position.width, position.height, ...rows.flat()] : [
     position.x, position.y, position.width, position.height,
     panelX, panelY, box.width, box.height,
     ...rows.flat(),
   ];
+}
+
+function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
+  const published = scroller.querySelector<HTMLElement>(":scope > [data-menu-published]");
+  if (!published) throw new Error("a trailing menu requires its published content block");
+  const style = getComputedStyle(scroller);
+  const used = published.getBoundingClientRect().height
+    + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  if (!mobile) return parseFloat(style.maxBlockSize) - used;
+  const panel = scroller.closest<HTMLElement>('[role="dialog"]');
+  const parent = panel?.parentElement;
+  if (!panel || !parent) throw new Error("a mobile trailing menu requires its sheet containing block");
+  const containing = getComputedStyle(parent);
+  const available = parent.getBoundingClientRect().height
+    - parseFloat(containing.paddingTop) - parseFloat(containing.paddingBottom)
+    - parseFloat(containing.borderTopWidth) - parseFloat(containing.borderBottomWidth);
+  return available - (panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height) - used;
 }
 
 /**
@@ -404,6 +424,9 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   const prepared = source.kind === "Prepared" && invocation?.attempt &&
     !invocation.attempt.controller.signal.aborted &&
     source.state?.request === invocation.attempt.controller.signal ? source.state : null;
+  const trailingRegion = source.kind === "Prepared" && source.trailing !== undefined;
+  const trailing = trailingRegion && invocation?.attempt && !invocation.attempt.controller.signal.aborted &&
+    source.trailing?.request === invocation.attempt.controller.signal ? source.trailing ?? null : null;
   const content = invocation && (source.kind === "Immediate" ? source.content :
     prepared?.kind === "Ready" ? prepared.content : null);
   const feedback = invocation?.feedback ?? null;
@@ -414,9 +437,10 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   const visible = invocation?.visible === true && invocation.admission === null;
   const busy = invocation?.attempt?.timer != null;
   useMobileChromeHold(invocation !== null);
+  const lockedSide = trailingRegion ? invocation?.side ?? null : null;
   const menu = useAnchoredPosition<HTMLDivElement>(trigger, {
     enabled: candidate && !sheet && container !== null,
-    placement, align, flip: true, keepAnchorVisible: true,
+    placement: lockedSide ?? placement, align, flip: lockedSide === null, keepAnchorVisible: true,
   });
   const surface = () => current.current?.mobile ? sheetBody.current : menu.ref.current;
   const closeRef = useRef<(returnFocus?: boolean) => void>(() => undefined);
@@ -467,7 +491,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       viewport: retry ? viewportGeometry() : session.viewport,
       touch: retry ? false : session.touch,
       attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
-      meaning: null, geometry: null,
+      meaning: null, geometry: null, side: null,
       admission: mobile ? { phase: "Focus", timer: null } : null,
     });
     if (attempt && source.kind === "Prepared") {
@@ -515,7 +539,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         ? value.state.content : null;
     if (ready === null || active.meaning !== meaning(value.title, ready) ||
       node === null || active.geometry === null) return false;
-    const measured = geometry(trigger.current, node, active.mobile);
+    const measured = geometry(trigger.current, node, active.mobile, trailingRegion);
     // Compositor/transform serialization noise can cross rounding boundaries.
     // Compare at 1/64 CSS px precision against the fixed publication snapshot.
     return active.geometry.length === measured.length && active.geometry.every(
@@ -566,16 +590,26 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       fail(active.attempt, FAILED);
       return;
     }
+    if (content && trailingRegion && !active.mobile && active.side === null) {
+      const placed = node.getBoundingClientRect().bottom <= trigger.current.getBoundingClientRect().top + 1 ? "above" : "below";
+      change({ ...active, side: placed });
+      return;
+    }
     if (content && active.attempt?.timer) {
       clearTimeout(active.attempt.timer);
       active.attempt.timer = null;
+    }
+    if (content && trailingRegion) {
+      const region = node.querySelector<HTMLElement>("[data-menu-trailing]");
+      const room = region ? trailingRoom(node, active.mobile) : NaN;
+      if (region && Number.isFinite(room)) region.style.maxBlockSize = `${Math.max(region.getBoundingClientRect().height, room)}px`;
     }
     if (content || !active.visible || active.admission !== null) {
       change({
         ...active, visible: true, feedback: content ? null : active.feedback,
         viewport: viewportGeometry(), admission: null,
         meaning: content ? meaning(source.title, content) : null,
-        geometry: content ? geometry(trigger.current, node, active.mobile) : null,
+        geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion) : null,
       });
       if (content && !hasOptions) announce("no actions available");
       else if (content) announce("");
@@ -778,7 +812,9 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   const latestOption = (id: string) => {
     const value = latest.current;
     const ready = value.kind === "Immediate" ? value.content : value.state?.kind === "Ready" ? value.state.content : null;
-    return ready?.sections.flatMap((section) => section.options).find((entry) => entry.id === id);
+    const later = value.kind === "Prepared" && value.state?.kind === "Ready" && value.trailing?.kind === "Ready" &&
+      value.trailing.request === value.state.request ? value.trailing.options : [];
+    return [...ready?.sections.flatMap((section) => section.options) ?? [], ...later].find((entry) => entry.id === id);
   };
   const item = (option: MenuOption, index: number) => {
     if (option.kind === "choice") {
@@ -892,6 +928,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     </li>;
   };
   let itemIndex = 0;
+  const trailingFirst = sheet || (lockedSide ?? menu.side) === "above";
   const body = content ? hasOptions ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
     {content.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
       {sectionIndex > 0 ? <div role="separator" className={styles.separator} /> : null}
@@ -907,11 +944,33 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     content={feedback} announcement="None"
     actions={[{ label: "retry", busy, onClick: () => { if (!busy) begin(current.current?.edge ?? "first", true); } }]}
   /> : null;
+  const trailingView = trailingRegion && content && hasOptions ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
+    {trailingFirst ? null : <div role="separator" className={styles.separator} />}
+    {trailing?.kind === "Ready" && trailing.options.length > 0
+      ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"} aria-label={trailing.label ?? undefined}>
+        {trailing.options.map((option, index) => <Fragment key={option.id}>
+          {option.separatorBefore && index > 0 ? <li role="separator" className={styles.separator} /> : null}
+          {item(option, TRAILING_INDEX + index)}
+        </Fragment>)}
+      </ul>
+      : trailing?.kind === "Failed" ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"}>
+        <li role={sheet ? undefined : "none"}><button type="button" role={sheet ? undefined : "menuitem"} aria-disabled="true"
+          tabIndex={sheet ? 0 : -1} className={collection.row} data-action-availability="Blocked" onClick={event => event.preventDefault()}>
+          <span className={`${collection.content} ${styles.menuText}`}>{trailing.feedback.title}</span></button></li>
+      </ul>
+      : <p className={`${styles.menuStatus} ${styles.trailing}`}>{trailing?.kind === "Ready" ? "no other actions" : "loading more actions…"}</p>}
+    {trailingFirst ? <div role="separator" className={styles.separator} /> : null}
+  </div> : null;
+  const composed = trailingView ? <>
+    {trailingFirst ? trailingView : null}
+    <div role="none" data-menu-published="">{body}</div>
+    {trailingFirst ? null : trailingView}
+  </> : body;
   return <>
     {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
       className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasOptions ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
-      tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
+      tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{composed}</div>, container) : null}
     {sheet ? <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
@@ -924,13 +983,13 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         }
         if (current.current?.touch) return panel;
         if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
-        const items = [...panel.querySelectorAll<HTMLElement>("[data-menu-row]")];
+        const items = [...(panel.querySelector<HTMLElement>("[data-menu-published]") ?? panel).querySelectorAll<HTMLElement>("[data-menu-row]")];
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
         // A choice edge focuses its checked radio, the group's one native tab stop.
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
           ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
-      <div ref={sheetBody} data-collection-viewport="" className={`${collection.contentViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
+      <div ref={sheetBody} data-collection-viewport="" className={`${collection.contentViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{composed}</div>
     </MobileSheet> : null}
   </>;
 }

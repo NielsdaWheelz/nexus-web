@@ -1,0 +1,31 @@
+{
+  "name": "@nexus/authored",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./capture": "./src/capture.ts",
+    "./types": "./src/types.ts",
+    "./documents": "./src/documents.ts",
+    "./body": "./src/body.ts",
+    "./identity": "./src/identity.ts",
+    "./merge": "./src/merge.ts",
+    "./commands": "./src/commands.ts",
+    "./queries": "./src/queries.ts",
+    "./scope": "./src/scope.ts",
+    "./schema": "./src/schema.ts",
+    "./markdown": "./src/markdown.ts"
+  },
+  "dependencies": {
+    "fractional-indexing": "4.0.0",
+    "prosemirror-model": "1.25.4",
+    "uuid": "11.1.0",
+    "yjs": "13.6.33",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-to-markdown": "2.1.2"
+  },
+  "devDependencies": {
+    "typescript": "6.0.2",
+    "@types/mdast": "4.0.4"
+  }
+}

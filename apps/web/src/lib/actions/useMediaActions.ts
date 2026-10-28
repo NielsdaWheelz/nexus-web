@@ -15,6 +15,7 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
+import { continuationRecoveryLabel } from "./mediaContinuation";
 
 export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly ActionButtonSpec[] {
   const { ctx, run } = useActionRuntime();
@@ -42,7 +43,16 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const creatingLibrary = subject.kind === "External" && placement.hasPendingExternalCreation(subject.target);
   const disconnected = installedApp && !ctx.online;
   const holding = creatingLibrary || operation !== null && operation.phase !== "complete";
-  const heldReason = creatingLibrary ? "finish creating this item's library first" : "finish this item's import first";
+  const creationFailed = subject.kind === "External" && placement.hasFailedExternalCreation(subject.target);
+  const heldReason = creationFailed ? "this item's library wasn’t created; retry it from manage libraries"
+    : creatingLibrary ? "finish creating this item's library first"
+    : operation?.failure ? operation.failure.content.title : "finish this item's import first";
+  // A failed continuation keeps its recovery on the control for its destination.
+  const recovery = operation !== null && operation.failure !== null ? {
+    destination: operation.destination.kind,
+    label: continuationRecoveryLabel(operation, operation.failure),
+    invoke: () => { if (!installedApp || remoteReady()) ctx.mediaContinuations.recover(operation.intentId); },
+  } : null;
   const actions: ActionButtonSpec[] = [];
   if (kind === "podcast_episode") {
     const state = ctx.player.state;
@@ -110,24 +120,41 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
       },
     });
   } else {
-    const label = "add to lectern";
-    actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", menuLabel: label, accessibleLabel: `${label}: ${title}`, icon: createElement(ListPlus),
-      disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
+    if (recovery?.destination === "Lectern") actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership",
+      menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(ListPlus), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+      invoke: recovery.invoke });
+    else actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", menuLabel: "add to lectern", accessibleLabel: `add to lectern: ${title}`, icon: createElement(ListPlus),
+      disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding && recovery === null,
       invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
-  if (kind === "podcast_episode" && mediaId === null) actions.push({
-    controlKey: "AddEpisodeToAll", hasPopup: null, id: "AddEpisodeToAll", menuLabel: "add to all", accessibleLabel: `add to all: ${title}`, icon: createElement(ListPlus),
-    disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
-    invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "All" }, null); },
-  });
-  actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: "manage libraries", accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library), disabled: holding || disconnected,
-    disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
+  if (kind === "podcast_episode" && mediaId === null) {
+    const heldRecovery = recovery?.destination === "All" ? recovery : null;
+    const label = heldRecovery?.label ?? "add to all";
+    actions.push({ controlKey: "AddEpisodeToAll", hasPopup: null, id: "AddEpisodeToAll", menuLabel: label,
+      accessibleLabel: `${label}: ${title}`, icon: createElement(ListPlus),
+      disabled: disconnected || holding && heldRecovery === null,
+      disabledReason: disconnected ? "requires a connection" : holding && heldRecovery === null ? heldReason : null,
+      busy: holding && heldRecovery === null,
+      invoke: () => {
+        if (heldRecovery) { heldRecovery.invoke(); return; }
+        if (subject.kind === "External" && !holding && (!installedApp || remoteReady()))
+          ctx.mediaContinuations.start(subject, { kind: "All" }, null);
+      },
+    });
+  }
+  if (recovery?.destination === "Library") actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement",
+    menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(Library), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+    invoke: recovery.invoke });
+  // A failed library creation keeps "manage libraries" open: its editor holds the retry.
+  else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: "manage libraries", accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library),
+    disabled: holding && !creationFailed || disconnected,
+    disabledReason: disconnected ? "requires a connection" : holding && !creationFailed ? heldReason : null, busy: holding && !creationFailed && recovery === null,
     invoke: ({ trigger, returnFocus }) => {
-      if (holding || installedApp && !remoteReady()) return;
+      if (holding && !creationFailed || installedApp && !remoteReady()) return;
       const options = { anchor: () => trigger, returnFocusFallback: returnFocus };
       if (mediaId !== null) placement.openLibraryPlacement([{ kind: "Media", id: mediaId }], options);
-      else if (subject.kind === "External") placement.openExternalLibraryPlacement({ target: subject.target, pending: holding,
+      else if (subject.kind === "External") placement.openExternalLibraryPlacement({ target: subject.target, pending: holding && !creationFailed,
         choose: (library, sessionKey) => ctx.mediaContinuations.start(subject, { kind: "Library", library }, sessionKey),
       }, options);
     },

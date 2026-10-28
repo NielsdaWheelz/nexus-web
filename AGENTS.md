@@ -18,19 +18,21 @@ Binding owner decisions for every new or changed line.
   between releases: the first change merged after a release that breaks that
   release's clients bumps it; later breaking changes before the next release
   ride that bump.
-- **Writes.** No replay ledger and no `client_mutation_id`. A create takes a
-  client-minted uuid (`INSERT … ON CONFLICT (id) DO NOTHING`; an id held by
-  another user is 409). An update sets absolute values and carries an expected
-  version, so a retry that already landed sees current = desired. A delete is
-  idempotent. Ingest dedupes by source. Each write's module doc states its retry
-  rule.
-- **server reads (web).** `useServerValue`, `useServerList`, `usePagePrefix` and
-  `apiFetch`. browser storage may hold per-viewer conveniences, never authored
-  writing or pending writes. clean server data and unfinished writing stay in
-  their account-scoped memory owners. ordinary notes autosave; passage notes
-  save explicitly. `WorkGuard` protects unacknowledged autosave and other real
-  loss; automatic reload also waits for submitted writes. there is no writing
-  recovery, durable outbox or persistent corpus replica.
+- **writes.** server-owned writes retain client uuid create, absolute versioned
+  update and idempotent delete rules; no replay ledger or `client_mutation_id`.
+  authored commands instead commit one immutable causal change locally and retry
+  the same source sequence and bytes. the account head lock commits shared-node
+  merge, relational projections, feed and accepted source prefix together.
+- **authored storage.** `node/authored` owns grammar, merge, commands and queries.
+  firefox's account-scoped sqlite shared worker and android's serialized bundled
+  sqlite store own durable authored writing, pending changes and catch-up cursors.
+  local queries remain authoritative online. server relational authored rows are
+  projections, never independent writers. ordinary notes and attached annotation
+  notes autosave locally; the annotation creation composer saves explicitly.
+  `WorkGuard` protects uncommitted writing, never already committed pending sync.
+  `useServerValue`, `useServerList`, `usePagePrefix` and `apiFetch` remain for
+  server-owned domains. no memory fifo, persistent corpus fallback, activity or
+  global recovery inventory.
 - **Hard cutover.** No compatibility arms, legacy readers or fallbacks. A schema
   change is one alembic migration after head; it states its data effects and
   raises on data it cannot convert.

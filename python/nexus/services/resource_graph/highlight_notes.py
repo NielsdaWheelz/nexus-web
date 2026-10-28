@@ -1,77 +1,91 @@
-"""Highlight ↔ note projections over the viewer's ``origin='highlight_note'`` edges."""
+"""Highlight ↔ note adjacency over the viewer's live authored links.
+
+Any live authored link between a highlight and a note attaches that note: there is no
+singleton annotation slot and no attachment origin. A highlight lists its notes in its
+own endpoint order (fractional position, byte-ordered, then link id); a note's excerpt
+is its first readable highlight in the note's endpoint order.
+"""
 
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import highlight_readability_filter
-from nexus.db.models import Highlight, NoteBlock, ResourceEdge
+from nexus.auth.permissions import highlight_readability_sql
+from nexus.db.models import NoteBlock
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 
-
-def _attachments(viewer_id: UUID) -> list[ColumnElement[bool]]:
-    return [
-        ResourceEdge.user_id == viewer_id,
-        ResourceEdge.origin == "highlight_note",
-        ResourceEdge.source_scheme == "highlight",
-        ResourceEdge.target_scheme == "note_block",
-    ]
+# (link, the endpoint ordering it, its far end, that endpoint's position); a link may
+# store either direction. Callers order by ``_ORDER``.
+_ADJACENT = f"""
+    SELECT e.id AS link_id,
+        CASE WHEN e.source_scheme = :near THEN e.source_id ELSE e.target_id END AS near_id,
+        CASE WHEN e.source_scheme = :near THEN e.target_id ELSE e.source_id END AS far_id,
+        (SELECT place.order_key FROM resource_view_states place
+         WHERE place.edge_id = e.id AND place.user_id = :viewer_id
+           AND place.surface_scheme = :near
+           AND place.surface_id = CASE WHEN e.source_scheme = :near
+               THEN e.source_id ELSE e.target_id END) AS position_key
+    FROM resource_edges e
+    WHERE e.user_id = :viewer_id AND e.origin = ANY(:origins) AND {edge_live_sql("e")}
+      AND ((e.source_scheme = :near AND e.source_id = ANY(:ids) AND e.target_scheme = :far)
+        OR (e.target_scheme = :near AND e.target_id = ANY(:ids) AND e.source_scheme = :far))
+"""
+_ORDER = 'adjacent.near_id, adjacent.position_key COLLATE "C" NULLS LAST, adjacent.link_id'
 
 
 def linked_note_blocks_for_highlights(
     db: Session, viewer_id: UUID, highlight_ids: list[UUID]
-) -> dict[UUID, list[NoteBlock]]:
-    """Attached notes per highlight, ordered by attachment creation, edge id, then note id."""
+) -> dict[UUID, list[tuple[UUID, NoteBlock]]]:
+    """Each highlight's attached visible notes with their link ids, in highlight order."""
     if not highlight_ids:
         return {}
     rows = db.execute(
-        select(ResourceEdge.source_id, NoteBlock)
-        .join(NoteBlock, ResourceEdge.target_id == NoteBlock.id)
-        .where(
-            *_attachments(viewer_id),
-            ResourceEdge.source_id.in_(highlight_ids),
-            NoteBlock.user_id == viewer_id,
-        )
-        .order_by(ResourceEdge.source_id, ResourceEdge.created_at, ResourceEdge.id, NoteBlock.id)
+        text(f"SELECT * FROM ({_ADJACENT}) adjacent ORDER BY {_ORDER}"),
+        {
+            "viewer_id": viewer_id,
+            "origins": list(AUTHORED_LINK_ORIGINS),
+            "near": "highlight",
+            "far": "note_block",
+            "ids": highlight_ids,
+        },
     ).all()
-    result: dict[UUID, list[NoteBlock]] = {}
-    for highlight_id, block in rows:
-        result.setdefault(highlight_id, []).append(block)
-    return result
-
-
-def note_blocks_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[NoteBlock]:
-    """All attached notes of one highlight, oldest attachment first."""
-    return list(
-        db.scalars(
-            select(NoteBlock)
-            .join(ResourceEdge, ResourceEdge.target_id == NoteBlock.id)
-            .where(
-                *_attachments(viewer_id),
-                ResourceEdge.source_id == highlight_id,
-                NoteBlock.user_id == viewer_id,
+    notes = {
+        note.id: note
+        for note in db.scalars(
+            select(NoteBlock).where(
+                NoteBlock.id.in_([row.far_id for row in rows]), NoteBlock.user_id == viewer_id
             )
-            .order_by(ResourceEdge.created_at, ResourceEdge.id, NoteBlock.id)
         )
-    )
+    }
+    result: dict[UUID, list[tuple[UUID, NoteBlock]]] = {}
+    for row in rows:
+        note = notes.get(row.far_id)
+        if note is not None:
+            result.setdefault(row.near_id, []).append((row.link_id, note))
+    return result
 
 
 def highlight_excerpts_for_note_blocks(
     db: Session, viewer_id: UUID, note_ids: list[UUID]
 ) -> dict[UUID, str]:
-    """The first readable attached highlight's exact text per note block."""
+    """The first readable attached highlight's exact text per note, in note order."""
     if not note_ids:
         return {}
     excerpts: dict[UUID, str] = {}
-    for note_id, exact in db.execute(
-        select(ResourceEdge.target_id, Highlight.exact)
-        .join(Highlight, Highlight.id == ResourceEdge.source_id)
-        .where(
-            *_attachments(viewer_id),
-            ResourceEdge.target_id.in_(note_ids),
-            highlight_readability_filter(viewer_id),
-        )
-        .order_by(ResourceEdge.created_at, ResourceEdge.id)
+    for row in db.execute(
+        text(f"""
+            SELECT adjacent.near_id, h.exact FROM ({_ADJACENT}) adjacent
+            JOIN highlights h ON h.id = adjacent.far_id AND {highlight_readability_sql("h")}
+            ORDER BY {_ORDER}
+        """),
+        {
+            "viewer_id": viewer_id,
+            "origins": list(AUTHORED_LINK_ORIGINS),
+            "near": "note_block",
+            "far": "highlight",
+            "ids": note_ids,
+        },
     ):
-        excerpts.setdefault(note_id, str(exact or ""))
+        excerpts.setdefault(row.near_id, str(row.exact or ""))
     return excerpts

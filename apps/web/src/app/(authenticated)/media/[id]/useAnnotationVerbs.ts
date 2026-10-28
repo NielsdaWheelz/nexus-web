@@ -1,13 +1,12 @@
 "use client";
 
 // What a reader does with a selection or a mark. A selection is not yet a
-// resource: highlight, note and share create its highlight first
-// and continue with it; Link creates nothing until a target is confirmed.
+// resource: highlight, note and share create a new independent highlight and
+// continue with it; overlapping or identical extents never reuse another one.
 // Mobile observations remain provisional: only explicit frozen-capture commands
-// prepare authoring. A quiet range owns no draft, journal or chat destination.
-// A mark's verbs arrive as this pane visit's entry, claimed once its marks load.
-// An unresolved quote enters the same bounds session from its evidence row;
-// relocation keeps its owner, quote and note, with the mounted generation fenced.
+// prepare authoring. A mark's verbs arrive as this pane visit's entry, claimed
+// once its marks load. Resizing and relocation replace one highlight's whole
+// selection capture locally; its identity, colour and notes stay.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -21,7 +20,13 @@ import {
   type SelectionCapture,
   type SelectionNotice,
 } from "@/lib/documentReader/DocumentReader";
+import { captureSelection, recolorHighlight, resizeHighlight, type SourceLabel } from "@/lib/documentReader/annotations";
+import { deleteResource } from "@/lib/resourceGraph/links";
 import type { HighlightColor } from "@/lib/documentReader/model";
+
+import { useWritingRuntime } from "@/lib/notes/hooks";
+import { LocalCommitError } from "@/lib/notes/runtime";
+import { normalizeQuote } from "@nexus/authored/identity";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -29,7 +34,7 @@ import { resourceShareTarget } from "@/lib/sharing/targets";
 import { useOverlay } from "@/lib/ui/overlay";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
-import type { AnnotationStore } from "./annotations";
+import type { MediaAnnotations } from "./annotations";
 import { samePassage } from "./selectionDrafts";
 
 const MOBILE_SELECTION_QUIET_MS = 250;
@@ -37,17 +42,14 @@ const MOBILE_SELECTION_QUIET_MS = 250;
 export interface MobileSelection {
   readonly id: string;
   readonly capture: SelectionCapture;
-  readonly highlightId: string | null;
 }
 
 interface BoundsSession {
   readonly id: string;
   readonly highlightId: string;
-  readonly mediaId: string;
   readonly identity: string;
-  /** null relocates an unresolved quote within its original canonical media. */
-  readonly unit: string | null;
-  readonly version: string;
+  /** Where the new extent must fall: its text section, its pdf page, or (relocation) anywhere matching its quote. */
+  readonly scope: { readonly kind: "unit"; readonly unit: string } | { readonly kind: "page"; readonly page: number } | { readonly kind: "quote" };
   readonly phase: "Selecting" | "Submitting";
   readonly issue: string | null;
 }
@@ -60,11 +62,12 @@ export interface AnnotationVerbs {
   readonly hovered: string | null;
   /** Being recoloured from its menu. */
   readonly recolouring: string | null;
-  /** A highlight whose note the Evidence row edits. */
-  readonly noteEdit: { readonly kind: "highlight" | "link"; readonly id: string; readonly request: number } | null;
+  /** A highlight whose attached notes the Evidence row should focus. */
+  readonly noteEdit: { readonly id: string; readonly request: number } | null;
   readonly selectionIssue: string | null;
   readonly bounds: BoundsSession | null;
   cancelBounds(): void;
+  editBounds(id: string): void;
   relocate(id: string): void;
   readonly mobileSelection: MobileSelection | null;
   readonly selectionVisible: boolean;
@@ -86,19 +89,23 @@ export interface AnnotationVerbs {
   chooseMark(id: string): void;
   closeMenu(): void;
   recolour(color: HighlightColor | null): void;
+  remove(id: string): void;
   closeNoteEdit(): void;
 }
 
 export function useAnnotationVerbs(input: {
   readonly reader: Reader;
+  readonly mediaId: string;
+  readonly sourceLabel: (sourceRef: string) => SourceLabel | null;
   readonly active: boolean;
   readonly isMobile: boolean;
-  readonly store: AnnotationStore;
+  readonly store: MediaAnnotations;
   /** The marks mounted in the reader; pane entries wait for their first load. */
   readonly marks: readonly Mark[] | null;
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
-  const { reader, active, isMobile, store, marks, openEvidence } = input;
+  const { reader, mediaId, sourceLabel, active, isMobile, store, marks, openEvidence } = input;
+  const writing = useWritingRuntime();
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const { closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
@@ -132,7 +139,7 @@ export function useAnnotationVerbs(input: {
     candidate.current = null; activation.current = null; inputHeld.current = false;
     setMobileSelection(null); setSelectionVisible(false);
   }, [clearQuiet]);
-  // Admission changes synchronously, before another source event or queue completion.
+  // Admission changes synchronously, before another source event or commit completion.
   const showBounds = useCallback((next: BoundsSession | null) => { currentBounds.current = next; setBounds(next); }, []);
   const cancelBounds = useCallback(() => {
     if (currentBounds.current?.phase !== "Selecting") return;
@@ -165,25 +172,18 @@ export function useAnnotationVerbs(input: {
   const fail = useCallback(
     (error: unknown, title: string) => {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-      setNotice({ tone: "Danger", title, requestId: error.requestId });
+      // an uncommitted local frame is retried from the pane's writing error notice.
+      if (error instanceof LocalCommitError) return;
+      if (isApiError(error) && isSameSystemApiDefect(error)) return setDefect({ error });
+      // any other local failure committed nothing: say so and keep the reader usable.
+      setNotice(isApiError(error) ? { tone: "Danger", title, requestId: error.requestId } : { tone: "Danger", title, message: "nothing was saved. try again." });
     },
     [],
   );
 
-  const composer = useSelectionComposer({ reader, annotations: store, active, isMobile, onError: fail });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
-  const recolouringHighlight = colour ? store.highlight(colour) : null;
-  useEffect(() => {
-    const shown = candidate.current;
-    if (!shown) return;
-    const highlightId = store.twin(shown.capture.anchor);
-    if (highlightId === shown.highlightId) return;
-    if (activation.current) return retireSelection();
-    const next = { ...shown, highlightId };
-    candidate.current = next; setMobileSelection(next);
-  }, [marks, store, retireSelection]);
 
   const currentSource = (capture: SelectionCapture) => {
     const shown = reader.getState().document;
@@ -197,9 +197,8 @@ export function useAnnotationVerbs(input: {
   const observeSelection = (capture: SelectionCapture, held: boolean) => {
     clearQuiet(); setSelectionVisible(false);
     const previous = candidate.current;
-    const highlightId = store.twin(capture.anchor);
-    const next = previous && samePassage(previous.capture, capture) && previous.capture.quote === capture.quote && previous.highlightId === highlightId
-      ? previous : { id: previous?.id ?? createRandomId(), capture, highlightId };
+    const next = previous && samePassage(previous.capture, capture) && previous.capture.quote === capture.quote
+      ? previous : { id: previous?.id ?? createRandomId(), capture };
     candidate.current = next; setMobileSelection(next);
     if (held) return;
     quietTimer.current = setTimeout(() => {
@@ -207,9 +206,9 @@ export function useAnnotationVerbs(input: {
       if (candidate.current?.id !== next.id || inputHeld.current || !currentSource(next.capture)) return;
       const fresh = reader.captureSelection();
       if (!fresh || fresh.kind !== "Captured" || !currentSource(fresh) || !reader.measurePassage(fresh)) return retireSelection();
-      const latest = candidate.current, saved = store.twin(fresh.anchor);
-      const revealed = latest && samePassage(latest.capture, fresh) && latest.capture.quote === fresh.quote && latest.highlightId === saved
-        ? latest : { id: next.id, capture: fresh, highlightId: saved };
+      const latest = candidate.current;
+      const revealed = latest && samePassage(latest.capture, fresh) && latest.capture.quote === fresh.quote
+        ? latest : { id: next.id, capture: fresh };
       candidate.current = revealed; setMobileSelection(revealed); setSelectionVisible(true);
     }, MOBILE_SELECTION_QUIET_MS);
   };
@@ -218,51 +217,65 @@ export function useAnnotationVerbs(input: {
     setSelectionIssue(next.reason === "CrossUnit" ? (shown.status === "ready" && shown.doc.kind === "text" && shown.doc.units.some(unit => unit.xPost !== null)
       ? "select text within one post" : "select within one text section.") : "select within one pdf page.");
   };
-  const validBounds = (session: BoundsSession, next: SelectionEvent): next is SelectionCapture & { anchor: Extract<SelectionCapture["anchor"], { kind: "text" }> } => {
-    if (next.kind === "Rejected" || next.anchor.kind !== "text" || session.identity !== next.identity ||
-      (session.unit !== null && next.anchor.unit !== session.unit) || store.source(next.anchor).mediaId !== session.mediaId) {
-      showBounds({ ...session, issue: session.unit === null
-        ? "select matching text within the highlight’s original document."
-        : "select within the same text section as this highlight." });
-      return false;
-    }
-    return true;
+  /** The new extent's exact capture, when it may replace this highlight's selection. */
+  const boundsCapture = (session: BoundsSession, next: SelectionEvent) => {
+    const annotation = store.annotation(session.highlightId);
+    const shown = reader.getState().document;
+    const capture = next.kind === "Captured" && annotation && shown.status === "ready" && shown.doc.identity === next.identity
+      ? captureSelection(shown.doc, mediaId, next.anchor) : null;
+    const scope = session.scope;
+    const fits = next.kind === "Captured" && capture !== null && capture.sourceRef === annotation?.sourceRef && session.identity === next.identity && (
+      scope.kind === "unit" ? next.anchor.kind === "text" && next.anchor.unit === scope.unit
+        : scope.kind === "page" ? next.anchor.kind === "pdf" && next.anchor.page === scope.page
+          : normalizeQuote(capture.selection.quote_exact) === normalizeQuote(annotation.selection.quote_exact));
+    if (fits) return { annotation: annotation!, capture: capture! };
+    showBounds({ ...session, issue: scope.kind === "quote"
+      ? "select text matching the original quote. the quote and note will stay unchanged."
+      : scope.kind === "page" ? "select within the same pdf page as this highlight." : "select within the same text section as this highlight." });
+    return null;
   };
   const applyBounds = (session: BoundsSession, next: SelectionEvent) => {
-    if (!validBounds(session, next)) return;
+    const admitted = boundsCapture(session, next);
+    if (!admitted || !writing) return;
+    // relocation moves the location only: the saved literal quote stays exactly as written.
+    const capture = session.scope.kind === "quote"
+      ? { ...admitted.capture, selection: { ...admitted.capture.selection, quote_exact: admitted.annotation.selection.quote_exact } } : admitted.capture;
     const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
     showBounds(submitted);
-    const owns = () => {
-      const shown = reader.getState().document;
-      return activeRef.current && currentBounds.current?.id === submitted.id &&
-        shown.status === "ready" && shown.doc.identity === submitted.identity;
-    };
-    void store.rebound(submitted.highlightId, next.anchor, submitted.version).then(
+    const owns = () => activeRef.current && currentBounds.current?.id === submitted.id;
+    void resizeHighlight(writing, admitted.annotation, capture).then(
       () => { if (owns()) showBounds(null); },
-      (error: unknown) => {
-        if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
-          if (owns()) { showBounds(null); setSelectionIssue("this post changed. select the passage again."); }
-          reader.reload();
-        } else if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
-          if (error.details?.reason === "quote_mismatch") {
-            if (owns()) showBounds({ ...submitted, phase: "Selecting",
-              issue: "select text matching the original quote. the quote and note will stay unchanged." });
-          } else if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
-            store.refresh();
-            if (owns()) { showBounds(null); setSelectionIssue("this highlight changed. start again from its evidence row."); }
-          } else if (owns()) showBounds({ ...submitted, phase: "Selecting",
-            issue: "a highlight already covers that passage. select another passage or cancel." });
-        } else {
-          if (owns()) showBounds(null);
-          fail(error, "Highlight wasn’t changed");
-        }
-      },
+      (error: unknown) => { if (owns()) showBounds(null); fail(error, "highlight wasn’t changed"); },
     );
   };
   const ensureSelection = async (subject: MobileSelection) => {
     const result = await composer.ensureCapture(subject.capture);
     return result ? { id: result.id, isCurrent: () => selectionCurrent(subject) && result.isCurrent() } : null;
   };
+  const startBounds = useCallback((id: string, scope: BoundsSession["scope"]) => {
+    if (!publication) return;
+    retireSelection();
+    composer.dismiss();
+    setMenu(null);
+    setSelectionIssue(null);
+    showBounds({ id: createRandomId(), highlightId: id, identity: publication, scope, phase: "Selecting", issue: null });
+    setFocused(id);
+    reader.focusSource();
+  }, [composer, publication, reader, retireSelection, showBounds]);
+  const editBounds = useCallback((id: string) => {
+    const annotation = store.annotation(id);
+    if (annotation?.placement.kind !== "placed") { setNotice({ tone: "Neutral", title: "this highlight isn’t shown in this version" }); return; }
+    const anchor = annotation.placement.anchor;
+    startBounds(id, anchor.kind === "text" ? { kind: "unit", unit: anchor.unit } : { kind: "page", page: anchor.page });
+  }, [startBounds, store]);
+  const remove = useCallback((id: string) => {
+    const annotation = store.annotation(id);
+    if (!annotation || !writing) return;
+    void deleteResource(writing, { ref: annotation.ref }).then(
+      () => { setFocused((current) => current === id ? null : current); highlightDeleted(id); },
+      (error: unknown) => fail(error, "highlight wasn’t deleted"),
+    );
+  }, [fail, highlightDeleted, store, writing]);
 
   // Resource actions target this visit; no other mounted reader may consume them.
   const { delivery, claim } = usePaneEntryDelivery();
@@ -271,9 +284,7 @@ export function useAnnotationVerbs(input: {
     if (!claim(delivery)) return;
     const { entry } = delivery;
     const id = entry.highlightId;
-    const mark = marks.find((candidate) => candidate.id === id);
-    const inform = (title: string) => setNotice({ tone: "Neutral", title });
-    if (!mark) return inform("this highlight is no longer available");
+    if (!store.annotation(id)) return setNotice({ tone: "Neutral", title: "this highlight is no longer available" });
     retireSelection();
     setNotice(null);
     setColour(null);
@@ -284,33 +295,16 @@ export function useAnnotationVerbs(input: {
       case "EditHighlight":
         return setColour(id);
       case "EditHighlightNote":
-        setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
+        setNoteEdit((current) => ({ id, request: (current?.request ?? 0) + 1 }));
         return openEvidence(id);
-      case "EditHighlightBounds": {
-        if (mark.anchor.kind !== "text") return inform("this highlight’s bounds can’t be edited");
-        const highlight = store.highlight(id);
-        if (!highlight || !publication) return inform("this highlight is no longer available");
-        composer.dismiss();
-        showBounds({ id: createRandomId(), highlightId: id, mediaId: highlight.mediaId, identity: publication, unit: mark.anchor.unit,
-          version: highlight.version, phase: "Selecting", issue: null });
-        setFocused(id);
-        return reader.focusSource();
-      }
+      case "EditHighlightBounds":
+        return editBounds(id);
       case "DeleteHighlight":
-        void store.remove(id).then(
-          () => {
-            setFocused((current) => current === id ? null : current);
-            highlightDeleted(id);
-          },
-          (error: unknown) => fail(error, "Highlight wasn’t deleted"),
-        );
+        return remove(id);
     }
-  }, [claim, composer, delivery, fail, highlightDeleted, marks, openEvidence, publication, reader, retireSelection, showBounds, store]);
+  }, [claim, delivery, editBounds, marks, openEvidence, remove, retireSelection, showBounds, store]);
 
-  const closeNoteEdit = useCallback(() => {
-    setNoteEdit(null);
-    store.refresh();
-  }, [store]);
+  const closeNoteEdit = useCallback(() => setNoteEdit(null), []);
 
   if (defect) throw defect.error;
   return {
@@ -324,6 +318,8 @@ export function useAnnotationVerbs(input: {
     selectionIssue,
     bounds,
     cancelBounds,
+    editBounds,
+    remove,
     mobileSelection,
     selectionVisible: active && isMobile && selectionVisible,
     captureSelection() {
@@ -334,10 +330,8 @@ export function useAnnotationVerbs(input: {
       if (!samePassage(shown.capture, fresh) || shown.capture.quote !== fresh.quote) {
         activation.current = null; observeSelection(fresh, inputHeld.current); return null;
       }
-      const highlightId = store.twin(fresh.anchor);
-      const captured = highlightId === shown.highlightId ? shown : { ...shown, highlightId };
-      clearQuiet(); candidate.current = captured; activation.current = captured; setMobileSelection(captured);
-      return captured;
+      clearQuiet(); candidate.current = shown; activation.current = shown; setMobileSelection(shown);
+      return shown;
     },
     ownSelectionFocus(subject) {
       if (candidate.current !== subject || !selectionVisible || inputHeld.current || !currentSource(subject.capture)) return false;
@@ -361,7 +355,7 @@ export function useAnnotationVerbs(input: {
       consumeSelection(); composer.compose(subject.capture, mode);
     },
     highlightSelection(subject, color) {
-      if (!selectionCurrent(subject) || subject.highlightId && store.highlight(subject.highlightId)?.color === color) return;
+      if (!selectionCurrent(subject)) return;
       consumeSelection(); void composer.highlightCapture(subject.capture, color);
     },
     shareSelection(subject, trigger) {
@@ -379,23 +373,13 @@ export function useAnnotationVerbs(input: {
     },
     relocate(id) {
       const document = reader.getState().document;
-      const map = store.getState().map;
-      const highlight = store.highlight(id);
-      if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" ||
-        map.status !== "ready" || map.data.identity !== document.doc.identity || !highlight?.is_owner ||
-        !map.data.evidence.roots.some((root) => root.resolution?.kind === "Unavailable" &&
-          root.content.kind === "Highlight" && root.content.highlight_id === id)) {
-        setNotice({ tone: "Neutral", title: "refresh this highlight before relocating it." });
+      const annotation = store.annotation(id);
+      if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" || annotation?.placement.kind !== "unlocated") {
+        setNotice({ tone: "Neutral", title: "open this highlight’s source text before relocating it." });
         return;
       }
-      retireSelection();
-      composer.dismiss();
-      setMenu(null);
-      setSelectionIssue(null);
-      showBounds({ id: createRandomId(), highlightId: id, mediaId: highlight.mediaId, identity: document.doc.identity,
-        unit: null, version: highlight.version, phase: "Selecting", issue: null });
+      startBounds(id, { kind: "quote" });
       closeSecondaryPane({ restoreFocus: false });
-      reader.focusSource();
     },
     onSelection(notice) {
       if (!isMobile && notice.kind === "Observed") return;
@@ -422,11 +406,11 @@ export function useAnnotationVerbs(input: {
         setSelectionIssue(null);
         if (next.kind === "Rejected") {
           retireSelection();
-          if (session?.phase === "Selecting") validBounds(session, next); else rejectedSelection(next);
+          if (session?.phase === "Selecting") boundsCapture(session, next); else rejectedSelection(next);
           return;
         }
         if (session?.phase === "Selecting") {
-          if (!validBounds(session, next)) { retireSelection(); return; }
+          if (!boundsCapture(session, next)) { retireSelection(); return; }
           if (session.issue) showBounds({ ...session, issue: null });
         }
         observeSelection(next, held);
@@ -446,8 +430,11 @@ export function useAnnotationVerbs(input: {
       showBounds(null);
       setSelectionIssue(null);
       setFocused(event.marks[0]?.id ?? null);
-      if (event.marks.length > 1) setMenu(event);
-      else if (event.marks[0]) composer.activate(event.marks[0], event.identity, event.input !== "touch");
+      const only = event.marks.length === 1 ? event.marks[0] : null;
+      if (!only) { if (event.marks.length) setMenu(event); return; }
+      // library members' highlights are read-only server evidence.
+      if (store.annotation(only.id)) composer.activate(only, event.identity, event.input !== "touch");
+      else openEvidence(only.id);
     },
     highlight: (color) => composer.highlight(color),
     share(trigger) {
@@ -459,18 +446,19 @@ export function useAnnotationVerbs(input: {
     hover: setHovered,
     chooseMark(id) {
       const mark = menu?.marks.find((entry) => entry.id === id);
-      if (mark && menu) composer.activate(mark, menu.identity, menu.input !== "touch");
+      if (mark && menu) {
+        if (store.annotation(id)) composer.activate(mark, menu.identity, menu.input !== "touch");
+        else openEvidence(id);
+      }
       setMenu(null);
     },
     closeMenu: () => setMenu(null),
     recolour(color) {
       const id = colour;
       setColour(null);
-      if (!id || !color || !recolouringHighlight) return;
-      void store.recolor(id, color, recolouringHighlight.version).catch((error: unknown) => {
-        if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") store.refresh();
-        fail(error, "Highlight wasn’t changed");
-      });
+      const annotation = id ? store.annotation(id) : null;
+      if (!annotation || !color || !writing) return;
+      void recolorHighlight(writing, annotation, color).catch((error: unknown) => fail(error, "highlight wasn’t changed"));
     },
     closeNoteEdit,
   };

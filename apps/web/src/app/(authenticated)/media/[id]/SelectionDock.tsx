@@ -1,37 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
-import { ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, Save, Share2, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, MessageCircle, MessagesSquare, Move, NotebookPen, Save, Share2, Trash2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContextValue } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
-import { TextComparison, copyWriting } from "@/components/notes/NoteNotices";
-import ResourceBody from "@/components/resources/ResourceBody";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
-import { useResourceActions } from "@/lib/actions/useResourceActions";
-import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
+import { AttachedNotes, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
+import { copyText } from "@/lib/ui/copyText";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { usesMeta } from "@/lib/shortcuts";
-import { prepareActionSelect, type ActionDescriptor, type ActionSelectDetail, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
-import { copyText } from "@/lib/ui/copyText";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import type { AnnotationStore } from "./annotations";
+import { convertReaderQuestion } from "@nexus/authored/markdown";
+import { bodyHasContent } from "@nexus/authored/body";
+import type { MediaAnnotations } from "./annotations";
 import type { AnnotationVerbs, MobileSelection } from "./useAnnotationVerbs";
 import HighlightColourPicker, { Colours, HighlightButton } from "./HighlightColourPicker";
-import { canRetryWriting } from "@/lib/notes/writes";
-import { convertReaderQuestion } from "@/lib/chat/readerQuestion";
-import { isEmptyParagraph } from "./selectionDrafts";
 import styles from "./media.module.css";
 
-const COMPOSER_ACTIONS = new Set(["Chat", "HighlightNote", "EditHighlight"]);
+
+function copy(feedback: FeedbackContextValue, text: string, title: string) {
+  void copyText(text).catch(() => feedback.receipt({ tone: "Danger", title }));
+}
 
 type SelectionActionPresentation =
   | { readonly action: Extract<ActionDescriptor, { kind: "command" }>; readonly unavailable?: never }
@@ -65,7 +64,7 @@ function SelectionAction({ action, unavailable, help, busy, buttonRef }: Selecti
   </>;
 }
 
-/** The native invoker survives ensure and fact loading; only capability absence removes it. */
+/** The native invoker survives ensure; only capability absence removes it. */
 function SelectionShare({ returnFocus, ...props }: SelectionActionPresentation & {
   readonly help: string;
   readonly busy: boolean;
@@ -77,21 +76,18 @@ function SelectionShare({ returnFocus, ...props }: SelectionActionPresentation &
 }
 
 /** A press freezes one source capture; only its native click may execute it. */
-function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: {
+function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
   readonly verbs: AnnotationVerbs;
   readonly reader: Reader;
-  readonly store: AnnotationStore;
   readonly canQuote: boolean;
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
   const feedback = useFeedback();
-  const authoringReason = verbs.composer.paused ? "writing is paused." : null;
   const ownerId = useId();
   const row = useRef<HTMLDivElement | null>(null);
   const menuTrigger = useRef<HTMLButtonElement | null>(null);
   const [menuSubject, setMenuSubject] = useState<MobileSelection | null>(null);
   const subject = menuSubject && verbs.selectionCurrent(menuSubject) ? menuSubject : verbs.mobileSelection;
-  const highlight = subject?.highlightId ? store.highlight(subject.highlightId) : null;
   const current = useRef(verbs);
   current.current = verbs;
   const press = useRef<{
@@ -100,7 +96,6 @@ function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: 
   const focus = useRef<{ subject: MobileSelection; control: HTMLButtonElement } | null>(null);
   const transfer = useRef<MobileSelection | null>(null);
   const menuCommand = useRef<MobileSelection | null>(null);
-  const { state, prepare } = useResourceActions(subject?.highlightId ? `highlight:${subject.highlightId}` : null);
   const anchor = useCallback(() => subject ? reader.measurePassage(subject.capture) : null, [reader, subject]);
   const cancelPress = useCallback(() => {
     press.current = null;
@@ -190,58 +185,28 @@ function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: 
     command(captured);
   };
   const content = (captured: MobileSelection): MenuContent => {
-    const highlight = captured.highlightId ? store.highlight(captured.highlightId) : null;
     const options: ActionDescriptor[] = [
       { kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />,
-        onSelect: () => {
-          if (!verbs.selectionCurrent(captured)) return;
-          void copyText(captured.capture.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite",
-            content: { tone: "Danger", title: "passage couldn’t be copied" } }));
-        } },
+        onSelect: () => { if (verbs.selectionCurrent(captured)) copy(feedback, captured.capture.quote, "passage couldn’t be copied"); } },
       { kind: "custom", id: "HighlightColours", label: "highlight colour", render: ({ closeMenu }) => (
-        <Colours selected={highlight?.color ?? "yellow"} persisted={captured.highlightId !== null} disabledReason={authoringReason} size="comfortable"
+        <Colours selected={null} persisted={false} size="comfortable"
           onSelect={(color) => { closeMenu(); menuCommand.current = captured; verbs.highlightSelection(captured, color); }} />
       ) },
+      sharePiece === null
+        ? { kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
+          onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } }
+        : { kind: "command", id: "SharePiece", label: "share piece", icon: <Share2 size={16} aria-hidden="true" />,
+          onSelect: ({ triggerEl }) => {
+            if (!verbs.selectionCurrent(captured)) return;
+            menuCommand.current = captured;
+            sharePiece(triggerEl);
+          } },
     ];
-    if (captured.highlightId && state?.kind === "Ready") {
-      const guard = (event: MouseEvent | KeyboardEvent) => {
-        if (!verbs.selectionCurrent(captured)) { event.preventDefault(); event.stopPropagation(); }
-      };
-      options.push(...state.options.filter((action) => !COMPOSER_ACTIONS.has(action.id) && !(sharePiece !== null && action.id === "Share")).map((action) => {
-        if (action.kind === "command") return { ...action,
-          onSelect: (detail: ActionSelectDetail) => { if (verbs.selectionCurrent(captured)) action.onSelect(detail); } };
-        if (action.kind === "link") {
-          const onActivate: NonNullable<typeof action.onActivate> = (event) => {
-            if (!verbs.selectionCurrent(captured)) { event.preventDefault(); return "consumed"; }
-            return action.onActivate?.(event) ?? "unhandled";
-          };
-          return { ...action, onActivate };
-        }
-        return { ...action, render: (controls) => <div onClickCapture={guard} onKeyDownCapture={guard}>
-          {action.render(controls)}
-        </div> } satisfies ActionDescriptor;
-      }));
-    } else if (!captured.highlightId && sharePiece === null) options.push(
-      { kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
-        disabled: authoringReason !== null, disabledReason: authoringReason ?? undefined, onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } },
-    );
-    if (sharePiece !== null) options.push({
-      kind: "command", id: "SharePiece", label: "share piece", icon: <Share2 size={16} aria-hidden="true" />,
-      disabled: authoringReason !== null, disabledReason: authoringReason ?? undefined,
-      onSelect: ({ triggerEl }) => {
-        if (!verbs.selectionCurrent(captured)) return;
-        menuCommand.current = captured;
-        sharePiece(triggerEl);
-      },
-    });
     return { sections: [{ id: "Passage", label: null, options }] };
   };
   const source: MenuSource = {
-    subjectKey: subject ? JSON.stringify([subject.id, subject.capture]) : ownerId,
-    title: "passage actions",
-    ...(subject?.highlightId ? { kind: "Prepared" as const, prepare,
-      state: state?.kind === "Ready" ? { kind: "Ready" as const, request: state.request, content: content(subject) } : state }
-      : { kind: "Immediate" as const, content: subject ? content(subject) : { sections: [] } }),
+    kind: "Immediate", subjectKey: subject ? JSON.stringify([subject.id, subject.capture]) : ownerId,
+    title: "passage actions", content: subject ? content(subject) : { sections: [] },
   };
   const confirming = verbs.bounds?.phase === "Selecting" || verbs.composer.reselection !== null;
   return <ActionMenu source={source} label="more passage actions" triggerRef={(node) => { menuTrigger.current = node; }}
@@ -264,23 +229,18 @@ function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: 
         role="group" label={confirming ? "confirm passage selection" : "passage actions"} onDismiss={verbs.dismissSelection}>
         <div ref={row} className={styles.mobileSelectionActions}>
           {confirming ? <>
-            <Button size="comfortable" emphasis="strong" disabled={authoringReason !== null}
-              tooltip={authoringReason ? { text: authoringReason } : undefined} onPointerDown={pointerDown} onKeyDown={keyDown}
+            <Button size="comfortable" emphasis="strong" onPointerDown={pointerDown} onKeyDown={keyDown}
               onFocus={(event) => focusControl(event.currentTarget)} onClick={(event) => activate(event, verbs.applySelection)}>apply selection</Button>
             <Button size="comfortable" onClick={verbs.bounds ? verbs.cancelBounds : verbs.dismissSelection}>cancel</Button>
           </> : <>
-            <HighlightButton selected={highlight?.color ?? "yellow"} persisted={Boolean(subject?.highlightId)}
-              disabledReason={authoringReason} busy={false}
+            {/* every selection becomes a new independent highlight, so the command never shows a persisted colour. */}
+            <HighlightButton selected="yellow" persisted={false} disabledReason={null} busy={false}
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))} />
-            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon}
-              aria-label="open passage note" disabled={authoringReason !== null}
-              tooltip={authoringReason ? { text: `open passage note. ${authoringReason}` } : undefined}
+            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="open passage note"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))} />
-            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon}
-              aria-label="ask about passage" disabled={authoringReason !== null}
-              tooltip={authoringReason ? { text: `ask about passage. ${authoringReason}` } : undefined}
+            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="ask about passage"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))} /> : null}
             <OverflowMenuButton {...trigger} className={styles.selectionIcon} onPointerDown={pointerDown} onKeyDown={keyDown}
@@ -294,7 +254,7 @@ function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: 
 
 export default function SelectionDock({ verbs, store, reader, isMobile, canQuote, returnFocus, sharePiece }: {
   readonly verbs: AnnotationVerbs;
-  readonly store: AnnotationStore;
+  readonly store: MediaAnnotations;
   readonly reader: Reader;
   readonly isMobile: boolean;
   readonly canQuote: boolean;
@@ -305,56 +265,43 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
   const feedback = useFeedback();
-  const { draft, opening } = composer;
+  const { draft, opening, annotation } = composer;
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
   const pickerId = useId();
   const pickerAnchor = useCallback(() => isMobile ? moreTrigger.current : destinationTrigger.current, [isMobile]);
-  const { state: resourceState, prepare } = useResourceActions(draft?.highlightId ? `highlight:${draft.highlightId}` : null);
-  const [actionAttempt, setActionAttempt] = useState(0);
-  useEffect(() => {
-    if (!draft?.highlightId) return;
-    const controller = new AbortController();
-    prepare(controller.signal);
-    return () => controller.abort();
-  }, [draft?.highlightId, prepare, actionAttempt]);
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
-  const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && identity !== null && draft.passage.identity !== identity);
+  const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && draft.highlightId === null && identity !== null && draft.passage.identity !== identity);
   const anchor = useCallback(() => {
     if (!draft) return null;
-    const measured = reader.measurePassage(draft.passage);
+    const passage = annotation?.placement.kind === "placed" ? { identity: draft.passage.identity, anchor: annotation.placement.anchor } : draft.passage;
+    const measured = reader.measurePassage(passage);
     if (measured) return measured;
     const bounds = reader.measureBounds();
     return bounds ? { rect: null, lines: [], bounds } : null;
-  }, [draft, reader]);
+  }, [annotation, draft, reader]);
   const chooserAnchor = useCallback(() => {
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const deleting = draft?.operation?.kind === "Delete";
-  const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
-  const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
-  const map = store.getState().map;
-  const overlapItems = menu && map.status !== "loading" && map.data
-    ? map.data.evidence.roots.map((root) => root.content) : [];
   const renderComposer = (placed: boolean, unavailable: boolean, headerOnly = false) => {
     if (!draft || !opening) return null;
-    const blockedReason = composer.paused ? "writing is paused." : sourceChanged ? "the source changed. your words are kept; select the passage again."
+    const hasNote = bodyHasContent(draft.body);
+    const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
+    const blockedReason = failed ? "retry saving first. your words are kept."
+      : sourceChanged ? "the source changed. your words are kept; select the passage again."
       : draft.chatIssue?.kind === "Passage" || draft.chatIssue?.kind === "Source" ? "select the passage again before saving or sending."
-      : draft.issue?.kind === "Conflict" || draft.issue?.kind === "Deleted" ? "review the saved note or choose a new passage before saving."
-      : draft.load !== "Ready" ? "load your note before using this action."
       : draft.attachmentActive ? "finish or discard the attachment before saving or sending."
       : draft.referenceActive ? (isMobile ? "finish linking before using this action." : "finish linking or press escape to keep this as prose.")
       : draft.operation ? "finish or retry the current request first."
       : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
-    const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
-    const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
     const destination = draft.destination;
     const selected = destination.kind === "Selected" ? destination : null;
     const preparing = draft.chatAttempt?.kind === "Preparing" || draft.operation?.kind === "Chat" || draft.operation?.kind === "Ensure" || (selected?.snapshot.kind === "Loading");
     const sending = composer.ownChatCommand && composer.chatState.kind === "Busy";
-    const continuationBlocked = (selected !== null && selected.snapshot.kind !== "Ready") || (hasMessage && composer.chat?.target.kind === "Blocked");
+    const continuationBlocked = (selected !== null && selected.snapshot.kind !== "Ready") || (hasNote && composer.chat?.target.kind === "Blocked");
+    const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
     const chatLabel = selected ? `${hasMessage ? "send to" : "open in"} “${selected.title}”` : "choose existing chat";
     const chatIssue = draft.chatIssue;
     const commandRecovery = composer.ownChatCommand && (composer.chatState.kind === "Unconfirmed" || composer.chatState.kind === "RefreshRequired") ? composer.chatState : null;
@@ -363,11 +310,13 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
       : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
     const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
-    const command = (id: string, label: string, icon: ActionDescriptor["icon"], onSelect: (detail: ActionSelectDetail) => void, reason: string | null): Extract<ActionDescriptor, { kind: "command" }> => ({
+    const command = (id: string, label: string, icon: ActionDescriptor["icon"], onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });
-    const saveAction = command("SavePassageNote", draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
-      <Save size={16} aria-hidden="true" />, composer.save, blockedReason);
+    // a failed local commit is retried as the same frozen command, never saved again.
+    const saveAction = failed ? command("RetryPassageSave", "retry saving", <Save size={16} aria-hidden="true" />, failed.retry, null)
+      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save note",
+        <Save size={16} aria-hidden="true" />, composer.save, blockedReason ?? (draft.highlightId !== null && !hasNote ? "write a note to add it to this highlight." : null));
     const newLabel = hasMessage ? "send in new chat" : "open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
@@ -375,57 +324,34 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const copyReason = draft.passage.quote.trim().length > 0 ? null : {
-      Loading: "loading passage text…",
-      Failed: "passage text couldn’t be loaded",
-      Ready: "this highlight has no text to copy",
-    }[draft.load];
-    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => {
-      void copyText(draft.passage.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite",
-        content: { tone: "Danger", title: "passage couldn’t be copied" } }));
-    }, copyReason);
-    const shareAction = sharePiece !== null
-      ? { ...command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason), hasPopup: "dialog" as const }
-      : !draft.highlightId
-        ? { ...command("SharePassage", "share passage", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => verbs.share(triggerEl), blockedReason), hasPopup: "dialog" as const }
-        : resourceState?.kind === "Ready"
-          ? resourceState.options.find((action): action is Extract<ActionDescriptor, { kind: "command" }> => action.kind === "command" && action.id === "Share") ?? null
-          : null;
-    const sharePending = sharePiece === null && draft.highlightId !== null && resourceState?.kind !== "Ready";
-    const sharePresentation: SelectionActionPresentation | null = shareAction ? { action: shareAction }
-      : sharePending ? { action: null, unavailable: {
-        id: "Share", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
-        reason: resourceState?.kind === "Failed" ? "open more to retry highlight actions" : "loading highlight actions…",
-        hasPopup: "dialog",
-      } } : null;
+    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"),
+      draft.passage.quote.trim().length > 0 ? null : "this highlight has no text to copy");
+    // sharing a new passage first commits its highlight; an existing one shares as it is.
+    const shareAction = { ...(sharePiece !== null
+      ? command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
+      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "share highlight" : "share passage", <Share2 size={16} aria-hidden="true" />,
+        ({ triggerEl }) => verbs.share(triggerEl), draft.highlightId ? null : blockedReason)), hasPopup: "dialog" as const };
     const options: ActionDescriptor[] = isMobile ? [copyAction] : [];
     if (isMobile) {
       options.push({ kind: "custom", id: "HighlightColours", label: "highlight colours", render: ({ closeMenu }) =>
-        <Colours selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={highlightReason} size="comfortable"
+        <Colours selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} size="comfortable"
           onSelect={(color) => { closeMenu(); verbs.highlight(color); }} /> });
       if (canQuote) {
         if (selected) options.push({ ...existingAction, label: `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` });
         options.push(chooseAction);
       }
+      options.push(shareAction);
     }
     if (draft.highlightId) {
-      if (resourceState?.kind === "Ready") options.push(...resourceState.options.filter((action) => !COMPOSER_ACTIONS.has(action.id) && !((sharePiece !== null || !isMobile) && action.id === "Share")).map((action) =>
-        action.kind === "command" && (action.id === "DeleteHighlight" || action.id === "EditHighlightBounds")
-          ? { ...action, disabled: action.disabled || blockedReason !== null, disabledReason: action.disabledReason ?? blockedReason ?? undefined } : action));
-      else {
-        options.push({ kind: "custom", id: "HighlightActionsFeedback", label: "highlight actions", render: () => resourceState?.kind === "Failed"
-          ? <FeedbackNotice content={resourceState.feedback} announcement="Polite" />
-          : <FeedbackStatus content={{ tone: "Neutral", title: "loading highlight actions…" }} announcement="Polite" /> });
-        if (resourceState?.kind === "Failed") options.push(command("RetryHighlightActions", "retry highlight actions", undefined, () => setActionAttempt((value) => value + 1), null));
-      }
+      const id = draft.highlightId;
+      if (annotation?.placement.kind === "placed") options.push(command("EditHighlightBounds", "edit highlight bounds", <Move size={16} aria-hidden="true" />, () => verbs.editBounds(id), blockedReason));
+      options.push({ ...command("DeleteHighlight", "delete highlight", <Trash2 size={16} aria-hidden="true" />, () => verbs.remove(id), draft.operation ? "finish the current request first." : null), tone: "danger" });
     }
-    if (isMobile && shareAction && (!draft.highlightId || sharePiece !== null)) options.push(shareAction);
-    if (emptyExisting) options.push({ ...command("DeleteEmptyNote", "delete empty note (keep highlight)", <Trash2 size={16} aria-hidden="true" />, composer.deleteNote, blockedReason), tone: "danger" });
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
-      {isMobile ? <HighlightButton selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={highlightReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(highlight?.color ?? "yellow")} />
-        : <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={highlightReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
+      {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
+        : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
       <SelectionAction action={saveAction} help={`${saveAction.label} · enter saves · shift-enter inserts a line`} busy={draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure"} />
       {canQuote ? <>
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} />
@@ -439,9 +365,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       </> : null}
       {!isMobile ? <>
         <SelectionAction action={copyAction} help={copyAction.label} busy={false} buttonRef={copyTrigger} />
-        {sharePresentation ? <SelectionShare {...sharePresentation} help={shareAction?.label ?? "share passage"}
-          busy={sharePiece === null && (draft.operation?.kind === "Ensure" || sharePending && resourceState?.kind !== "Failed")}
-          returnFocus={() => copyTrigger.current ?? returnFocus()} /> : null}
+        <SelectionShare action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
+          returnFocus={() => copyTrigger.current ?? returnFocus()} />
       </> : null}
       {options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null}
     </div>;
@@ -450,23 +375,25 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       <div data-mobile={isMobile} className={styles.selectionComposer}>
         {!isMobile ? toolbar : null}
         {unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
-          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) }]} /> : null}
+          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
+        {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
+        {annotation ? <AttachedNotes annotation={annotation} /> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
-          {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
-            containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
-            body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
-            reference={composer.reference()} placeholder={isMobile ? opening.mode === "Ask" ? "ask about this passage" : "write a note…" : "note or question…"} compact editable={!deleting && !composer.paused}
-            focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
-            onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive}
-            history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-            onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
-            onContinueChat={canQuote ? () => composer.continueChat() : undefined} onEmptyBackspace={composer.deleteNote}
+            <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`} containingNoteRef={null}
+              body={draft.body} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
+              reference={composer.reference()} placeholder={isMobile ? opening.mode === "Ask" ? "ask about this passage" : annotation?.notes.length ? "add another note…" : "write a note…" : "note or question…"} compact editable
+              focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
+              onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive}
+              history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
+              onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
+              onContinueChat={canQuote ? () => composer.continueChat() : undefined}
             />
-            : !draft.issue ? <FeedbackStatus content={{ tone: "Neutral", title: "loading your note…" }} announcement="Polite" /> : null}
           </PaneReturnVisitScope>
         </div>
+        {failed ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
+          actions={[{ label: "retry", onClick: failed.retry }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
         {canQuote ? <>
           {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "highlight saved; send not confirmed" : "this chat changed", message: commandRecovery.kind === "Unconfirmed" ? "the request may have succeeded." : "review this chat before sending again." }} announcement="Polite"
             actions={commandRecovery.kind === "Unconfirmed" ? [{ label: "retry same send", onClick: composer.retryChat }]
@@ -477,7 +404,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                 { label: "choose a model in chat", onClick: composer.recoverModel },
               ] : chatIssue.kind === "Passage" || chatIssue.kind === "Source" ? [
                 { label: "select passage again", onClick: composer.reselect },
-                { label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) },
+                { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") },
               ] : chatIssue.kind === "Model" ? [{ label: "choose a model in chat", onClick: composer.recoverModel }]
                 : chatIssue.kind === "Missing" ? [{ label: "choose existing chat…", onClick: composer.chooseChat }]
                 : chatIssue.kind === "Changed" ? [{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }] : undefined} />
@@ -488,29 +415,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                   : destination.kind === "LookupFailed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
                       actions={[{ label: "retry", onClick: composer.retryDefault }]} /> : null}
         </> : null}
-        {draft.issue?.kind === "Conflict" && draft.issue.saved.kind === "Present" ? <TextComparison
-          value={draft.body} saved={draft.issue.saved.body} before={draft.base.kind === "Present" ? draft.base.body : null}
-          shown={composer.conflictShown} resolve={(choice, shown) => composer.resolveConflict(choice === "saved", shown)} />
-          : draft.issue && draft.issue.kind !== "Source" ? <FeedbackNotice content={{ tone: "Warning", title: draft.issue.message }} announcement="Polite"
-            actions={draft.write?.read().kind === "unconfirmed" ? (() => {
-              const state = draft.write.read();
-              return state.kind === "unconfirmed" && !canRetryWriting(draft.write) ? [
-                { label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) },
-                { label: "reload", onClick: () => { window.location.reload(); } },
-              ] : [{ label: "retry same save", onClick: composer.retry },
-                { label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) }];
-            })() : draft.issue.kind === "Conflict" ? [
-              { label: "use saved version", onClick: () => void composer.resolveConflict(true, composer.conflictShown) },
-              { label: "replace saved version", onClick: () => void composer.resolveConflict(false, composer.conflictShown) },
-            ] : draft.load === "Failed" ? [{ label: "reload note", onClick: composer.retry },
-              { label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) }]
-              : [{ label: "copy text", onClick: () => copyWriting(feedback, draft.body.body_text) }]} />
-            : null}
       </div>
     );
   };
+  const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
-    {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} store={store} canQuote={canQuote} sharePiece={sharePiece} /> : null}
+    {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} canQuote={canQuote} sharePiece={sharePiece} /> : null}
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}
       heightLimit="available" onDismiss={composer.dismiss} focusKey={opening?.id}
@@ -527,17 +437,16 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       <div className={styles.chooser}>
         <span>choose highlight</span>
         {menu.marks.map((mark) => {
-          const highlight = store.highlight(mark.id);
-          const item = overlapItems.find((item): item is Schema<"ReaderEvidenceHighlightOut"> => item.kind === "Highlight" && item.highlight_id === mark.id);
+          const own = store.annotation(mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
-            {item ? <ResourceBody body={item.item.preview.body} /> : "highlight"}
-            <span>{mark.color} · {highlight?.is_owner ? "your highlight" : "shared highlight"}</span>
+            {own ? own.selection.quote_exact : "highlight"}
+            <span>{mark.color} · {own ? `your highlight${own.notes.length ? ` · ${own.notes.length === 1 ? "1 note" : `${own.notes.length} notes`}` : ""}` : "shared highlight"}</span>
           </button>;
         })}
       </div>
     </FloatingActionSurface> : null}
     <Dialog open={verbs.recolouring !== null} title="edit highlight" onClose={() => verbs.recolour(null)}>
-      <Colours selected={verbs.recolouring ? store.getState().decorations.marks.find((mark) => mark.id === verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
+      <Colours selected={recolouring?.color ?? null} onSelect={verbs.recolour} />
     </Dialog>
     {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={draft.sourceMediaId} hasSourceChats={draft.sourceHasChats}
       onClose={composer.closePicker} onSelectConversation={composer.chooseDestination} /> : null}

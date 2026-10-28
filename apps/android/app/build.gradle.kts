@@ -217,7 +217,9 @@ val buildPackagedUi = tasks.register<BuildPackagedUi>("buildPackagedUi") {
     inputs.dir(webDir.resolve("scripts"))
     inputs.file(webDir.resolve("vite.shelf.config.ts"))
     inputs.file(webDir.resolve("vite.android.config.ts"))
-    inputs.files(fileTree(webDir.resolve("public")) { exclude("pdfjs/**") })
+    inputs.file(webDir.resolve("vite.authored.config.ts"))
+    inputs.dir(rootProject.projectDir.resolve("../../node/authored"))
+    inputs.files(fileTree(webDir.resolve("public")) { exclude("pdfjs/**", "_nexus/**", "workspace-sw.js") })
     inputs.property("storageOrigin", providers.environmentVariable("R2_S3_API_ORIGIN").orElse(""))
     inputs.file(webDir.resolve("package.json"))
     inputs.file(webDir.resolve("bun.lock"))
@@ -289,6 +291,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.sqlite:sqlite-bundled:2.7.1")
     implementation("androidx.activity:activity-ktx:1.13.0")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.appcompat:appcompat:1.7.0")

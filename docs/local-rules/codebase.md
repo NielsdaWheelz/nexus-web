@@ -27,6 +27,10 @@ technology-ownership, import, and module-boundary model.
   host cache locking, real container creation and reference-aware tag retention.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
+`make setup` and ci install locked dependencies for `apps/web`, `node/authored`
+and `node/ingest`. the authored package's own install supplies module resolution
+for its shared source and semantic-helper generation/typechecking.
+
 ## web production build
 
 `apps/web/package.json` owns `bun run build`: `build:next` removes generated
@@ -103,7 +107,9 @@ build and packaging command.
   make only its direct download calls above. AndroidX WebKit exposes the
   main-frame `nexusApp` and `nexusPlayer` listeners on the owned origin and
   `nexusLocalContent` on the owned and shelf origins.
-  Android code must not add other product or Supabase clients, OAuth/PKCE
+  Android authored replication uses fixed provision/change/snapshot paths through
+  `NexusOriginClient`; its bridge admits only the owned workspace and exact
+  packaged shelf generation. Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.
 - Supabase Auth alone owns password hashes, invitation and recovery tokens, and
