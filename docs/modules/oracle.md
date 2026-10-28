@@ -45,6 +45,9 @@ one per work, and offers six. Fewer than three is the reading's typed failure
 question's words and every offered passage, ties broken by key; it is chosen
 before the model sees the passages, so the model can write to it.
 
+both retrieval lanes rank the full cosine-distance range (0–2), without a
+similarity cutoff.
+
 ## Reading — `services/oracle/readings.py`, `synthesis.py`
 
 `oracle_readings` is the reading: `pending` until one transaction makes it

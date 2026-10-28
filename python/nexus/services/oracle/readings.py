@@ -305,7 +305,7 @@ def _retrieve(
         params=params,
         limit=200,
         ctes="",
-        maximum_distance=0.5,
+        maximum_distance=2,  # Full cosine range: oracle ranks without a similarity cutoff.
     )
     chunks = {
         row.id: row

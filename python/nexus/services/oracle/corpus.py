@@ -177,7 +177,7 @@ def rank_passages(
         params={"ids": ids},
         limit=len(ids),
         ctes="",
-        maximum_distance=0.5,
+        maximum_distance=2,  # Full cosine range: oracle ranks without a similarity cutoff.
     )
     similarity = dict(near)
     words = set(TOKEN.findall(question.lower()))
