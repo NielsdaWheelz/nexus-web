@@ -317,6 +317,13 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+contained-work form removal against `d4d108f2d` removes 19 authored runtime lines
+(13 added, 32 deleted): piece editor -5, piece commands -5, discovery -1,
+piece schemas -5 and database models -3. the classification control, enum,
+schema fields and publication/update plumbing are deleted. generated wire,
+migration, retained search caller and documentation are outside this count;
+earlier area totals retain their stated bases.
+
 playback queue adds 2,692 authored runtime lines against `51fc75cd9`
 (3,443 added, 751 deleted), including new modules. it removes browser descriptor
 history, lectern successor selection, the separate native listening file and the

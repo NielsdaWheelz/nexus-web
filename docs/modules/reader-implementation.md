@@ -104,6 +104,13 @@ owner. the highlight module owns the capture and merge contract.
 
 ### source-backed pieces
 
+piece commands choose a title and proved source sections. discovery supplies an
+independence verdict, source-grounded title, contributors, evidence and uncertainty;
+literary examples guide that judgment without becoming stored classifications.
+the private title basis distinguishes printed titles from incipits and is removed
+when findings are normalized. definition edits retain the existing absolute-value,
+expected-version retry contract.
+
 `media_text_scope.py` resolves the reading identity separately from the canonical
 source. a piece freezes one contiguous source range and its proved element-edge
 cuts; `reader_text_slice.py` clips retained rich html and proves its text equals
