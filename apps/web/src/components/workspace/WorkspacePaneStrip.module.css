@@ -54,6 +54,7 @@
   min-width: 0;
   background: transparent;
   color: inherit;
+  font: inherit;
   cursor: grab;
   overflow: hidden;
   user-select: none;
