@@ -15,6 +15,8 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
+import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib/ui/overlay";
 import { conversationViewHref } from "@/lib/chat/view";
 import { isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
@@ -91,6 +93,7 @@ export function useSelectionComposer(input: {
   const current = useRef<Opening | null>(null);
   const interaction = useRef<string | null>(null);
   const serial = useRef(0);
+  const attention = useRef(0);
   const activeRef = useRef(active);
   activeRef.current = active;
   const show = useCallback((next: Opening | null) => {
@@ -121,13 +124,21 @@ export function useSelectionComposer(input: {
       if (event.type === "focusin" && opened.focus && event.target instanceof Element &&
         event.target.matches('[role="dialog"]') &&
         event.target.querySelector("[data-selection-composer]")?.getAttribute("data-selection-composer") === opened.id) return;
+      if (event.type === "focusin" || event.type === "blur") attention.current++;
       const inside = event.target instanceof Element && event.target.closest("[data-selection-composer]") !== null;
       if (opened.focus || opened.ownsFocus !== inside) show({ ...opened, focus: false, ownsFocus: inside });
     };
+    const attended = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest("[data-passive-tooltip]")) return;
+      if (isNavigationAttention(event)) attention.current++;
+    };
+    for (const event of NAVIGATION_ATTENTION_EVENTS) window.addEventListener(event, attended, { capture: true, passive: true });
     document.addEventListener("focusin", moved);
+    const blurred = () => { if (current.current) attention.current++; };
+    document.addEventListener("focusout", blurred);
     document.addEventListener("pointerdown", moved, true);
     window.addEventListener("blur", moved);
-    return () => { document.removeEventListener("focusin", moved); document.removeEventListener("pointerdown", moved, true); window.removeEventListener("blur", moved); };
+    return () => { for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, attended, true); document.removeEventListener("focusin", moved); document.removeEventListener("focusout", blurred); document.removeEventListener("pointerdown", moved, true); window.removeEventListener("blur", moved); };
   }, [show]);
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
@@ -244,7 +255,7 @@ export function useSelectionComposer(input: {
       capture, highlightId,
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Source", message: "this passage can’t be annotated here." },
-      referenceActive: false, attachmentActive: false,
+      referenceActive: false, linkInputActive: false, attachmentActive: false,
       sourceMediaId: sourceRef.slice("media:".length), sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
     };
     store.put(entry);
@@ -264,12 +275,17 @@ export function useSelectionComposer(input: {
     for (const entry of store.getSnapshot()) if (entry.highlightId === id) store.remove(entry.id);
   }, [show, store]);
 
+  const close = (id: string | null) => {
+    if (id !== null) store.remove(id);
+    show(null); setPickerDraftId(null); cancelReselection();
+  };
+
   /** One local command for the opened draft; the input stays until its commit is durable. */
   const submit = async ({ command, opened }: { command: Command; opened: Opening | null }): Promise<{ id: string } | null> => {
     const entry = opened && get(opened.draftId);
     // a failed frame is retried, never resubmitted under a new identity.
-    if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.attachmentActive ||
-      entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
+    if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive ||
+      (command.kind === "Save" && entry.highlightId !== null && !bodyHasContent(entry.body)) || entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
     const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
@@ -283,10 +299,25 @@ export function useSelectionComposer(input: {
     store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind }, issue: null }));
     const note = command.kind === "Save" && bodyHasContent(submitted.body) ? submitted.body : null;
     const id = submitted.highlightId ?? crypto.randomUUID();
-    // the committed note is now an attached note of its own; this input starts empty.
+    let intent: { openingId: string; attention: number; layer: Layer | null; generation: number } | null = command.kind === "Save"
+      ? { openingId: opened.id, attention: attention.current, layer: getInteractionOwner(), generation: getInteractionGeneration() } : null;
+    let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = null;
     const finish = () => {
-      store.update(entry.id, value => ({ ...value, operation: null, issue: null, highlightId: id, capture: null,
-        ...(note && value.revision === submitted.revision ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}) }));
+      if (ctx.sessionSignal().aborted) return { id };
+      const value = get(entry.id);
+      if (!value) return { id };
+      const unchanged = value.revision === submitted.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
+      const complete = command.kind === "Save" && unchanged && intent !== null && activeRef.current &&
+        current.current?.id === intent.openingId && current.current.draftId === entry.id &&
+        attention.current === intent.attention && getInteractionOwner() === intent.layer && getInteractionGeneration() === intent.generation;
+      store.update(entry.id, value => ({ ...value, highlightId: id, capture: null,
+        operation: value.operation?.id === operationId ? null : value.operation,
+        issue: failed !== null && value.issue === failed ? null : value.issue,
+        ...(note && unchanged ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}) }));
+      if (complete) {
+        close(entry.id);
+        if (!isMobile) reader.focusSource();
+      }
       return { id };
     };
     try {
@@ -299,12 +330,26 @@ export function useSelectionComposer(input: {
     } catch (error) {
       if (ctx.sessionSignal().aborted) return null;
       if (error instanceof LocalCommitError) {
-        store.update(entry.id, value => ({ ...value, operation: null, issue: { kind: "Failed", message: LOCAL_FAILURE,
-          retry: () => { void error.retry().then(finish, () => {}); } } }));
+        intent = null;
+        failed = { kind: "Failed", message: LOCAL_FAILURE, retry: () => {
+          const value = get(entry.id);
+          if (!value || value.issue !== failed || value.operation) return;
+          if (command.kind === "Save" && current.current?.id === opened.id && activeRef.current &&
+            value.revision === submitted.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive) {
+            intent = { openingId: opened.id, attention: attention.current, layer: getInteractionOwner(), generation: getInteractionGeneration() };
+          }
+          store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind } }));
+          void error.retry().catch(() => {
+            intent = null;
+            store.update(entry.id, value => value.issue === failed && value.operation?.id === operationId ? { ...value, operation: null } : value);
+          });
+        } };
+        store.update(entry.id, value => value.operation?.id === operationId ? { ...value, operation: null, issue: failed } : value);
+        void error.completion.then(finish, () => undefined);
         return null;
       }
       // nothing committed: the input stays and the same gesture may run again.
-      store.update(entry.id, value => ({ ...value, operation: null }));
+      store.update(entry.id, value => value.operation?.id === operationId ? { ...value, operation: null } : value);
       onError(error, "couldn’t save this passage");
       return null;
     }
@@ -383,7 +428,7 @@ export function useSelectionComposer(input: {
   const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: Selection | null } | null = null) => {
     const opened = current.current;
     const entry = opened && get(opened.draftId);
-    if (!opened || !entry || entry.operation || entry.referenceActive || entry.attachmentActive || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
+    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
     const selected = entry.destination;
     const owner = target === "New" ? newOwner : selected.kind === "Selected" ? getConversationCommands(ctx.accountId, selected.id) : null;
     if (!owner) { chooseChat(); return; }
@@ -432,7 +477,7 @@ export function useSelectionComposer(input: {
     const owns = () => {
       const latest = get(entry.id);
       return activeRef.current && current.current?.id === opened.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive && !latest.attachmentActive &&
+        latest !== undefined && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
         (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
     };
     const account = ctx.sessionSignal();
@@ -509,7 +554,7 @@ export function useSelectionComposer(input: {
       const result = await owner.execute({ kind: "Send", request, runId, viewId: pane.paneId, openIntent }, () => {
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
-          const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.attachmentActive;
+          const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
           if (consume) submittedInput.consumedRevision = value.revision + 1;
           return { ...value, chatIssue: null,
             ...(consume ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
@@ -565,7 +610,7 @@ export function useSelectionComposer(input: {
     const owns = () => {
       const latest = get(entry.id);
       return activeRef.current && current.current?.id === opened.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive && !latest.attachmentActive &&
+        latest !== undefined && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
         (latest.revision === attempt.input.revision || latest.revision === attempt.input.consumedRevision);
     };
     try {
@@ -663,12 +708,14 @@ export function useSelectionComposer(input: {
       if (!canAbandon()) return;
       const returnFocus = current.current?.ownsFocus;
       const id = current.current?.draftId;
-      if (id) store.remove(id);
-      show(null); setPickerDraftId(null); cancelReselection();
+      close(id ?? null);
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
     },
     attachmentActive(attached: boolean) {
       if (draft) store.update(draft.id, entry => entry.attachmentActive === attached ? entry : { ...entry, attachmentActive: attached });
+    },
+    linkInputActive(active: boolean) {
+      if (draft) store.update(draft.id, entry => entry.linkInputActive === active ? entry : { ...entry, linkInputActive: active });
     },
     compositionStart() { if (draft) store.update(draft.id, entry => ({ ...entry, revision: entry.revision + 1 })); },
     edit(edit: NoteEdit) {
