@@ -7,30 +7,20 @@ p95 192.8ms and typing300 p95 40ms pass. all eleven os premises and ten
 local appends pass; the budget stop precedes final upload-prefix and canonical
 append assertions. canonical and hardware cleanup completed.
 
-linear sql and admission-state reuse remove repeated work. the1989 pending-read
-shortcut eliminates one initial projection query but retained50-target p95 is
-220.8ms. e8f1 reuses compiled statements at the native connection: the same
-retained-corpus diagnostic `20261027-164129-47acbb079667` measures186.7ms.
-all targets render and account/replica/sequence310/first64 pending commands stay
-unchanged. these are debugger-free diagnostics, not fresh-campaign acceptance.
+linear sql, admission-state reuse, compiled native statements and one root read
+remove repeated work. primary authoring code now loads with the workspace.
+the unchanged retained50-target diagnostic `20261027-183136-ae41847ea4ba`
+(sourcef43a8dbed) measures p95 156ms and median122.2ms. every target renders and
+account/replica/sequence310/first64 pending bytes remain unchanged. canonical and
+hardware cleanup pass. this remains a target miss and is not fresh-campaign
+acceptance. the react external-store experiment was reverted after worsening
+p95; neither those timings nor the metadata trace establish a pure scheduling
+or sql cause.
 
-30ef removes the note-route resource → mounted-outline waterfall and composes one
-root-window read for
-canonical note metadata, editor and active title, retaining actual pagination,
-branch provenance and admission's revision/byte fences. its metadata survives
-query-key changes; document admission still waits for the visible note view.
-the transient native pending-read shortcut is removed. 44 affected browser
-controls and full apk build pass. the same retained50-target diagnostic
-`20261027-173558-37a61aab1186` measures161.1ms, still above150ms. every target,
-account/replica/sequence310 and pending bytes remain unchanged; hardware and
-canonical cleanup pass. inspect the remaining admission/monitor/paint path before
-another full campaign; no further bottleneck is established yet.
-
-the93a query-local react external-store candidate passes its affected browser
-controls but the unchanged retained50 diagnostic (pilot76751) measures p95
-179.5ms and median141.8ms; it does not improve the150ms target. the hook and
-module change are reverted to f73. no scheduling-cause attribution follows from
-these timings; installed93a remains historical until the next owned install.
+the current source adds a bounded inline encoding for small native messages
+through the existing dispatcher; large messages retain staged transfer and all
+limits. its latency benefit remains unqualified. retain one execution per request,
+including small requests with large replies, and every current authority fence.
 
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append

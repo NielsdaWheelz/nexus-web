@@ -153,11 +153,20 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         require(frame.getInt("offset") == pending.size() && pending.size() + bytes.size <= transfer.first)
                         pending.write(bytes); JSONObject().put("next_offset", pending.size())
                     }
-                    "invoke" -> {
-                        val transfer = uploads[frame.getString("transfer_id")] ?: error("no authored upload")
-                        val pending = transfer.second
-                        require(pending.size() == transfer.first); uploads.remove(frame.getString("transfer_id"))
-                        val request = JSONObject(pending.toString("UTF-8"))
+                    "invoke", "invoke_inline" -> {
+                        val transferId = frame.getString("transfer_id")
+                        val inlineRequest = frame.getString("op") == "invoke_inline"
+                        val request = if (inlineRequest) {
+                            val bytes = Base64.decode(frame.getString("base64"), Base64.NO_WRAP)
+                            require(bytes.size <= 24 * 1024)
+                            require(uploads.size < 8 && uploads.values.sumOf { it.first } + bytes.size <= 16 * 1024 * 1024)
+                            JSONObject(String(bytes, Charsets.UTF_8))
+                        } else {
+                            val transfer = uploads[transferId] ?: error("no authored upload")
+                            val pending = transfer.second
+                            require(pending.size() == transfer.first); uploads.remove(transferId)
+                            JSONObject(pending.toString("UTF-8"))
+                        }
                         val operation = request.getString("op")
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
@@ -202,8 +211,12 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         if (operation == "hello") { boundAccount = account; hintOwner = message to account; result.put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()); startHints() }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
                         require(bytes.size <= 16 * 1024 * 1024 && outputs.size < 8)
-                        outputs[frame.getString("transfer_id")] = bytes
-                        JSONObject().put("byte_count", bytes.size)
+                        if (inlineRequest && bytes.size <= 24 * 1024) {
+                            JSONObject().put("kind", "inline").put("byte_count", bytes.size).put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                        } else {
+                            outputs[transferId] = bytes
+                            JSONObject().put("byte_count", bytes.size).also { if (inlineRequest) it.put("kind", "transfer") }
+                        }
                     }
                     "read" -> {
                         val transferId = frame.getString("transfer_id")

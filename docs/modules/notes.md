@@ -20,6 +20,13 @@ retain their separate owners.
   actual editor transactions to incremental shared operations, never a stale
   whole-body replacement.
 
+native operations share one admitted dispatcher. requests up to 24 kib of utf8 json
+use one inline frame; replies up to 24 kib return bounded inline bytes, while larger
+replies return the existing transfer handle and are read without re-execution.
+larger requests retain staged framing. both encodings retain the same account,
+document, command lease, cancellation and 16 mib result limits; neither retries an
+operation after a lost reply.
+
 authored query subscriptions require success and failure callbacks and return one
 unsubscribe function. one initial read and subsequent invalidations use those same
 owners; adapters do not report failures behind the caller. read surfaces retain
