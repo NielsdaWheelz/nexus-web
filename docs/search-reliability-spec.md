@@ -1,0 +1,276 @@
+# search reliability: revised implementation and acceptance spec
+
+2026-10-28. requested documentation-only revision.
+inspected `codex/search-reliability` at `113b9ef259908e161c8c35ae00a253d2b336eb09`.
+the main search owner confirmed that head, handed over this file, and reported no
+active runtime or resource lease. this review changes no code or operational
+state. the previous spec is preserved at
+`.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
+
+## decision
+
+useful retrieval and a surviving database take precedence over speed. preserve
+semantics and writing; bound concurrency and physical resources; let complete
+work finish. a safe timeout is a failure outcome, not a working search.
+
+retire the former 400 ms background computation, 500 ms hold/retirement and
+60-second quiet-publication acceptance gates, plus the former foreground
+latency/phase-cutoff requirements. **no replacement numeric deadline is approved;
+15 seconds was a suggestion.** current source timers remain unchanged until
+implementation. finite operational watchdogs remain required, as specified below.
+
+this target supersedes conflicting timing requirements in
+[search](modules/search.md), [suggestions](modules/suggestions.md),
+[release-search](issues/release-search.md) and linked issue resolution clauses.
+it does not change historical verdicts or turn old failures into passes.
+
+retain the 2 gib host, postgres 512 mib/no-swap, api 384 mib and other existing
+service limits. retain the established 64 mib database and 128 mib workload host
+reserves; deployment's separate 256 mib available-memory preflight stays intact.
+no larger host, external search service/pooler, new scheduler, persistent partial
+rankings or local corpus replica. no semantic feature is cut by this revision.
+
+## evidence and uncertainty
+
+- **observed:** production postgres oom kills and recovery; warmed ordinary
+  connections could exhaust memory before another search. separately, suggestion
+  work held search admission for minutes. allocator attribution remains incomplete.
+  [oom](issues/production-search-postgres-oom.md),
+  [contention](issues/production-search-admission-contention.md).
+- **observed:** exact retrieval over 39,769 restrictive chunks found required
+  matches in about 1.5 seconds; a server-membership prototype took about 0.9 seconds.
+  a separate complete strict read took about 2 seconds and still used ann. database
+  reserve held; neither proves a full exact suggestion refresh or whole-host fit.
+  [recall](issues/search-ivf-retraining-recall.md),
+  [strict read](issues/strict-search-family-ranking-budget.md).
+- **observed:** the historical exhaustive suggestion reference took 204.6 seconds
+  for lectern and 220.4 seconds for a named piece; the b34 candidate took 0.73 and
+  0.89 seconds. receipts are the private `final-suggestion-quality-b34dd44cb-refowner-*.private.json`
+  files under `apps/web/.nexus-lab/cases/native-results/`. these obsolete-plan
+  timings neither qualify nor disqualify the proposed repaired exact queries.
+- **observed:** static checks, the three retained foundations and real-model
+  shortlist/discovery/chat-tool cases passed at their recorded revisions. derived
+  0319 preservation and actual main0320 migration passed. actual half0321 built
+  in 59.12 seconds with sampled database charge 335.3 mib, unchanged recorded
+  non-index/authored/source fingerprints and vector count, and confirmed cleanup.
+  vector count alone is not original-vector-byte equality. this is build and
+  preservation evidence, not retrieval or capacity acceptance.
+  [integration](issues/search-local-first-integration.md),
+  [0321](issues/search-normalized-half-ivf-qualification.md).
+- **observed:** latest oracle generation/content review passed with three citations;
+  only two had exact navigation targets, with no browser-click proof. provider
+  cleanup is now confirmed; the original lab-exit-125 history remains.
+  [blake locator](issues/oracle-resolved-blake-anchor-has-no-captured-location.md).
+- **open:** full exact-baseline feasibility, current candidate recall/composition,
+  useful mixed-load progress, actual 2 gib topology and phone acceptance. brave
+  import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
+  no search-repair production deployment has occurred.
+
+## target behavior and invariants
+
+search retains direct, lexical and semantic capabilities, existing scopes and
+filters, strict tools, pickers, connection discovery and oracle retrieval. show
+truthful pending/failure states and retain useful completed phases. no results
+means successful empty completion; semantic failure cannot masquerade as hybrid
+success. slower server work must leave local authored search, reading, writing
+and stop controls usable.
+
+permissions, canonical reading boundaries, publication/model identity, original
+vectors, distance thresholds, anchor attribution, evidence and activation stay
+exact. browser/strict distance remains 0.5, suggestion similarity 0.80; oracle
+retains its full 0–2 cosine domain. preserve lexical ordering, family composition,
+diversity and current result windows. exactness of a neighbour window does not
+promise exhaustive application results or stable pagination across corpus changes.
+
+main's local-first authored owner remains authoritative: locally committed
+immutable changes survive remote failure and retry the same sequence and bytes.
+server-owned writes retain their own identity/version/retry contracts. database
+busy or lost response never proves that a write failed to commit. no old note
+write owner, replay ledger or second recovery mechanism returns.
+
+suggestions retain [stable visits and explicit refresh](suggestions-refresh-spec.md):
+an adopted pool keeps its order, eligibility is rechecked, and refresh reads the
+latest completed publication without waiting for a new ranking. retain the
+15-minute age policy and 30-second build spacing as scheduling policy, not a
+completion guarantee. old rankings never grant current permission. after a finite
+competing workload drains, every active due feed must publish the settled input
+revision; old rows, empty substitutes and perpetual rescheduling do not satisfy it.
+freeze that due-feed cohort at scenario start. identify pre-existing suspended
+failures separately; failures or suspensions created by the scenario cannot
+remove feeds from acceptance.
+
+## architecture and operational bounds
+
+keep the current owners; change policy at those owners rather than adding layers.
+
+1. `db/engine.py`, `db/session.py`, `db/listen.py` and deployment composition own
+   finite role pools, zero overflow, separate short control transactions, shared
+   listeners and loop-scoped async lifetimes. count every process, worker child,
+   listener, maintenance and backup/operator connection. pool quotas remain
+   provisional until the reachable concurrent topology fits the memory envelope.
+2. `search/admission.py` retains one database-wide expensive-read gate and a
+   physical search lease through confirmed backend retirement. provider waits and
+   unrelated ordinary/control work remain outside it. a snapshot covers complete
+   permission/ranking/hydration facts; publication uses a later short transaction.
+   no ordinary transaction waits for a provider or the search gate.
+3. foreground requests wait for an admitted background read to finish; do not
+   repeatedly preempt that read to make the foreground appear fast. background
+   refuses observed local physical-capacity or shared-gate contention without
+   waiting. the shared-gate try-lock cannot bypass foreground waiters already
+   queued in postgres; there is no cross-process priority before a request reaches
+   that gate. existing query owners cancel superseded/disconnected requests;
+   cancelled waiters never execute later. no extra durable queue or priority service.
+4. `api/search_operation.run_search_operation` remains the http deadline,
+   disconnect and cancel/join owner. routes supply a finite absolute allowance;
+   embedding, checkout, gate waiting, reads and result construction consume it
+   without timer resets. tool/oracle owners retain their enclosing cancellation
+   scope. web `lib/search/policy.ts`, browser request owners and `api/proxy.ts`
+   must agree with the server and actual hosting limits.
+5. shortlist/discovery handlers retain a finite attempt read watchdog through
+   `search_session_async` and `read_snapshot`'s remaining statement-timeout
+   backstop. provider work has its existing finite provider/job owner outside
+   admission. `jobs/process_executor.py` retains the existing fresh-child wall
+   watchdog, termination/join and supervisor heartbeat/claim ownership. its
+   general job limit is not the search allowance or a foreground service promise.
+6. cancellation still joins driver work and closes/invalidate-checks the captured
+   backend before capacity reuse or publication. retain the scope's fail-closed
+   behavior for unconfirmed retirement. a cleanup warning alone must not reject
+   an otherwise live completed operation after confirmed retirement; actual
+   request cancellation/expiry still wins. cleanup is never abandoned to meet a
+   stopwatch. preserve original failure classification during rollback.
+
+**foreground coexistence is a release gate, not an assumption.** the reviewed
+watchdog table must cover the longest admitted background read and retirement,
+queued foreground work allowed by the finite client/topology workload, and the
+request's own provider/read/transport work. client/bff/platform ceilings must
+permit that wait. verify actual lexical and hybrid success while a full background
+read is already holding the gate, not only when it is idle or timing out.
+
+choose and record finite watchdog values and a finite qualification observation
+window before executing qualification, from measured complete-work costs and
+cleanup margin. they are operational safeguards, not new latency targets. do not
+silently inherit the old phase caps, borrow the general worker wall limit, restart
+clocks, or use infinite waits. if measured background cost cannot coexist with
+successful foreground requests inside actual transport ceilings, this synchronous
+baseline fails: return the concrete conflict for a design decision before adding
+preemption, incremental snapshots, an async search protocol or a feature cut.
+preliminary cost measurements also declare a finite diagnostic watchdog before
+execution. expiry is censored noncompletion, not a successful latency measurement
+or qualification; diagnostic limits do not become product allowances.
+
+only admission refusal may return the existing delayed `RescheduleRequested`
+without spending an attempt. admitted computation expiry spends the existing
+bounded failure budget and eventually exposes suspension/failure. narrow the
+catches in `suggestion_shortlists.py` and `connection_discovery.py`; do not change
+generic queue refund semantics. observed contention for a physical search permit
+or the advisory gate, before reading starts, is admission refusal. a connection
+setup timeout or generic pre-read expiry is not evidence of contention and must
+not be refunded merely because its phase says checkout. lost claims, shutdown and unrelated database
+errors keep their own meanings. successful publication still atomically rechecks
+claim, feed and authority, replaces the complete pool and settles the job. changed
+inputs may leave that captured revision dirty; a later complete build must converge.
+
+## retrieval choice: prove the simpler baseline first
+
+qualify exact original-float retrieval on the representative complete corpus,
+under the same admission and memory envelope. keep eligibility and scoring in
+postgres; return only bounded winning rows. do not raise `_EXACT_MAX` and export
+an entire uuid/vector domain into python. bounded output does not establish
+bounded database memory: inspect the actual joins, sorts and maintenance demand.
+
+- browser/strict/oracle select nearest chunks from the complete authorized,
+  current-ready model domain, using their existing thresholds and deterministic
+  chunk tie order.
+- suggestions select canonical **reading/chunk rows** independently for each
+  original anchor and family, ordered by distance, reading id and chunk id,
+  before the existing 400-row cutoff and media grouping. retain all anchors and
+  both semantic families. use straightforward sequential queries in one snapshot;
+  do not restore the old all-anchor cross-product. an exact chunk cutoff followed
+  by reading projection is not equivalent; see the
+  [cutoff hazard](issues/search-exact-reading-window.md).
+- share readiness, calibrated scoring and canonical scope mechanisms where their
+  contracts match. a universal truncated-candidate interface is not required.
+  preserve proven query-shape repairs and remove duplicate work when doing so
+  preserves the proper selection boundary.
+
+**hypothesis:** these repaired exact queries can finish useful work with less
+machinery within the retained capacity envelope. no existing measurement proves
+that hypothesis for a complete five-anchor/global refresh. slower queries also
+hold snapshots and the gate longer; qualification must measure that cost.
+
+if exact retrieval fails capacity or foreground/background progress, assess the
+existing stock original-float access path before requiring normalized-half ivf.
+select one qualified implementation, not runtime fallbacks or load-dependent
+recall. keep the prior approximation floors if ann is necessary: browser at least
+95% of exact-200 qualifying owners and every semantic first-page reference owner;
+suggestions overlap at least `ceil(0.9 * min(10, reference_count))` per frozen case,
+with every changed item reviewed. preserve semantic-positive restrictive cases,
+including `moderate_tolkien`; graph-only success cannot conceal a broken semantic
+lane. approximation remains an explicit quality cost, never inferred permission
+to shrink anchors, families, thresholds or candidate windows.
+
+## existing work: keep, delete or condition
+
+| disposition | work and reason |
+| --- | --- |
+| keep | finite pools/control/listeners, async ownership, fresh background children, physical retirement and admission; retained memory and orphaned work remain hazards at any speed |
+| keep | canonical readiness/scope/owner/projection query repairs, meaningful duplicate-work removal, atomic publication, provider failures, busy/write uncertainty and main0320 integration |
+| delete | hard subsecond hold verdicts and computation-expiry refunds; these reject useful work or hide noncompletion |
+| remove when unused by the selected access path | count-proof routing and multi-domain ann cursor plumbing; half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction also disappear if stock original-float ann wins. retain dimension/model and valid finite nonzero-vector checks |
+| conditional | normalized-half index0321 and pinned cancellation patch. a subsecond miss alone no longer justifies them. stock selected access paths must still prove safe retirement; if a patch is needed, retain exact source/package provenance and its maintenance cost |
+| migration owner | main owns0320; the selected derived-index change remains one unreleased0321 after it. if exact wins, review removal of the unused ann index and associated constraint/build machinery. preserve original data; never relabel an already migrated qualification fixture as a different0321 |
+
+trade-offs are explicit: serialized work lowers throughput and can lengthen
+foreground waits; exact retrieval spends more scan/io time to preserve recall;
+fixed suggestion visits and background contention delay ranking freshness;
+approximate access can lose candidates; a dependency patch incurs ongoing release
+ownership. no trade permits inaccessible evidence, silent semantic loss, lost
+writing, permanent hidden failure or memory-limit increases.
+
+## non-overlapping implementation slices
+
+| owner | exclusive responsibility | prerequisite |
+| --- | --- | --- |
+| a: database capacity | `config.py`, `db/{engine,session,listen}.py`, runtime/worker lifetime wiring and deployment resource settings; freeze physical quotas and control reserve | current topology inventory |
+| b: retrieval | `search/semantic.py`, relevant `sources/indexed/scope/project` query changes, `suggestions.py`, indexing/owner helpers, selected0321 and postgres package | frozen exact reference and proper ranking identity |
+| c: operation/publication | `search/admission.py`, `api/search_operation.py`, route allowances, `search/service.py`, shortlist/discovery/oracle/tool caller scopes; watchdogs, retry classification and claim-fenced publication | b's measured complete read and a's ownership; agrees timer contract with d |
+| d: client/write outcomes | browser search policy/loaders, bff deadlines, existing pending/error presentation and busy/uncertainty consumers; consume main's authored contract | c's reviewed end-to-end allowance; no authored-owner rewrite |
+| e: integration | reconcile module/release docs, coordinate migration identity, temporary qualification and release evidence; no duplicate edits to a–d | their reviewed interfaces and acceptance below |
+
+this is remaining implementation scope, not a request to redo completed repairs.
+main assigns one editor per file before resuming. source-only old-policy drafts
+remain historical until deliberately revised; do not execute them as new acceptance.
+
+## meaningful acceptance and release gates
+
+follow [testing standards](local-rules/testing-standards.md). no checks were run in
+this documentation review. future static verification uses only `./scripts/test`;
+retain exactly the existing three manually invoked search foundation checks.
+other cases are temporary in the existing disposable/native workflows, not a new
+suite, benchmark campaign or runtime. freeze cases and comparison references
+before tuning; record actual waits without manufacturing latency percentiles.
+
+| gate | required outcome |
+| --- | --- |
+| retrieval quality | frozen name/body/semantic-only/empty cases, global and restrictive library/source/piece scopes, active-model/readiness changes and exclusions. exact baseline matches reference windows/order; ann meets the retained floors. preserve literal evidence, full reading boundaries and real activation. include 401 equal-distance chunks and overlapping readings for suggestion cutoff ties |
+| useful coexistence | full five-anchor, both-family refresh and strict discovery finish through real job/claim/publication owners. overlapping foreground lexical and hybrid requests succeed independently; reading, local writing, sync and stop controls remain usable. after finite competing jobs/mutations drain, every active due feed publishes the settled revision within the predeclared observation window. timed-out reads and old publications fail this gate |
+| lifecycle/failure | supersession/disconnect and owned timeout retire real backends before reuse; subsequent work succeeds. contention alone refunds; compute expiry consumes attempts. failed/lost-claim work preserves the old publication; authority withdrawal removes access; revised inputs converge; listener reconnect rereads truth. unknown retirement never publishes or releases its physical allowance |
+| writing | local authored commits survive busy/disconnect and retry original sequence/bytes. server-owned writes preserve their own identity and uncertainty before dispatch and after a committed write whose response fails; no false refusal or lost intent |
+| actual capacity | current candidate on actual2gib topology, postgres512mib/no-swap and real service limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. preserve reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
+| integration/release | qualified selected0321 after main0320 plus the real deployed0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing |
+
+brave import/metadata remains blocked until entitlement permits real completion;
+no fake-provider pass or unrelated oracle success closes it. review the known
+blake locator and separate verse issue without silently dropping affected citation
+semantics; generation success does not prove navigable citations. existing explicit
+screen-reader/unrestricted-worker deferrals remain named in
+[release-search](issues/release-search.md), not broadened by this revision.
+
+release stays with the existing controller and a separate explicit release
+instruction. retain the accepted announced interruption of at most 30 minutes,
+including stopped writers, verified backup, migrations and paired restart; do not
+mix workers or restore the known-broken predecessor as a claimed repair. selected
+image/patch requirements and recovery steps must be reconciled in release-search
+before activation. preserve historical snapshots/outputs; delete temporary cases
+only after final qualification. the pr records proof, limitations, net authored
+lines and deletions; issue files close only on their own proved criteria.
