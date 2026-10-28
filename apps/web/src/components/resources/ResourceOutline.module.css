@@ -1,6 +1,6 @@
 .outline {
-  --outline-control-inline-size: var(--size-xs);
-  --outline-control-block-size: var(--size-xs);
+  --outline-control-inline-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
+  --outline-control-block-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
   --outline-gap: calc(var(--space-1) / 2);
   --outline-content-start: calc(2 * (var(--outline-control-inline-size) + var(--outline-gap)));
   min-width: 0;
@@ -14,7 +14,7 @@
 .reference {display: inline; white-space: normal;}
 .separator {color: var(--ink-muted);}
 @media (any-pointer: coarse) {
-  .outline {--outline-control-inline-size: var(--size-xl); --outline-control-block-size: var(--size-xl);}
+  .outline {--outline-control-inline-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1))); --outline-control-block-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
 }
 .list {
   position: relative;
@@ -59,9 +59,11 @@
   color: var(--ink-faint);
 }
 .bullet {
-  color: var(--accent);
   font-size: var(--text-lg);
   line-height: 1;
+}
+.bullet:disabled {
+  color: var(--ink-muted);
 }
 .arrow {
   transition: transform var(--duration-fast) var(--ease-snap);

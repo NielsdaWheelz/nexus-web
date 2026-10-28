@@ -39,6 +39,15 @@
   padding: var(--space-2) 0;
 }
 
+.localTitle {
+  display: inline-flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  vertical-align: top;
+}
+
+.accessibleContext { user-select: none; }
+
 .localKind {
   color: var(--ink-muted);
   font-size: var(--text-sm);

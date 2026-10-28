@@ -297,8 +297,13 @@ blocks always retain their touch commands. native keyboard hiding also restores
 the mobile player without changing focus; browsers retain their focus-based
 player suppression.
 
-writing rows keep a leading bullet link and a trailing disclosure only for
-projected parents. retaining an open empty input does not establish child
+writing rows keep a leading opening link and a trailing disclosure only for
+projected parents. notes and uncommitted drafts use dots; other resources use the
+canonical scheme glyph. currently unmarked roots, tail and continuation rows stay
+unmarked. markers remain noneditable chrome outside `contentDOM`; glyphs never
+enter authored bodies, history or clipboard serialization. opening and relationship
+menus retain the same native control and focus target. retaining an open empty
+input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
 availability. one `outline_window` query reads a bounded raw page, root and
