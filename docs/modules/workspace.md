@@ -367,7 +367,8 @@ ends disclosure and transient companion results.
 pane control rows and companion/strip headers consume the shared compact density
 recipe. controls own their appearance; the shell owns layout and available space.
 companion tabs use the controlled `TabList` while retaining their guarded focus,
-column/sheet relocation, stable panel ids and active-body lifetime. pane chips
+column/sheet relocation, stable panel ids and active-body lifetime. active-tab
+reveal observes the live header and selected tab across relocation and text zoom. pane chips
 retain intrinsic height, title ellipsis, action slots and drag ownership.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional

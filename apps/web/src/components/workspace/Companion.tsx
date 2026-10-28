@@ -441,8 +441,9 @@ export default function Companion(props: {
     reveal();
     const observer = new ResizeObserver(reveal);
     observer.observe(list);
+    observer.observe(tab);
     return () => observer.disconnect();
-  }, [activeId, tabs.length]);
+  }, [activeId, tabs.length, presentation, sheetActive, open]);
 
   const columnKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (presentation !== "Column" || !isVisible || event.key !== "Escape" ||
