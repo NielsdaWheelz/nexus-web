@@ -1,14 +1,14 @@
 "use client";
 
 import { X } from "lucide-react";
+import type { MouseEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
   FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import ResourceQuotation from "@/components/resources/ResourceQuotation";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { getReaderQuotePreview, type ReaderSelectionKey } from "@/lib/chat/readerIntent";
@@ -52,19 +52,16 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
   return { quote, retry: preview.refetch };
 }
 
-/** A pending or captured quote uses the same resource row as every other reference. */
-export default function QuotedPassage({ quote, occurrenceKey, onRemove, onRetry }: {
+/** A pending or captured quote retains its attachment controls and feedback. */
+export default function QuotedPassage({ quote, onRemove, onRetry }: {
   quote: QuoteState | { kind: "Sent"; selection: Snapshot };
-  occurrenceKey: string;
-  onRemove?: () => void;
+  onRemove?: MouseEventHandler<HTMLButtonElement>;
   onRetry?: () => void;
 }) {
   const selection = quote.kind === "Ready" || quote.kind === "Sent" ? quote.selection : null;
-  return <figure className={styles.quote} aria-label="Quoted passage">
+  return <div className={styles.quote} role="group" aria-label="Quoted passage">
     {onRemove ? <Button icon={<X />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
-    {selection ? <ResourceOutlineList scope={occurrenceKey} ariaLabel="Quoted passage">
-      <ResourceOutlineRow incoming={null} item={selection.item} occurrenceKey={occurrenceKey} historical={quote.kind === "Sent"} occurrenceLabel="quoted passage" />
-    </ResourceOutlineList> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}
+    {selection ? <ResourceQuotation item={selection.item} /> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}
     <p className="sr-only" role="status" aria-live="polite">{onRemove && selection ? "Quoted passage attached." : ""}</p>
-  </figure>;
+  </div>;
 }
