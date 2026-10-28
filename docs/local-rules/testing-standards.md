@@ -49,6 +49,33 @@ durable data, destructive operations, authorization, and cross-process behavior.
 record what was actually observed and any material limits. a documentation or
 test-deletion change does not require replaying unrelated product journeys.
 
+### quiet browser verification
+
+ordinary nexus browser verification is headless: no visible windows, desktop
+activation or focus changes, native mouse/keyboard input, clipboard access or
+attachment to a personal browser. this applies during startup, interaction,
+failure and teardown. browser-protocol input, rendering, screenshots and private
+failure artifacts remain available; never auto-open viewers.
+
+desktop access requires approval for the specific check unless that scope is
+already explicitly authorized. implementation or verification permission does
+not grant desktop access, nor does a failed headless check authorize a visible
+retry. headed/ui/inspector modes, recorders and viewers are explicit exceptions;
+their launch options grant no permission. reuse existing approval within its
+scope. this rule is nexus-local; change no global agent or browser configuration.
+
+when approval is needed, name the observation, tool, desktop effect, duration and
+specific headless limitation; link this rule and request only that check. continue
+independent work while waiting. distinguish verified behavior, failed checks and
+unrun observations. record unresolved gaps in `docs/issues/`; screenshots,
+extensions or zoom alone do not establish a need for desktop access.
+
+run playwright through `scripts/lab`, which already strips inherited `PWDEBUG`
+and npm aliases. ordinary drivers must not reintroduce inspector mode or use
+`--headed`, `--ui`, recorders or viewers. inspector mode can override explicit
+headless defaults; `DEBUG=pw:browser` is logging. retain the terminal reporter,
+failure screenshots and traces without opening them automatically.
+
 ## disposable verification
 
 `./scripts/lab -- COMMAND [ARG ...]` creates a fresh real local application,
@@ -82,6 +109,19 @@ persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
 gecko bridge accepts that permission without applying it; the helper verifies the
 grant and real storage persistence before returning. on macos its app-data home
 also stays inside the owned temporary root. no global profile or trust changes.
+
+native firefox drivers import `open_native_firefox` from
+`python/scripts/lab_firefox.py`, using the checkout's `python` import root. it
+uses installed stock firefox, geckodriver and `certutil`, a caller-owned
+`state_dir` and private profile/app-data. it trusts the current lab ca with normal
+certificate validation, defaults to headless, grants exact-origin persistence and
+returns before application navigation. callers own actions, assertions and state
+lifetime; reopening the same state preserves application data. `command` sends
+session-relative webdriver requests with bounded transport deadlines; script
+timeouts remain separate.
+`process_id` identifies the owned browser. context exit establishes browser and
+geckodriver shutdown before state can be removed; retain recovery inputs if
+shutdown fails. `headless=False` requests visibility, never desktop approval.
 
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and

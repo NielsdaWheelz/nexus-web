@@ -48,11 +48,13 @@ export async function openLabBrowser(input: {
         await Promise.all(["Library/Application Support", "Library/Caches", "Downloads"].map(part => mkdir(join(appData, part), { recursive: true })));
       }
       context = await firefox.launchPersistentContext(profile, {
+        headless: true,
         args: [], ignoreHTTPSErrors: false,
         ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: appData } } : {}),
       });
     } else {
       context = await chromium.launchPersistentContext(profile, {
+        headless: true,
         args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
       });
     }
