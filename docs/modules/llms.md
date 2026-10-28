@@ -66,9 +66,27 @@ keys, `(mode, effort)` and `(mode, effort_order)` are unique within a model,
 and a declared default names an actual row. mode order is source order; effort
 order applies only within that model/mode. the browser groups actual rows and
 never parses execution keys or manufactures model/mode/effort combinations.
-this required catalog contract was introduced with wire revision 4; no database
-migration is needed. the runtime and kernel dependency pins form one reviewed
-cohort.
+each route also names its product `default_model` (model key and mode), even when
+that target is absent. each reasoning row carries `chat_default`, `mode_label`
+and `effort_label`. the catalog resolves source default within mode, sole advertised
+row, then the explicit policy exception; otherwise there is no automatic default.
+readiness never selects an alternative or erases a default. default policy does
+not grant or withdraw execution eligibility. source defaults remain internal;
+the old combined reasoning-row label is removed from the wire.
+
+the browser uses these projected labels and default markers. provider/model changes
+are complete when facts permit; `DefaultUnavailable` retains an unresolved target
+and allows explicit effort choice. recovery completes only that same unresolved
+intent. exact selections, inherited choices and frozen requests never follow later
+defaults. discovery is event-driven and quiet over retained usable data; cold-load
+failure keeps retry. one advertised effort is static only when it is the selected
+identity; other unavailable identities retain explicit recovery choices.
+
+new saved reasoning presentation uses the same mode/effort labels. history reads
+its saved presentation verbatim, including older descriptive labels. the combined
+label bound is 131 characters, accommodating two 64-character labels and the
+separator. the catalog cut rides unreleased wire 17; no database migration or
+provider/kernel pin change is needed.
 
 The strict Chat selection is one tagged value:
 

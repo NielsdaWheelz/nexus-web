@@ -42,7 +42,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
       if (!event.currentTarget.contains(event.relatedTarget) && event.target.isConnected) focused.current = null;
     }}>
     <div className={styles.details}>
-      <p className={styles.identity}>{[shown.route_label, shown.model_label, run.run_selection.selection.reasoning].join(" · ")}</p>
+      <p className={styles.identity}>{[shown.route_label, shown.model_label, shown.reasoning_label].join(" · ")}</p>
       {context.length ? <div>
           <h3 className={styles.heading}>context</h3>
           <ul className={styles.list} role="list" aria-label="resource references attached to this run">

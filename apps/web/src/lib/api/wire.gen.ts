@@ -6464,6 +6464,7 @@ export interface components {
         GenerationCatalogRoute: {
             /** Billing */
             billing: components["schemas"]["SubscriptionBilling"] | components["schemas"]["MeteredApiBilling"];
+            default_model: components["schemas"]["GenerationModelDefault"];
             /** Label */
             label: string;
             /** Models */
@@ -6474,6 +6475,13 @@ export interface components {
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
             /** Route */
             route: components["schemas"]["CodexPersonalRoute"] | components["schemas"]["ProviderApiRoute"];
+        };
+        /** GenerationModelDefault */
+        GenerationModelDefault: {
+            /** Mode */
+            mode: string | null;
+            /** Model Key */
+            model_key: string;
         };
         /** GenerationModelRow */
         GenerationModelRow: {
@@ -6495,25 +6503,27 @@ export interface components {
             reasoning: components["schemas"]["GenerationReasoningRow"][];
             /** Source Context Window */
             source_context_window: number | null;
-            /** Source Default Reasoning */
-            source_default_reasoning: string | null;
             /** Source Max Output Tokens */
             source_max_output_tokens: number | null;
         };
         /** GenerationReasoningRow */
         GenerationReasoningRow: {
+            /** Chat Default */
+            chat_default: boolean;
             /** Chat State */
             chat_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
             /** Effort */
             effort: string;
+            /** Effort Label */
+            effort_label: string;
             /** Effort Order */
             effort_order: number;
             /** Key */
             key: string;
-            /** Label */
-            label: string;
             /** Mode */
             mode: string | null;
+            /** Mode Label */
+            mode_label: string | null;
             /** Readiness */
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
         };

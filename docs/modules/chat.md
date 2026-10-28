@@ -187,7 +187,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   holds the accepted answer made by this run (another pane's send may move the stored
   leaf), and hands it to every mounted store before the gate reopens. a send's acceptance
   settles its source callback once, whichever surface retried it: ordinary chat spends
-  its submitted text, while the reader keeps its annotation. the pane lands an accepted send, or
+  its unchanged submitted fields, preserving later text and explicit model choices,
+  while the reader keeps its annotation. the pane lands an accepted send, or
   a repeat once a read shows its answer (a retried read too), through `openAsyncResult`:
   while it still shows the path asked from, it selects the answer (a new chat's pane
   routes to the chat), shift opens it in a new pane, otherwise an offer ("message
@@ -234,7 +235,9 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   and never saves or spends the annotation. user bubbles and recovery show markdown
   source through the existing literal chat views.
 - **reader recovery** uses `ComposeReaderQuestion{text, selection}` on a fresh `Fork`
-  pane. its href names the chat/observed leaf and quote, never the question. after
+  pane. recovery actions belong to the reader composer's interaction scope;
+  independently edited attached notes do not. its href names the chat/observed
+  leaf and quote, never the question. after
   registering the actual memory draft cell, the composer synchronously writes text and
   the exact observed model (or null), then claims that visit's entry before enabling input.
   the workspace retains and guards an unclaimed question until this transfer; no draft
@@ -257,7 +260,7 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   `AssistantMessage` owns its details disclosure and failure or reconnect card;
   successful answers expose regeneration only in message overflow; eligible
   failed or cancelled answers retain inline rerun in their failure card.
-  `MessageDetails` shows `route · model · reasoning key`, the admitted context and the
+  `MessageDetails` shows the saved `route · model · reasoning` presentation, the admitted context and the
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
@@ -373,8 +376,10 @@ and source arrival remain resource-owned.
     refusal settles an earlier unconfirmed attempt only with accepted-run evidence or a
     revision or absence fence (a new chat has neither, so it stays unconfirmed until the
     viewer discards it or reloads).
-21. a selection is never substituted: a provider change needs a model; within a provider
-    keep the effort name, else the mode default, else the sole effort, else require one.
+21. deliberate provider/model changes choose the catalog's model/mode/effort defaults
+    together. a missing default preserves transient intent and permits explicit effort
+    choice. only that unresolved intent can complete on a later catalog read; an exact
+    selection is never substituted. inheritance and pending requests retain their identity.
 22. saved terminal calls win over replayed frames; only saved authorship authorizes undo.
 23. drafts and live command identity remain in memory. the common work guard
     warns before their actual loss; model selection alone is clean. accepted
