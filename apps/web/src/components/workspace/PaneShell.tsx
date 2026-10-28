@@ -618,7 +618,9 @@ function PaneView({
             return touchCapable && isActive && !hasActiveInteractionOwner() && current?.touchVisible ? current : null;
           }}/>
         </div> : null}
-        {isMobile || isMaximized ? null : (
+      </div>
+      {isMobile || isMaximized ? null : (
+        <div className={styles.primaryResizeHandle}>
           <ResizeHandle
             label={`Resize pane ${label}`}
             controls={bodyId}
@@ -627,8 +629,8 @@ function PaneView({
             maxWidthPx={width.maxWidthPx}
             onResize={(widthPx) => resizePrimaryPane(paneId, widthPx)}
           />
-        )}
-      </div>
+        </div>
+      )}
       {refresh.announcement}
       <Companion
         resourceTitle={header.title}

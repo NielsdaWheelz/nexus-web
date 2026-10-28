@@ -9,7 +9,7 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
-import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
+import { MAP_RAIL_WIDTH_PX, MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
@@ -26,7 +26,6 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { MenuOption } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
-import styles from "./media.module.css";
 
 const ReaderSettingsIcon = getPaneRouteIcon("/settings/reader");
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;
@@ -149,11 +148,9 @@ export function useReaderChrome(input: {
         rail:
           readable && !isMobile
             ? {
-                widthPx: 52,
+                widthPx: MAP_RAIL_WIDTH_PX,
                 body: (
-                  <section aria-label="Document Map overview" className={styles.rail}>
-                    <MapRail reader={reader} evidence={{ markers: input.markers, onMarker: input.onMarker, markerTarget: input.markerTarget }} />
-                  </section>
+                  <MapRail reader={reader} evidence={{ markers: input.markers, onMarker: input.onMarker, markerTarget: input.markerTarget }} />
                 ),
               }
             : null,

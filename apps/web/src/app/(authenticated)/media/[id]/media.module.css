@@ -43,11 +43,6 @@
   white-space: nowrap;
 }
 
-.rail {
-  display: flex;
-  height: 100%;
-}
-
 .textButton {
   display: inline-flex;
   align-items: center;

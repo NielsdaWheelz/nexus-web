@@ -1051,7 +1051,7 @@ adds less than one CSS pixel of safe clearance.
 
 The media reader publishes its geometry with `usePaneLayout`
 (`{intrinsicWidthPx, rail}`): a pdf's own width becomes the pane's minimum once
-known, and the Document Map overview rail (52px) sits beside the body and widens
+known, and the document map overview rail (32px, owned by `MapRail`) sits beside the body and widens
 the pane. Both are desktop-only; mobile ignores the publication. Clamping is
 render-only (`primaryWidth`): the stored `primaryWidthPx` is what the user chose
 (null follows the reader column), and is clamped only at render time to the 320px floor or a pdf
@@ -1065,8 +1065,16 @@ clearance and does not rise above Nexus, Player, or Android navigation; a
 higher-priority surface may cover it. Its range is the reader's visible band
 (`PositionRibbon` in `lib/documentReader/chrome/MapRail.tsx`).
 
-The reader Document Map overview rail is desktop-only. Its markers activate contextual targets; it contains no inspector
-or Document Map opener.
+the hosted document map is desktop-only. its visual lanes show sections and
+located evidence; full-width regions activate one destination or open a named
+chooser. reader destinations and evidence destinations keep their respective
+inspection and connections behaviour.
+
+ordinary desktop primary panes have a separate 8px resize boundary between the
+primary pane and companion. it consumes the existing `--resize-handle-width`
+without overlapping body or map controls. stored primary width and pdf minima
+still describe the body; map and separator are additional extent. maximized and
+mobile panes have no primary separator. the canvas measures the resulting extent.
 
 ## Pane History
 
