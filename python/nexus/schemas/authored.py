@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.reader_excerpts import ExcerptView, FrozenExcerpt
 from nexus.schemas.retrieval import RetrievalLocator
 
 
@@ -54,13 +55,17 @@ class NotePublication(Closed):
 Publication = Annotated[ReaderPublication | NotePublication, Field(discriminator="kind")]
 
 
-class SelectionCapture(Closed):
+class SelectionLocation(Closed):
     publication: Publication | None
     locator: RetrievalLocator
     quote_exact: str
     prefix: str | None
     suffix: str | None
     passage_ref: str | None
+
+
+class SelectionCapture(SelectionLocation):
+    excerpt: FrozenExcerpt
 
 
 class Causality(Closed):
@@ -115,6 +120,7 @@ class LinkState(Closed):
 
 
 class PassageCapture(Closed):
+    excerpt: FrozenExcerpt
     quote_exact: str
     publication: Publication | None
     locator: RetrievalLocator | None
@@ -159,16 +165,18 @@ class Corpus(Closed):
 class ResourceProjection(Closed):
     authored_by_viewer: bool
     ref: str
-    kind: Literal["note", "page", "highlight"]
+    kind: Literal["note", "page", "highlight", "source"]
     visible: bool
     body_pm_json: dict[str, object] | None
     body_text: str | None
     title: str | None
     local_date: str | None
     source_ref: str | None
-    selection: SelectionCapture | None
+    selection: SelectionLocation | None
     color: HighlightColor | None
     embedded_refs: list[str]
+    excerpt: ExcerptView | None
+    capture_revision: str | None
 
 
 class MergeResult(Corpus):
@@ -205,7 +213,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[1]
+    format_revision: Literal[2]
     head_cursor: Counter
     lamport: Counter
 
@@ -239,7 +247,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[1]
+    format_revision: Literal[2]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts
@@ -329,6 +337,14 @@ class ScopeInterval(Closed):
     end_cut: bool
 
 
+class ScopeIncompleteTable(Closed):
+    kind: Literal["incomplete_table"]
+    reading_ref: str
+    fragment_id: UUID
+    start_offset: int
+    end_offset: int
+
+
 ScopeInput = Annotated[
     ScopeIdentity
     | ScopeWorkspaceMember
@@ -338,7 +354,8 @@ ScopeInput = Annotated[
     | ScopeSourceAlias
     | ScopeHighlightMember
     | ScopeReading
-    | ScopeInterval,
+    | ScopeInterval
+    | ScopeIncompleteTable,
     Field(discriminator="kind"),
 ]
 

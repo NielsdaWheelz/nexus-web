@@ -44,7 +44,9 @@ import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import {cx} from "@/lib/ui/cx";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu from "./ContextualActionMenu";
-import ResourceBody, {ResourceMatchEvidence, type ResourceMatch} from "./ResourceBody";
+import { FullResourceBody } from "./ExcerptDisclosure";
+import { authoredItem } from "@/lib/notes/presentation";
+import {ResourceMatchEvidence, type ResourceMatch} from "./ResourceBody";
 import ResourceMetadata from "./ResourceMetadata";
 import {ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
@@ -88,6 +90,7 @@ type Shared = {
   authoredByViewer?: boolean;
   suppressedEdgeIds?: readonly string[];
   historical?: boolean;
+  readingRef?: string | null;
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
   /** The owning flat editor settles or refuses removal of its disclosed fields. */
@@ -131,6 +134,7 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
 }
 
 export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props) {
+  shared.readingRef = item?.preview.body.kind === "passage" ? item.preview.body.reading_ref : shared.readingRef ?? null;
   if(item!==undefined&&shared.historical)return <RemoteRow {...shared} item={item}/>;
   if(shared.writing)return <AuthoredRow {...shared} subject={item?.ref??resourceRef!}/>;
   if(item!==undefined)return item.authored_by_viewer&&AUTHORED.test(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
@@ -138,7 +142,7 @@ export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props
 }
 
 function LocalRow(props:Shared&{subject:string}){
-  const read=useAuthoredQuery({kind:"resource",ref:props.subject});
+  const read=useAuthoredQuery(props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind:"resource",ref:props.subject});
   const resource=read.data?.rows[0]?.resource;
   const [ownedRef,setOwnedRef]=useState<string|null>(null);
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
@@ -153,7 +157,7 @@ function remotePresentation(item: Item, props: Shared, runtime: ReturnType<typeo
   const activation = item.activation;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
-  const content = <ResourceBody body={item.preview.body} match={props.match}/>;
+  const content = <FullResourceBody item={item} historical={props.historical}/>;
   return {
     ref: item.ref, label: item.label, identity: metadata.identity, href: activation.href, item, highlightId: null,
     primary: <div className={styles.reference}>
@@ -161,7 +165,8 @@ function remotePresentation(item: Item, props: Shared, runtime: ReturnType<typeo
         aria-label={`open ${item.label}`} data-workspace-rich-target="true"
         onClick={event => activateTargetLink({event, runtime, target: {href: activation.href!, labelHint: item.label}})}
         onKeyDown={event => activateTargetLink({event, runtime, target: {href: activation.href!, labelHint: item.label}})}>
-        {content}</a> : content}
+        {item.preview.body.kind === "passage" ? item.preview.source?.title ?? item.label : content}</a> : item.preview.body.kind === "passage" ? null : content}
+      {item.preview.body.kind === "passage" ? content : null}
       {metadata.bibliography.length ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>
         <ResourceMetadata parts={metadata.bibliography} linkSource={false}/></span> : null}
     </div>,
@@ -202,7 +207,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
 }
 
 function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;read?:ReturnType<typeof useAuthoredQuery>}) {
-  const ownRead = useAuthoredQuery(props.writing||suppliedRead ? null : {kind: "resource", ref: props.subject});
+  const ownRead = useAuthoredQuery(props.writing||suppliedRead ? null : props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind: "resource", ref: props.subject});
   const read=suppliedRead??ownRead;
   const resource = props.writing ? props.projection : read.data?.rows[0]?.resource ?? null;
   const source = useAuthoredQuery(resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
@@ -227,10 +232,9 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
       : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
     : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
       placeholder={resource.local_date ?? "untitled page"}/> : <span data-resource-primary className={factualStyles.named}>{label}</span>
-    : resource.kind === "highlight" ? <div className={styles.reference}>
-      {link(<span data-resource-primary className={factualStyles.passage}>
-        <mark className={factualStyles.exact} data-color={resource.color ?? undefined}>{resource.selection?.quote_exact || "selected region"}</mark>
-      </span>)}
+    : resource.excerpt !== null ? <div className={styles.reference}>
+      {href ? link(sourceLabel ? localResourceLabel(sourceLabel) : "highlight") : null}
+      <FullResourceBody item={authoredItem(resource, props.readingRef ?? null)} />
       {sourceLabel ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>{localResourceLabel(sourceLabel)}</span> : null}
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
@@ -285,7 +289,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     arrow.current=node;
   },[]);
   const excludedEdgeIds=useMemo(()=>[...new Set([...childrenBranch.traversedEdgeIds,...suppressedEdgeIds])].sort(),[childrenBranch,suppressedEdgeIds]);
-  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.prefix,item.preview.body.exact,item.preview.body.suffix,item.activation]:null;
+  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.excerpt,item.preview.body.capture_revision,item.activation]:null;
   const descriptor=!writingRow&&projection.kind==="resource"&&item?.missing!==true?{
     resource_ref:ref,excluded_edge_ids:excludedEdgeIds,
     identity:JSON.stringify([ref,excludedEdgeIds,aliasMeaning]),

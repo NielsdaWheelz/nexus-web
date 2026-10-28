@@ -377,6 +377,16 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
     }
     if source.kind == "epub":
         locator["section_id"] = None
+    from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+
+    frozen = source_excerpts(
+        db,
+        [
+            SourceExcerptRequest(
+                reading_id=media.id, fragment_id=fragment.id, start=start, end=end, bounds=bounds
+            )
+        ],
+    )[0]
     highlight = ResourceRef("highlight", uuid5(call.id, "nexus.highlight.create:highlight"))
     intents: list[dict[str, Any]] = [
         {
@@ -395,6 +405,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
                 "prefix": prefix,
                 "suffix": suffix,
                 "passage_ref": None,
+                "excerpt": frozen.model_dump(mode="json"),
             },
             "color": value.color or "yellow",
         },

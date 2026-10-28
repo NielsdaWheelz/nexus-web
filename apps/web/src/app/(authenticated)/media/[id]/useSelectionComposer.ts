@@ -1,4 +1,6 @@
 "use client";
+import { CommandTooLargeError } from "@nexus/authored/types";
+import { ExcerptCaptureError, excerptTextParts } from "@nexus/authored/excerpt";
 
 // One ephemeral rich composer for a passage. A new selection freezes its exact local
 // capture when the composer opens; saving commits the highlight, its new note and their
@@ -33,12 +35,12 @@ import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
-import { attachNote, captureSelection, createHighlight, recolorHighlight, type SourceLabel } from "@/lib/documentReader/annotations";
+import { attachNote, captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { bodyHasContent, emptyBody } from "@nexus/authored/body";
-import { useWritingRuntime } from "@/lib/notes/hooks";
+import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
 import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import type { MediaAnnotations } from "./annotations";
 import { createSelectionDrafts, emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
@@ -142,6 +144,12 @@ export function useSelectionComposer(input: {
   }, [show]);
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
+  const copyRead = useAuthoredQuery(draft?.highlightId ? { kind: "excerpt", ref: `highlight:${draft.highlightId}`, reading_ref: `media:${mediaId}` } : null);
+  const copyResource = copyRead.data?.rows[0]?.resource;
+  const copyAnnotation = draft?.highlightId ? annotations.annotation(draft.highlightId) : null;
+  const fullCopyText = useMemo(() => copyResource?.excerpt?.kind === "content" ? excerptTextParts(copyResource.excerpt.body).exact : null, [copyResource]);
+  const copyQuote = draft?.highlightId ? copyResource?.capture_revision === copyAnnotation?.projection.capture_revision && copyResource?.excerpt?.kind === "content" ? fullCopyText : null : draft?.passage.quote ?? null;
+  const copyUnavailable = draft?.highlightId && copyQuote === null ? copyRead.error ? "couldn’t load this passage" : copyRead.data ? "passage unavailable in this reading" : "loading passage…" : copyQuote?.trim() ? null : "this highlight has no text to copy";
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
   const canAbandon = () => {
     const id = current.current?.draftId;
@@ -236,7 +244,7 @@ export function useSelectionComposer(input: {
   // Opening fixes the exact capture before any command; commands reuse that frozen target.
   const prepare = (selected: ComposerDraft["passage"], highlightId: string | null, carried: ComposerDraft | null): ComposerDraft => {
     // pdf captures carry the command-only `exact`; the passage keeps the visual anchor.
-    const passage: ComposerDraft["passage"] = { identity: selected.identity, quote: selected.quote,
+    const passage: ComposerDraft["passage"] = { identity: selected.identity, quote: selected.quote, excerpt: selected.excerpt, excerpt_start: selected.excerpt_start, excerpt_end: selected.excerpt_end,
       anchor: selected.anchor.kind === "text"
         ? { kind: "text", unit: selected.anchor.unit, start: selected.anchor.start, end: selected.anchor.end }
         : { kind: "pdf", page: selected.anchor.page, quads: selected.anchor.quads },
@@ -247,14 +255,18 @@ export function useSelectionComposer(input: {
     const shown = reader.getState().document;
     const annotation = highlightId ? annotations.annotation(highlightId) : null;
     const anchor: DraftAnchor = passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: selected.quote } : passage.anchor;
-    const capture = highlightId || shown.status !== "ready" || shown.doc.identity !== passage.identity ? null
-      : captureSelection(shown.doc, mediaId, anchor);
+    let capture: Capture | null = null;
+    let refused = false;
+    if (!highlightId && shown.status === "ready" && shown.doc.identity === passage.identity) {
+      try { capture = captureSelection(shown.doc, mediaId, anchor, selected.excerpt, selected.excerpt_start, selected.excerpt_end); }
+      catch (error) { if (error instanceof ExcerptCaptureError) refused = true; else throw error; }
+    }
     const sourceRef = annotation?.sourceRef ?? capture?.sourceRef ?? `media:${mediaId}`;
     const entry: ComposerDraft = {
-      id: createRandomId(), passage: annotation ? { ...passage, quote: annotation.selection.quote_exact } : passage,
+      id: createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
       capture, highlightId,
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
-      operation: null, issue: highlightId || capture ? null : { kind: "Source", message: "this passage can’t be annotated here." },
+      operation: null, issue: highlightId || capture ? null : { kind: "Capture", message: refused ? "this passage contains text that can’t be captured faithfully yet." : "this passage can’t be annotated here." },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
       sourceMediaId: sourceRef.slice("media:".length), sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
     };
@@ -329,6 +341,10 @@ export function useSelectionComposer(input: {
       return finish();
     } catch (error) {
       if (ctx.sessionSignal().aborted) return null;
+      if (error instanceof CommandTooLargeError) {
+        store.update(entry.id, value => value.operation?.id === operationId ? { ...value, operation: null, issue: { kind: "Capacity", message: "this selection is too large to save. select a shorter passage." } } : value);
+        return null;
+      }
       if (error instanceof LocalCommitError) {
         intent = null;
         failed = { kind: "Failed", message: LOCAL_FAILURE, retry: () => {
@@ -623,7 +639,7 @@ export function useSelectionComposer(input: {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
   return {
-    draft, opening, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
     reselection, cancelReselection,
     reselect() {
@@ -701,7 +717,7 @@ export function useSelectionComposer(input: {
     },
     activate(mark: Mark, identity: string, focus = true) {
       cancelReselection();
-      open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus, null, "Note");
+      open({ identity, anchor: mark.anchor, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null }, mark.id, focus, null, "Note");
     },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
@@ -720,19 +736,19 @@ export function useSelectionComposer(input: {
     compositionStart() { if (draft) store.update(draft.id, entry => ({ ...entry, revision: entry.revision + 1 })); },
     edit(edit: NoteEdit) {
       if (draft) store.update(draft.id, (entry) => ({ ...entry, body: edit.after, revision: entry.revision + 1,
-        selection: edit.selectionAfter, history: recordDraftEdit(entry.history, edit) }));
+        selection: edit.selectionAfter, issue: entry.issue?.kind === "Capacity" ? null : entry.issue, history: recordDraftEdit(entry.history, edit) }));
     },
     selection(selection: NoteEdit["selectionAfter"]) { if (draft) store.update(draft.id, (entry) => ({ ...entry, selection })); },
     historyBoundary() { if (draft) store.update(draft.id, (entry) => ({ ...entry, history: { ...entry.history, group: entry.history.group + 1 } })); },
     undo() {
       if (!draft) return;
-      store.update(draft.id, (entry) => { const edit = entry.history.undo.at(-1); return edit ? { ...entry, body: edit.before, selection: edit.selectionBefore, revision: entry.revision + 1,
+      store.update(draft.id, (entry) => { const edit = entry.history.undo.at(-1); return edit ? { ...entry, body: edit.before, selection: edit.selectionBefore, revision: entry.revision + 1, issue: entry.issue?.kind === "Capacity" ? null : entry.issue,
         history: { undo: entry.history.undo.slice(0, -1), redo: [...entry.history.redo, edit], group: entry.history.group + 1 } } : entry; });
       restoreHistoryFocus();
     },
     redo() {
       if (!draft) return;
-      store.update(draft.id, (entry) => { const edit = entry.history.redo.at(-1); return edit ? { ...entry, body: edit.after, selection: edit.selectionAfter, revision: entry.revision + 1,
+      store.update(draft.id, (entry) => { const edit = entry.history.redo.at(-1); return edit ? { ...entry, body: edit.after, selection: edit.selectionAfter, revision: entry.revision + 1, issue: entry.issue?.kind === "Capacity" ? null : entry.issue,
         history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 } } : entry; });
       restoreHistoryFocus();
     },

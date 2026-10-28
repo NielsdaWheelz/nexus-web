@@ -2,6 +2,7 @@
 /** Authored titles come from the local graph, even online. Other resource labels
  * retain their server/catalog owner. Saved visit hints are display evidence only. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { apiFetch } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -26,7 +27,7 @@ const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
 const PublisherContext = createContext<PublishTitle | null>(null);
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
-  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
+  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? (resource.kind === "highlight" ? localResourceLabel(resource) : ""), local_date: resource.local_date} : null;
 }
 /** A successful root read supplies title evidence; unknown/error is never absence. */
 export function useNoteRootTitle(ref: string, rootRead: OutlineRootMetadata): void {

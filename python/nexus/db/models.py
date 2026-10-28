@@ -233,6 +233,7 @@ class PassageAnchor(Base):
     anchor_key: Mapped[str]
     # the quote identity plus a non-identity locator_hint.
     selector: Mapped[dict[str, object]] = mapped_column(JSONB)
+    excerpt_preview: Mapped[dict[str, object]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
@@ -777,6 +778,7 @@ class Highlight(Base):
     exact: Mapped[str]
     prefix: Mapped[str]
     suffix: Mapped[str]
+    excerpt_preview: Mapped[dict[str, object]] = mapped_column(JSONB)
     authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

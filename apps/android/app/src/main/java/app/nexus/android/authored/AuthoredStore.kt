@@ -32,8 +32,20 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,1,0)", account.toString(), UUID.randomUUID().toString())
-        check(replica().getString("account_id") == account.toString())
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,2,0)", account.toString(), UUID.randomUUID().toString())
+        try {
+            transaction {
+                val metadata = replica()
+                check(metadata.getString("account_id") == account.toString())
+                if (metadata.getInt("format_revision") == 1) {
+                    require(rows("SELECT COUNT(*) AS count FROM pending_changes").getJSONObject(0).getString("count").toLong() == 0L) { "sync this device’s pending writing with the previous nexus version before updating." }
+                    val retired = JSONArray(context.assets.open("app/authored-retired-v1.json").bufferedReader().use { it.readText() })
+                    for (index in 0 until retired.length()) run("DROP TABLE ${retired.getString(index)}")
+                    for (index in 0 until schema.length()) if (!schema.getString(index).startsWith("PRAGMA")) run(schema.getString(index))
+                    run("UPDATE replica_state SET format_revision=2,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1")
+                } else check(metadata.getInt("format_revision") == 2) { "authored format mismatch" }
+            }
+        } catch (error: Throwable) { connection.close(); throw error }
     }
     private fun run(sql: String, vararg values: Any?) { rows(sql, *values) }
     private fun rows(sql: String, vararg values: Any?): JSONArray = connection.prepare(sql).use { readRows(it, *values) }
@@ -132,7 +144,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until passages.length()) {
             val state = passages.getJSONObject(index)
             val key = JSONArray().put(state.getString("source_ref")).put(state.getString("normalized_exact")).put(state.getString("prefix")).put(state.getString("suffix"))
-            run("INSERT INTO passages VALUES(?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString())
+            val projection = byRef["passage_anchor:${state.getString("anchor_id")}"] ?: error("missing passage projection")
+            run("INSERT INTO passages VALUES(?,?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json,projection_json=excluded.projection_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString(), projection.toString())
         }
         val stubs = states.getJSONArray("source_stubs")
         for (index in 0 until stubs.length()) { val state = stubs.getJSONObject(index); run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", state.getString("source_ref"), state.toString()) }

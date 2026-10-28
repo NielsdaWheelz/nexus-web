@@ -1,4 +1,5 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import { ChevronDown, Copy, MessageCircle, MessagesSquare, Move, NotebookPen, Save, Share2, Trash2 } from "lucide-react";
@@ -289,9 +290,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!draft || !opening) return null;
     const hasNote = bodyHasContent(draft.body);
     const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
+    const refused = draft.issue?.kind === "Capture" || draft.issue?.kind === "Capacity" ? draft.issue : null;
     const saving = failed ? draft.operation !== null : draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure";
     const blockedReason = failed ? "retry saving first. your words are kept."
       : sourceChanged ? "the source changed. your words are kept; select the passage again."
+      : refused ? refused.message
       : draft.chatIssue?.kind === "Passage" || draft.chatIssue?.kind === "Source" ? "select the passage again before saving or sending."
       : draft.attachmentActive ? "finish or discard the attachment before saving or sending."
       : draft.linkInputActive ? "finish or cancel the link before saving or sending."
@@ -326,8 +329,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"),
-      draft.passage.quote.trim().length > 0 ? null : "this highlight has no text to copy");
+    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(feedback, composer.copyQuote, "passage couldn’t be copied"); },
+      composer.copyUnavailable);
     // sharing a new passage first commits its highlight; an existing one shares as it is.
     const shareAction = { ...(sharePiece !== null
       ? command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
@@ -376,7 +379,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     return (
       <div data-mobile={isMobile} className={styles.selectionComposer}>
         {!isMobile ? toolbar : null}
-        {unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
+        {refused && !sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: refused.message }} announcement="Polite"
+          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
         {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
         {annotation ? <AttachedNotes annotation={annotation} /> : null}
@@ -441,7 +445,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         {menu.marks.map((mark) => {
           const own = store.annotation(mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
-            {own ? own.selection.quote_exact : "highlight"}
+            {own ? own.excerpt.kind === "content" ? excerptTextParts(own.excerpt.body).exact : "table excerpt" : "highlight"}
             <span>{mark.color} · {own ? `your highlight${own.notes.length ? ` · ${own.notes.length === 1 ? "1 note" : `${own.notes.length} notes`}` : ""}` : "shared highlight"}</span>
           </button>;
         })}

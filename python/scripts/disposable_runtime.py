@@ -306,6 +306,61 @@ def stop_group(
     raise RuntimeError("owned process group remains after kill")
 
 
+def database_backup(value: str) -> Path:
+    """Admit an explicit readable backup before the lab allocates resources."""
+    try:
+        path = Path(value).resolve(strict=True)
+        if not path.is_file():
+            raise OSError("not a regular file")
+        with path.open("rb"):
+            pass
+    except OSError:
+        raise argparse.ArgumentTypeError("requires a readable regular file") from None
+    return path
+
+
+def restore_database(
+    backup: Path | None,
+    *,
+    compose: list[str],
+    compose_env: dict[str, str],
+    container_ids: list[str],
+    run_dir: Path,
+    command: Callable[..., str],
+) -> None:
+    """Restore only the fresh owned database before migrations or writers exist."""
+    if backup is None:
+        return
+    message("database restore: restoring backup into fresh owned postgres before migrations")
+    postgres_id = command(compose + ["ps", "-q", "postgres"], env=compose_env).strip()
+    if postgres_id not in container_ids:
+        raise RuntimeError("owned postgres container missing")
+    restore_path = "/tmp/nexus-lab-restore.dump"
+    command(["docker", "cp", str(backup), f"{postgres_id}:{restore_path}"])
+    command(
+        compose
+        + [
+            "exec",
+            "-T",
+            "postgres",
+            "pg_restore",
+            "-U",
+            "postgres",
+            "--dbname",
+            "postgres",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--no-privileges",
+            "--exit-on-error",
+            "--single-transaction",
+            restore_path,
+        ],
+        env=compose_env,
+        log=run_dir / "database-restore.log",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="fresh real nexus application; owned resources removed after the driver exits",
@@ -316,6 +371,12 @@ def main() -> int:
         'optional {"max_parallel_labs": 6}; absent means six lab slots. '
         "example: ./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test "
         "--config apps/web/scripts/lab/playwright.config.ts",
+    )
+    parser.add_argument(
+        "--database-backup",
+        type=database_backup,
+        help="restore this PostgreSQL custom-format backup into the fresh owned database "
+        "before migrations and writers start",
     )
     parser.add_argument(
         "--live-config",
@@ -1056,6 +1117,15 @@ def main() -> int:
         if len(container_ids) < len(store_services) + 4:
             raise RuntimeError("owned stores and isolated auth containers missing")
         app_env |= {"SUPABASE_URL": auth_origin, "SUPABASE_ANON_KEY": status["PUBLISHABLE_KEY"]}
+        phase = "database restore"
+        restore_database(
+            args.database_backup,
+            compose=compose,
+            compose_env=compose_env,
+            container_ids=container_ids,
+            run_dir=run_dir,
+            command=command,
+        )
         phase = "bucket and migration"
         command(
             [sys.executable, str(ROOT / "python/scripts/local_storage.py"), "--origin", web_origin],

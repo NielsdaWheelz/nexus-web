@@ -4,6 +4,7 @@
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
+import { captureLocator } from "@nexus/authored/capture";
 import type { NoteBody } from "@nexus/authored/body";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
 
@@ -118,7 +119,7 @@ export function useReferenceInput(
     const selectedTarget =
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
-        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target };
+        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target, capture: { ...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref) } };
     set(null);
     input.accepted(value.row_id, value.base);
     owner.onSelected(selectedTarget, target.item);

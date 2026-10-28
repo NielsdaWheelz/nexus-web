@@ -341,7 +341,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         );
                       }}
                     >
-                      <NexusRowBody row={row} desktop />
+                      <NexusRowBody row={row} desktop disclosure={{
+                        triggerAttributes: { tabIndex: selected ? 0 : -1,
+                          onFocus: event => { focusedSecondary.current = event.currentTarget; select(row); },
+                          onBlur: () => { focusedSecondary.current = null; } },
+                        returnFocus: () => inputRef.current,
+                      }} />
                     </div>
                     {row.secondary?.kind === "ClosePane" ? (
                       <Button

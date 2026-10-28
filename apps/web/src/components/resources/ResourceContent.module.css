@@ -5,8 +5,7 @@
 .named {
   font-weight: var(--weight-medium);
 }
-.prose,
-.passage {
+.prose {
   white-space: pre-wrap;
 }
 .code {
@@ -14,32 +13,9 @@
   white-space: pre-wrap;
   tab-size: 2;
 }
-.context,
 .quiet {
   color: var(--ink-muted);
 }
-.exact {
-  color: inherit;
-  background: var(--accent-muted);
-  border-radius: var(--radius-xs);
-  box-decoration-break: clone;
-}
-.exact[data-color="yellow"] {
-  background: var(--highlight-yellow);
-}
-.exact[data-color="green"] {
-  background: var(--highlight-green);
-}
-.exact[data-color="blue"] {
-  background: var(--highlight-blue);
-}
-.exact[data-color="pink"] {
-  background: var(--highlight-pink);
-}
-.exact[data-color="purple"] {
-  background: var(--highlight-purple);
-}
-
 .source {
   color: var(--ink-muted);
   text-decoration: none;

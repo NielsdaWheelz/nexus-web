@@ -1,4 +1,5 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
 import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
@@ -67,7 +68,7 @@ export default function ResourceIndexRow({
     case "images": title = body.count === 1 ? "image" : `${body.count} images`; break;
     case "passage":
     case "prose": {
-      const literal = body.kind === "passage" ? body.exact.text : body.excerpt.text;
+      const literal = body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.excerpt.text;
       title = source?.title?.trim() || (literal.startsWith(item.label) ? metadata.identity : item.label);
       break;
     }

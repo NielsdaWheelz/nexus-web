@@ -1,4 +1,5 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
 // The media pane's annotations. Highlights, their attached notes and the media's
 // whole-document links are local authored state: the account database owns them online
@@ -146,7 +147,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         : structure.fraction({ kind: "pdf", page: anchor.page, y: 0 });
       for (const annotation of localState.annotations) if (annotation.placement.kind === "placed")
         markers.push({ id: annotation.id, position: at(annotation.placement.anchor, false), end: at(annotation.placement.anchor, true),
-          kind: "Highlight", tone: "Highlight", label: "highlight", preview: annotation.selection.quote_exact });
+          kind: "Highlight", tone: "Highlight", label: "highlight", preview: annotation.excerpt.kind === "content" ? excerptTextParts(annotation.excerpt.body).exact : "table excerpt" });
       for (const root of occurrences) {
         const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
         if (!extent) continue;
@@ -170,7 +171,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
           kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
             : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",
           tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
-          preview: body.kind === "passage" ? body.exact.text : body.kind === "prose" ? body.excerpt.text : null });
+          preview: body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.kind === "prose" ? body.excerpt.text : null });
       }
       if (wire && wire.identity === doc.identity) markers.push(...wire.markers.filter(marker => marker.item_id.startsWith("embed:")).map(marker => ({
         id: marker.item_id, position: marker.position, end: marker.end_position, kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview })));

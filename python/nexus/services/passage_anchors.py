@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import XPostSource
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.services import authored, library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
@@ -125,6 +126,7 @@ def materialize_or_reuse(
     prefix: str | None = None,
     suffix: str | None = None,
     locator_hint: dict[str, Any] | None = None,
+    captured_evidence: CapturedEvidence | None = None,
 ) -> ResourceRef:
     """Capture or reuse the authored passage for a quote within one owner.
 
@@ -164,6 +166,50 @@ def materialize_or_reuse(
             ApiErrorCode.E_LINK_TARGET_AMBIGUOUS,
             _REFUSAL_MESSAGES[resolution.status],
         )
+    from nexus.services.reader_excerpts import plain_excerpt
+    from nexus.services.reader_publication import read_ready_publication_generation
+    from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+
+    locator = None
+    publication = None
+    frozen = plain_excerpt(exact, prefix, suffix)
+    if captured_evidence is not None:
+        assert captured_evidence.quote is not None
+        frozen = captured_evidence.quote.excerpt
+        if captured_evidence.target.kind == "passage":
+            locator = captured_evidence.target.locator.model_dump(mode="json")
+        target = captured_evidence.target
+        extent = frozen.source_extent
+        if (
+            target.kind == "passage"
+            and extent is not None
+            and extent.reading_ref == target.owner_ref == f"media:{owner_id}"
+            and extent.document_identity == target.source_identity
+            and str(getattr(target.locator, "media_id", "")) == str(owner_id)
+            and target.source_identity is not None
+            and target.source_identity.startswith("g")
+            and target.source_identity[1:].isdigit()
+        ):
+            publication = {"kind": "reader", "generation": int(target.source_identity[1:])}
+    elif (
+        owner_scheme == "media"
+        and resolution.locator is not None
+        and resolution.locator.get("fragment_id")
+    ):
+        generation = read_ready_publication_generation(db, media_id=owner_id)
+        publication = None if generation is None else {"kind": "reader", "generation": generation}
+        hint = resolution.locator
+        frozen = source_excerpts(
+            db,
+            [
+                SourceExcerptRequest(
+                    reading_id=owner_id,
+                    fragment_id=UUID(hint["fragment_id"]),
+                    start=hint["start_offset"],
+                    end=hint["end_offset"],
+                )
+            ],
+        )[0]
     result = authored.server_command(
         db,
         user_id,
@@ -174,7 +220,12 @@ def materialize_or_reuse(
             "exact": quote_exact,
             "prefix": resolution.prefix,
             "suffix": resolution.suffix,
-            "capture": {"quote_exact": exact, "publication": None, "locator": None},
+            "capture": {
+                "quote_exact": exact,
+                "publication": publication,
+                "locator": locator,
+                "excerpt": frozen.model_dump(mode="json"),
+            },
         },
         resource_refs=[],
         link_ids=[],

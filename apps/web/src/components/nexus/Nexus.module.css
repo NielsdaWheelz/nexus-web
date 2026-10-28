@@ -86,7 +86,7 @@
 .rowIcon { width: 20px; }
 .rowBody { align-items: flex-start; }
 .rowLabel { max-width: 100%; font-weight: 600; overflow-wrap: anywhere; }
-.rowLabel [data-resource-primary] { white-space: inherit; }
+
 .rowPassage { min-width: 0; max-width: 100%; }
 
 .rowSnippet {
@@ -507,3 +507,6 @@
   .mobile .paneOpen:hover,
   .mobile .choices button:hover { background: var(--surface-hover); color: var(--ink); }
 }
+
+.mobile .row:has(.mobileEvidence) { flex-wrap: wrap; }
+.mobileEvidence { flex-basis: 100%; min-width: 0; padding: 0 var(--space-2) var(--space-3); }

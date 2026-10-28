@@ -10,7 +10,7 @@ import json
 import subprocess
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
@@ -65,3 +65,33 @@ def call(value: dict[str, Any]) -> Any:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid authored change")
     result.check_returncode()
     return json.loads(result.stdout)
+
+
+def call_items(
+    op: Literal[
+        "project_excerpts",
+        "scope_excerpts",
+        "excerpt_source_selections",
+        "capture_excerpts",
+        "excerpt_text_parts",
+    ],
+    items: list[dict[str, Any]],
+) -> list[Any]:
+    """One closed batch protocol, bounded below the helper's complete stdin budget."""
+    out = []
+    batch = []
+    size = 64
+    for item in items:
+        item_size = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode())
+        if item_size > 10 * 1024 * 1024:
+            raise InvalidRequestError(
+                ApiErrorCode.E_CAPTURE_TOO_LARGE, "Source capture exceeds helper capacity"
+            )
+        if batch and size + item_size > 10 * 1024 * 1024:
+            out.extend(call({"op": op, "items": batch})["items"])
+            batch, size = [], 64
+        batch.append(item)
+        size += item_size + 1
+    if batch:
+        out.extend(call({"op": op, "items": batch})["items"])
+    return out

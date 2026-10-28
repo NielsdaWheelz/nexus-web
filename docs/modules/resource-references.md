@@ -70,7 +70,7 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | --- | --- |
 | `named` | title/name, ordered credits and nullable live show artwork |
 | `media` | canonical `MediaSummaryOut`: title, credits, original publication, consumption and time |
-| `passage` | exact words in captured/saved colour with adjacent prefix/suffix |
+| `passage` | frozen excerpt structure with selected runs in saved colour; compact or full view |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
 | `reference` | an embed note's stored label, or `embedded resource` |
@@ -78,7 +78,9 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 two row families compose the same resource facts. indexes serve collection panes,
 search and chat context: native title links, applicable bibliography,
 consumption and time, existing resource actions, and podcast-show artwork. indexes
-never create outline sessions, disclosure or editors. imports/settings retain their
+never create outline sessions or editors. captured passages have an independent
+excerpt disclosure; reference pickers keep that control outside their listbox.
+imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
 the shell requires `Index` (title and metadata), `Search` (also one excerpt) or

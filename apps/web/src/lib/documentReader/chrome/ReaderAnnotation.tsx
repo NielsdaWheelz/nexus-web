@@ -4,6 +4,8 @@
 // in the mounted source, and each attached note as its own editable resource in
 // endpoint order. Note editing saves on this device as it happens; unlink and delete
 // address exactly one note and never the highlight.
+import { FullResourceBody } from "@/components/resources/ExcerptDisclosure";
+import { authoredItem } from "@/lib/notes/presentation";
 import { useState, useSyncExternalStore } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
@@ -22,7 +24,7 @@ export const PLACEMENT_COPY: Record<Exclude<ReaderAnnotation["placement"]["kind"
 /** The literal captured quote, never the current source text. */
 export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnnotation }) {
   return <>
-    <mark className={styles.annotationQuote} data-color={annotation.color}>{annotation.selection.quote_exact}</mark>
+    <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef)} />
     {annotation.placement.kind === "unlocated" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unlocated }} announcement="None" /> : null}
   </>;
 }

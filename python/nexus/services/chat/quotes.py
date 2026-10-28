@@ -26,6 +26,7 @@ from nexus.schemas.conversation import (
     ReaderSelectionPreview,
     ReaderSelectionSnapshot,
 )
+from nexus.services.reader_excerpts import quote_parts
 from nexus.services.resource_graph.refs import ResourceRef
 
 
@@ -52,14 +53,15 @@ def build_snapshot(
     except NotFoundError as error:
         raise ApiError(missing, "Highlight is outside the requested reading scope") from error
     quote = evidence.quote
-    if quote is None or not quote.exact.strip():
+    parts = quote_parts(quote) if quote is not None else None
+    if parts is None or not parts.exact.strip():
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_GEOMETRY_ONLY,
             "A geometry-only highlight cannot be quoted",
         )
     if (
-        len(quote.exact) > MAX_QUOTE_EXACT
-        or max(len(quote.prefix or ""), len(quote.suffix or "")) > MAX_QUOTE_AFFIX
+        len(parts.exact) > MAX_QUOTE_EXACT
+        or max(len(parts.prefix), len(parts.suffix)) > MAX_QUOTE_AFFIX
     ):
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
@@ -149,10 +151,11 @@ def attribute(value: str) -> str:
 
 
 def snapshot_block(snapshot: ReaderSelectionSnapshot, tag: str) -> str:
+    parts = quote_parts(snapshot.evidence.quote) if snapshot.evidence.quote else None
     return quote_block(
         tag,
-        exact=snapshot.evidence.quote.exact if snapshot.evidence.quote else "",
-        prefix=snapshot.evidence.quote.prefix if snapshot.evidence.quote else None,
-        suffix=snapshot.evidence.quote.suffix if snapshot.evidence.quote else None,
+        exact=parts.exact if parts else "",
+        prefix=parts.prefix if parts else None,
+        suffix=parts.suffix if parts else None,
         source=snapshot.evidence.source.title,
     )

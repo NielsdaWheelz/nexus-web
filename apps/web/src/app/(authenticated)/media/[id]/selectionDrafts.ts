@@ -1,3 +1,4 @@
+import type { ExcerptBody } from "@nexus/authored/excerpt";
 import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
@@ -26,7 +27,7 @@ export function recordDraftEdit(history: DraftHistory, edit: NoteEdit): DraftHis
 }
 
 export type DraftIssue =
-  | { kind: "Source"; message: string }
+  | { kind: "Source" | "Capture" | "Capacity"; message: string }
   /** A local commit that did not persist: its frozen command retries; the input stays. */
   | { kind: "Failed"; message: string; retry: () => void };
 
@@ -48,7 +49,7 @@ type ChatAttempt =
 export interface ComposerDraft {
   id: string;
   /** Visual anchor and literal quote; capture-only fields live in `capture`. */
-  passage: Passage & { quote: string };
+  passage: Passage & { quote: string; excerpt: ExcerptBody | null; excerpt_start: number | null; excerpt_end: number | null };
   /** A new selection's frozen local capture; null when the draft opened an existing highlight. */
   capture: Capture | null;
   /** The annotated highlight, once it exists. Its notes are its own resources, never this draft. */
