@@ -2,12 +2,13 @@
 
 /**
  * One account's external-media intention, retained independently of its row or
- * picker. URL admission saves; episode resolution only establishes catalogue
- * identity. A separate account command retains episode placement guards through
- * response loss. Nothing survives reload; subscription stays independent.
+ * picker. URL admission saves; episode resolution establishes catalogue identity.
+ * Placement retains its exact guards through response loss. Nothing survives a
+ * reload. Podcast subscription is a separate operation. Each failure reports once;
+ * the subject's own lectern or library control then carries its recovery.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
@@ -15,14 +16,13 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchBrowsePreview, type BrowsePreview } from "@/lib/browse/api";
 import { isAbortError } from "@/lib/errors";
+import { publishImportsInvalidation } from "@/lib/imports/api";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { acquirePreviewMedia, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance } from "@/lib/imports/ingest";
 import type { Schema } from "@/lib/api/wire";
 import { placements, readAcquisitionGuard, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { resolveResourceItem } from "@/lib/resources/items";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
@@ -39,12 +39,16 @@ export interface MediaContinuation {
   readonly finalMediaId: string | null;
   readonly placement: { readonly libraryId: string; readonly body: Schema<"PlaceItemRequest"> } | null;
   readonly failure: { readonly content: FeedbackContent; readonly unknown: boolean; readonly review: boolean } | null;
-  readonly needsAttention: boolean;
   readonly retryRevision: number;
-  readonly resultLabel: string | null;
 }
 type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
 const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "lectern" : destination.kind === "All" ? "all" : destination.library.name;
+
+/** The one recovery a failed continuation offers, wherever it is shown. */
+export function continuationRecoveryLabel(operation: MediaContinuation, failure: NonNullable<MediaContinuation["failure"]>): string {
+  return failure.review ? "review choices" : failure.unknown ? "check change"
+    : operation.accepted === null ? "retry import" : `retry adding to ${destinationLabel(operation.destination)}`;
+}
 
 export function useMediaContinuationOwner(ctx: Context) {
   const placement = useLibraryPlacementController();
@@ -73,7 +77,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     const unavailable = isApiError(error) && ["E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
     const review = isApiError(error) && ["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
     update(id, value => ({ ...value,
-      phase: unavailable ? "unavailable" : value.phase, needsAttention: true,
+      phase: unavailable ? "unavailable" : value.phase,
       failure: {
         unknown: isAbortError(error) || outcomeUnknown(error), review,
         content: { tone: "Warning", title: unavailable && resolved ? "item is no longer available"
@@ -97,7 +101,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     try {
       let confirmed: boolean;
       if (!await mediaAcquisitionAvailable(mediaId, signal)) {
-        update(id, value => ({ ...value, phase: "unavailable", needsAttention: true, failure: { unknown: false, review: true, content: {
+        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
           tone: "Warning", title: "this item is no longer available", message: "review the source before saving again.",
         } } }));
         return;
@@ -109,9 +113,9 @@ export function useMediaContinuationOwner(ctx: Context) {
           if (held.phase === "Unknown") await ctx.podcasts.check(held.key);
           if (get(id)?.phase !== "complete") {
             const pending = ctx.podcasts.pending(subject);
-            update(id, value => ({ ...value, phase: "resolving", needsAttention: true, failure: {
+            update(id, value => ({ ...value, phase: "resolving", failure: {
               unknown: pending?.phase === "Unknown", review: pending === null || pending.phase === "Refused",
-              content: { tone: "Warning", title: "change not confirmed", message: "review the existing save in workspace feedback." },
+              content: { tone: "Warning", title: "change not confirmed", message: "review this item’s library controls to check the saved request." },
             } }));
           }
           return;
@@ -131,16 +135,16 @@ export function useMediaContinuationOwner(ctx: Context) {
         confirmed = await ctx.podcasts.submit({ subject, title: `${operation.subject.title} · ${destinationLabel(operation.destination)}`,
           command: { kind: "EpisodeSave", mediaId, libraryId: request.libraryId, body: request.body },
           onAccepted: () => {
-            update(id, value => ({ ...value, phase: "complete", needsAttention: false, failure: null }));
+            update(id, value => ({ ...value, phase: "complete", failure: null }));
             if (operation.pickerKey !== null) placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
           },
         });
         if (!confirmed) {
           const pending = ctx.podcasts.pending(subject);
-          update(id, value => ({ ...value, phase: "resolving", needsAttention: true,
+          update(id, value => ({ ...value, phase: "resolving",
             failure: { unknown: pending?.phase === "Unknown", review: pending?.phase === "Refused", content: {
               tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "save needs review",
-              message: "exact-request recovery remains available in workspace feedback.",
+              message: "review this item’s library controls to check the saved request.",
             } },
           }));
           return;
@@ -159,13 +163,13 @@ export function useMediaContinuationOwner(ctx: Context) {
       }
       if (signal.aborted) return;
       if (!confirmed) {
-        update(id, value => ({ ...value, needsAttention: true, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
+        update(id, value => ({ ...value, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
           tone: "Warning", title: operation.destination.kind === "Library" ? "library filing changed" : "lectern change not confirmed",
           message: operation.destination.kind === "Library" ? "review the current libraries before choosing again." : "check the current lectern change before trying again.",
         } } }));
         return;
       }
-      update(id, value => ({ ...value, phase: "complete", needsAttention: false, failure: null }));
+      update(id, value => ({ ...value, phase: "complete", failure: null }));
       if (operation.pickerKey !== null)
         placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
     } catch (error) { fail(id, error); }
@@ -194,7 +198,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       // Record the exact acceptance before beginning any remaining membership.
       update(id, value => ({ ...value, accepted, phase: "resolving", failure: null }));
       if (!accepted.available) {
-        update(id, value => ({ ...value, phase: "unavailable", needsAttention: true, failure: { unknown: false, review: true, content: {
+        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
           tone: "Warning", title: "this item is no longer available", message: "review the source before saving again.",
         } } }));
         return;
@@ -207,7 +211,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     if (held || latest.current.placement.hasPendingExternalCreation(subject.target) || !latest.current.ctx.isActive()) return;
     const operation: MediaContinuation = { intentId: crypto.randomUUID(), subject, destination, pickerKey,
       phase: "acquiring", accepted: null, preview: null, guard: null,
-      finalMediaId: null, placement: null, failure: null, needsAttention: false, retryRevision: 0, resultLabel: null };
+      finalMediaId: null, placement: null, failure: null, retryRevision: 0 };
     current.current = [...current.current.filter(item => item.subject.target !== subject.target), operation];
     setOperations(current.current);
     for (const listener of listeners.current) listener();
@@ -220,7 +224,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       stopsBrowserWork: current.current.some(operation => operation.phase !== "complete"),
     }),
   }), [guard]);
-  return {
+  const api = {
     operations, start,
     forSubject: (target: string) => operations.find(operation => operation.subject.target === target) ?? null,
     forgetDeletedMedia(mediaId: string) {
@@ -265,7 +269,16 @@ export function useMediaContinuationOwner(ctx: Context) {
           void apply(id, operation.finalMediaId ?? operation.accepted.mediaId);
       }
     },
-    labelResult(id: string, label: string) { update(id, value => ({ ...value, resultLabel: label })); },
+  };
+  return {
+    ...api,
+    /** Imports refresh first, so a retry never reads the failure it recovers from. */
+    recover(id: string) {
+      const failure = get(id)?.failure;
+      if (!failure) return;
+      publishImportsInvalidation();
+      if (failure.review) api.review(id); else api.retry(id);
+    },
   };
 }
 
@@ -293,12 +306,6 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
       return fetchAcceptedSource(attempt, signal);
     },
   });
-  const completed = operation.phase === "complete";
-  const label = usePaneFreeServerValue({
-    key: completed && operation.resultLabel === null ? `media-continuation-result:${operation.intentId}` : null,
-    stale: "",
-    load: async signal => (await resolveResourceItem(`media:${operation.finalMediaId}`, signal)).label,
-  });
   useEffect(() => {
     if (!resolving) return;
     if (source.status === "ready") {
@@ -309,31 +316,13 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
       : imports.summary.status === "ready" && !imports.summary.refreshing ? imports.summary.error : null;
     if (source.status === "ready" && !source.data.settled && error !== null) owner.fail(operation.intentId, error);
   }, [source, resolving, imports.summary, owner, operation.intentId]);
-  useEffect(() => {
-    if (!completed || operation.resultLabel !== null) return;
-    if (label.status === "ready") owner.labelResult(operation.intentId, label.data);
-    else if (label.status === "failed") owner.labelResult(operation.intentId, "saved item");
-  }, [completed, label, owner, operation.intentId, operation.resultLabel]);
-  const resultLabel = operation.resultLabel ?? "saved item";
-  const href = operation.finalMediaId === null ? null : `/media/${operation.finalMediaId}`;
+  const feedback = useFeedback();
   const failure = operation.failure;
-  useWorkspaceCondition(`media-continuation:${operation.intentId}`, {
-    needsAttention: operation.needsAttention,
-    priority: completed ? "Status" : "Write", announcement: "Polite",
-    content: failure?.content ?? { tone: completed ? "Success" : "Neutral",
-      title: completed ? `added to ${destinationLabel(operation.destination)}: ${resultLabel}`
-        : operation.phase === "applying" ? `adding to ${destinationLabel(operation.destination)}`
-        : operation.accepted !== null ? "resolving item" : `${operation.subject.media_kind === "podcast_episode" ? "resolving episode" : "importing"} for ${operation.subject.title}`,
-    },
-    actions: failure !== null ? [{ label: failure.review ? "review choices"
-      : failure.unknown ? "check change" : operation.accepted === null ? "retry import"
-      : `retry adding to ${destinationLabel(operation.destination)}`,
-      onClick: () => { imports.refresh(); if (failure.review) owner.review(operation.intentId); else owner.retry(operation.intentId); } }]
-      : completed && href !== null ? [{ label: `open ${resultLabel}`, href, onActivate: event => activateTargetLink({ event,
-        target: { href, labelHint: resultLabel }, runtime: { activateTarget: request => ctx.workspace().activateWorkspaceTarget({
-          ...request, originPaneId: ctx.workspace().state.active_primary_pane_id,
-        }) },
-      }) }] : undefined,
-  });
+  useEffect(() => {
+    if (failure === null) return;
+    return feedback.receipt(failure.content, { label: continuationRecoveryLabel(operation, failure), onClick: () => owner.recover(operation.intentId) });
+    // One report per failure the owner records, retracted once it resolves or retries.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the failure identity alone
+  }, [failure]);
   return null;
 }

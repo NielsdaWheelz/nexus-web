@@ -5,7 +5,8 @@
   min-inline-size: min-content;
   max-width: 100%;
   align-items: baseline;
-  gap: var(--row-media-gap);
+  /* a containing row may compact this; standalone identities keep the row's standard gap. */
+  gap: var(--row-media-gap, var(--space-3));
   color: var(--ink-muted);
   white-space: nowrap;
 }

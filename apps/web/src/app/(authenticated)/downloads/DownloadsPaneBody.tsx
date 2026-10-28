@@ -1,5 +1,7 @@
 "use client";
 
+import { DeviceCatalogStatus, DeviceListeningStatus } from "@/lib/native/localStateStatus";
+
 // Device-owned downloads, independent of catalog coverage and remote admission.
 import { useEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
@@ -89,6 +91,7 @@ export default function DownloadsPaneBody() {
   if (!localContentAvailable) return <FeedbackState content={{ tone: "Neutral", title: "downloads require the android app" }} announcement="None" />;
   if (index === null) return <FeedbackState content={{ tone: error === null ? "Neutral" : "Warning", title: error?.message ?? "opening downloads…" }} announcement="Polite" />;
   return <div ref={root} className={styles.body}>
+    <DeviceCatalogStatus /><DeviceListeningStatus />
     <h1 ref={heading} tabIndex={-1}>downloads</h1>
     <span className="sr-only" role="status">{announcement}</span>
     {error === null ? null : <FeedbackNotice content={{ tone: "Warning", title: "downloads couldn’t refresh", message: error.message }} announcement="Polite" />}

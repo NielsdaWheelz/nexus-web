@@ -84,7 +84,8 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
             onCreate: name => ctx.podcastLibraryCreation.admit({ name, scope, onCreated: destination => {
               if (!ctx.isActive()) return;
               if (session.current.active && session.current.choosing) { choose(destination.id, true); return; }
-              ctx.feedback.receipt({ tone: "Success", title: `library created · ${destination.name}; addition not started` });
+              // The chooser has closed: nothing else says the subscription still needs choosing.
+              ctx.feedback.receipt({ tone: "Info", title: `library created · ${destination.name}; addition not started` });
             } }) }} />
       </PickerSurface>;
     case "AdditionReview":

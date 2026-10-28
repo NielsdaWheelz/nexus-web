@@ -1,11 +1,11 @@
 "use client";
-// Server success and local durability are separate acknowledgements. A local
-// refresh failure offers its own retry and never resends an email or edit.
+/** Server settings success and native durability are separate acknowledgements.
+ * A failed local refresh stays in the settings pane; retry never resends edits. */
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { installedApp, remoteAdmission } from "./admission";
 import { refreshDeviceSettings } from "./client";
-const Context = createContext<(() => Promise<void>) | null>(null);
+const Context = createContext<{ refresh(): Promise<void>; failed: boolean; busy: boolean } | null>(null);
 export function DeviceSettingsProvider({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -20,17 +20,15 @@ export function DeviceSettingsProvider({ children }: { children: ReactNode }) {
     } catch { setFailed(true); }
     finally { setBusy(false); }
   }, []);
-  useWorkspaceCondition("device-settings-save", failed ? {
-    needsAttention: true,
-    priority: "Write", announcement: "Polite",
-    content: { tone: "Warning", title: "settings weren’t saved on this device", message: "reopening offline may use earlier settings." },
-    actions: [{ label: "retry", busy, onClick: () => void refresh() }],
-  } : null);
-  return <Context value={refresh}>{children}</Context>;
+  return <Context value={{ refresh, failed, busy }}>{children}</Context>;
 }
-
+export function DeviceSettingsStatus() {
+  const state = useContext(Context);
+  if (!state?.failed) return null;
+  return <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "settings weren’t saved on this device", message: "reopening offline may use earlier settings." }} actions={[{ label: "retry", busy: state.busy, onClick: () => void state.refresh() }]} />;
+}
 export function useSettingsRefresh(): () => Promise<void> {
-  const refresh = useContext(Context);
-  if (!refresh) throw new Error("useSettingsRefresh requires DeviceSettingsProvider");
-  return refresh;
+  const state = useContext(Context);
+  if (!state) throw new Error("useSettingsRefresh requires DeviceSettingsProvider");
+  return state.refresh;
 }

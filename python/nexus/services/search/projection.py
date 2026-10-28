@@ -24,6 +24,7 @@ from nexus.services.media_text_scope import (
     highlight_in_reading_scope_sql,
     text_scope_rows_sql,
 )
+from nexus.services.notes import page_title_sql
 
 TABLE = "keyword_occurrences"
 _BATCH = 256
@@ -193,16 +194,22 @@ _SOURCES = {
         fields={"contributors": "fts.search_text"},
     ),
     "page": _source(
-        "page", "pages p", identity="p.id", name="p.title", fields={"title": "p.title"}
+        "page",
+        "pages p",
+        identity="p.id",
+        name=page_title_sql("p"),
+        fields={"title": page_title_sql("p")},
+        where="p.authored_visible",
     ),
+    # A note's text identity is its exact body: the same sha256 note publications use.
     "note_block": _source(
         "note_block",
-        "note_blocks n LEFT JOIN resource_versions v ON v.user_id=n.user_id AND v.resource_scheme='note_block' AND v.resource_id=n.id AND v.lane='body'",
+        "note_blocks n",
         identity="n.id",
-        revision="COALESCE(v.version,1)",
-        admission="'note_block:' || n.id::text || ':' || COALESCE(v.version,1)::text",
+        admission="'note_block:' || n.id::text || ':' || "
+        "encode(digest(convert_to(n.body_text,'UTF8'),'sha256'),'hex')",
         fields={"body": "n.body_text"},
-        where="n.body_text<>''",
+        where="n.body_text<>'' AND n.authored_visible",
     ),
     "highlight": _source(
         "highlight",
@@ -217,7 +224,7 @@ _SOURCES = {
             "suffix": "CASE WHEN reading.media_id=h.anchor_media_id OR last_anchor.fragment_id IS NULL THEN COALESCE(h.suffix,'')"
             " ELSE left(COALESCE(h.suffix,''),GREATEST(last_bound.hi-last_anchor.end_offset,0)) END",
         },
-        where="(reading.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'"
+        where="h.authored_visible AND (reading.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'"
         " AND reading.media_id<>h.anchor_media_id AND "
         + highlight_in_reading_scope_sql("h.id", "reading.media_id")
         + "))",

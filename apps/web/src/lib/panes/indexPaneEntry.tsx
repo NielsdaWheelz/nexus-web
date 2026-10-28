@@ -11,8 +11,6 @@ import { getContributor, listContributorWorks } from "@/lib/contributors/api";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
-import { fetchNotePages } from "@/lib/notes/api";
-import { useWritingRevision } from "@/lib/api/writingReceive";
 import { fetchConversationIndex } from "@/lib/chat/conversationIndex";
 import { listPodcasts, listEpisodes } from "@/lib/podcasts/api";
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
@@ -26,7 +24,6 @@ const Libraries = createContext<ReadDescriptor<Result<typeof librariesIndex>> | 
 const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntriesIndex>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Podcasts = createContext<{ read: ReadDescriptor<Result<typeof listPodcasts>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Episodes = createContext<{ read: ReadDescriptor<Result<typeof listEpisodes>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
-const Notes = createContext<ReadDescriptor<Result<typeof fetchNotePages>> | null>(null);
 const Chats = createContext<ReadDescriptor<Result<typeof fetchConversationIndex>> | null>(null);
 const Author = createContext<{ detail: ReadDescriptor<Result<typeof getContributor>>; works: ReadDescriptor<Result<typeof listContributorWorks>> } | null>(null);
 function requireRead<T>(value: T | null): T {
@@ -38,7 +35,6 @@ export const useLibrariesIndexRead = () => requireRead(useContext(Libraries));
 export const useLibraryEntriesRead = () => requireRead(useContext(Entries));
 export const usePodcastsIndexRead = () => requireRead(useContext(Podcasts));
 export const usePodcastEpisodesRead = () => requireRead(useContext(Episodes));
-export const useNotesIndexRead = () => requireRead(useContext(Notes));
 export const useChatsIndexRead = () => requireRead(useContext(Chats));
 export const useAuthorIndexReads = () => requireRead(useContext(Author));
 
@@ -79,17 +75,10 @@ function EpisodesEntry({ query, params, children }: EntryProps) {
   const read = useMemo(() => ({ key: `/podcasts/${id}/episodes?${text}`, stale, load: (signal: AbortSignal) => listEpisodes(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
   return <Episodes.Provider value={{ read, group }}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Episodes.Provider>;
 }
-function UpdatedEntry({ query, children, kind }: EntryProps & { kind: "notes" | "chats" }) {
-  const text = indexPaneQuery(kind === "notes" ? "notes" : "conversations", query);
-  const notes = useChangeStamp("Notes");
-  const chats = useChangeStamp("Chats");
-  const writing = useWritingRevision();
-  const stale = kind === "notes" ? `${notes}:${writing}` : chats;
-  const key = text === null ? null : `${kind === "notes" ? "/notes/pages" : "/conversations"}?${text}`;
-  if (kind === "notes") {
-    const read = { key, stale, load: (signal: AbortSignal) => fetchNotePages(new URLSearchParams(text ?? ""), signal) };
-    return <Notes.Provider value={read}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Notes.Provider>;
-  }
+function ChatsEntry({ query, children }: EntryProps) {
+  const text = indexPaneQuery("conversations", query);
+  const stale = useChangeStamp("Chats");
+  const key = text === null ? null : `/conversations?${text}`;
   const read = { key, stale, load: (signal: AbortSignal) => fetchConversationIndex(new URLSearchParams(text ?? ""), signal) };
   return <Chats.Provider value={read}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Chats.Provider>;
 }
@@ -116,8 +105,7 @@ export function IndexPaneEntry({ routeId, ...props }: EntryProps & { routeId: Pa
     case "library": return <LibraryEntry {...props} />;
     case "podcasts": return <PodcastsEntry {...props} />;
     case "podcastDetail": return <EpisodesEntry {...props} />;
-    case "notes": return <UpdatedEntry {...props} kind="notes" />;
-    case "conversations": return <UpdatedEntry {...props} kind="chats" />;
+    case "conversations": return <ChatsEntry {...props} />;
     case "author": return <AuthorEntry {...props} />;
     default: return props.children;
   }

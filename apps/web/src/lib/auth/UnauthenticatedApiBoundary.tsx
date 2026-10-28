@@ -24,7 +24,8 @@ export function beforeSecurityTeardown(stop: () => void): () => void {
 
 export function handleUnauthenticatedApiError(error: unknown): boolean {
   if (!isUnauthenticatedApiError(error)) return false;
-  if (installedApp || androidShellDocument) return false;
+  // A confirmed local workspace survives token expiry on either host.
+  if (installedApp || androidShellDocument || (typeof document !== "undefined" && document.getElementById("root") !== null)) return false;
   if (redirectStarted) return true;
   if (typeof window === "undefined" || window.location.pathname === "/login") {
     return false;

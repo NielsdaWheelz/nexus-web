@@ -16,6 +16,8 @@
 !migrations/**
 
 !node/
+!node/authored/
+!node/authored/helper.mjs
 !node/ingest/
 !node/ingest/package.json
 !node/ingest/bun.lock*

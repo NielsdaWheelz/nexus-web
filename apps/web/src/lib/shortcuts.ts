@@ -72,66 +72,21 @@ export const PANE_STRIP_SHORTCUTS = [
   },
 ] as const;
 
-// These keys belong to the outline's editors and selection, not the app-wide matcher.
+/** The outline's local editing grammar; these are not app-wide shortcuts. */
 export function outlineShortcuts(platform: PlatformKind): readonly {
   id: string; title: string; description: string; meta: string;
 }[] {
-  const apple = usesMeta(platform);
   return [
-    {
-      id: "Outline.Select",
-      title: "Select the item",
-      description: "From an item's text, selects that item. On a focused item, Space selects it.",
-      meta: "Esc / Space",
-    },
-    {
-      id: "Outline.Browse",
-      title: "Browse items",
-      description: "Moves the selection to the previous or next item. Shift extends it.",
-      meta: "↑ / ↓",
-    },
-    {
-      id: "Outline.Edit",
-      title: "Edit the item's text",
-      description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.",
-      meta: "F2",
-    },
-    {
-      id: "Outline.Insert",
-      title: "Insert item",
-      description: "In note text, splits the note at the caret. On a selected item or an item's title, inserts an item after it.",
-      meta: "Enter",
-    },
-    {
-      id: "Outline.Indent",
-      title: "Indent or outdent",
-      description: "Nests the item under the one above it, or moves it out a level. Does nothing when there is no such place.",
-      meta: "Tab / Shift+Tab",
-    },
-    {
-      id: "Outline.Move",
-      title: "Move item up or down",
-      description: "Moves the item past its neighbour. In text, the caret stays where it was.",
-      meta: apple ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓",
-    },
-    {
-      id: "Outline.History",
-      title: "Undo or redo",
-      description: "Undoes or redoes the last change in this outline, text included.",
-      meta: apple ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z",
-    },
-    {
-      id: "Outline.Unlink",
-      title: "Unlink the item",
-      description: "Removes the selected item from this outline. The item itself remains.",
-      meta: "Delete / Backspace",
-    },
-    {
-      id: "Outline.Clear",
-      title: "Clear the selection",
-      description: "From a selected item, clears the selection and moves focus to its bullet. Tab then moves on.",
-      meta: "Esc",
-    },
+    {id: "Outline.Select", title: "Select an item", description: "Escape from note text selects its item. Space selects a focused item. On touch screens, hold its bullet and choose select item.", meta: "Esc / Space"},
+    {id: "Outline.Browse", title: "Browse items", description: "From a selected item, arrows follow the visible outline, including expanded children. Shift extends the selection.", meta: "↑ / ↓"},
+    {id: "Outline.Edit", title: "Edit the item's text", description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.", meta: "F2"},
+    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits note text at the caret or inserts after a selected item. On an empty nested note it outdents; an empty root note stays put.", meta: "Enter"},
+    {id: "Outline.LineBreak", title: "Insert a line break", description: "Starts another line within the same note. Return inside code also stays in the note.", meta: "Shift+Enter"},
+    {id: "Outline.Indent", title: "Indent or outdent", description: "Nests the item under the one above it, or moves it out a level. An unavailable move leaves the caret in place.", meta: "Tab / Shift+Tab"},
+    {id: "Outline.Move", title: "Move an item up or down", description: "Moves the item past its sibling. Editing keeps the caret at the same text position.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
+    {id: "Outline.History", title: "Undo or redo", description: "Undoes or redoes the last change in this outline, including writing and item changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
+    {id: "Outline.Delete", title: "Join or remove an item", description: "At a note boundary, joins an adjacent note. An empty note or selected item is unlinked; the resource remains. Undo restores the change.", meta: "Backspace / Delete"},
+    {id: "Outline.Clear", title: "Clear item selection", description: "Clears the selection and returns focus to the bullet. Tab then moves on.", meta: "Esc"},
   ];
 }
 
@@ -139,6 +94,17 @@ type Shortcut = (typeof SHORTCUTS)[keyof typeof SHORTCUTS];
 
 export function usesMeta(platform: PlatformKind): boolean {
   return platform === "mac" || platform === "ios";
+}
+
+/** The same primary-modifier undo/redo grammar for text and selected blocks. */
+export function outlineHistoryCommand(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "altKey" | "ctrlKey">,
+  platform: PlatformKind,
+): "undo" | "redo" | null {
+  const primary = usesMeta(platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!primary || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  return key === "z" ? event.shiftKey ? "redo" : "undo" : key === "y" && !event.shiftKey ? "redo" : null;
 }
 
 /** Tab/Shift+Tab and the move chord. Any extra modifier disqualifies. */

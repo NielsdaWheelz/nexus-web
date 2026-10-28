@@ -23,7 +23,6 @@ export function indexCatalog(value: OfflineCatalog) {
     episodes: new Map(value.episodes.map(row => [row.media_id, row])),
     shows: new Map(value.shows.map(row => [row.detail.podcast.id, row])),
     libraryShows: new Map(value.library_shows.map(row => [row.library_id, row.value])),
-    notes: new Map(value.notes.map(row => [row.value.id, row.value])),
     chats: new Map(value.chats.map(row => [row.value.id, row.value])),
     /** Per show: complete saved episode selection's unplayed count. */
     unplayed,
@@ -112,7 +111,6 @@ function catalogLibraryPodcastIndex(catalog: CatalogIndex, id: string): Schema<"
 }
 export const catalogMedia = (catalog: CatalogIndex, id: string) => catalog.media.get(id)?.summary ?? null;
 export const catalogShow = (catalog: CatalogIndex, id: string) => catalog.shows.get(id)?.detail ?? null;
-export const catalogPage = (catalog: CatalogIndex, id: string) => catalog.notes.get(id) ?? null;
 export const catalogChat = (catalog: CatalogIndex, id: string) => catalog.chats.get(id) ?? null;
 export const catalogLectern = (catalog: CatalogIndex) => catalog.value.lectern;
 
@@ -213,10 +211,6 @@ function updatedRank(params: URLSearchParams): keyof Schema<"UpdatedTitleOrder">
     case "title-asc": return "title_asc";
     case "title-desc": return "title_desc";
   }
-}
-export function catalogNotes(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_NotePageSummaryOut_"> {
-  const rank = updatedRank(params);
-  return index(sorted(catalog.value.notes, row => row.order[rank]).map(row => row.value));
 }
 export function catalogChats(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_ConversationListItemOut_"> {
   const rank = updatedRank(params);

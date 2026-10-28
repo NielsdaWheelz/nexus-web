@@ -7,6 +7,7 @@ import { CatalogProvider } from "@/lib/catalog/provider";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import styles from "@/app/(authenticated)/layout.module.css";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
+import { WorkProvider } from "@/lib/unsavedWork";
 import Button from "@/components/ui/Button";
 import { isApiError, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { FeedbackState } from "@/components/feedback/Feedback";
@@ -73,18 +74,17 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   if (startup?.binding && initial.current !== null) {
     const binding = startup.binding;
     return <DeviceWorkspaceContext value={{ initial: initial.current, revision }}>
-      <AuthenticatedWorkspaceErrorBoundary>
+      <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}>
         <CatalogProvider key={binding.account.account_id} accountId={binding.account.account_id}><AuthenticatedShell
           account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
           readerProfile={binding.reader_profile}
           renderEnvironment={renderEnvironment}
           initialState={initial.current}
           seeds={{}}
-          consumptionObservations={[]}
           entryFailure={null}
           locationLinkFailure={null}
         /></CatalogProvider>
-      </AuthenticatedWorkspaceErrorBoundary>
+      </AuthenticatedWorkspaceErrorBoundary></WorkProvider>
     </DeviceWorkspaceContext>;
   }
   const signIn = () => {

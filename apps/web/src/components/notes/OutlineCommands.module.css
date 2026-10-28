@@ -1,6 +1,7 @@
 .bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: var(--space-1);
   padding: var(--space-1);
   border-block-start: var(--stroke-hairline) solid var(--edge);
@@ -8,5 +9,5 @@
 }
 
 .command {
-  flex: 1 0 auto;
+  flex: 1 0 var(--size-xl);
 }

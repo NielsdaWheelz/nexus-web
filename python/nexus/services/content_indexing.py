@@ -178,10 +178,7 @@ def _set_state(
 def _clear(db: Session, owner: IndexOwner) -> None:
     """Delete index children, then withdraw their known-deleted keyword identities."""
     params = {"kind": owner.kind, "id": owner.id}
-    if owner.kind == "note_block":
-        # Live derived-reference admission holds KEY SHARE on this owner. Exclude
-        # it before replacing endpoints, then resolve old owners before deletion.
-        db.execute(text("SELECT id FROM note_blocks WHERE id = :id FOR UPDATE"), {"id": owner.id})
+    # A note owner's caller holds the note row: the authored projection or the job fence.
     if owner.kind == "media":
         # The media unit's claims cite these spans through a non-cascading key.
         media_intelligence_lifecycle.clear_media_claims_for_reindex(db, media_id=owner.id)

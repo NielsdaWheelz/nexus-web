@@ -1,17 +1,21 @@
 "use client";
 
 // A captured episode is a package, not a fabricated live MediaDetail. The saved
-// transcript uses the ordinary reader with no cursor writes or playback highlighting.
+// transcript uses the ordinary reader with no cursor writes or playback highlighting;
+// its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { WIRE_HEADER } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import { assertNever } from "@/lib/assertNever";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { effectiveEpisode, episodeProgress, useListening } from "@/lib/consumption/listening";
 import DocumentReaderView, { useDocumentReader, useReaderState } from "@/lib/documentReader/DocumentReader";
 import { Contents } from "@/lib/documentReader/chrome/Contents";
+import { useCompactAnnotations } from "@/lib/documentReader/chrome/CompactAnnotations";
+import { locatePassage } from "@/lib/documentReader/annotations";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
 import { useHostPolicy } from "@/lib/host/policy";
@@ -23,7 +27,7 @@ import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
-import type { Reader } from "@/lib/documentReader/DocumentReader";
+import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { formatByteCount } from "@/lib/text/formatByteCount";
@@ -145,13 +149,39 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     },
   } }), [chrome, viewport, source, id, onIntent, runtime, savedView]), transcriptReady);
   readerRef.current = reader;
+  // without a saved transcript, retained quotes and their notes still list and stay editable.
+  const annotations = useCompactAnnotations(reader, id, { kind: "podcast_episode", label: capture.rendition.title }, transcriptReady);
   const document = useReaderState(reader, state => state.document);
   const doc = document.status === "ready" ? document.doc : null;
   const restored = useReaderState(reader, state => state.restored);
+  const [inspection, setInspection] = useState<(Inspection & { activationId: string }) | null>(null);
   const arrival = useSourceArrival({ ready: restored || !transcriptReady, sourceIdentity: doc?.identity ?? null,
     apply: async (target, context) => {
       if (context.signal.aborted) return "Cancelled";
       if (target.kind === "source") return target.source.location.kind === "resource" ? "Applied" : "Unavailable";
+      if (target.kind === "passage") {
+        const location = doc && locatePassage(doc, id, target.passage, target.canonical_source_ref);
+        if (!location) return "Unavailable";
+        if (!context.restored) {
+          const outcome = await reader.inspect({ target: location.target, signal: context.signal });
+          switch (outcome.kind) {
+            case "Unavailable": return "FailureHandled";
+            case "Cancelled": return "Cancelled";
+            case "Arrived":
+            case "Unchanged": break;
+            default: assertNever(outcome);
+          }
+        }
+        const current = reader.getState().document;
+        if (context.signal.aborted) return "Cancelled";
+        if (current.status !== "ready" || current.doc.identity !== location.inspection.identity) return "Unavailable";
+        setInspection({ ...location.inspection, activationId: context.activationId });
+        context.signal.addEventListener("abort", () => {
+          setInspection(current => current?.activationId === context.activationId ? null : current);
+        }, { once: true });
+        if (context.mayFocus()) reader.focusSource();
+        return "Applied";
+      }
       if (target.kind !== "reader_destination") return "Unavailable";
       const destination = destinationTarget(target.destination, reader);
       if (destination === null) return "Unavailable";
@@ -239,10 +269,11 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <FeedbackStatus content={{ tone: "Neutral", title: "partial transcript" }} announcement="None" /> : null}
     {contents ? <Contents reader={reader} /> : null}
   </div>;
-  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile}>{header}</div>;
+  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile}>{header}{annotations.list}{annotations.panel}</div>;
   return <div className={styles.layout}>
     <DocumentReaderView reader={reader} profile={profile} isMobile={isMobile} playback={null} showCaptureTitle={false}
-      announcement={active ? "Polite" : "None"} before={header} onSeekTime={ms => { onIntent(); play(ms); }} />
-
+      announcement={active ? "Polite" : "None"} before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}
+      inspection={inspection} decorations={annotations.decorations} onSelection={annotations.onSelection} onMarks={annotations.onMarks} />
+    {annotations.panel}
   </div>;
 }

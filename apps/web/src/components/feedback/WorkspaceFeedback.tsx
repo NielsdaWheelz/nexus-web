@@ -5,37 +5,42 @@ import { createPortal } from "react-dom";
 import { readMobileCssLength, useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useInteractionOwner } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { activityReturnFocus } from "./Activity";
-import { Announcement, Signal, type FeedbackActions } from "./Feedback";
-import { EMPTY_SIGNALS, transientAction, type createWorkspaceSignals } from "./workspaceSignals";
+import { Announcement, Signal } from "./Feedback";
+import type { createTransientFeedback } from "./transient";
 import styles from "./Feedback.module.css";
 
+function visible(element: HTMLElement | null): element is HTMLElement {
+  return element !== null && element.isConnected && !element.closest("[hidden], [inert]")
+    && element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible";
+}
+
 /** passive geometry never enters the overlay stack or the shell's measured chrome.
- * an ineligible occurrence retires permanently; geometry cannot replay it.
+ * a card larger than its area scrolls inside it; only a missing area retires it.
+ * activating its action closes the card: the action's owner reports what follows.
  */
 export default function WorkspaceFeedback({ signals, fallbackFocus }: {
-  signals: ReturnType<typeof createWorkspaceSignals>;
+  signals: ReturnType<typeof createTransientFeedback>;
   fallbackFocus?: () => HTMLElement | null;
 }) {
-  const { entries, transient } = useSyncExternalStore(signals.subscribe, signals.snapshot, () => EMPTY_SIGNALS);
+  const transient = useSyncExternalStore(signals.subscribe, signals.snapshot, () => null);
   const owner = useInteractionOwner();
   const mobile = useIsMobileViewport();
   const viewport = useMobileViewport();
   const card = useRef<HTMLElement | null>(null);
   const [placed, setPlaced] = useState<object | null>(null);
   const occurrence = transient?.occurrence ?? null;
-  const entry = transient && transient.kind !== "Receipt" ? entries.find((item) => item.key === transient.key) : null;
-  const content = transient?.kind === "Receipt" ? transient.content : entry?.notice.content;
-  const exactAction = transientAction(transient, entries);
-  const actions: FeedbackActions | undefined = transient?.kind === "Attention"
-    ? [{ label: "review", onClick: () => { if (card.current) signals.openActivity(card.current); } }]
-    : exactAction ? [exactAction] : undefined;
 
   useLayoutEffect(() => { signals.environmentChanged(); }, [signals, owner, mobile]);
   useEffect(() => {
     const focusChanged = () => signals.environmentChanged();
+    // focus leaving a text field for the body raises no focusin; re-check once it settles.
+    const focusLeft = () => queueMicrotask(focusChanged);
     document.addEventListener("focusin", focusChanged);
-    return () => document.removeEventListener("focusin", focusChanged);
+    document.addEventListener("focusout", focusLeft);
+    return () => {
+      document.removeEventListener("focusin", focusChanged);
+      document.removeEventListener("focusout", focusLeft);
+    };
   }, [signals]);
   useLayoutEffect(() => {
     const element = card.current;
@@ -44,7 +49,7 @@ export default function WorkspaceFeedback({ signals, fallbackFocus }: {
     let closed = false;
     const measure = () => {
       frame = null;
-      if (closed || signals.snapshot().transient?.occurrence !== occurrence) return;
+      if (closed || signals.snapshot()?.occurrence !== occurrence) return;
       const workspace = document.querySelector<HTMLElement>("[data-workspace-feedback-root]");
       const pane = workspace?.querySelector<HTMLElement>('[data-pane-shell="true"][data-active="true"] [data-pane-content="true"]');
       const visual = window.visualViewport;
@@ -65,13 +70,14 @@ export default function WorkspaceFeedback({ signals, fallbackFocus }: {
         : Math.max(paneBox.top, workBox.top, visible.top) + inset;
       const bottom = mobile ? visible.top + visible.height - 12
         : Math.min(paneBox.bottom, workBox.bottom, visible.top + visible.height) - inset;
-      element.style.maxWidth = `${Math.max(0, Math.min(readMobileCssLength("24rem"), right - left))}px`;
-      const size = element.getBoundingClientRect();
-      if (right <= left || size.width > right - left || size.height > bottom - top) {
+      if (right <= left || bottom <= top) {
         closed = true;
         signals.closeTransient(occurrence);
         return;
       }
+      element.style.maxWidth = `${Math.min(readMobileCssLength("24rem"), right - left)}px`;
+      element.style.maxHeight = `${bottom - top}px`;
+      const size = element.getBoundingClientRect();
       element.style.left = `${mobile ? left : right - size.width}px`;
       element.style.top = `${top}px`;
       setPlaced(occurrence);
@@ -114,7 +120,9 @@ export default function WorkspaceFeedback({ signals, fallbackFocus }: {
     };
   }, [signals, viewport, mobile, occurrence]);
 
-  if (!transient || !content || typeof document === "undefined") return null;
+  if (!transient || typeof document === "undefined") return null;
+  const { content, action } = transient;
+  const close = () => signals.closeTransient(transient.occurrence);
   return createPortal(<div className={styles.transientLayer}>
     <section ref={card} className={styles.transient} data-placed={placed === occurrence || undefined} aria-label="notification"
       onPointerEnter={(event) => { if (event.pointerType === "mouse") signals.hold(transient.occurrence, "Pointer", true); }}
@@ -126,13 +134,13 @@ export default function WorkspaceFeedback({ signals, fallbackFocus }: {
         if (event.key !== "Escape" || event.defaultPrevented) return;
         event.preventDefault();
         event.stopPropagation();
-        signals.closeTransient(transient.occurrence);
+        close();
       }}>
-      <Signal content={{ tone: content.tone, title: content.title }} actions={actions} announcement="None"
-        plain className={styles.transientSignal} occurrence={transient.occurrence}
-        onDismiss={() => signals.closeTransient(transient.occurrence)} dismissLabel="close notification" dismissBlocked={false}
-        returnFocus={() => activityReturnFocus(null, fallbackFocus)} />
+      <Signal content={content} announcement="None" plain className={styles.transientSignal} occurrence={transient.occurrence}
+        actions={action === null ? undefined : [action.href === undefined ? { ...action, onClick: intent => { close(); action.onClick(intent); } } : action]}
+        onNavigate={close} onDismiss={close} dismissLabel="close notification" dismissBlocked={false}
+        returnFocus={() => { const target = fallbackFocus?.() ?? null; return visible(target) ? target : null; }} />
     </section>
-    {placed === occurrence && !owner ? <Announcement text={content.title} level="Polite" occurrence={transient.occurrence} /> : null}
+    {placed === occurrence && !owner && transient.announce ? <Announcement text={content.title} level="Polite" occurrence={transient.occurrence} /> : null}
   </div>, document.body);
 }

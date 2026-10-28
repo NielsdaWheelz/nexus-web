@@ -7,17 +7,20 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
+import { useFeedback } from "@/components/feedback/Feedback";
+import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
-import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
+import { readDeviceStartup, sessionSignIn, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
+import { prepareAuthoredSignOut } from "@/lib/authored/signOut";
 import { importAttentionDescription } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
-import { pauseWriting, readWriting, resumeWriting, stopWritingRuntime } from "@/lib/notes/writes";
 import { unbindNativePlayer } from "@/lib/player/nativeEngine";
-import { localContentAvailable, localCall } from "@/lib/offline/localContent";
+import { localContentAvailable } from "@/lib/offline/localContent";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -25,15 +28,19 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { cx } from "@/lib/ui/cx";
 import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
+import { syncStatusOption, syncStatusText } from "./SyncStatus";
 import styles from "./AppNav.module.css";
 import accountStyles from "./AccountMenu.module.css";
 
 const SignOutContext = createContext<{ request: () => void; busy: boolean } | null>(null);
 
-/** One guarded exit. Failed cleanup restores writing only while the same account remains active. */
+/** The person declined discarding device-only writing; nothing was retired. */
+class SignOutDeclined extends Error {}
+
+/** One guarded exit. Authored writing drains or is deliberately discarded and its
+ * account retired before the session ends; declining leaves everything intact. */
 export function SignOutProvider({ children }: { children: ReactNode }) {
   const { accountId } = useAuthenticatedAccount();
-  const form = useRef<HTMLFormElement>(null);
   const guardedSignOut = useGuardedSignOut();
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
@@ -49,57 +56,50 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     working.current = true;
     setBusy(true);
     setFailure(null);
-    const generation = readWriting().generation;
-    const sameAccount = () => live.current && readWriting().generation === generation && readWriting().account_id === accountId;
     let nativeStarted = false;
     let ended = false;
     let message = "playback couldn’t stop or save its position. your session is still open. retry sign out.";
     try {
-      await guardedSignOut(async () => {
-        if (!sameAccount()) throw new Error("sign-out account is no longer active");
-        pauseWriting();
+      await guardedSignOut(async confirm => {
+        if (!live.current) throw new Error("sign-out account is no longer active");
         await unbindNativePlayer();
-        if (!sameAccount()) throw new Error("sign-out account is no longer active");
+        if (!live.current) throw new Error("sign-out account is no longer active");
+        message = "your notes on this device couldn’t be closed for sign out. your session is still open. retry sign out.";
+        if (!await prepareAuthoredSignOut(accountId, confirm)) throw new SignOutDeclined();
         if (installedApp) {
           nativeStarted = true;
           message = "sign out was not confirmed. retry sign out to finish removing this device’s account data.";
-          await sessionSignOut();
+          // prepareAuthoredSignOut has drained or obtained the discard this carries.
+          await sessionSignOut(true);
           ended = true;
-          if (sameAccount()) {
-            stopWritingRuntime(generation);
-            publishAdmission("SignInRequired");
-          }
+          if (live.current) publishAdmission("SignInRequired");
           return;
         }
-        message = "offline data couldn’t be fully removed. your session is still open. retry sign out.";
-        if (localContentAvailable) await localCall("purge");
-        message = "sign out couldn’t finish. your session is still open.";
+        // BrowserWorkspace owns purge and session clearing beyond this unmount.
       }, () => {
-        if (installedApp) { if (live.current && readWriting().account_id === null) refreshDevice(); return; }
-        if (!live.current || !form.current?.isConnected) throw new Error("Sign-out form is no longer available");
-        form.current.submit();
+        if (installedApp && live.current) refreshDevice();
       });
     } catch (error) {
+      if (error instanceof SignOutDeclined) return;
       reportError(error);
       if (nativeStarted) {
         if (isApiError(error) && error.code === "E_LOCAL_CLEANUP") ended = true;
         else try {
           const startup = await readDeviceStartup();
           ended = startup?.binding?.account.account_id !== accountId;
-          if (!ended && sameAccount()) resumeWriting();
         } catch (inspection) {
           if (isApiError(inspection) && inspection.code === "E_LOCAL_CLEANUP") ended = true;
           else reportError(inspection);
         }
-      } else if (sameAccount()) resumeWriting();
-      if (ended) {
-        const owned = sameAccount();
-        stopWritingRuntime(generation);
-        if (owned) publishAdmission("SignInRequired");
-        message = "your account has ended on this device, but local cleanup did not finish. retry sign out to remove remaining account data.";
-        if (owned) refreshDevice();
       }
-      if (live.current && (sameAccount() || ended && readWriting().account_id === null)) setFailure({ message, ended });
+      if (ended) {
+        message = "your account has ended on this device, but local cleanup did not finish. retry sign out to remove remaining account data.";
+        if (live.current) {
+          publishAdmission("SignInRequired");
+          refreshDevice();
+        }
+      }
+      if (live.current) setFailure({ message, ended });
     } finally {
       working.current = false;
       if (live.current) setBusy(false);
@@ -115,12 +115,13 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
           <Button onClick={() => setFailure(null)}>close</Button>
         </div>
       </Dialog>}
-      <form ref={form} action="/auth/signout" method="post" hidden />
     </SignOutContext>
   );
 }
 
-/** Account navigation and passive Imports attention, shared by the rail and mobile Nexus. */
+/** Account navigation, the one sync status and passive Imports attention, shared by the
+ * rail and mobile Nexus. The trigger is described by the current status. Expired
+ * credentials offer the existing sign-in flow without retiring local writing. */
 export default function AccountMenu(props: {
   activeId: DestinationId | null;
   placement: "above" | "below";
@@ -132,8 +133,13 @@ export default function AccountMenu(props: {
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
   const workspace = useWorkspaceStore();
+  const feedback = useFeedback();
+  const [signingIn, setSigningIn] = useState(false);
+  const signInRunning = useRef(false);
   const signOut = useContext(SignOutContext);
   const { summary } = useImports();
+  const status = useAuthoredStatus();
+  const cause = useAuthoredSyncDetail();
   const descriptionId = useId();
   const count = summary.status === "ready" ? summary.data.needs_attention_count : null;
   const refresh_failed = summary.status === "ready" && summary.error !== null;
@@ -171,7 +177,29 @@ export default function AccountMenu(props: {
     ),
   });
 
+  const signIn = async () => {
+    if (signInRunning.current) return;
+    if (!installedApp) {
+      window.location.assign(loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)));
+      return;
+    }
+    signInRunning.current = true;
+    setSigningIn(true);
+    try {
+      const result = await sessionSignIn();
+      if (result === "DifferentAccount") feedback.receipt({ tone: "Warning", title: "use the account already open here", message: "sign in with the account already open on this device to continue syncing." });
+      else if (result === "Failed") feedback.receipt({ tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." });
+    } catch (error) {
+      reportError(error);
+      feedback.receipt({ tone: "Warning", title: "couldn’t sign in", message: "your notes remain saved on this device. try signing in again." });
+    } finally {
+      signInRunning.current = false;
+      setSigningIn(false);
+    }
+  };
+
   const options: ActionDescriptor[] = [
+    syncStatusOption(status, cause, { onSignIn: () => void signIn(), busy: signingIn || signOut.busy }),
     link(NAV_STATS, props.activeId === "stats"),
     link(NAV_IMPORTS, props.activeId === "imports"),
     link(NAV_SETTINGS, props.activeId === "settings"),
@@ -187,7 +215,7 @@ export default function AccountMenu(props: {
     },
   ];
   if (localContentAvailable) {
-    options.splice(2, 0, {
+    options.splice(3, 0, {
       kind: "link",
       id: "downloads",
       label: "Downloads",
@@ -212,11 +240,11 @@ export default function AccountMenu(props: {
         align={props.align}
         renderTrigger={(trigger) => props.renderTrigger({
           ...trigger,
-          "aria-describedby": cx(trigger["aria-describedby"], description !== null && descriptionId) || undefined,
+          "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
         }, <span className={accountStyles.attention} data-visible={description !== null} aria-hidden="true" />)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
       />
-      <span id={descriptionId} className="sr-only">{description}</span>
+      <span id={descriptionId} className="sr-only">{description === null ? syncStatusText(status, cause) : `${syncStatusText(status, cause)}; ${description}`}</span>
     </>
   );
 }

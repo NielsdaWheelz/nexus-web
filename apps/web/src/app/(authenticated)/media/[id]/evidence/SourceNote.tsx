@@ -102,10 +102,7 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
     const href = activation.kind === "route" ? activation.href : null;
     const locator = target.resolution.kind === "Resolved" ? target.resolution.anchor.locator : null;
     const unit = locator && "fragment_id" in locator ? locator.fragment_id : null;
-    const emptyQuote = target.item.preview.body.kind === "passage" && !target.item.preview.body.exact.text.trim();
     return <ResourceOutlineRow incoming={null} key={target.item.ref} item={target.item} occurrenceKey={`${occurrenceKey}/source:${target.item.ref}`}
-      continuation={emptyQuote ? null : undefined}
-      insertionSource={emptyQuote ? null : undefined}
       sourceContent={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
       resourceDetails={<div className={styles.sourceActions}>
         {href ? <a className={styles.sourceLink} href={href} data-workspace-rich-target="true"

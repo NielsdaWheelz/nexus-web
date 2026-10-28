@@ -16,3 +16,7 @@ retain the existing `pdf_open_failed` error argument and failed-resource details
 on the next occurrence. resolve by identifying and repairing that failure at its
 reader/asset owner, then proving the same cold journey. do not loosen csp, add
 alternate loading paths or claim the intermittent failure fixed from one pass.
+
+the current local-first zero-height saved-reader failure is tracked separately
+in [local-first-shelf-feedback-layout.md](local-first-shelf-feedback-layout.md).
+its cause does not establish the cause of the older intermittent occurrence.

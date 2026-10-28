@@ -4,9 +4,9 @@ import { execFile } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { join } from "node:path";
-import { chromium } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { components } from "@/lib/api/wire.gen";
-import { browserRequest } from "./browser";
+import { browserRequest, openLabBrowser } from "./browser";
 import { readLabContext } from "./context";
 
 const context = readLabContext();
@@ -31,7 +31,7 @@ from nexus.db.session import get_session_factory, get_repeatable_read_db
 bind_database_role("maintenance")
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_chunking import Chunk, IndexableBlock
-from nexus.services.content_indexing import IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
+from nexus.services.content_indexing import JOB_KIND, IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
 from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from nexus.services.contributor_writes import MediaTarget, create_contributor
 from nexus.services.contributors import replace_observed_role_slices_batch
@@ -41,11 +41,10 @@ from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
-from nexus.services import highlights, library_entries, library_members, libraries
+from nexus.services import authored, highlights, library_entries, library_members, libraries
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.services.media_parts import create_part
-from nexus.schemas.highlights import EnsureMediaHighlightRequest, TextHighlightAnchorIn
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.library_members import CreateInvitationRequest
 from nexus.schemas.media_parts import PartCreate, PartPrepare, SectionSelection
@@ -85,7 +84,7 @@ async def read(viewer, scope="all", q="labneedle", view="resources", kinds=("doc
     return (await discovery.search(viewer, query, phase="lexical", view=view, cursor=None,
         limit=50, deadline=asyncio.get_running_loop().time()+10)).model_dump(mode="json")
 
-def await_current_text(owner, *, witness):
+def await_current_text(owner, *, witness, preparation):
     until = time.monotonic() + 45
     while time.monotonic() < until:
         with factory() as db:
@@ -94,7 +93,35 @@ def await_current_text(owner, *, witness):
             if sections is not None and state is not None and state.lexical_revision == state.revision and state.section_bounds_key == sections.bounds_key and (not witness or state.section_witness_key == sections.witness_key):
                 return
         time.sleep(.25)
-    raise AssertionError("source lexical revision, witness or partition did not publish")
+    failure = AssertionError("source lexical revision, witness or partition did not publish")
+    try:
+        with factory() as db:
+            sections = _read_sections(db, owner)
+            state = db.execute(text("SELECT revision, lexical_revision, section_witness_key, section_bounds_key, status, status_reason, updated_at FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":owner}).mappings().one_or_none()
+            target = {"media_id":str(owner), "revision":None if state is None else state["revision"]}
+            jobs = db.execute(text("SELECT id, kind, payload->'revision' AS revision, status, error_code, last_error, available_at, attempts, max_attempts, claimed_by, lease_expires_at, started_at, finished_at, updated_at FROM background_jobs WHERE id=:job_id OR (kind=:kind AND payload @> CAST(:target AS jsonb)) ORDER BY created_at, id"), {"job_id":preparation.job_id, "kind":JOB_KIND, "target":json.dumps(target)}).mappings().all()
+        diagnostic = {"owner_ref":"media:"+str(owner), "require_witness":witness,
+            "preparation":{"job_id":str(preparation.job_id), "revision":preparation.revision},
+            "content_index_state":None if state is None else dict(state),
+            "observed_sections":None if sections is None else {"generation":sections.generation, "witness_key":sections.witness_key, "bounds_key":sections.bounds_key},
+            "jobs":[dict(job) for job in jobs]}
+        diagnostic_file = Path(context["artifacts_dir"]) / ("search-text-readiness-"+str(owner)+".private.json")
+        with os.fdopen(os.open(diagnostic_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+            json.dump(diagnostic, output, default=str)
+        failure.add_note("readiness diagnostics: "+str(diagnostic_file))
+    except Exception as diagnostic_error:
+        failure.add_note("readiness diagnostics failed: "+type(diagnostic_error).__name__+": "+str(diagnostic_error))
+    raise failure
+
+def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, end, words, prefix, suffix, publication):
+    """One canonical authored highlight; its projection owns rows and search publication."""
+    selection = {"publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
+                 "locator": {"type": "web_text_offsets", "media_id": str(media_id), "fragment_id": str(fragment_id),
+                             "start_offset": start, "end_offset": end, "media_kind": "web_article",
+                             "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix}}}
+    authored.server_command(db, viewer, command={"kind": "create_highlight", "ref": "highlight:" + str(highlight_id),
+                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow"},
+                            resource_refs=[], link_ids=[])
 
 if mode == "seed":
     print("seed_stage=fixture_rows", file=sys.stderr, flush=True)
@@ -134,15 +161,15 @@ if mode == "seed":
         replace_media_apparatus(db,media_id=source,note_groups=[])
         advance_reader_publications(db,media_ids=[source])
         assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body
-        # A persisted quote can outlive its locator. Public creation correctly cannot make this state.
-        db.execute(text("INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix) VALUES (:id,:viewer,'fragment_offsets',:source,'yellow',:quote,'','')"), {"id":stale,"viewer":viewer,"source":source,"quote":stale_quote})
+        # A persisted quote can outlive its locator: its captured fragment no longer exists.
+        create_highlight(db, viewer, highlight_id=stale, media_id=source, fragment_id=uuid4(), start=0, end=len(stale_quote),
+                         words=stale_quote, prefix="", suffix="", publication=None)
         person = create_contributor(db, display_name="fixture writer")
         for media in (a,b):
             db.execute(text("INSERT INTO contributor_credits(contributor_id,media_id,credited_name,role,ordinal,source) VALUES (:person,:media,'fixture writer','author',0,'user')"), {"person":person.contributor_id,"media":media})
         # Only fixture initialization refreshes manually. Changed writers below must own it.
         projection.refresh(db,"media",[a,b,hidden,source])
         projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden,source]}).all())
-        projection.refresh(db,"highlight",[stale])
         db.commit()
     print("seed_stage=section_choice", file=sys.stderr, flush=True)
     with factory() as db:
@@ -161,24 +188,26 @@ if mode == "seed":
     highlight_start=source_body.index("small section.",start,end)
     highlight_end=highlight_start+len("small section.")
     with factory() as db:
-        highlights.ensure_highlight(db,viewer,source,EnsureMediaHighlightRequest(
-            id=crossing_highlight,anchor=TextHighlightAnchorIn(kind="text",unit_id=source_fragment,start_offset=highlight_start,end_offset=highlight_end),
-            color="yellow",expected_reader_generation=generation,initial_note=None))
+        create_highlight(db, viewer, highlight_id=crossing_highlight, media_id=source, fragment_id=source_fragment,
+                         start=highlight_start, end=highlight_end, words=source_body[highlight_start:highlight_end],
+                         prefix=source_body[max(0,highlight_start-64):highlight_start], suffix=source_body[highlight_end:highlight_end+64],
+                         publication={"kind":"reader","generation":generation})
+        db.commit()
     with factory() as db:
-        saved=highlights.get_highlight(db,viewer,crossing_highlight)
+        saved=next(h for h in highlights.list_highlights_for_media(db,viewer,source,mine_only=False) if h.id==crossing_highlight)
         assert neighbour in saved.suffix and saved.exact=="small section.", "source highlight lacks crossing context"
     print("seed_stage=prepare_parts", file=sys.stderr, flush=True)
     with factory() as db:
         preparation=prepare_media_parts(db,viewer_id=viewer,source_media_id=source,request=PartPrepare(id=uuid4(),expected_source_generation=generation))
         assert preparation.media_id==source
     print("seed_stage=await_initial_text", file=sys.stderr, flush=True)
-    await_current_text(source,witness=True)
+    await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=create_part", file=sys.stderr, flush=True)
     with factory() as db:
         receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece",form=None))
         assert receipt.media_id==part
     print("seed_stage=await_partition_text", file=sys.stderr, flush=True)
-    await_current_text(source,witness=True)
+    await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=share_part", file=sys.stderr, flush=True)
     with factory() as db:
         removal_revision=str(db.scalar(text("SELECT removal_revision FROM users WHERE id=:id"),{"id":viewer}))
@@ -349,7 +378,24 @@ else:
                 assert sections is not None and state.lexical_revision==state.revision and state.section_bounds_key==sections.bounds_key, "piece result used an obsolete partition"
                 detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
                 processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
-                assert state.status!="ready" and detail.text_search_ready and processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+                assert detail.text_search_ready and processing.text_search_ready, "piece lost current lexical capability"
+                # A real provider can finish vectors before this later evidence read.
+                # Observe the actual lexical-only publication phase under its owner locks;
+                # roll it back so the independently scored occurrence ids stay unchanged.
+                source_id=UUID(f["source"])
+                db.execute(text("SELECT id FROM media WHERE id=:id FOR UPDATE"), {"id":source_id})
+                db.execute(text("SELECT owner_id FROM content_index_states WHERE owner_kind='media' AND owner_id=:id FOR UPDATE"), {"id":source_id})
+                existing=db.execute(text("SELECT chunk_text,summary_locator,heading_path FROM content_chunks WHERE owner_kind='media' AND owner_id=:id ORDER BY chunk_idx"), {"id":source_id}).mappings().all()
+                assert existing, "lexical-only fixture has no canonical chunks"
+                with db.begin_nested() as publication:
+                    blocks=[IndexableBlock(row["chunk_text"],int(row["summary_locator"].get("start_offset",0)),row["summary_locator"],tuple(row["heading_path"])) for row in existing]
+                    chunks=[Chunk(index,row["chunk_text"],row["summary_locator"]) for index,row in enumerate(existing)]
+                    published=publish_text_index(db,owner=IndexOwner("media",source_id),source_kind="web_article",blocks=blocks,chunks=chunks,reason="oracle_corpus_seed")
+                    assert published.status=="indexing", "publisher did not expose the lexical-only phase"
+                    lexical_detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
+                    lexical_processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
+                    assert lexical_detail.text_search_ready and lexical_processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+                    publication.rollback()
             root_context=(await read(UUID(f["viewer"]),"media:"+f["source"],f["neighbour"],kinds=("highlights",)))["results"]
             assert [r["item"]["ref"] for r in root_context]==["highlight:"+f["crossing_highlight"]], "source highlight lost its stored neighbouring context"
             piece_context=(await read(UUID(f["viewer"]),"media:"+f["part"],f["inside"],kinds=("highlights",)))["results"]
@@ -410,15 +456,13 @@ async function run(mode: string): Promise<void> {
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 await run("seed");
 const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale_term: string; stale_quote: string };
-const browser = await chromium.launch({
-  args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
-});
-let diagnosticPage: Awaited<ReturnType<typeof browser.newPage>> | null = null;
+const browser = await openLabBrowser({ web_origin: context.web_origin, web_tls: context.web_tls,
+  storage_state: context.browser_state_file });
+let diagnosticPage: Page | null = null;
 try {
   const browserRequests: Array<Record<string, unknown>> = [];
   facts.browser_requests = browserRequests;
-  const session = await browser.newContext({ storageState: context.browser_state_file });
-  const page = await session.newPage();
+  const { page } = browser;
   diagnosticPage = page;
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
   async function search(scope = "all", text = "labneedle", kinds = "documents") {

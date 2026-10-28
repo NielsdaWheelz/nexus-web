@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from nexus.api.routes.assistant_writes import router as assistant_writes_router
 from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
+from nexus.api.routes.authored import router as authored_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat import router as chat_router
 from nexus.api.routes.connection_discovery import router as connection_discovery_router
@@ -14,7 +15,6 @@ from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.email_ingest import router as email_ingest_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
-from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_members import router as library_members_router
@@ -25,7 +25,6 @@ from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_parts import router as media_parts_router
 from nexus.api.routes.media_sources import router as media_sources_router
 from nexus.api.routes.media_uploads import router as media_uploads_router
-from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.offline_catalog import router as offline_catalog_router
 from nexus.api.routes.operational import router as operational_router
 from nexus.api.routes.oracle import router as oracle_router
@@ -45,6 +44,7 @@ from nexus.api.routes.users import router as users_router
 
 def create_api_router() -> APIRouter:
     api_router = APIRouter()
+    api_router.include_router(authored_router)
     api_router.include_router(assistant_writes_router)
     api_router.include_router(operational_router)
     api_router.include_router(me_router)
@@ -72,12 +72,10 @@ def create_api_router() -> APIRouter:
     api_router.include_router(reader_router)
     api_router.include_router(media_parts_router)
     api_router.include_router(media_router)
-    api_router.include_router(notes_router)
     api_router.include_router(resource_items_router)
     api_router.include_router(resource_shares_router)
     api_router.include_router(resource_graph_router)
     api_router.include_router(connection_discovery_router)
-    api_router.include_router(highlights_router)
     api_router.include_router(chat_router)
     api_router.include_router(contributors_router)
     api_router.include_router(oracle_router)

@@ -1,7 +1,4 @@
 .surface {
-  --floating-action-enter-x: 0;
-  --floating-action-enter-y: 4px;
-
   max-block-size: var(--anchored-max-height, 100dvh);
   display: flex;
   align-items: stretch;
@@ -14,7 +11,7 @@
 }
 
 .surface[data-positioned="true"] {
-  animation: floatingActionSurfaceEnter var(--duration-fast) var(--ease-snap);
+  animation: floatingActionSurfaceFadeOnly var(--duration-fast) var(--ease-snap);
 }
 
 .surface > * {
@@ -26,35 +23,12 @@
 
 /* One scrollport keeps enlarged compact commands reachable inside live bounds. */
 .surface[data-strategy="mobile-selection-actions"] {
-  animation-name: floatingActionSurfaceFadeOnly;
   overflow: auto;
   overscroll-behavior: contain;
 }
 
 .surface[data-strategy="mobile-selection-actions"] > * {
   max-block-size: none;
-}
-
-.surface[data-strategy="text-selection"][data-placement="above"] {
-  --floating-action-enter-y: 4px;
-}
-
-.surface[data-strategy="text-selection"][data-placement="below"] {
-  --floating-action-enter-y: -4px;
-}
-
-.surface[data-strategy="text-selection"][data-placement="right"] {
-  --floating-action-enter-x: -4px;
-  --floating-action-enter-y: 0;
-}
-
-.surface[data-strategy="text-selection"][data-placement="left"] {
-  --floating-action-enter-x: 4px;
-  --floating-action-enter-y: 0;
-}
-
-.surface[data-strategy="text-selection"][data-placement="edge"] {
-  --floating-action-enter-y: 0;
 }
 
 .surface[data-strategy="text-selection"]::after {
@@ -88,22 +62,6 @@
   transform: translateX(-50%) rotate(45deg);
 }
 
-@keyframes floatingActionSurfaceEnter {
-  from {
-    opacity: 0;
-    transform: translate(
-        var(--floating-action-enter-x),
-        var(--floating-action-enter-y)
-      )
-      scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(0, 0) scale(1);
-  }
-}
-
 @keyframes floatingActionSurfaceFadeOnly {
   from {
     opacity: 0;
@@ -111,12 +69,6 @@
 
   to {
     opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .surface[data-positioned="true"] {
-    animation-name: floatingActionSurfaceFadeOnly;
   }
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import type { ChatCommand, CommandOutcome, ConversationCommands } from "./commands";
@@ -20,7 +20,9 @@ const commandKey = (command: ChatCommand) =>
   command.kind === "DeleteChat" ? `DeleteChat:${command.expectedRevision}`
   : command.kind === "Repeat" ? `Repeat:${command.runId}` : null;
 
-/** A menu's chat deletion or repeat outlives its menu: its pending command stays a workspace condition. */
+/** A menu's chat deletion or repeat outlives its menu. While its exact command stays
+ * pending, each failed attempt reports once with its check; the conversation pane
+ * shows a repeat's recovery itself, and the menu re-sends a deletion. */
 export function useChatCommandFeedback() {
   const [observations, setObservations] = useState<readonly Observation[]>([]);
   const fail = useThrowLater();
@@ -35,12 +37,12 @@ export function useChatCommandFeedback() {
   return {
     observe,
     feedback: observations.map((observation) => (
-      <Condition key={observation.id} observation={observation} remove={remove} fail={fail} />
+      <PendingCommand key={observation.id} observation={observation} remove={remove} fail={fail} />
     )),
   };
 }
 
-function Condition({ observation, remove, fail }: {
+function PendingCommand({ observation, remove, fail }: {
   observation: Observation;
   remove: (id: string) => void;
   fail: (failure: { error: unknown }) => void;
@@ -51,23 +53,18 @@ function Condition({ observation, remove, fail }: {
   useEffect(() => {
     if (!current) remove(id);
   }, [current, id, remove]);
-  useWorkspaceCondition(`chat-command:${id}`, current ? {
-    needsAttention: current.feedback !== null,
-    priority: "Write",
-    announcement: "Polite",
-    content: current.feedback
-      ? { ...current.feedback, message: [title, current.feedback.message].filter(Boolean).join(" · ") }
-      : { tone: "Neutral", title: "checking chat change…", message: title },
-    actions: [{
+  const feedback = useFeedback();
+  useEffect(() => {
+    // A check in flight keeps the earlier failure; only a settled failure reports, until it changes.
+    if (!current?.feedback || current.kind === "Busy") return;
+    return feedback.receipt({ ...current.feedback, message: [title, current.feedback.message].filter(Boolean).join(" · ") }, {
       label: "check chat change",
-      commandKey: key,
-      busy: current.kind === "Busy",
       onClick: (intent) => {
         if (owner.getSnapshot() !== current) return;
         const checking = retry ? retry(intent) : owner.retry(intent).then((outcome) => owner.isActive() && present(outcome));
         void checking.catch((error: unknown) => owner.isActive() && fail({ error }));
       },
-    }],
-  } : null);
+    });
+  }, [current, feedback, fail, owner, present, retry, title]);
   return null;
 }

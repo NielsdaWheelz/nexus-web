@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -26,6 +26,7 @@ from nexus.services.resource_graph.edges import (
     replace_edges_for_origin,
     source_is,
 )
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.evidence import evidence_items
 
@@ -79,6 +80,8 @@ def build_citation_outs_for_sources(
             ResourceEdge.origin == "citation",
             ResourceEdge.ordinal.is_not(None),
             or_(*(source_is(source) for source in sources)),
+            # a citation of a deleted note, page or highlight is hidden until revival
+            text(edge_live_sql("resource_edges")),
         )
         .order_by(ResourceEdge.ordinal)
     ).all()

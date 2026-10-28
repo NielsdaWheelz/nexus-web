@@ -2,6 +2,8 @@
 // normalization) and paints the text layer; the reader owns scope, the active
 // match and movement (pdf.js find never scrolls). The narrow scope is the page
 // at the reading position when the first query starts.
+import type { PassageState } from "@nexus/authored/types";
+import { ScopeQuoteScanner, ScopeTextNormalizer } from "@nexus/authored/scope";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { EventBus, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import {
@@ -111,11 +113,11 @@ export function createPdfFind(
     return { starts: controller.pageMatches ?? [], lengths: controller.pageMatchesLength ?? [] };
   }
 
-  async function pageText(page: number, signal: AbortSignal) {
+  async function pageText(page: number, signal: AbortSignal, keepLineBreaks = false) {
     const content = await (await pdf!.getPage(page)).getTextContent({ disableNormalization: true });
     if (signal.aborted) throw new DOMException("PDF find was superseded.", "AbortError");
     // pdf.js original match offsets address this EOL-free UTF-16 join.
-    return content.items.map((item) => "str" in item ? item.str : "").join("");
+    return content.items.map((item) => "str" in item ? item.str + (keepLineBreaks && item.hasEOL ? "\n" : "") : "").join("");
   }
 
   const source: FindSource<PdfHit> = {
@@ -192,6 +194,35 @@ export function createPdfFind(
 
   return {
     controller,
+    /** Saved passages use this file's existing extraction, independently of find
+     * state. A unique normalized quote grants a coarse page, never old quads. */
+    async locatePassage(passage: PassageState, signal: AbortSignal): Promise<number | null> {
+      const document = pdf;
+      if (!document || signal.aborted) return null;
+      const scanner = new ScopeQuoteScanner(passage.normalized_exact, passage.prefix, passage.suffix);
+      const normalizer = new ScopeTextNormalizer();
+      const keep = Array.from(passage.prefix + passage.normalized_exact + passage.suffix).length + 2;
+      const pages: { page: number; start: number }[] = [];
+      let tail = "", base = 0, raw = 0, edits: [number, number][] = [];
+      for (let page = 1; page <= document.numPages; page++) {
+        const text = await pageText(page, signal, true) + "\n";
+        if (signal.aborted || pdf !== document) return null;
+        pages.push({ page, start: raw });
+        raw += Array.from(text.normalize("NFC")).length;
+        const normalized = normalizer.push(text, page === document.numPages);
+        edits.push(...normalized.edits);
+        const window = tail + normalized.normalized_text;
+        scanner.add({ fragment_id: "pdf", start_offset: 0, normalized_text: window,
+          normalized_start_offset: base, edits, start_cut: false, end_cut: false });
+        if (scanner.ambiguous) return null;
+        const chars = Array.from(window), drop = Math.max(0, chars.length - keep);
+        tail = chars.slice(drop).join(""); base += drop;
+        const previous = edits.findLastIndex(([at]) => at <= base);
+        if (previous > 0) edits = edits.slice(previous);
+      }
+      const match = scanner.result;
+      return match ? pages.findLast(page => page.start <= match.start_offset)?.page ?? null : null;
+    },
     /** Verify the original extraction and exact matcher result before moving. */
     async replay(target: PdfFindDestination, signal: AbortSignal, inspectionSignal: AbortSignal | null): Promise<{ readonly page: number; readonly index: number } | null> {
       clearArrival();

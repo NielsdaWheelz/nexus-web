@@ -5,9 +5,11 @@
  * and a fresh intent; a stale forecast fingerprint is never replayed.
  * Remote admission precedes sending; a known-unsent refusal creates no uncertainty.
  * Only the current command in its original lifetime can settle or forget itself.
+ * A failed attempt reports once; an unconfirmed one stays on the transcript dialog.
+ * Queued episodes speak through their own transcript state.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { useFeedback, useWorkspaceCondition, type FeedbackContent, type FeedbackContextValue } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackAction, type FeedbackContent, type FeedbackContextValue } from "@/components/feedback/Feedback";
 import { ApiError, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
@@ -16,7 +18,7 @@ import { isAbortError } from "@/lib/errors";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 import { requestEpisodeTranscripts } from "@/lib/podcasts/api";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { useLatestWorkspace } from "@/lib/workspace/store";
+import { useLatestWorkspace, type WorkspaceStoreValue } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { remoteReady } from "@/lib/native/admission";
 
@@ -30,14 +32,30 @@ interface Entry {
   readonly kind: Command["kind"];
   readonly body: string;
   readonly unregister: () => void;
+  /** Withdraws the unconfirmed report once this entry is forgotten or retired. */
+  retract: (() => void) | null;
   phase: "sending" | "unconfirmed";
   uncertain: boolean;
   requestId: string | null;
   failure: FeedbackContent | null;
 }
 const EMPTY: readonly Entry[] = [];
+export const UNCONFIRMED_TRANSCRIPTS: FeedbackContent = { tone: "Warning", title: "transcript request unconfirmed",
+  message: "it may have been accepted. inspect episode status and imports before requesting another batch." };
 
-function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackContextValue, fail: (input: { error: unknown }) => void) {
+/** Imports own the evidence for an unconfirmed request; opening them rereads it. */
+export function viewImportsAction(workspace: () => WorkspaceStoreValue, inspect: () => void): FeedbackAction {
+  return { label: "view imports", href: "/imports", onActivate: event => {
+    const current = workspace();
+    const handled = activateTargetLink({ event, target: { href: "/imports" },
+      runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId: current.state.active_primary_pane_id }) },
+    });
+    if (handled === "handled-default" || handled === "handled-new-pane") inspect();
+    return handled;
+  } };
+}
+
+function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackContextValue, workspace: () => WorkspaceStoreValue, fail: (input: { error: unknown }) => void) {
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
   let snapshot = EMPTY;
@@ -55,6 +73,7 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
   const retire = (entry: Entry) => {
     entries.delete(entry.podcastId);
     entry.unregister();
+    entry.retract?.();
     publish();
   };
   const inspectEntry = () => {
@@ -82,8 +101,6 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
       if (!current(entry, scope) || result === null) return;
       acknowledged = true;
       retire(entry);
-      const count = result.matched_count;
-      feedback.receipt({ tone: "Success", title: `${result.queued_count} of ${count} eligible episode${count === 1 ? "" : "s"} queued. · ${entry.title}` });
     } catch (error) {
       if (!current(entry, scope)) return;
       if (isApiError(error) && error.requestId !== undefined) entry.requestId = error.requestId;
@@ -106,10 +123,13 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
       if (!entry.uncertain) {
         const content = entry.failure;
         retire(entry);
-        if (!defect && content !== null) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: entry.commandKey, content: { ...content, title: `${content.title} · ${entry.title}` }, announcement: "Polite" });
+        if (!defect && content !== null) feedback.receipt({ ...content, title: `${content.title} · ${entry.title}` });
       } else {
         entry.phase = "unconfirmed";
         publish();
+        entry.retract = feedback.receipt({ ...UNCONFIRMED_TRANSCRIPTS, title: `${UNCONFIRMED_TRANSCRIPTS.title} · ${entry.title}`,
+          message: `selection: ${entry.scopeLabel}. ${UNCONFIRMED_TRANSCRIPTS.message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`,
+          requestId: entry.requestId ?? undefined }, viewImportsAction(workspace, inspectEntry));
       }
       if (defect || (sent && !isRefusal(error) && !outcomeUnknown(error) && !isAbortError(error) && !unauthenticated)) fail({ error });
     } finally {
@@ -146,7 +166,7 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
         const entry: Entry = {
           podcastId: input.podcastId, title: input.title, scopeLabel: input.scopeLabel,
           commandKey, kind: input.command.kind, body: JSON.stringify(input.command.body),
-          phase: "sending", uncertain: false, failure: null, requestId: null,
+          phase: "sending", uncertain: false, failure: null, requestId: null, retract: null,
           unregister: guard.register({ id: commandKey, scope: { kind: "account" }, read: () => ({ changed: false, unconfirmed: true, stopsBrowserWork: false }), subscribe }),
         };
         entries.set(entry.podcastId, entry);
@@ -174,31 +194,10 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
 export function usePodcastEpisodeCommands(accountId: string, reportDefect: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
   const feedback = useFeedback();
-  const owner = useMemo(() => createCommands(accountId, guard, feedback, reportDefect), [accountId, guard, feedback, reportDefect]);
-  useLayoutEffect(() => owner.start(), [owner]);
-  const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
-  return { commands: { ...owner.commands }, feedback: entries.map(entry => <CommandCondition key={entry.commandKey} entry={entry} commands={owner.commands} />) };
-}
-
-function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnType<typeof createCommands>["commands"] }) {
   const workspace = useLatestWorkspace();
-  const sending = entry.phase === "sending";
-  const title = sending ? "requesting transcripts…" : "transcript request unconfirmed";
-  const message = "it may have been accepted. inspect episode status and imports before requesting another batch.";
-  useWorkspaceCondition(entry.commandKey, {
-    needsAttention: !sending, priority: "Write", announcement: "Polite",
-    content: { tone: sending ? "Neutral" : "Warning", title: `${title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${sending ? "" : ` ${message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`}`, requestId: entry.requestId ?? undefined },
-    actions: sending ? undefined : [
-      { label: "view imports", href: "/imports", onActivate: event => {
-        const current = workspace();
-        const handled = activateTargetLink({ event, target: { href: "/imports" },
-          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId: current.state.active_primary_pane_id }) },
-        });
-        if (handled === "handled-default" || handled === "handled-new-pane") commands.inspect(entry.commandKey);
-        return handled;
-      } },
-      { label: "stop tracking", commandKey: entry.commandKey, onClick: () => commands.forget(entry.commandKey) },
-    ],
-  });
-  return null;
+  const owner = useMemo(() => createCommands(accountId, guard, feedback, workspace, reportDefect), [accountId, guard, feedback, workspace, reportDefect]);
+  useLayoutEffect(() => owner.start(), [owner]);
+  // A fresh command object per published change re-renders the dialog that reads `pending`.
+  useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
+  return { commands: { ...owner.commands } };
 }

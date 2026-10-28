@@ -38,6 +38,7 @@ internal class ShelfRouter(context: Context, private val store: OfflineStore) {
             return if (shelfActive && !request.isForMainFrame) notFound() else null
         }
         if (!origin.matches(url)) return notFound()
+        if (request.isForMainFrame && url.path?.startsWith("/shelf/copies/") == true) return jsonError(403, "Forbidden", "E_FORBIDDEN", "open downloaded sources from the reader")
         if (url.path == "/shelf/downloads.json") {
             if (request.method != "GET") return jsonError(405, "Method Not Allowed", "E_METHOD_NOT_ALLOWED", "use get")
             if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {

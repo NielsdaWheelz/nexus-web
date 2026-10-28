@@ -6,7 +6,6 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, getInteractionOwnerBelow, type Layer } from "@/lib/ui/overlay";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type { WorkspacePaneEntry, WorkspaceTarget } from "@/lib/workspace/targetActivation";
 
@@ -105,34 +104,24 @@ export async function openAsyncResult({
   }
   const label = subject ?? result.target.labelHint;
   const shownLabel = label === undefined ? undefined : truncateText(label, 120);
-  const offer = ctx.feedback.offer({ needsAttention: false, undo: null, onDismiss: null,
-    key: `open-result:${result.target.href}`,
-    content: {
-      tone: "Success", title: shownLabel ? `${result.title} · ${shownLabel}` : result.title,
-      message: label !== shownLabel ? label : undefined,
-    },
-    announcement: "Polite",
-    actions: [{
-      label: result.openLabel,
-      href: result.target.href,
-      onActivate: event => {
-        if (signal.aborted) { event.preventDefault(); return "consumed"; }
-        const current = ctx.workspace();
-        const originPaneId = current.state.active_primary_pane_id;
-        const handled = activateTargetLink({
-          event,
-          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId }) },
-          target: result.target,
-          entry: result.entry,
-        });
-        if (handled === "handled-default" || handled === "handled-new-pane") offer.withdraw();
-        return handled;
-      },
-    }],
-    returnFocus: () => {
-      if (signal.aborted) return null;
-      const active = ctx.workspace().state.active_primary_pane_id;
-      return findPaneChromeFocusTarget(active) ?? findPaneLandmarkFocusTarget(active);
+  // Navigation moved on before the result was ready: this is the result's only way open,
+  // so it waits for an unblocked workspace like any other non-success outcome.
+  ctx.feedback.receipt({
+    tone: "Info", title: shownLabel ? `${result.title} · ${shownLabel}` : result.title,
+    message: label !== shownLabel ? label : undefined,
+  }, {
+    label: result.openLabel,
+    href: result.target.href,
+    onActivate: event => {
+      if (signal.aborted) { event.preventDefault(); return "consumed"; }
+      const current = ctx.workspace();
+      const originPaneId = current.state.active_primary_pane_id;
+      return activateTargetLink({
+        event,
+        runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId }) },
+        target: result.target,
+        entry: result.entry,
+      });
     },
   });
 }

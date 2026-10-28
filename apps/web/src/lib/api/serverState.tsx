@@ -22,7 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteReady, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
   ApiError,
@@ -645,14 +645,14 @@ function useServerState<D>(
             }
           }
           if (localError?.code === "E_CATALOG_COVERAGE" && heldRef.current?.source.kind === "catalog")
-            update(h => ({ ...h, data: null, source: LIVE_SOURCE, acceptedStale: null, error: remoteReady() ? null : localError }));
+            update(h => ({ ...h, data: null, source: LIVE_SOURCE, acceptedStale: null, error: remoteAttemptAllowed() ? null : localError }));
           let next: D;
           if (prepared !== null) {
             const claimed = prepared;
             try { next = await claimed.promise; }
             finally { claimed.release(); prepared = null; }
           } else {
-            if (!remoteReady()) {
+            if (!remoteAttemptAllowed()) {
               const error = localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
               update(h => ({ ...h, error: h.data === null ? error : null }));
               settle(error);

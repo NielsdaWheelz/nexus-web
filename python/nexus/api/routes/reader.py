@@ -35,7 +35,6 @@ from nexus.schemas.reader import (
 from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.schemas.reader_document_map import ReaderApparatusDetailOut, ReaderDocumentMapOut
 from nexus.services import (
-    highlights,
     media_file_access,
     reader_apparatus,
     reader_document,
@@ -113,7 +112,7 @@ def get_reader_document_map(
     request: Request,
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
+    db: RepeatableReadDbSession,
 ) -> Data[ReaderDocumentMapOut]:
     unsupported_params = sorted(request.query_params)
     if unsupported_params:
@@ -121,12 +120,6 @@ def get_reader_document_map(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Unsupported Document Map params: {', '.join(unsupported_params)}",
         )
-    # Locator repair is a write. Finish it before the map's coherent, read-only
-    # snapshot; source replacement between phases may leave an unresolved anchor.
-    highlights.repair_missing_fragment_caches(db, viewer_id=viewer.user_id, media_id=media_id)
-    db.commit()
-    db.expire_all()
-    get_repeatable_read_db(db)
     return Data(
         data=reader_document_map.get_reader_document_map(
             db, viewer_id=viewer.user_id, media_id=media_id

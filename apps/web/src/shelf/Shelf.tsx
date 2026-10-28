@@ -1,6 +1,6 @@
 // The isolated shelf reads non-episode copies. Download management belongs to the workspace.
 import { useEffect, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackProvider, FeedbackState } from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import { localCall, localMutation, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
@@ -43,7 +43,7 @@ export default function Shelf() {
     void localMutation("remove", { media_id: item.media_id }).then(back,
       () => setFailure("removal not confirmed · try again"));
   };
-  return <main className={`${styles.shell} ${styles.readerShell}`}>
+  return <FeedbackProvider><main className={`${styles.shell} ${styles.readerShell}`}>
     <header className={styles.readerHeader}>
       <Button onClick={back}>downloads</Button>
       {item === null ? null : <h1>{item.title}</h1>}
@@ -58,5 +58,5 @@ export default function Shelf() {
         <Button onClick={() => setConfirmRemoval(false)}>cancel</Button>
       </div>
     </Dialog> : null}
-  </main>;
+  </main></FeedbackProvider>;
 }

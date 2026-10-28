@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 ShareMode = Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
@@ -180,7 +181,7 @@ def expand_owned_child_refs(
                 *_children(db, "passage_anchor", _MEDIA_ANCHORS, ref.id, viewer_id=viewer_id),
             )
         case "page_note_blocks":
-            return _children(db, "note_block", _PAGE_NOTE_BLOCKS, ref.id, viewer_id=viewer_id)
+            return _children(db, "note_block", PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id)
         case "note_block_owned_evidence":
             return (
                 *_children(
@@ -206,15 +207,16 @@ _MEDIA_ANCHORS = (
     "SELECT id FROM passage_anchors"
     " WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id"
 )
-_PAGE_NOTE_BLOCKS = """
+# Live authored links only: a deleted note, page or unlinked link breaks the closure.
+PAGE_NOTE_BLOCKS_SQL = f"""
 WITH RECURSIVE links AS (
     SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
-    FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user'
+    FROM resource_edges e
+    WHERE user_id = :viewer_id AND origin = 'user' AND {edge_live_sql("e")}
     UNION ALL
     SELECT target_scheme, target_id, source_scheme, source_id
-    FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user'
+    FROM resource_edges e
+    WHERE user_id = :viewer_id AND origin = 'user' AND {edge_live_sql("e")}
 ), connected(id) AS (
     SELECT b_id FROM links WHERE a_scheme = 'page' AND a_id = :id AND b_scheme = 'note_block'
     UNION

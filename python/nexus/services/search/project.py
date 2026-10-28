@@ -108,7 +108,7 @@ def _locator(row: Mapping[str, Any]) -> dict[str, Any] | None:
         media_kind=row.get("source_media_kind", row["media_kind"]),
     )
     if locator is not None and locator["type"] == "note_block_offsets":
-        locator["body_version"] = row.get("note_body_version") or 1
+        locator["body_version"] = None
         locator["text_quote_selector"] = {"exact": row["span_text"]}
     return locator
 

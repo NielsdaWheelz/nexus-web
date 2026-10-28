@@ -2,7 +2,7 @@
 import { decodeUpdatedTitleIndexView, updatedTitleIndexViewQuery } from "@/lib/collections/updatedTitleIndexView";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLSearchParams): string | null {
-  if (routeId === "notes" || routeId === "conversations") {
+  if (routeId === "conversations") {
     const decoded = decodeUpdatedTitleIndexView(query);
     return decoded.kind === "Invalid" ? null : updatedTitleIndexViewQuery(decoded.view).slice(1);
   }

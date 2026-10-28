@@ -891,7 +891,7 @@ internal class OfflineStore private constructor(private val context: Context) {
         return JSONObject().put("media_id", item.mediaId.toString()).put("kind", item.kind).put("title", item.title)
             .put("state", item.state).put("failure", item.failure.orNull()).put("attempts", item.attempts)
             .put("received", item.received).put("total", item.total.orNull()).put("size_bytes", item.sizeBytes)
-            .put("saved_at", item.savedAt.orNull()).put("progress", progress).put("package_id", item.packageId?.toString().orNull())
+            .put("saved_at", item.savedAt.orNull()).put("progress", progress).put("package_id", item.packageId?.toString().orNull()).put("generation", item.generation)
             .put("extras", extras.orNull())
     }
 

@@ -36,6 +36,7 @@ import {
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
+import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
@@ -78,6 +79,7 @@ export function useNexusController() {
   const interactionLayer = useRef<Layer | null>(null);
   const [openingSources, setOpeningSources] = useState<ReadonlySet<string>>(() => new Set());
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
+  const captureAttempt = useRef<{ noteId: string; promise: Promise<string>; retry: (() => Promise<unknown>) | null } | null>(null);
   const guard = useWorkGuard();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
@@ -169,9 +171,10 @@ export function useNexusController() {
     setList((previous) => mergeResults(previous, listIdentity, candidateRows({
       query: parsed, panes, frecency: find.frecency, preview: find.preview,
       reference: find.reference, referenceFailed: find.referenceFailed,
+      local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
       retained: previous.identity === listIdentity ? previous.rows : [],
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, searchRefreshRevision]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision]);
 
   // Navigation from outside the launcher's own pane commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -257,7 +260,7 @@ export function useNexusController() {
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
     if (current.kind === "Add") return addSession.workOwnerIds;
-    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManagePanes" || current.kind === "Activity") return [];
+    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManagePanes") return [];
     if (current.kind === "ChooseCreate" && target !== null) {
       const transferred = target.kind === "CreatePage" ? target.titleDraft
         : target.kind === "CreateLibrary" ? target.nameDraft
@@ -347,10 +350,6 @@ export function useNexusController() {
         setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row), activation });
         setOpen(true);
         return null;
-      case "Activity":
-        setPage({ kind: "Activity", origin: rootOrigin(row) });
-        setOpen(true);
-        return null;
       case "ManagePanes":
         setPage({ kind: "ManagePanes" });
         setOpen(true);
@@ -424,13 +423,9 @@ export function useNexusController() {
       if (signal.aborted) return;
       const failure = modeledApiError(error, ctx.reportDefect);
       if (failure === null) return;
-      const offer = ctx.feedback.offer({
-        key: `open-source:${target.sourceAttemptId}`, content: savedSourceReadFailure(failure), announcement: "Polite",
-        needsAttention: true, undo: null, onDismiss: null,
-        actions: [{ label: "retry", onClick: intent => {
-          if (!signal.aborted && latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation })) offer.withdraw();
-        } }],
-      });
+      ctx.feedback.receipt(savedSourceReadFailure(failure), { label: "retry", onClick: intent => {
+        if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
+      } });
     }).catch(error => ctx.reportDefect({ error })).finally(() => setOpeningSources(current => {
       const next = new Set(current);
       next.delete(target.sourceAttemptId);
@@ -442,11 +437,18 @@ export function useNexusController() {
    * launcher keeps the text with Retry, under the same note id, when it fails). */
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
     void openCreated(running, async () => {
-      await captureToday(running.localDate, running.noteId, running.text);
-      return { target: { href: `/daily/${running.localDate}` }, title: "note kept on this device; queued for today", openLabel: "open today",
+      if (captureAttempt.current?.noteId !== running.noteId) captureAttempt.current = {noteId:running.noteId,promise:captureToday(getWritingRuntime(accountId),running.localDate,running.noteId,running.text),retry:null};
+      else if (captureAttempt.current.retry) { captureAttempt.current.promise=captureAttempt.current.retry().then(()=>"");captureAttempt.current.retry=null; }
+      await captureAttempt.current.promise;
+      return { target: { href: `/daily/${running.localDate}` }, title: "note saved on this device", openLabel: "open today",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
+        if (error instanceof LocalCommitError) {
+          if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
+          setPage({...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t save on this device",message:"keep this page open. retry saving."},unconfirmed:false}});
+          return;
+        }
         const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
@@ -577,7 +579,7 @@ export function useNexusController() {
       rootFocus.current = "Choice:library";
       return setPage(page.returnTo);
     }
-    const origin = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" || page.kind === "Activity" ? page.origin
+    const origin = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" ? page.origin
       : page.kind === "CreateLibrary" && page.returnTo.kind === "Root" ? page.returnTo.origin
         : page.kind === "ManagePanes" ? { mode: "Overview", control: "AllPanes" } as const : null;
     if (origin) {
@@ -688,7 +690,7 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     announcement,
-    dialogLabel: page.kind === "Activity" ? "activity" : page.kind === "Add" ? "Add content" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
+    dialogLabel: page.kind === "Add" ? "Add content" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
     addSession,
     openingSources,
@@ -706,6 +708,12 @@ export function useNexusController() {
     enterSearch: () => setRootMode("Search"),
     submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
       if (parsed.intent.kind === "Resource") {
+        const local = find.localReference;
+        if (local !== null) {
+          if (local.href === null) setAnnouncement("source unavailable");
+          else run({ kind: "InternalHref", href: local.href, labelHint: local.label }, activation);
+          return;
+        }
         if (find.reference === null) return;
         const action = resourceAction(find.reference);
         if (action.kind === "Unavailable") setAnnouncement(action.reason);
@@ -792,7 +800,6 @@ export function useNexusController() {
       setAddDefect({ sessionId: addSession.state.sessionId, error });
     },
     clearAddDefect: () => setAddDefect(null),
-    completeActivityNavigation: () => finishNavigation(null),
     managePanes: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManagePanes" }); },
     openPane(paneId: string, intent: OpenIntent) {
       return run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });

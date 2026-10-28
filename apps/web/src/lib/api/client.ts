@@ -3,7 +3,7 @@
 // browser http cache, and answers the parsed json or throws ApiError. A request
 // sealed under another revision is refused here, never rewritten. A 426 means
 // this tab was built for another wire: it reloads unless writing holds it.
-import { installedApp, remoteReady, remoteAdmission, observeRemoteFailure } from "@/lib/native/admission";
+import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession } from "@/lib/native/admission";
 import { androidShellDocument } from "@/lib/androidShell";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
@@ -13,6 +13,16 @@ import { WIRE_REVISION } from "./wire.gen";
 
 export type ApiPath = `/api/${string}`;
 export const WIRE_HEADER = "X-Nexus-Wire";
+let accountBinding: { accountId: string } | null = null;
+/** An account assertion prevents a changed cookie jar from moving local data
+ * into another account. It grants no authority; the BFF verifies the bearer. */
+export function bindApiAccount(accountId: string): () => void {
+  const binding = { accountId }; accountBinding = binding;
+  return () => { if (accountBinding === binding) accountBinding = null; };
+}
+/** Capture the existing account assertion, not an authorization or a new session. */
+export const captureApiAccount = () => accountBinding;
+export const isCurrentApiAccount = (binding: ReturnType<typeof captureApiAccount>) => accountBinding === binding;
 const RELOADED_FOR = "nexus.reloaded-for-wire";
 
 export class ApiError extends Error {
@@ -208,7 +218,7 @@ function retryAfterMs(value: string | null): number | undefined {
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
-/** The one reader of an api answer: its json, or the envelope's ApiError. */
+/** Decode an answer. Its request owner publishes admission failures. */
 export async function readResponse<T>(response: Response): Promise<T> {
   const { ok, status } = response;
   const answerId = response.headers.get("x-request-id") ?? undefined;
@@ -218,7 +228,6 @@ export async function readResponse<T>(response: Response): Promise<T> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     // an incomplete body is transport, whatever the status (#604)
-    observeRemoteFailure(0);
     throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
   }
   if (ok) {
@@ -247,9 +256,14 @@ export async function readResponse<T>(response: Response): Promise<T> {
     isRecord(error.details) ? error.details : undefined,
     retryAfterMs(response.headers.get("retry-after")),
   );
-  observeRemoteFailure(status);
-  if (status === 426 && typeof window !== "undefined" && !installedApp && !androidShellDocument) reloadForNewBuild();
   throw failure;
+}
+
+/** A retired response cannot change the next account's admission. */
+export function observeApiFailure(error: unknown, binding: ReturnType<typeof captureApiAccount>): void {
+  if (!isCurrentApiAccount(binding) || !(error instanceof ApiError)) return;
+  if (binding !== null && (error.status !== 403 || error.code === "E_ACCOUNT_MISMATCH")) observeRemoteFailure(error.status);
+  if (error.status === 426 && !installedApp && !androidShellDocument) reloadForNewBuild();
 }
 
 /**
@@ -261,8 +275,13 @@ export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
-  if (installedApp && !remoteReady()) {
-    const admission = remoteAdmission();
+  const binding = captureApiAccount();
+  const admission = remoteAdmission();
+  // Unavailable pauses background owners; an explicit browser attempt may prove
+  // reachability. Native session admission remains owned by the installed host.
+  if (!remoteAttemptAllowed()) {
+    // Demand asks native authority to recheck reachability; this request stays unsent.
+    if (installedApp && admission === "Unavailable") checkSession();
     throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
   }
   const headers = new Headers(init.headers);
@@ -270,6 +289,7 @@ export async function apiFetch<T>(
   if (sealed !== null && sealed !== String(WIRE_REVISION))
     throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
+  if (binding) headers.set("X-Nexus-Account", binding.accountId);
   if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", createRandomId());
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
@@ -290,9 +310,12 @@ export async function apiFetch<T>(
     response = await fetch(path, { ...init, cache: "no-store", headers });
     mark("headers", { status: response.status, response_request_id: response.headers.get("x-request-id") });
     const body = await readResponse<T>(response);
+    if (!isCurrentApiAccount(binding)) throw new DOMException("api account changed", "AbortError");
+    if (binding !== null) observeRemoteSuccess();
     mark("body_complete", { status: response.status });
     return body;
   } catch (error) {
+    if (!isCurrentApiAccount(binding)) throw new DOMException("api account changed", "AbortError");
     const reason = init.signal?.reason;
     let cause = "error";
     if (init.signal?.aborted) {
@@ -304,9 +327,9 @@ export async function apiFetch<T>(
       error_type: error instanceof Error ? error.name : typeof error,
       error_code: error instanceof ApiError ? error.code : null,
     });
-    if (response !== undefined) throw error;
     if (isAbortError(error)) throw error;
-    observeRemoteFailure(0);
-    throw new ApiError(0, "E_NETWORK", "Network request failed");
+    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed") : error;
+    observeApiFailure(failure, binding);
+    throw failure;
   }
 }

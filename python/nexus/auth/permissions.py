@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from nexus.services import resource_grants
 from nexus.services.media_text_scope import highlight_in_reading_scope_sql
+from nexus.services.resource_graph.liveness import edge_live_sql
 
 
 def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewer_id") -> str:
@@ -63,6 +64,7 @@ def retained_x_post_roots_sql() -> str:
     return """
         SELECT h.anchor_media_id AS media_id, h.user_id
         FROM highlights h JOIN x_post_sources xp ON xp.media_id = h.anchor_media_id
+        WHERE h.authored_visible
         UNION
         SELECT pa.owner_id, pa.user_id
         FROM passage_anchors pa JOIN x_post_sources xp ON xp.media_id = pa.owner_id
@@ -246,12 +248,14 @@ def visible_contributor_ids_cte_sql() -> str:
         SELECT re.source_id AS contributor_id
         FROM resource_edges re
         WHERE re.user_id = :viewer_id AND re.source_scheme = 'contributor'
+          AND {edge_live_sql("re")}
 
         UNION
 
         SELECT re.target_id AS contributor_id
         FROM resource_edges re
         WHERE re.user_id = :viewer_id AND re.target_scheme = 'contributor'
+          AND {edge_live_sql("re")}
     """
 
 
@@ -270,8 +274,9 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
 
 
 def highlight_visibility_sql(highlight_alias: str = "h") -> str:
-    """The author, library and grant paths; the caller proves the anchor and its media."""
-    return f"""(
+    """A semantically live highlight on the author, library or grant path; the caller
+    proves the anchor and its media. A deleted highlight's projection reads as absent."""
+    return f"""({highlight_alias}.authored_visible AND (
         {highlight_alias}.user_id = :viewer_id
         OR EXISTS (
             SELECT 1
@@ -289,7 +294,7 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
               AND author_m.user_id = {highlight_alias}.user_id
         )
         OR {resource_grants.highlight_grant_path_exists_sql(f"{highlight_alias}.id")}
-    )"""
+    ))"""
 
 
 def highlight_readability_sql(highlight_alias: str = "h") -> str:

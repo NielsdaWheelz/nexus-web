@@ -21,8 +21,10 @@ package, and `?view=live` explicitly selects the current server presentation.
 media location links retain `loc` alongside at most one `view=downloaded|live`;
 unknown query keys, unknown view values and duplicate selectors are refused.
 live refusal keeps usable downloaded content. saved transcripts use the shared
-reader with no progress port, annotations or automatic playback highlighting.
-contents, selection/copy and published timestamp seeks remain available.
+reader with no progress port or automatic playback highlighting. the extracted
+authored annotation controller supports locally captured annotations against the
+saved publication. contents, selection/copy and published timestamp seeks remain
+available.
 
 ## parts
 
@@ -114,6 +116,22 @@ reading-copy leases retain their account namespace across document cleanup. ever
 local response stream registers for account retirement, including in-memory index
 streams. explicit sign-out closes streams and drains workers before purge; old
 results cannot publish into a replacement account or package.
+
+## authored writing boundary
+
+`authored/AuthoredStore.kt` owns the account's separate bundled sqlite database on
+one serialized io connection. `authored/AuthoredBridge.kt` admits the owned workspace
+and exact packaged `/shelf/index.html` document generation only; source-asset
+mainframes and subframes have no authored bridge. frames retain the fixed 24 kib
+raw chunks inside 64 kib messages. the preparation mutex spans baseline read and
+uncertain durable commit settlement. device/account retirement rejects late work.
+
+fixed native replica/change/snapshot calls use current credentials and the asserted
+bound account. synchronization runs in the foreground with writing-stream wake
+hints; it is separate from reading-position delivery and adds no background job.
+source copies and media bytes remain owned by the existing content store. source
+absence does not remove authored quotes or notes, and the shelf has no account
+commands. sign-in intervention returns to the workspace.
 
 ## bridge and local reads
 

@@ -13,7 +13,7 @@ import { ended, finish, isSameOrigin, liveSession, presentedSession } from "@/li
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
-import { AuthUnavailable } from "@/lib/supabase/auth";
+import { AuthUnavailable, verify } from "@/lib/supabase/auth";
 import { WIRE_REVISION } from "./wire.gen";
 import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
@@ -30,7 +30,7 @@ export type SessionLane = "Json" | "Asset" | "Stream" | "Copy";
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const LONG_MS = 280_000;
 const SESSION_IN =
-  "content-type accept range if-none-match if-modified-since idempotency-key x-nexus-wire";
+  "content-type accept range if-none-match if-modified-since idempotency-key x-nexus-wire x-nexus-account";
 const SESSION_OUT =
   "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location retry-after";
 const SHARE_OUT =
@@ -261,6 +261,16 @@ export async function proxySession(
   if (live.kind === "Ended") {
     return finish(unauthenticated(), passive ? { kind: "Preserve" } : ended(live.cookieNames));
   }
+  const expectedAccount = request.headers.get("X-Nexus-Account");
+  if (expectedAccount !== null) {
+    try {
+      const viewer = await verify(live.accessToken);
+      if (viewer === "Rejected" || viewer.userId !== expectedAccount) return finish(failure(id, 403, "E_ACCOUNT_MISMATCH", "sign in with the account already open on this device"), { kind: "Write", writes: live.writes });
+    } catch (error) {
+      if (!(error instanceof AuthUnavailable)) throw error;
+      return finish(failure(id, 503, "E_AUTH_UNAVAILABLE", "Authentication service unavailable"), { kind: "Write", writes: live.writes });
+    }
+  }
   const headers = pick(request.headers, SESSION_IN);
   headers.set("authorization", `Bearer ${live.accessToken}`);
   const device = readDeviceId(await cookies());
@@ -340,7 +350,7 @@ export async function proxyExtension(
   }
   const headers = pick(
     request.headers,
-    "content-type accept idempotency-key x-nexus-wire",
+    "content-type accept idempotency-key x-nexus-wire x-nexus-account",
   );
   headers.set("authorization", authorization);
   headers.set("accept-encoding", "identity");

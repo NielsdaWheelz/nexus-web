@@ -32,11 +32,12 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
 from nexus.schemas.writing import WritingState
+from nexus.services import authored, metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services import media as media_service
-from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.oracle import readings as oracle_readings
+from nexus.services.resource_items.versions import annotations_revision
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -151,12 +152,17 @@ async def _snapshot_stream(
 
 @router.get("/stream/writing")
 async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingResponse:
-    """Listen first, then read the durable wake token in every fresh snapshot."""
+    """Listen first, then read the authored head and annotation token in every fresh snapshot.
+
+    A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
+    refetch document maps whose ``annotations_version`` moved."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
-            revision = suggestion_changes.input_revision(db)
-        return WritingState(revision=revision).model_dump(mode="json"), False
+            revision = str(authored.head(db, viewer.user_id))
+            annotations = annotations_revision(db, viewer_id=viewer.user_id)
+        state = WritingState(revision=revision, annotations_revision=str(annotations))
+        return state.model_dump(mode="json"), False
 
     return await _snapshot_stream(request, "nexus_writing", viewer.user_id, read)
 

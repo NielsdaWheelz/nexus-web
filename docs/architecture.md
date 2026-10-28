@@ -1373,25 +1373,16 @@ directory or root Authors pane; author search lives in desktop Nexus at
 
 ### 8.7 Notes and pages
 
-Pages and notes are resources, not documents or trees. A `page` owns its title, a
-`note_block` one ProseMirror block; an outline is a page's or note's neutral user links
-(`origin = 'user'`, undirected) in that endpoint's own rank order, so a note can sit in
-many outlines and a row is a link, not containment. `services/outline.py` reads
-outlines and applies the idempotent outline commands (insert, move, relink, remove, body
-and title writes, ensure-daily) in one SERIALIZABLE transaction; a removed note with no
-other place (link, annotation, link note, citation) is deleted. `services/notes.py` owns
-pages, the complete index, the daily page (latent until its first write, its id derived
-from the date) and quick capture; `services/note_bodies.py` the note row, its text
-projection and reindexing. Note prose has no inline resource references; whole-block
-`object_embed` nodes keep `origin='note_body'` facts; highlight and link notes are
-ordinary notes on `highlight_note` / `link_note` edges.
-
-The web writes online only (owner decision): `lib/notes/texts.ts` holds unsaved text in
-memory and saves 1.5 s after typing stops or at once when the tab hides;
-`lib/notes/writes.ts` sends one request at a time and retries transport failures; one
-`useOutline` session per pane applies structure edits optimistically and keeps one undo
-history over text and structure. `PagePaneBody` (pages and days) and `NotePaneBody`
-render `OutlineEditor`; `NoteEditor` is the one prose editor. Contracts and invariants:
+Pages and notes are authored resources. A `page` owns its title, a `note_block`
+one ProseMirror body; an outline is ordered user links, so a note can appear in
+many places without containment or implicit deletion. `node/authored` owns the
+grammar, causal merge, commands and local queries. The account-scoped local
+SQLite store owns durable writing and the bounded title/ref page index online
+and offline. One change commits a structural gesture and its text edits; the
+server accepts that change and maintains relational projections. Unlink removes
+only the addressed relationship. Daily pages are latent until their first
+authored command. `PagePaneBody` and `NotePaneBody` share one flat ProseMirror
+outline host; retained canonical documents and undo managers own edits. Contracts:
 [`modules/notes.md`](modules/notes.md).
 
 ### 8.8 Lectern & podcast playback
@@ -1688,7 +1679,7 @@ registry, generic controller, Boolean AST, or client sorting of pageable rows.
 | Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL over the complete result |
 | Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
 | Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL over the complete result |
-| Notes index | Page title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
+| Notes index | Page title | Title/ref | none | local keyset prefix; filter describes loaded rows |
 | Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL over the complete result |
 | Podcast subscriptions | title; contributor names | Newest episode | Newest episode; most unplayed; title A–Z | owner SQL |
 | Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
@@ -1704,7 +1695,7 @@ semantic owner order. Connections, Downloads, Library members/invites,
 choosers, overlays, Preview episodes and Stats tables are secondary lists and
 out of scope.
 
-The chain is:
+For server-owned indexes, the chain is:
 
 ```text
 pane URL
@@ -1725,7 +1716,8 @@ The URL is requested state; the pane's list hook owns everything after it
 ### 8.12 Lists
 
 finite saved indexes are complete ordered observations: libraries, library contents,
-followed podcasts, episodes, pages, chats, author works and lectern. selected get
+followed podcasts, episodes, chats, author works and lectern. authored pages use
+the local title/ref keyset query and bounded rendering described in §8.7. selected get
 routes reject unknown/repeated query keys and `limit`/`cursor`. `CollectionIndex`
 contains only `items`; library entries add their library, podcast section and
 nullable manual-order revision; episodes add their show detail. all parts and
@@ -1916,34 +1908,18 @@ open over Resume and never become panes.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
   quick reads, suggestions and Nexus ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
-- **Entry and first usable content.** silent middleware resolution and read-only
-  page verification precede the response. the verified layout places required data
-  under a streaming suspense skeleton and workspace error boundary. auth can gate
-  ttfb; data and the active seed gate first shell mount. `loadWorkspaceBootstrap`
-  concurrently loads required account, reader profile and saved sessions on the
-  30 s server deadline, then awaits only the active pane's first-paint reads
-  (`paneSeeds`, `lib/panes/paneResourceLoaders.ts`) with the existing 500 ms
-  per-request budget, returning `{ account, readerProfile, initialState, seeds }`.
-  `seeds` holds them by the active pane's id, under the key of the
-  `useServerValue`/`useServerList` hook that reads them (the api path); the pane
-  body's first commit paints and spends them, so a later mount reads. named
-  transport/resource misses leave normal pane reads in charge; internal defects,
-  malformed json, unknown codes and bootstrap 401 terminate.
-  only `E_NETWORK`, `E_UPSTREAM`, `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE` produce
-  cold retry; a cold failure mounts no store. `WorkspaceEntry` retains the first
-  successful initializer for its verified viewer. later modeled data reread failure
-  preserves that exact shell and store and publishes one refresh notice; later
-  success clears it without replacing live work. viewer identity keys the subtree.
-- **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
-  httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
-  request-forwarded so this SSR sees it, response-set for future requests. The data root
-  reads it, fetches the saved sessions (only a missing row is null; corruption is `E_INTERNAL`), and classifies `/`
-  as Resume or every other protected href as Navigate; `enterWorkspace`
-  (`lib/workspace/model.ts`, isomorphic) picks the session and merges the deep link. The
-  store is created from that `initialState`, so the first render already shows the
-  right panes. `useWorkspaceSession` saves 1 s after a change and flushes with keepalive
-  on page hide; the BFF stamps the device id from the cookie as `X-Nexus-Device` — the
-  client never reads or sends it. Column
+- **Entry and first usable content.** `BrowserWorkspace` opens the confirmed
+  local account binding without a credential read. first provisioning fetches
+  verified account, reader profile and saved workspace session concurrently;
+  failure mounts no store. `DeviceWorkspace` opens the installed binding from
+  device storage. neither path seeds authored writing from server reads. the
+  pane registry admits a body when presented; server-owned index reads belong
+  to their pane hooks. account retirement discards the shell.
+- **Workspace restore.** `enterWorkspace` (`lib/workspace/model.ts`) picks the
+  saved session and merges the deep link. `useWorkspaceSession` saves local
+  navigation after 200 ms and flushes on page hide. online remote admission
+  also sends a best-effort cloud copy; the BFF stamps `X-Nexus-Device` from its
+  server-owned cookie. Column
   **widths** are clamped on the client at render only (`primaryWidth`), never written
   back; a null width is the reader column, whose first-paint estimate
   (`estimatePrimaryWidthPx`) the shell's probe refines. The URL-hash fold navigates the active pane (preserving the
@@ -1959,8 +1935,7 @@ open over Resume and never become panes.
   no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
   server-side). the pane registry owns dynamic imports and one cached
   `Pending` → `Ready` or `Failed` outcome per route; import failure requires
-  document reload. startup updates can still replace streamed bodies before
-  hydration; see the [owning issue](issues/pane-body-drops-gestures-before-hydration.md).
+  document reload.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; every
   Supabase call is behind `lib/supabase/` (`cookie.ts` edge-safe, `auth.ts`

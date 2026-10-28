@@ -6,14 +6,14 @@ their owned, database-wide admitted backend and materialize before retiring it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import PassageAnchor
 from nexus.db.session import open_async_session
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_evidence import CapturedPassageTarget
@@ -290,29 +290,26 @@ def _passage_identities(
                     exact=normalized, prefix=resolution.prefix, suffix=resolution.suffix
                 ),
             )
+    bindings = [{"source_ref": owner.uri, "semantic_key": key} for owner, key in keys.values()]
     anchors = (
         {
-            (row.owner_scheme, row.owner_id, row.anchor_key): ResourceRef("passage_anchor", row.id)
+            (row.source_ref, row.semantic_key): ResourceRef("passage_anchor", UUID(row.anchor_id))
             for row in db.execute(
-                select(
-                    PassageAnchor.id,
-                    PassageAnchor.owner_scheme,
-                    PassageAnchor.owner_id,
-                    PassageAnchor.anchor_key,
-                ).where(
-                    PassageAnchor.user_id == viewer_id,
-                    tuple_(
-                        PassageAnchor.owner_scheme, PassageAnchor.owner_id, PassageAnchor.anchor_key
-                    ).in_({(owner.scheme, owner.id, key) for owner, key in keys.values()}),
-                )
+                text("""
+                    SELECT p.anchor_id,p.state->>'source_ref' AS source_ref,p.semantic_key
+                    FROM jsonb_to_recordset(CAST(:bindings AS jsonb)) AS k(source_ref text,semantic_key text)
+                    JOIN authored_passages p ON p.account_id=:viewer
+                      AND p.state->>'source_ref'=k.source_ref AND p.semantic_key=k.semantic_key
+                """),
+                {"viewer": viewer_id, "bindings": json.dumps(bindings)},
             )
         }
-        if keys
+        if bindings
         else {}
     )
     return {
         uri: (anchor.uri, anchor)
-        if (anchor := anchors.get((owner.scheme, owner.id, key))) is not None
+        if (anchor := anchors.get((owner.uri, key))) is not None
         else (f"{owner.uri}:{key}", None)
         for uri, (owner, key) in keys.items()
     }

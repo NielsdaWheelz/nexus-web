@@ -1,3 +1,7 @@
 # Frontend test artifacts
 __screenshots__/
 .vercel
+
+# Complete shared workspace and SQLite worker asset closure.
+/public/_nexus/
+/public/workspace-sw.js

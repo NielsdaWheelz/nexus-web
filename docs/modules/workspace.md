@@ -59,72 +59,48 @@ the body is the absolute state and the prune is idempotent. the device is `X-Nex
 `callFastAPI` stamp from the server-owned httpOnly `nx_device` cookie, so a
 client cannot name one; without it the api answers 400.
 
-[`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
-reads the account, reader profile and sessions concurrently on the normal 30 s
-deadline (all required: a failure is the workspace error region, never a
-fabricated default that could autosave over an unread session). `enterWorkspace`
-picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
-merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
-today in the account zone (as it is in a pane: the store's target activation and
-navigation resolve it too; it is never stored); any other path reuses the pane on its resource and
-material view (keeping its visit id, width and inspector) or is appended without
-evicting another pane. entry awaits only the guaranteed visible active pane's
-first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
-seeded by that pane's id under the api paths its hooks read. named transport
-failures and route-specific missing resources use normal client reads; other seed
-errors terminate. complete library/episode aggregates and independent published suggestions use
-exact route-query keys. accepted destination entry overlaps declared get reads
-with code loading through the same one-use seed owner. claims transfer pending,
-successful or failed work to the mounted owner; close, account retirement and
-module failure retire unclaimed work. a named bootstrap miss loses only its own
-result; no completed response cache remains. a cold inactive pane
-admits its body and existing read owners only when first presented. the
-authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
-unknown paths render unsupported panes.
+[`BrowserWorkspace.tsx`](../../apps/web/src/lib/authored/BrowserWorkspace.tsx)
+opens a confirmed local account binding without a credential read. first
+provisioning reads the verified account, reader profile and workspace session
+concurrently, then saves the binding before mounting the shell. a failed read
+mounts no store. [`DeviceWorkspace.tsx`](../../apps/web/src/lib/native/DeviceWorkspace.tsx)
+opens the installed binding from the device; later account refresh cannot replace
+live navigation. `enterWorkspace` picks own-if-nontrivial, else
+elsewhere-if-nontrivial, else one lectern pane. it merges a deep link: `/` and
+invalid paths resume; bare `/daily` resolves in the account zone; another path
+reuses its resource and material view or appends a pane. neither entry seeds
+authored text from the server. the authenticated group has one optional catch-all
+page (`[[...path]]/page.tsx`); unknown paths render unsupported panes.
 
+primary note, page and daily authoring code is a workspace prerequisite; its
+bodies still mount only for their actual pane. this increases initial workspace
+code in exchange for removing their navigation-time module load. new-page entry
+normalizes to page, and route-kind keys still distinguish page from daily bodies.
 the pane registry owns one cached `Pending` → `Ready` or `Failed` module outcome
-per route. server rendering and hydration suspend for pending code. startup
-updates can still replace streamed body markup before hydration; the
-[existing startup issue](../issues/pane-body-drops-gestures-before-hydration.md)
-records that unresolved loss of early gestures. client navigation renders ordinary
-loading while code is pending, then defers the ready
-body's render so module arrival does not incur suspense's fallback retry delay.
-only the committed ready body spends unused seeds; import failure keeps its stage
-and requires document reload. this registry holds code, never account data.
+per secondary route. client navigation renders loading while code is pending, then defers
+the ready body's render so module arrival does not incur suspense's fallback
+retry delay. import failure keeps its stage and requires document reload. this
+registry holds code, never account data.
 
-required-data transport failures (`E_NETWORK`, `E_UPSTREAM`,
-`E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE`) are classified before react serializes
-errors. cold failures mount no store and offer document reload. other failures,
-including malformed json, unknown codes and bootstrap 401, are logged terminal
-containment without retry. only a missing stored row is null; invalid state returns
-`500 E_INTERNAL` without modifying its row or timestamp.
-
-`WorkspaceEntry` captures the first successful initializer for one verified viewer.
-a modeled later data reread failure retains the exact shell/store/reader/seeds and
-publishes "workspace update not confirmed" with one guarded `router.refresh()`
-action, "try again". success clears the notice without replacing live state; its focused action
-hands focus to the current pane before removal. viewer change discards the subtree.
-identity-gate failure still uses manual session recovery. local room selection
-writes its browser cookie without an authenticated request or refresh.
+first-provisioning transport failure mounts no store and offers retry. only a
+missing stored row is null; invalid state returns `500 E_INTERNAL` without
+modifying its row or timestamp. after mounting, the shell retains its local
+binding and live store across remote admission changes. account retirement
+discards the subtree. local room selection writes its browser cookie without
+an authenticated request or refresh.
 
 launcher `?nexus=…` commands are one-shot entry input, never pane identity.
-`nexus/urlIntent.ts` supplies one strict parser; the server entry strips an
-accepted command from the incoming request path. restored states are used as
-stored: python validated them, and the web never writes a command or a seed
-query into an href, so stored data never dispatches a command. the client captures once, strips browser history, then
-delivers through the existing receiver only after viewport hydration.
+`nexus/urlIntent.ts` supplies one strict parser. restored states are used as
+stored; the web never writes a command into an href, so stored data never
+dispatches a command. the client captures once, strips browser history, then
+delivers through the existing receiver after mounting.
 
-[`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
-saves 1 s after the state last changed identity; the initial state counts as
-unsaved, so every page load saves once. one request is in flight; a newer state
-requested meanwhile is sent when it settles (keepalive if any request asked), and
-a success acknowledges exactly the state it sent. pagehide and hidden flush with
-keepalive while the body fits the browser's 64 KiB keepalive budget, else as an
-ordinary request, which lands when the page only hides: a larger state loses a
-change made in the 1 s before an unload. network, upstream, upstream-timeout and
-auth-dependency failures publish one persistent "workspace changes not
-confirmed" notice with "retry save" (a stale build: "reload app"); 401 goes to
-login; anything else is a defect thrown into the workspace boundary.
+[`useWorkspaceSession.tsx`](../../apps/web/src/lib/workspace/useWorkspaceSession.tsx)
+saves after 200 ms. browser saves the local binding first; the installed app
+saves through its device workspace owner. an admitted online session also sends
+a best-effort cloud copy. one request is in flight; a newer state is sent after
+it settles. pagehide and hidden flush the current state. local failure offers
+retry; cloud failure cannot veto the local save.
 
 the address bar names the active pane. the store projects it with next's patched
 `history.replaceState(null, "", href)`, so next's router url follows and a server
@@ -220,6 +196,12 @@ account-scoped projection for nexus, all panes, pane chrome and the document tit
 status; `name` is the real name the title shows, or null while the title is a
 placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
 refreshes the shared read. readers never publish canonical titles.
+
+current authored locators retain singular resource and semantic daily subscriptions.
+each locator has a keyed subscription lifetime; sibling pane changes do not restart
+its read.
+the title projection publishes only changed ref, caption or local date; unchanged
+read replies do not invalidate pane chrome. missing rows remain distinct from unread titles.
 
 `POST /me/workspace-presentations` resolves the distinct current locators,
 including minimized panes, in ordered batches of at most 100. batches run

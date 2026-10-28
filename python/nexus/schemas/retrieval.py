@@ -27,8 +27,8 @@ LocationPrecision = Literal["exact", "approximate", "page", "time"]
 @with_config(ConfigDict(extra="allow", strict=True))
 class _TextQuoteGrammar(TypedDict):
     exact: str
-    prefix: NotRequired[str]
-    suffix: NotRequired[str]
+    prefix: NotRequired[str | None]
+    suffix: NotRequired[str | None]
 
 
 _TEXT_QUOTE_ADAPTER = TypeAdapter(_TextQuoteGrammar)

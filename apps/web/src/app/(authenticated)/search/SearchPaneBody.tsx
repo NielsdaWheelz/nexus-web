@@ -2,6 +2,9 @@
 
 // Two complete server-ranked lists. Hidden generations own page one; adoption
 // freezes their key/stamp, then ordinary invalidation rereads the selected prefix.
+// The account database owns notes, pages, highlights and saved passages online and
+// offline, including scope membership and clipped evidence. Unavailable local scope
+// inputs stay explicit; only readable peers retain their remote search owner.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
@@ -30,6 +33,8 @@ import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/se
 import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { SEARCH_ACTION_LABELS, searchProgress } from "@/lib/search/progress";
 import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
+import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
+import { TRANSPORT_CODES } from "@/lib/nexus/useNexusFind";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
 
@@ -131,7 +136,13 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     },
   });
   const selected = visit.adopted?.phase === "hybrid" ? hybrid : lexical;
-  const results = visit.adopted === null ? [] : selected.items;
+  // remote search reads synchronized projections, including a server copy of authored text.
+  const results = (visit.adopted === null ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
+    .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row);
+  const localApplies = localSearchApplies(query);
+  const [localPages, setLocalPages] = useState(1);
+  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages, query.scope);
+  const remoteOffline = [lexical.failure, hybrid.failure].some(failure => failure !== null && TRANSPORT_CODES.includes(failure.error.code));
   const list = selected;
   const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
     targets: results.flatMap(row => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
@@ -262,10 +273,13 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     const timer = setTimeout(() => setRevealed(true), PROGRESS_REVEAL_MS);
     return () => clearTimeout(timer);
   }, [pending]);
-  const message = unfixable !== undefined ? unfixable.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available"
+  const progressText = local.matches?.length && progress.text === "no results found." ? "no other results found." : progress.text;
+  const message = local.scopeAvailable === false ? "scope unavailable on this device. connect to refresh its access and reading data."
+    : unfixable !== undefined ? unfixable.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available"
+    : remoteOffline && visit.adopted === null ? "other results aren’t available offline. your notes on this device are still searchable."
     : rejectedCursor ? "results need refreshing." : prefixFailure ? failure.op === "More" ? "more results couldn’t be loaded. your results are still here." : "results couldn’t be refreshed. your results are still here."
-    : blank ? "ready to search." : unsupported ? query.view === "passages" ? "no passages for these content types" : "no results found." : !pending || revealed || progress.action !== null ? progress.text : "";
-  const action = rejectedCursor ? "refresh" : prefixFailure ? failure.op !== "More" ? "refresh" : null : progress.action;
+    : blank ? "ready to search." : unsupported ? query.view === "passages" ? "no passages for these content types" : "no results found." : !pending || revealed || progress.action !== null ? progressText : "";
+  const action = local.scopeAvailable === false ? null : rejectedCursor ? "refresh" : prefixFailure ? failure.op !== "More" ? "refresh" : null : progress.action;
   const count = results.length;
   const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
   const statusAction = unfixable !== undefined || prefixFailure && failure.op === "More" ? undefined
@@ -288,6 +302,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     { key: "inside", label: "inside sources", rows: results.filter(row => "section" in row && row.section === "inside") },
   ];
   return <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={interact}>
+    {localApplies ? <LocalResults local={local} remote={results} more={() => setLocalPages(value => value + 1)} /> : null}
     <div key={visit.adopted?.key ?? key}>
       {query.view === "resources" ? sections.filter(section => section.rows.length > 0).map(section => <section className={styles.section} key={section.key} aria-label={section.label}>
         <h2 className={styles.sectionHeading}>{section.label}</h2>
@@ -311,6 +326,47 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
       ? <Button disabled={refreshPhase !== null || selected.running !== null} aria-busy={selected.running === "More" || undefined}
         onClick={() => { interact(); selected.more(); }}>load more</Button> : null}
   </div>;
+}
+
+const LOCAL_KIND_LABELS: Record<LocalMatch["kind"], string> = {
+  notes: "note", highlights: "highlight", saved_passages: "saved passage", documents: "source", conversations: "chat",
+  people: "author", libraries: "library", readings: "reading", web: "web",
+};
+
+/** Literal local matches: canonical label, exact excerpt, exact target. A retained source label
+ * yields to the server's own row for the same ref; authored rows are only ever local. */
+function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
+  const runtime = usePaneRuntime();
+  if (local.scopeAvailable === false) return <FeedbackNotice content={{ tone: "Info", title: "scope unavailable on this device", message: "connect to refresh its access and reading data." }} announcement="Polite" />;
+  if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search this device" }} announcement="Polite"
+    actions={[{ label: "retry", onClick: local.retry }]} />;
+  const remoteRefs = new Set(remote.map(row => row.item.ref));
+  const shown = (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref));
+  if (!shown.length) return null;
+  return <section className={styles.section} aria-label="on this device">
+    <h2 className={styles.sectionHeading}>on this device</h2>
+    <ResourceList ariaLabel="on this device">
+      {shown.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
+    </ResourceList>
+    {!local.complete ? <Button onClick={more}>show more from this device</Button> : null}
+  </section>;
+}
+
+function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {
+  const { href, label, excerpt, resource } = match;
+  const kind = resource.kind === "page" ? "page" : LOCAL_KIND_LABELS[match.kind];
+  const activate = (event: Parameters<typeof activateTargetLink>[0]["event"]) => href ? activateTargetLink({ event, runtime, target: { href, labelHint: label } }) : undefined;
+  return <li className={styles.localResult} data-resource-ref={resource.ref}>
+    {href ? <a href={href} data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{label}</a> : <span>{label}</span>}
+    <span className={styles.localKind}> · {kind}</span>
+    {excerpt ? <p className={styles.evidence}>
+      {excerpt.before ? "…" : null}
+      {excerpt.marks.reduce<{ at: number; parts: ReactNode[] }>((acc, [start, end], index) => ({ at: end,
+        parts: [...acc.parts, excerpt.text.slice(acc.at, start), <mark key={index}>{excerpt.text.slice(start, end)}</mark>] }), { at: 0, parts: [] }).parts}
+      {excerpt.text.slice(excerpt.marks.at(-1)?.[1] ?? 0)}
+      {excerpt.after ? "…" : null}
+    </p> : null}
+  </li>;
 }
 
 /** A matching passage owns the single evidence slot and its exact destination. */

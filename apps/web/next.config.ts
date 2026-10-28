@@ -12,6 +12,7 @@ const env = getEnv();
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  transpilePackages: ["@nexus/authored"],
   // auth owners produce canonical APP_PUBLIC_URL redirects. preserve their
   // origin: next's middleware url normalizer rewrites loopback ips to localhost.
   skipMiddlewareUrlNormalize: true,
