@@ -1,6 +1,6 @@
 "use client";
 /** React reads subscribe to the local account database, including online. */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Intent } from "@nexus/authored/commands";
 import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
@@ -14,38 +14,27 @@ export function useAuthoredQuery(query: AuthoredQuery | null): { data: QueryResu
   const store = useAuthoredStore();
   const key = JSON.stringify(query);
   const [attempt, setAttempt] = useState(0);
-  const cell = useMemo(() => {
-    const empty: { data: QueryResult | null; error: unknown | null } = { data: null, error: null };
-    let snapshot = empty;
-    return {
-      snapshot: () => snapshot,
-      serverSnapshot: () => empty,
-      subscribe: (notify: () => void) => {
-        if (query === null || accountId === null) return () => {};
-        if (snapshot.error !== null) { snapshot = { data: snapshot.data, error: null }; notify(); }
-        let retired = false;
-        let latestRevision: bigint | null = null;
-        const unsubscribe = store.subscribe(query, data => {
-          const revision = BigInt(data.store_revision);
-          if (retired || latestRevision !== null && revision < latestRevision) return;
-          latestRevision = revision;
-          snapshot = { data, error: null }; notify();
-        }, error => {
-          if (!retired) { snapshot = { data: snapshot.data, error }; notify(); }
-        });
-        return () => { retired = true; unsubscribe(); };
-      },
+  const [state, setState] = useState<{ key: string; accountId: string | null; data: QueryResult | null; error: unknown | null }>({ key, accountId, data: null, error: null });
+  useEffect(() => {
+    if (query === null || accountId === null) { setState({ key, accountId, data: null, error: null }); return; }
+    setState(old => ({ key, accountId, data: old.key === key && old.accountId === accountId ? old.data : null, error: null }));
+    let retired = false;
+    let latestRevision: bigint | null = null;
+    const receive = (data:QueryResult) => {
+      const revision=BigInt(data.store_revision);
+      if(retired || latestRevision!==null && revision<latestRevision)return;
+      latestRevision=revision;
+      setState({key,accountId,data,error:null});
     };
-    // The serialized closed query owns this cell; creating it performs no read.
+    const unsubscribe = store.subscribe(query, receive, error => {
+      if (!retired) setState(old => ({ key, accountId, data: old.key === key && old.accountId === accountId ? old.data : null, error }));
+    });
+    return () => { retired = true; unsubscribe(); };
+    // The serialized closed query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId, key, store]);
-  const subscribe = useCallback((notify: () => void) => cell.subscribe(notify),
-    // Retry reattaches the same cell: retain rows, clear error, and catch up once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cell, attempt]);
-  const state = useSyncExternalStore(subscribe, cell.snapshot, cell.serverSnapshot);
+  }, [accountId, key, attempt, store]);
   const retry = useCallback(() => setAttempt(n => n + 1), []);
-  return { ...state, retry };
+  return { data: state.key === key && state.accountId === accountId ? state.data : null, error: state.key === key && state.accountId === accountId ? state.error : null, retry };
 }
 export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []): { document: WritingDocument | null; error: unknown | null; retry():void } {
   const runtime = useWritingRuntime();

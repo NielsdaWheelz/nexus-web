@@ -26,6 +26,12 @@ account/replica/sequence310 and pending bytes remain unchanged; hardware and
 canonical cleanup pass. inspect the remaining admission/monitor/paint path before
 another full campaign; no further bottleneck is established yet.
 
+the93a query-local react external-store candidate passes its affected browser
+controls but the unchanged retained50 diagnostic (pilot76751) measures p95
+179.5ms and median141.8ms; it does not improve the150ms target. the hook and
+module change are reverted to f73. no scheduling-cause attribution follows from
+these timings; installed93a remains historical until the next owned install.
+
 resolve with unchanged budgets, counts, corpus/history and native launch-intent
 clock in the fresh full paired campaign, including exact final upload and append
 order. preserve full projections and the native16mib packet cap. retain temporary

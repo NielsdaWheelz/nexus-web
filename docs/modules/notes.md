@@ -25,10 +25,7 @@ unsubscribe function. one initial read and subsequent invalidations use those sa
 owners; adapters do not report failures behind the caller. read surfaces retain
 accepted rows on refresh failure and expose their existing inline error/retry;
 retry clears the displayed error while retaining the accepted same-query prefix.
-account, query and null changes never borrow another read's rows. a single-query
-hook exposes its cached snapshot through react's external-store subscription;
-every attachment starts the existing catch-up read, and retry reattaches the same
-query-local cell without discarding accepted rows. direct runtime,
+account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
 the active note's root read supplies only literal title facts and its revision
 to the existing pane-title map; other authored locators retain their subscriptions.
