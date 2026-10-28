@@ -111,6 +111,29 @@ the private title basis distinguishes printed titles from incipits and is remove
 when findings are normalized. definition edits retain the existing absolute-value,
 expected-version retry contract.
 
+the source contents query returns one complete navigation/work snapshot under a
+repeatable read. current work bounds determine placement; original candidate
+bindings remain creation reservations and never stand in for current geometry.
+source navigation and independent-work activation remain separate destinations.
+the contents list uses the snapshot's section index, not another read's tree.
+candidate summaries omit quotations; creator-only detail supplies review evidence
+and the currently proved selector. removed works restore their existing identity.
+
+preview supplies the exact bounded document and any creation conflict. first
+candidate acceptance carries the reviewed navigation key as well as candidate
+version; this fences rich cuts even when text endpoints have not changed.
+already-desired same-part retries retain their original bytes and identity.
+manual editing freezes its baseline version and selection until explicit conflict
+review. review adopts the saved version while preserving the chosen range; a
+confirmed save advances the baseline before refreshing the surrounding view.
+preparation is an extraction prerequisite; retry-wait remains observed work.
+its index obligation is visible independently of import-history membership.
+structural readiness ends preparation feedback even if search indexing continues.
+section choices describe structural eligibility; only the complete previewed
+range determines a creation conflict, so existing works do not truncate larger
+overlapping selections. active contents refresh on foreground through the shared
+refresh owner.
+
 `media_text_scope.py` resolves the reading identity separately from the canonical
 source. a piece freezes one contiguous source range and its proved element-edge
 cuts; `reader_text_slice.py` clips retained rich html and proves its text equals

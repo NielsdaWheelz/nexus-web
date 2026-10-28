@@ -8,8 +8,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-contained-work bibliography against `16ac7ae2b`: +246 authored runtime lines
-(412 added, 166 deleted): web +48, python +198. independent piece facts,
+contained-work bibliography against `1a4b7cea3`: +211 authored runtime lines
+(377 added, 166 deleted): web +13, python +198. independent piece facts,
 source-owned edition facts and shared contributor admission replace copied
 bibliography, retarget preparation and duplicated result rendering. metadata
 observation refreshes all changed facts; versioned piece drafts survive conflicts.
@@ -325,6 +325,15 @@ the historical counting scripts were in `nexus-web-campaign-artifacts/2026-10-18
 since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counting #626, #629 and #632, stacked into #633): +36,905 authored lines net and +41.9k docs, against the campaign's -47,149 in 48. after #641 theirs are 52 (+28,661) and the campaign's 18 (-7,703): the rise since, +20,958.
 
 ## areas
+
+contents and extracted works against `16ac7ae2b` adds 553 authored runtime lines
+(1,010 added, 457 deleted): media/workflow +480, reader web ui +5, wire schemas
++60 and import projection +8. one complete contents snapshot, contextual actions
+and explicit draft/retry owners replace the paginated piece catalogue, separate
+navigation read, duplicate cards and permanent preparation/pinning copy.
+range preview owns exact creation conflicts; index facts remain observable without
+changing import-history membership. generated wire, docs and disposable cases
+are excluded; earlier area totals retain their stated bases.
 
 contained-work form removal against `d4d108f2d` removes 19 authored runtime lines
 (13 added, 32 deleted): piece editor -5, piece commands -5, discovery -1,

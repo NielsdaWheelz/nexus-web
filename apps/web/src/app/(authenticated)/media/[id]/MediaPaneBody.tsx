@@ -784,10 +784,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         <>
           <SourceIssuesNotice issues={doc.sourceIssues} readable />
           {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} /></>
-            : media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x" && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post") ? <SourcePieces source={id} reader={reader} /> : <Contents reader={reader} />}
+            : media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x" && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post") ? <SourcePieces key={`${runtime.visitId}:${id}`} source={id} reader={reader} /> : <Contents reader={reader} />}
         </>
       ) : undefined,
-    [doc, id, media, reader],
+    [doc, id, media, reader, runtime.visitId],
   );
   const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
     const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;

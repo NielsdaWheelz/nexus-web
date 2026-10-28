@@ -3,30 +3,28 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.responses import Data, DataPage
+from nexus.responses import Data
 from nexus.schemas.media_parts import (
+    CandidateDetail,
     CandidateReceipt,
     PartCandidateDecision,
     PartCreate,
     PartDefinition,
     PartDiscovery,
-    PartListRow,
     PartOperation,
-    PartPage,
     PartPrepare,
     PartPreview,
+    PartPreviewOut,
     PartReceipt,
     PartUpdate,
+    SourceContentsOut,
 )
 from nexus.schemas.media_sources import SearchRepairAdmission
-from nexus.schemas.reader import MediaNavigationOut
-from nexus.schemas.reader_document import ReaderPartDocumentOut
 from nexus.services import content_indexing, media_parts, part_discovery
-from nexus.services.reader_navigation import get_media_navigation_for_viewer
 
 router = APIRouter(tags=["media"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -37,13 +35,10 @@ def list_parts(
     source_media_id: UUID,
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
-    cursor: str | None = None,
-) -> DataPage[PartListRow, PartPage]:
-    rows, page = media_parts.list_parts(
-        db, viewer_id=viewer.user_id, source_media_id=source_media_id, limit=limit, cursor=cursor
+) -> Data[SourceContentsOut]:
+    return Data(
+        data=media_parts.list_parts(db, viewer_id=viewer.user_id, source_media_id=source_media_id)
     )
-    return DataPage(data=rows, page=page)
 
 
 @router.post("/media/{source_media_id}/parts")
@@ -96,8 +91,8 @@ def decide_candidate(
 
 @router.post("/media/{source_media_id}/parts/preview")
 def preview_part(
-    source_media_id: UUID, body: PartPreview, viewer: ViewerDep, db: DbSession
-) -> Data[ReaderPartDocumentOut]:
+    source_media_id: UUID, body: PartPreview, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[PartPreviewOut]:
     return Data(
         data=media_parts.preview_part(
             db, viewer_id=viewer.user_id, source_media_id=source_media_id, request=body
@@ -127,10 +122,12 @@ def discover_parts(
     )
 
 
-@router.get("/media/{media_id}/navigation")
-def get_navigation(
-    media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[MediaNavigationOut]:
+@router.get("/media/{source_media_id}/part-candidates/{candidate_id}")
+def get_candidate(
+    source_media_id: UUID, candidate_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CandidateDetail]:
     return Data(
-        data=get_media_navigation_for_viewer(db, viewer_id=viewer.user_id, media_id=media_id)
+        data=media_parts.get_candidate_detail(
+            db, viewer_id=viewer.user_id, source_media_id=source_media_id, candidate_id=candidate_id
+        )
     )
