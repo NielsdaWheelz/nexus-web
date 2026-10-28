@@ -158,7 +158,7 @@ export function useLibraryCreation() {
   const primaryAction: PanePrimaryAction = {
     kind: "command",
     id: "Libraries.Create",
-    label: "new library",
+    label: "New library",
     icon: <Plus size={20} aria-hidden="true" />,
     onSelect: ({ triggerEl, openIntent }) => show(triggerEl, openIntent),
   };

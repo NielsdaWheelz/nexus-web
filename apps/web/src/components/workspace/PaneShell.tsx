@@ -384,7 +384,7 @@ function PaneView({
   }
   if (refresh.command) paneActions.push(refresh.command);
   if (installedApp) paneActions.push({
-    kind: "command", id: "Catalog.Save", label: "save catalog for offline",
+    kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
     icon: <Download size={16} aria-hidden="true" />,
     disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
     disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,

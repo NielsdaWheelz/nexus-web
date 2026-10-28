@@ -1,5 +1,7 @@
 "use client";
 
+import { Unlink } from "lucide-react";
+
 import { useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -153,6 +155,7 @@ export default function SettingsIdentitiesPaneBody() {
                               {
                                 kind: "command",
                                 id: "unlink-identity",
+                                icon: <Unlink size={16} aria-hidden="true" />,
                                 label:
                                   unlinking === identity.id
                                     ? "Unlinking..."

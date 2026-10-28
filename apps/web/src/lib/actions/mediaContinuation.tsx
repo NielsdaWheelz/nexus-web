@@ -42,12 +42,12 @@ export interface MediaContinuation {
   readonly retryRevision: number;
 }
 type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
-const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "lectern" : destination.kind === "All" ? "all" : destination.library.name;
+const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "Lectern" : destination.kind === "All" ? "All" : destination.library.name;
 
 /** The one recovery a failed continuation offers, wherever it is shown. */
 export function continuationRecoveryLabel(operation: MediaContinuation, failure: NonNullable<MediaContinuation["failure"]>): string {
-  return failure.review ? "review choices" : failure.unknown ? "check change"
-    : operation.accepted === null ? "retry import" : `retry adding to ${destinationLabel(operation.destination)}`;
+  return failure.review ? "Review choices" : failure.unknown ? "Check change"
+    : operation.accepted === null ? "Retry import" : `Retry adding to ${destinationLabel(operation.destination)}`;
 }
 
 export function useMediaContinuationOwner(ctx: Context) {

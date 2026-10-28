@@ -6,7 +6,7 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 export const PODCAST_BROWSE_ACTION = {
   kind: "link",
   id: "Podcasts.Browse",
-  label: "browse podcasts",
+  label: "Browse podcasts",
   icon: <Plus size={20} aria-hidden="true" />,
   href: "/browse?kind=Podcast",
 } satisfies Extract<ActionDescriptor, { kind: "link" }> & { readonly icon: ReactElement };

@@ -281,7 +281,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     ? {
       kind: "command",
       id: "ViewAction.Library.AddContent",
-      label: "add content",
+      label: "Add content",
       icon: <Plus size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>

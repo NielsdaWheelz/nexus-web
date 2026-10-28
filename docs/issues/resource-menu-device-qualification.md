@@ -18,3 +18,11 @@ installed-app qualification must also drop remote admission while a review is op
 and during progress preparation: no new request/uncertainty, no lost undo, and no
 automatic replay after reconnect. those admission guards are source-reviewed;
 the ordinary web lab starts admitted and does not exercise the native transition.
+
+the menu presentation cut also leaves these actual states unobserved:
+`components/appnav/SyncStatus.tsx:51` credential repair with its nested `Sign in`
+action; `lib/actions/project.tsx:128-143` installed offline `Lectern`; and the
+device download/update branches, including `Update Nexus` at line 724. their
+copy/icon contracts are source-reviewed and statically checked. qualify them
+using real session/admission/download transitions, without injected app state;
+confirm visible glyphs, sentence-case action names and unchanged availability.

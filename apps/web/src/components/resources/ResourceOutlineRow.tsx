@@ -11,7 +11,7 @@
 // Browsing rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
 import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
-import {ChevronRight, CornerLeftUp} from "lucide-react";
+import {ChevronRight, CornerLeftUp, History, SquareDashedMousePointer, Unlink} from "lucide-react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
@@ -123,8 +123,8 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
   const mutation = incoming.mutation;
   if (mutation === null) return null;
   switch (mutation.kind) {
-    case "detach_context": return {id: mutation.kind, label: "remove from future context", run: () => mutateConnection(writing, mutation)};
-    case "remove_fact": return {id: mutation.kind, label: "remove suggested connection",
+    case "detach_context": return {id: mutation.kind, label: "Remove from future context", run: () => mutateConnection(writing, mutation)};
+    case "remove_fact": return {id: mutation.kind, label: "Remove suggested connection",
       run: () => mutateConnection(writing, {kind: "remove_fact", edge_id: incoming.edge_id})};
     default: return assertNever(mutation);
   }
@@ -374,15 +374,15 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       neighbours.find(node => node.isConnected)?.focus({preventScroll: true});
   }
   const commands: ActionDescriptor[] = [];
-  if (onSelectBlock) commands.push({kind: "command", id: "Outline.SelectBlock", label: "select block",
+  if (onSelectBlock) commands.push({kind: "command", id: "Outline.SelectBlock", label: "Select block", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />,
     restoreFocusOnClose: false, onSelect: onSelectBlock});
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
-    label: `unlink from ${incoming.parentLabel}`, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
-  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label,
+    label: `Unlink from ${incoming.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
+  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Unlink size={16} aria-hidden="true" />,
     disabled: busy, disabledReason: busy ? "removal is pending" : undefined,
     restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
-  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "view creation",
+  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: <History size={16} aria-hidden="true" />,
     href: made.conversation_id && made.message_id
       ? `/conversations/${made.conversation_id}?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});

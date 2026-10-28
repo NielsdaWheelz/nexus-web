@@ -26,7 +26,7 @@ export function paneControls({
   const restore = {
     command: "restore_canvas",
     icon: Copy,
-    label: `restore ${title} to layout`,
+    label: `Restore ${title} to layout`,
     tooltip: "return to multi-pane layout",
     disabledReason: null,
   } as const;
@@ -38,7 +38,7 @@ export function paneControls({
       slot: "visibility",
       command: "minimize",
       icon: Minus,
-      label: `minimize ${title}`,
+      label: `Minimize ${title}`,
       tooltip: "hide pane; keep it open",
       disabledReason: state.panes.filter((item) => item.visibility === "visible").length === 1
         ? "keep at least one pane visible" : null,
@@ -51,7 +51,7 @@ export function paneControls({
           slot: "layout",
           command: "maximize",
           icon: Square,
-          label: `maximize ${title}`,
+          label: `Maximize ${title}`,
           tooltip: "show this pane alone",
           disabledReason: null,
         });
@@ -60,7 +60,7 @@ export function paneControls({
     slot: "close",
     command: "close",
     icon: X,
-    label: `close ${title}`,
+    label: `Close ${title}`,
     tooltip: "close pane",
     disabledReason: null,
   });

@@ -1,5 +1,8 @@
 "use client";
 
+import { Unlink } from "lucide-react";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
+
 // One highlight as reading writing: its verbatim quote, the truth about where it is
 // in the mounted source, and each attached note as its own editable resource in
 // endpoint order. Note editing saves on this device as it happens; unlink and delete
@@ -39,8 +42,8 @@ function AttachedNoteRow({ note, editable }: { readonly note: AttachedNote; read
     <BoundNoteEditor noteRef={note.ref} label="attached note" editable={editable} compact />
     {editable && writing ? <ActionMenu label="attached note actions" source={{ kind: "Immediate", subjectKey: note.ref, title: "attached note",
       content: { sections: [{ id: "Note", label: null, options: [
-        { kind: "command", id: "UnlinkNote", label: "unlink", onSelect: command("note wasn’t unlinked", () => deleteLink(writing, { linkId: note.linkId })) },
-        { kind: "command", id: "DeleteNote", label: "delete note", tone: "danger", onSelect: command("note wasn’t deleted", () => deleteResource(writing, { ref: note.ref })) },
+        { kind: "command", id: "UnlinkNote", label: "Unlink", icon: <Unlink size={16} aria-hidden="true" />, onSelect: command("note wasn’t unlinked", () => deleteLink(writing, { linkId: note.linkId })) },
+        { kind: "command", id: "DeleteNote", label: ACTION_CATALOG.DeleteNote.label, icon: <ACTION_CATALOG.DeleteNote.icon size={16} aria-hidden="true" />, tone: "danger", onSelect: command("note wasn’t deleted", () => deleteResource(writing, { ref: note.ref })) },
       ] }] } }} /> : null}
     {failure ? <FeedbackNotice content={{ tone: "Warning", title: failure }} announcement="Polite" onDismiss={() => setFailure(null)} /> : null}
   </li>;
