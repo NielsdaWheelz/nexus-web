@@ -329,10 +329,16 @@ def _compose(
         (
             None,
             codex_readiness,
-            [] if codex is None else [_codex_model(codex, row) for row in codex.models],
+            []
+            if codex is None
+            else [_codex_model(codex, row) for row in codex.models if row.offered],
         ),
         *(
-            (provider, Ready(last_checked=now), [_api_model(row) for row in api.models])
+            (
+                provider,
+                Ready(last_checked=now),
+                [_api_model(row) for row in api.models if row.offered and row.provider == provider],
+            )
             for provider in providers
         ),
     ]
@@ -342,8 +348,6 @@ def _compose(
         label, billing, privacy, chain = _disclosure(provider)
         model_rows: list[GenerationModelRow] = []
         for model in models:
-            if isinstance(model.target, ProviderTarget) and model.target.provider != provider:
-                continue
             state: SelectionState = Selectable()
             if not model.chat_capable:
                 state = Ineligible(

@@ -60,7 +60,7 @@ _BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ..
     ("media_title", "media_enrichment", "gpt-6-luna", "low", 120, 256),
     ("media_summary", "media_summary", "gpt-6-luna", "low", 120, 256),
     ("connection_discovery", "connection_discovery_scan", "gpt-6-luna", "low", 120, 256),
-    ("oracle", "oracle_reading", "gpt-6-sol", "medium", 180, 256),
+    ("oracle", "oracle_reading", "gpt-6.1-sol", "medium", 180, 256),
 )
 
 
@@ -71,7 +71,7 @@ def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
 _TABLE: dict[Operation, OperationPolicy] = {
     "chat": OperationPolicy(
         owner_kind="chat_run",
-        selection=_codex("gpt-6-sol", "medium"),
+        selection=_codex("gpt-6.1-sol", "xhigh"),
         output="Text",
         timeout_seconds=900,
         input_max_bytes=512 * 1024,
