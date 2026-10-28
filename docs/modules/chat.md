@@ -248,7 +248,11 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   end (done or lost) is followed by exactly one run read. reload replays from event 0.
 - **the scroll owner** (`useChatScroll.ts`) pins a new question to the top, follows the
   newest text once it overflows, releases on a real gesture and shows Latest only while
-  newer text is below and nothing follows it.
+  newer text is below and nothing follows it. `ChatSurface` lets an oversized composer
+  scroll as a sibling of the transcript: at most half the pane when messages exist,
+  or the whole available height when empty. quotations remain unabridged and have no
+  scrollport of their own. wheel input scrolls the composer before the transcript;
+  browser zoom remains native.
 - **the views**: `ChatSurface` provides the pane context to rows, footers and dialogs;
   `AssistantMessage` owns its details disclosure and failure or reconnect card;
   `MessageDetails` shows `route · model · reasoning key`, the admitted context and the
