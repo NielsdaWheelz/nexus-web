@@ -24,21 +24,6 @@
   overflow-wrap: anywhere;
 }
 
-.options {
-  display: grid;
-  gap: var(--space-1);
-  min-inline-size: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.options legend {
-  margin-block-end: var(--space-1);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
 .message {
   display: grid;
   justify-items: start;

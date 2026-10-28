@@ -27,6 +27,7 @@ import {
   type MenuOption,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import {
   focusableElements,
@@ -49,6 +50,7 @@ import OverflowMenuButton from "./OverflowMenuButton";
 import RadioGroup from "./RadioGroup";
 import styles from "./ActionMenu.module.css";
 import choiceField from "./ChoiceField.module.css";
+import selection from "./Selection.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
@@ -846,7 +848,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
           <div className={choiceField.segments}>
             {option.choices.map((entry) => <button key={entry.value} type="button" role="menuitemradio"
               aria-checked={entry.value === option.value} tabIndex={-1} data-action-id={`${option.id}.${entry.value}`}
-              className={choiceField.segment} aria-disabled={option.disabled || undefined} aria-describedby={reason}
+              className={cx(choiceField.segment, selection.surface, selection.target, entry.value === option.value && selection.selected)} aria-disabled={option.disabled || undefined} aria-describedby={reason}
               // Click and Space's native click choose and keep the menu open.
               onClick={(event) => {
                 event.stopPropagation();
@@ -858,7 +860,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 choose(entry.value, true);
               }}>
-              {entry.icon}
+              {entry.icon ? <span aria-hidden="true">{entry.icon}</span> : null}
               <span>{entry.label}</span>
             </button>)}
           </div>

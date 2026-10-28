@@ -1,7 +1,7 @@
 .root {
   display: flex;
   min-width: 0;
-  min-height: var(--pane-strip-height);
+  min-height: max(var(--pane-strip-height), calc(var(--pane-control-size) + var(--space-2)));
   border-bottom: 1px solid var(--edge-subtle);
   background: var(--surface-2);
 }
@@ -18,19 +18,13 @@
 }
 
 .chip {
-  position: relative;
   display: flex;
-  align-items: center;
-  height: var(--size-md);
-  min-width: calc(12rem + var(--size-md));
-  max-width: calc(15rem + var(--size-md));
+  align-items: stretch;
+  min-block-size: var(--pane-control-size);
+  min-width: calc(12rem + var(--pane-control-size));
+  max-width: calc(15rem + var(--pane-control-size));
   flex: 0 0 auto;
-  background: transparent;
-  border-radius: var(--radius-md);
   overflow: hidden;
-  transition:
-    background-color var(--duration-fast) var(--ease-snap),
-    box-shadow var(--duration-fast) var(--ease-glide);
 }
 
 .chip[data-sorting] {
@@ -46,23 +40,21 @@
 
 .dragOverlay {
   width: 100%;
-  background: var(--surface-2);
   box-shadow: var(--shadow-2);
   cursor: grabbing;
   pointer-events: none;
 }
 
+.dragOverlay:not([data-active]) {
+  background: var(--surface-2);
+}
+
 .activator {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   flex: 1;
   min-width: 0;
-  height: 100%;
-  padding-inline: var(--space-2);
-  border: 0;
   background: transparent;
   color: inherit;
+  font: inherit;
   cursor: grab;
   overflow: hidden;
   user-select: none;
@@ -75,8 +67,7 @@
 
 .icon {
   flex: 0 0 auto;
-  color: var(--ink-faint);
-  transition: color var(--duration-fast) var(--ease-glide);
+  color: inherit;
 }
 
 .title {
@@ -85,35 +76,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-snug);
-  color: var(--ink-muted);
-  transition: color var(--duration-fast) var(--ease-glide);
 }
 
-.chip:hover:not([data-active]) {
-  background: var(--surface-hover);
-}
-
-.chip:hover:not([data-active]) .title {
-  color: var(--ink);
-}
-
-.chip[data-active] {
-  background: var(--surface-active);
-  box-shadow: var(--shadow-1);
-}
-
-.chip[data-active] .title {
-  color: var(--ink);
-}
-
-.chip[data-active] .icon {
-  color: var(--accent);
-}
-
-/* In-view is a tick, distinct from the active fill. */
+/* In-view is a tick, distinct from the active fill and bottom marker. */
 .chip::after {
   content: "";
   position: absolute;
@@ -133,7 +98,7 @@
   opacity: 1;
 }
 
-.chip[data-minimized] {
+.chip[data-minimized]:not([data-active]) {
   background: var(--surface-sunken);
 }
 
@@ -141,15 +106,14 @@
   opacity: 0.5;
 }
 
-.chip[data-dragging] {
+.chip[data-dragging],
+.chip[data-dragging]:hover {
   background: var(--surface-sunken);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.activator:focus-visible,
-.action:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: calc(-1 * var(--focus-ring-offset));
+.chip[data-dragging]::before {
+  display: none;
 }
 
 .actions {
@@ -167,42 +131,23 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: var(--size-md);
-  height: var(--size-md);
-  color: var(--ink-muted);
-}
-
-@media (any-pointer: coarse) {
-  .root {
-    min-height: calc(var(--pane-strip-height) + var(--size-xl) - var(--size-md));
-  }
-
-  .chip {
-    height: var(--size-xl);
-    min-width: calc(12rem + var(--size-xl));
-    max-width: calc(15rem + var(--size-xl));
-  }
-
-  .action {
-    width: var(--size-xl);
-    height: var(--size-xl);
-  }
+  inline-size: var(--pane-control-size);
+  min-block-size: var(--pane-control-size);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chip,
   .chip[data-sorting],
-  .icon,
-  .title,
-  .action,
   .chip::after {
     transition: none;
   }
 }
 
 @media (forced-colors: active) {
-  .chip[data-active] {
-    outline: 1px solid Highlight;
+  .chip[data-minimized]:not([data-active]),
+  .chip[data-dragging],
+  .chip[data-dragging]:hover {
+    background: Canvas;
+    color: CanvasText;
   }
 
   .chip[data-in-view]::after {

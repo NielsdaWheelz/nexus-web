@@ -15,6 +15,7 @@ import ContributorFilter, {
 } from "@/components/contributors/ContributorFilter";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
+import choices from "@/components/ui/ChoiceField.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import {
@@ -188,9 +189,9 @@ export default function SearchControls(props: {
         onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
         content: (
           <>
-            <fieldset className={styles.optionGroup}>
+            <fieldset className={choices.group}>
               <legend>Content types</legend>
-              <div className={styles.choices}>
+              <div className={choices.choices}>
                 {SEARCH_KINDS.map((kind) => (
                   <ChoiceField
                     key={kind}
@@ -203,9 +204,9 @@ export default function SearchControls(props: {
                 ))}
               </div>
             </fieldset>
-            <fieldset className={styles.optionGroup}>
+            <fieldset className={choices.group}>
               <legend>Formats</legend>
-              <div className={styles.choices}>
+              <div className={choices.choices}>
                 {MEDIA_FORMATS.map((format) => {
                   const on = query.formats.includes(format);
                   return (

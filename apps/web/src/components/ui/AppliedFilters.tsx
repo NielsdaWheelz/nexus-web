@@ -66,9 +66,7 @@ export default function AppliedFilters({
       {chips.map((chip) => (
         <Chip
           key={chip.id}
-          className={styles.chip}
-          removable
-          removeLabel={`Remove filter: ${chip.label}`}
+          removeLabel={`remove filter: ${chip.label}`}
           onRemove={() => onRemove(chip.id)}
         >
           {chip.label}

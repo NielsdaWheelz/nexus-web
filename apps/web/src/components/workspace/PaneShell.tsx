@@ -20,6 +20,7 @@ import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
+import compact from "@/components/ui/CompactChrome.module.css";
 import Companion, {
   companionAction,
   companionExpanded,
@@ -553,7 +554,7 @@ function PaneView({
             {isMobile ? null : surfaceHeader}
             {body?.navigation ? (
               <div
-                className={styles.controlRow}
+                className={`${styles.controlRow} ${compact.compact}`}
                 role="group"
                 aria-label={body.navigation.label}
               >
@@ -562,7 +563,7 @@ function PaneView({
             ) : null}
             {query ? (
               <div
-                className={styles.controlRow}
+                className={`${styles.controlRow} ${compact.compact}`}
                 hidden={query.kind === "Find" && !findVisible}
               >
                 <div

@@ -154,9 +154,11 @@ no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. pane query/navigation controls share declared density
-tokens owned by `PaneShell`'s control row: field/button heights grow with
-content, with 32px fine-pointer and 44px coarse-pointer minima. non-pane size
-defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
+tokens owned by `CompactChrome.module.css`, applied to pane control rows,
+companion headers, workspace strips and connections controls. targets grow with
+content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
+13px; coarse text-entry/native-select values use 16px. the two type roles are
+independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
 native intrinsic value width; the whole control wraps before its label stacks.
 `Stacked` forms keep their layout.
 
@@ -244,23 +246,30 @@ columns whose labels wrap; its visible legend takes the form-label type, and a
 `Hidden` legend names the group to assistive technology only. a choice label may
 be a node, such as a font named in its own face, beside a decorative icon.
 
-`ChoiceField.module.css` owns the one segmented recipe for both roots: the
-`.segments` track, the `.segment` option and `.segmentInput`, the transparent
-native radio covering its label. state selectors match `aria-checked` and
-`aria-disabled` on menu buttons and the input's state on native labels.
-every segment reserves a transparent 1px border inside its box. selection is an
-accent fill read in `--accent-ink`; focus is an inward `--ring` outline and hover
-`--surface-hover`, the control tokens; none changes a box. selection is never
-expressed as disabled. disabled removes tone and hover, never the value: a
-disabled checked option keeps a neutral `--surface-active` fill. in forced
-colours segments opt out of adjustment and paint system colours, which hover
-leaves alone: unchecked `CanvasText` on `Canvas`, checked `HighlightText` on
-`Highlight` with a `currentColor` border, disabled `GrayText` on `Canvas`,
-keeping that border when checked. focus there insets two ring widths on every
-checked option, disabled or not, so the border marker survives, as a pressed
-control's ring does; it is `HighlightText` over an enabled checked fill and
-`CanvasText` otherwise. equal columns are an accepted cost: a narrow track may
-break a long word mid-word, but a label never overflows or clips.
+`ChoiceField.module.css` owns native label/input geometry and the public group,
+choices and group-description layouts. names reference label-only spans;
+help and caller descriptions remain separate. refs address the actual inputs.
+inline choices use native checked marks without selected backplates.
+
+`Selection.module.css` owns surface, target and selected appearance for native
+segments, menu radios, companion tabs and pane activation. selected is a neutral
+surface with an inset bottom accent marker; hover preserves it. focus remains
+separate. disabled selected values retain a neutral marker. forced colors use
+system colors and preserve marker/focus contrast, including nested pane
+activators. reduced motion removes transitions. segments have no enclosing track
+border. labels wrap; equal columns remain the group layout.
+
+`Tabs.tsx` exports one controlled `TabList`. supplied ids associate native tab
+buttons with host-owned panels; left/right wrap and home/end select endpoints.
+the callback owns selection commitment and guarded focus. tab refs remain native;
+the primitive owns no panels, persistence or lifecycle. workspace pane controls
+retain their toolbar semantics and management/drag behavior. their left in-view
+tick is independent of the bottom active marker.
+
+`Chip` is one native whole-label removal button with a decorative cross. it uses
+shared action appearance and target minima; labels wrap. `AppliedFilters` owns
+neighbor focus after removal and the caller's surviving-control destination.
+query toolbars return to their input; stats returns to its modality select.
 
 ## action controls
 
