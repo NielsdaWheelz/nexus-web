@@ -90,6 +90,7 @@ include = [
     "scripts/disposable_runtime.py",
     "scripts/lab_codex.py",
     "scripts/lab_auth_cleanup.py",
+    "scripts/lab_firefox.py",
     "scripts/lab_fake_codex.py",
     "scripts/lab_fake_providers.py",
     "scripts/local_storage.py",
