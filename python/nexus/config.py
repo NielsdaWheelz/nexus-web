@@ -62,7 +62,7 @@ class ConnectionCapacity:
 # Provisional finite topology; release qualification must freeze measured headroom.
 # Search backends retire after every operation; the API listener is one extra socket.
 CONNECTION_CAPACITIES: dict[DatabaseRole, ConnectionCapacity] = {
-    "api": ConnectionCapacity(2, 1, 1, 1, 1),
+    "api": ConnectionCapacity(2, 1, 5, 1, 1),
     "interactive_worker": ConnectionCapacity(1, 1, 1, 1, 1),
     "background_supervisor": ConnectionCapacity(1, 0, 0, 1, 1),
     "background_child": ConnectionCapacity(2, 1, 1, 0, 1),

@@ -123,6 +123,14 @@ def nearest_chunks(
             "limit": limit,
             "maximum_distance": maximum_distance,
         }
+        # justify-service-invariant-check: validate the exact serialized query even for empty domains.
+        valid = db.scalar(
+            text(f"""SELECT (CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))
+                <=> CAST(:embedding AS vector({EMBEDDING_DIMENSIONS})) BETWEEN 0 AND 2) IS TRUE"""),
+            {"embedding": bindings["embedding"]},
+        )
+        if not valid:
+            raise ValueError("query embedding is not representable for cosine distance")
         windows = []
         for owner in domains:
             rows = db.execute(

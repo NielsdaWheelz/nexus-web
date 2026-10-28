@@ -387,10 +387,13 @@ def publish_embeddings(
         count += 1
         vector = array("f")
         vector.frombytes(embedding_f32)
-        db.execute(
+        # justify-service-invariant-check: validate the actual serialized vector before its insert.
+        inserted = db.scalar(
             text(
                 "INSERT INTO content_embeddings (chunk_id, embedding_provider, embedding_model, embedding_dimensions, embedding_vector)"
-                f" VALUES (:chunk, :provider, :model, :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS})))"
+                f" SELECT :chunk, :provider, :model, :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS}))"
+                f" WHERE (CAST(:vector AS vector({EMBEDDING_DIMENSIONS})) <=> CAST(:vector AS vector({EMBEDDING_DIMENSIONS})) BETWEEN 0 AND 2) IS TRUE"
+                " RETURNING chunk_id"
             ),
             {
                 "chunk": chunk_id,
@@ -400,6 +403,8 @@ def publish_embeddings(
                 "vector": pgvector_literal(vector),
             },
         )
+        if inserted is None:
+            raise ValueError("published embedding is not representable for cosine distance")
     # justify-service-invariant-check: a ready publication must cover every current chunk exactly once.
     if not count:
         raise AssertionError("embedding spool does not cover the current publication")

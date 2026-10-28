@@ -58,9 +58,7 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
 async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list[list[float]]:
     """Native cancellable provider request; the caller owns the retry policy.
 
-    Every vector is finite, ``EMBEDDING_DIMENSIONS`` wide and has l2 norm in
-    [0.5, 2]. An inward 4e-7 margin preserves that norm contract through unchanged
-    repr query and .8f publication serialization into float4. Credential and
+    Every vector is finite, nonzero and ``EMBEDDING_DIMENSIONS`` wide. Credential and
     expected provider failures propagate; malformed responses remain defects.
     """
     import httpx
@@ -102,7 +100,7 @@ async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list
     if len(vectors) != len(inputs) or any(
         len(vector) != EMBEDDING_DIMENSIONS
         or not all(map(math.isfinite, vector))
-        or not 0.5000004 <= math.hypot(*vector) <= 1.9999996
+        or not any(vector)
         for vector in vectors
     ):
         # justify-defect: the provider response violates the embedding adapter's shape contract.

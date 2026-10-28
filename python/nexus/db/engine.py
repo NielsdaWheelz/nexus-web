@@ -54,7 +54,7 @@ class SearchDatabaseLease:
         self._retirement_required = True
 
     def confirm_retired(self) -> None:
-        """The gate observed that PID absent; an overrun may still fail the read."""
+        """The gate observed that PID absent; its search capacity may be released."""
         self._retired = True
 
 

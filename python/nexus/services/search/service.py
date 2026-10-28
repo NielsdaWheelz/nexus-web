@@ -58,9 +58,18 @@ def read_snapshot[T](
         result = read(db)
         if deadline is not None:
             remaining_milliseconds(deadline)
-        return result
-    finally:
+    except BaseException as error:
+        try:
+            db.rollback()
+        except BaseException as cleanup_error:
+            # justify-ignore-error: retain rollback failure on the original read/cancellation.
+            error.add_note(
+                f"Search snapshot rollback also failed: {type(cleanup_error).__name__}: {cleanup_error}"
+            )
+        raise
+    else:
         db.rollback()
+        return result
 
 
 def _families(query: SearchQuery) -> list[str] | None:

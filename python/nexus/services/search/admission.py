@@ -6,7 +6,8 @@ closes local owners, invalidates that physical connection, then confirms its PID
 is absent through short control transactions. No explicit unlock admits a second
 read ahead of server cleanup. A failed confirmation never returns a read result.
 A scope-owned search permit remains held through confirmation even if SQLAlchemy
-returns its pool slot early.
+returns its pool slot early. Confirmed retirement has no elapsed-time failure;
+unconfirmed retirement withholds the permit. Cleanup preserves the primary failure.
 """
 
 import asyncio
@@ -28,8 +29,7 @@ from nexus.logging import get_logger
 logger = get_logger(__name__)
 _RETIREMENT_POLL_SECONDS = 0.005
 BACKGROUND_COMPUTATION_SECONDS = 0.400
-_BACKGROUND_HOLD_SECONDS = 0.500
-_CANCELLATION_CLEANUP_SECONDS = 0.500
+_RETIREMENT_CONFIRMATION_SECONDS = 10.0
 
 
 class SearchAdmissionBusy(Exception):
@@ -42,10 +42,6 @@ class SearchBudgetExpired(TimeoutError):
     def __init__(self, phase: str = "read") -> None:
         super().__init__("Search computation deadline expired")
         self.phase = phase
-
-
-class SearchRetirementOverrun(RuntimeError):
-    """The backend retired, but exceeded the operation's retirement allowance."""
 
 
 def remaining_milliseconds(deadline: float) -> int:
@@ -77,7 +73,6 @@ async def _retire(
     connection: AsyncConnection,
     database: AsyncSession | None,
     pid: int | None,
-    deadline: float,
     lease: SearchDatabaseLease,
 ) -> None:
     try:
@@ -91,42 +86,29 @@ async def _retire(
     if pid is None:
         # Checkout failed before an identified backend: local cleanup only.
         return
-    overrun = False
-    seen_present = False
+    deadline = asyncio.get_running_loop().time() + _RETIREMENT_CONFIRMATION_SECONDS
     try:
         while True:
-            overrun = overrun or asyncio.get_running_loop().time() >= deadline
             control = open_control_async_session()
-            observation = asyncio.timeout_at(None if overrun else deadline)
             try:
-                async with observation:
+                async with asyncio.timeout_at(deadline):
                     present = await control.scalar(
                         text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=:pid)"),
                         {"pid": pid},
                     )
-            except TimeoutError:
-                if observation.expired() and seen_present:
-                    overrun = True
-                    continue
-                raise
             finally:
                 await control.close()  # each probe ends its activity snapshot
-            overrun = overrun or asyncio.get_running_loop().time() >= deadline
             if not present:
                 lease.confirm_retired()
                 logger.info(
                     "search.backend.retired",
                     backend_pid=pid,
-                    overrun=overrun,
                     mono_ns=time.monotonic_ns(),
                 )
-                if overrun:
-                    raise SearchRetirementOverrun("Search backend retirement exceeded its budget")
                 return
-            seen_present = True
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("Search backend retirement remains unconfirmed")
             await asyncio.sleep(_RETIREMENT_POLL_SECONDS)
-    except SearchRetirementOverrun:
-        raise
     except BaseException:
         logger.error("search.retirement_unconfirmed", backend_pid=pid, mono_ns=time.monotonic_ns())
         raise
@@ -134,15 +116,25 @@ async def _retire(
 
 async def _join_retirement(task: asyncio.Task[None]) -> None:
     """Repeated cancellation cannot abandon the operation's local cleanup task."""
-    cancelled = False
+    cancelled: asyncio.CancelledError | None = None
     while not task.done():
         try:
             await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-    task.result()
-    if cancelled:
-        raise asyncio.CancelledError()
+        except asyncio.CancelledError as error:
+            if cancelled is None:
+                cancelled = error
+        except BaseException:
+            break  # retrieve the joined task's failure without masking cancellation
+    try:
+        task.result()
+    except BaseException as error:
+        if cancelled is None:
+            raise
+        # justify-ignore-error: retain the joined cleanup failure on the primary cancellation.
+        cancelled.add_note(f"Search retirement also failed: {type(error).__name__}: {error}")
+        logger.error("search.retirement_cleanup_failed", error_type=type(error).__name__)
+    if cancelled is not None:
+        raise cancelled
 
 
 @asynccontextmanager
@@ -162,6 +154,7 @@ async def search_session_async(
     admission_began = None
     phase = "checkout"
     outcome = "failed"
+    primary_error: BaseException | None = None
     logger.info(
         "search.connection.begin",
         purpose=purpose,
@@ -237,15 +230,13 @@ async def search_session_async(
             except asyncio.CancelledError:
                 outcome = "cancelled"
                 raise
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
             if connection is not None:
                 assert lease is not None  # capacity was acquired before this owned checkout
                 cleanup_began = loop.time()
-                retirement_deadline = (
-                    admission_began + _BACKGROUND_HOLD_SECONDS
-                    if purpose == "background" and admission_began is not None
-                    else cleanup_began + _CANCELLATION_CLEANUP_SECONDS
-                )
                 logger.info(
                     "search.connection_cleanup.begin",
                     backend_pid=pid,
@@ -256,19 +247,34 @@ async def search_session_async(
                 )
                 try:
                     await _join_retirement(
-                        asyncio.create_task(
-                            _retire(connection, database, pid, retirement_deadline, lease)
-                        )
+                        asyncio.create_task(_retire(connection, database, pid, lease))
                     )
-                except SearchRetirementOverrun:
-                    outcome = "retirement_overrun"
-                    raise
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as error:
                     outcome = "cancelled"
+                    if isinstance(primary_error, asyncio.CancelledError):
+                        if error is not primary_error:
+                            for note in getattr(error, "__notes__", ()):
+                                primary_error.add_note(note)
+                        raise primary_error from None
+                    if primary_error is not None:
+                        error.add_note(
+                            f"Search read also failed: {type(primary_error).__name__}: {primary_error}"
+                        )
                     raise
-                except BaseException:
+                except BaseException as error:
                     outcome = "retirement_unconfirmed"
-                    raise
+                    if primary_error is None:
+                        raise
+                    # justify-ignore-error: retain secondary cleanup failure; never mask the read.
+                    primary_error.add_note(
+                        f"Search retirement also failed: {type(error).__name__}: {error}"
+                    )
+                    logger.error(
+                        "search.retirement_cleanup_failed",
+                        backend_pid=pid,
+                        error_type=type(error).__name__,
+                        primary_error_type=type(primary_error).__name__,
+                    )
                 finally:
                     logger.info(
                         "search.connection_cleanup.end",
@@ -282,3 +288,8 @@ async def search_session_async(
                         else (loop.time() - admission_began) * 1000,
                         mono_ns=time.monotonic_ns(),
                     )
+                if primary_error is None and outcome == "complete":
+                    try:
+                        remaining_milliseconds(deadline)
+                    except SearchBudgetExpired as error:
+                        raise SearchBudgetExpired(phase) from error
