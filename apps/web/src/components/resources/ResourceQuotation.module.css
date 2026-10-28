@@ -1,0 +1,31 @@
+.quotation {
+  min-inline-size: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.attribution {
+  margin-block-start: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.attribution:first-child {
+  margin-block-start: 0;
+}
+
+.glyph {
+  display: inline-block;
+  margin-inline-end: var(--space-1);
+  vertical-align: middle;
+}
+
+.source {
+  margin-block-start: var(--space-1);
+}

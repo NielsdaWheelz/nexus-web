@@ -265,6 +265,15 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
 
 ## citation syntax
 
+draft and sent reader quotes and citation previews share `ResourceQuotation`.
+it presents supplied evidence without graph disclosure, management actions or
+live authored-resource substitution. quotation text is selectable; title, authors
+and location form its attribution. `QuotedPassage` owns attachment feedback and
+remove/retry; `ReaderCitation` owns the ordinal and preview interaction. explicit
+keyboard entry focuses the preview's first control or its readable dialog panel;
+escape restores the trigger. source availability remains a server decision, so
+captured evidence is not a promise of perpetual visibility after source deletion.
+
 inline citations are the source-inspection control; chat owns no sequential
 source tour. `ReaderCitation` keeps hover/focus preview, explicit keyboard
 inspection, ordinary follow and shifted opening. `HoverPreview` owns touch-sheet
