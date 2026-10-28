@@ -45,7 +45,7 @@ export async function openLabBrowser(input: {
       const appData = join(directory, "app-data");
       if (process.platform === "darwin") {
         // precreation avoids macos's deny-delete acl on automatic home folders.
-        await Promise.all(["Library/Application Support", "Library/Caches", "Downloads"].map(part => mkdir(join(appData, part), { recursive: true })));
+        await Promise.all(["Library/Application Support", "Library/Caches", "Downloads", "Documents"].map(part => mkdir(join(appData, part), { recursive: true })));
       }
       context = await firefox.launchPersistentContext(profile, {
         headless: true,
