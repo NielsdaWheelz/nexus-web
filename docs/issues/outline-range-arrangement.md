@@ -1,9 +1,11 @@
 # arranging selected block ranges
 
-the mobile editor supports selecting a visible range and unlinking/copying that
-range, but arrangement still accepts one occurrence. `LocalOutline.tsx` disables
-indent, outdent and move buttons for `owner.state.keys.length > 1`; the row
-keyboard handler consumes and refuses those same range commands.
+the flat editor supports selecting a visible range and unlinking/copying that
+range, but indent, outdent and movement still accept one occurrence.
+`apps/web/src/lib/notes/outlineController.ts:928` rejects
+`this.selected.size > 1` in `arrangementPlan`; the command bar and keyboard
+arrangement paths use that same owner. this is a functional gap, not merely an
+unperformed test.
 
 full range arrangement needs explicit semantics for selected ancestor/descendant pairs and
 multiple parents, then one atomic graph command with one undo group. do not claim
