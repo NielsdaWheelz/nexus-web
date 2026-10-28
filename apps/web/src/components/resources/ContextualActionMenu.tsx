@@ -62,7 +62,7 @@ function ContextualMenuInvocation({
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
   const client = useClientActions(resourceRef ?? null, title);
-  const authored = useAuthoredActions(resourceRef ?? null, title);
+  const authored = useAuthoredActions(resourceRef ?? null);
   const [request, setRequest] = useState<AbortSignal | null>(null);
   const prepareAuthored = authored.prepare, prepareRemote = resource.prepare;
   const prepare = useCallback((signal: AbortSignal) => {
@@ -72,9 +72,7 @@ function ContextualMenuInvocation({
   }, [prepareAuthored, prepareRemote]);
   const groups: MenuContent["sections"][number][] = sections
     .filter((section) => section.actions.length > 0)
-    .map((section) => ({ id: section.id, label: {
-      Pane: "pane", Occurrence: "this occurrence", View: "view",
-    }[section.id], options: section.actions }));
+    .map((section) => ({ id: section.id, label: null, options: section.actions }));
   if (coarse && displayedActivation?.kind === "route" && displayedActivation.href && pane) {
     const href = displayedActivation.href;
     groups.push({ id: "Navigation", label: null, options: [{
@@ -96,13 +94,14 @@ function ContextualMenuInvocation({
   const verbs = local?.actions.filter((action) => !omitResourceActions.includes(action.id)) ?? [];
   const owned = local !== null && verbs.length > 0;
   const remote = state !== null && state.request === request ? state : null;
+  if (owned && local.label === null) throw new Error("local resource actions require their resource label");
   if (owned) {
-    groups.push({ id: "Resource", label: "item", options: verbs });
+    groups.push({ id: "Resource", label: showSourceSubject ? `source: ${local.label}` : null, options: verbs });
   } else {
     if (remote?.kind === "Ready") {
       const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
       if (options.length > 0) groups.push({
-        id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : "item", options,
+        id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : null, options,
       });
     }
     if (remote?.kind === "Failed" && remote.connectionRequired) groups.push({
@@ -113,19 +112,18 @@ function ContextualMenuInvocation({
   // A published local snapshot cannot depend on server facts that settle after it.
   const remoteIds = new Set(!owned && remote?.kind === "Ready" ? remote.options.map(action => action.id) : []);
   const device = client.filter(action => !remoteIds.has(action.id) && !omitResourceActions.includes(action.id));
-  if (device.length > 0) groups.push({ id: "Device", label: "on this device", options: device });
+  if (device.length > 0) groups.push({ id: "Device", label: null, options: device });
   const blocked = (action: MenuOption): MenuOption => commandDisabledReason && action.kind === "command"
     ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const blockedRemote = (action: ActionDescriptor): ActionDescriptor => commandDisabledReason && action.kind === "command"
     ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const content: MenuContent = { sections: groups.map((section) => ({
     ...section,
-    label: groups.length > 1 || (showSourceSubject && section.id === "Resource") ? section.label : null,
     options: section.options.map(blocked),
   })) };
   const identity = { title, subjectKey };
   const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
-    kind: "Ready", request, label: showSourceSubject ? `source: ${remote.facts.label}` : null,
+    kind: "Ready", request, label: showSourceSubject && owned ? `source: ${local.label}` : null,
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
       !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
   } : remote?.kind === "Failed" ? {

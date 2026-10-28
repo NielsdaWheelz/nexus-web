@@ -14,7 +14,7 @@ import { LocalCommitError } from "@/lib/notes/runtime";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { localResourceHref } from "@/lib/resources/localResource";
+import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
 import type { ActionDescriptor, ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import type { WorkspacePaneEntry } from "@/lib/workspace/targetActivation";
 import { ACTION_CATALOG, BLOCKED_COPY, type ActionId, type Confirmation } from "./catalog";
@@ -35,9 +35,9 @@ const noSubscription = () => () => {};
  * `prepare` reads the local projection once per menu request; nothing stays subscribed.
  * `read.actions` is empty unless `ref` is an owned authored resource (a source stub never is).
  */
-export function useAuthoredActions(ref: string | null, title: string): {
+export function useAuthoredActions(ref: string | null): {
   readonly prepare: (signal: AbortSignal) => void;
-  readonly read: { readonly request: AbortSignal; readonly actions: readonly ActionDescriptor[] } | null;
+  readonly read: { readonly request: AbortSignal; readonly label: string | null; readonly actions: readonly ActionDescriptor[] } | null;
 } {
   const store = useAuthoredStore();
   const writing = useWritingRuntime();
@@ -53,8 +53,8 @@ export function useAuthoredActions(ref: string | null, title: string): {
       (result) => { if (!signal.aborted) setSettled({ request: signal, ref, resource: result.rows[0]?.resource ?? null }); },
       () => { if (!signal.aborted) setSettled({ request: signal, ref, resource: null }); });
   }, [ref, store]);
-  const verbs = (resource: ResourceProjection | null): ActionDescriptor[] => {
-    if (ref === null || writing === null || resource === null || resource.kind === "source") return [];
+  const verbs = (resource: ResourceProjection | null, title: string | null): ActionDescriptor[] => {
+    if (ref === null || writing === null || resource === null || resource.kind === "source" || title === null) return [];
     const owned = ref;
     const href = localResourceHref(resource);
     const id = parseResourceRef(owned)!.id;
@@ -117,5 +117,6 @@ export function useAuthoredActions(ref: string | null, title: string): {
     }
   };
   if (settled === null || settled.ref !== ref) return { prepare, read: null };
-  return { prepare, read: { request: settled.request, actions: verbs(settled.resource) } };
+  const label = settled.resource !== null && settled.resource.kind !== "source" ? localResourceLabel(settled.resource) : null;
+  return { prepare, read: { request: settled.request, label, actions: verbs(settled.resource, label) } };
 }

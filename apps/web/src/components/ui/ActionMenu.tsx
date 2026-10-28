@@ -156,13 +156,14 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
   let panelX = box.x;
   let panelY = box.y;
   if (mobile) {
-    // MobileSheet's fixed, untransformed backdrop is its offset parent. Layout
-    // offsets ignore the sheet's translation without mixing compositor samples.
+    // The available MobileSheet bottom-aligns in its fixed, untransformed
+    // backdrop without bottom spacing. Its fractional height avoids offsetTop
+    // rounding without mixing the sheet's compositor translation samples.
     const parent = panel.offsetParent;
     if (!parent) throw new Error("mobile action sheet requires its layout containing block");
     const origin = parent.getBoundingClientRect();
     panelX = origin.left + parent.clientLeft + panel.offsetLeft - parent.scrollLeft;
-    panelY = origin.top + parent.clientTop + panel.offsetTop - parent.scrollTop;
+    panelY = origin.bottom - box.height - parent.scrollTop;
   }
   const position = anchor.getBoundingClientRect();
   const rows = [...body.querySelectorAll<HTMLElement>(published ? "[data-menu-published] [data-menu-row]" : "[data-menu-row]")].map((row) => {
@@ -952,6 +953,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailing?.kind === "Ready" && trailing.options.length > 0
       ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"} aria-label={trailing.label ?? undefined}>
+        {trailing.label ? <li role={sheet ? undefined : "none"} className={styles.sectionLabel}>{trailing.label}</li> : null}
         {trailing.options.map((option, index) => <Fragment key={option.id}>
           {option.separatorBefore && index > 0 ? <li role="separator" className={styles.separator} /> : null}
           {item(option, TRAILING_INDEX + index)}
