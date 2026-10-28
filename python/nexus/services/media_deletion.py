@@ -152,6 +152,9 @@ def _claim_teardown(db: Session, media_id: UUID) -> None:
         """),
         {"id": new_uuid7(), "m": media_id},
     )
+    # The standalone presentation ends at this commit. Its hidden physical
+    # shell and collector no longer reserve the retained logical post identity.
+    _run(db, "DELETE FROM x_post_media WHERE media_id = :m", m=media_id)
     if intent_id is not None:
         enqueue_job(
             db,
@@ -600,7 +603,6 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     delete_processing_history_in_current_transaction(db, media_id=media_id)
     # Bindings and primary occurrences are deletable presentations of retained captures.
     _run(db, "DELETE FROM x_thread_posts WHERE thread_media_id = :m", m=media_id)
-    _run(db, "DELETE FROM x_post_media WHERE media_id = :m", m=media_id)
     for table in (
         "x_thread_sources",
         "x_article_sources",

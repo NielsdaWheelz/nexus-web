@@ -437,12 +437,12 @@ export default function TextSurface({
         {doc.embeds.filter((embed) => embed.provider === "x" && embed.locator.unit_id === null && !embeds.some(([id]) => id === embed.occurrence_key))
           .map((embed) => <div key={embed.occurrence_key} className={styles.postMeta}>{renderEmbed(embed.occurrence_key)}</div>)}
         {view.end ? <section className={styles.end}>{view.end}</section> : null}
+        {embeds.map(([id, slot]) => {
+          const parent = slot.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
+          const children = units.filter((unit) => unit.xPost?.embed_occurrence_key === id && unit.xPost.parent_unit_id === parent);
+          return createPortal(<>{children.map(renderUnit)}{renderEmbed(id)}</>, slot, id);
+        })}
       </div>
-      {embeds.map(([id, slot]) => {
-        const parent = slot.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
-        const children = units.filter((unit) => unit.xPost?.embed_occurrence_key === id && unit.xPost.parent_unit_id === parent);
-        return createPortal(<>{children.map(renderUnit)}{renderEmbed(id)}</>, slot, id);
-      })}
     </div>
   );
 }
