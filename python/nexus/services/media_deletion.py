@@ -479,16 +479,24 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
 
 def delete_duplicate_document_media(
-    db: Session, *, loser_media_id: UUID, winner_media_id: UUID
+    db: Session,
+    *,
+    loser_media_id: UUID,
+    winner_media_id: UUID,
+    public_capture_manifests: Mapping[UUID, Sequence[UUID]],
 ) -> None:
     """Hand a duplicate document's grants to its winner, then claim it for teardown.
 
     Grants on the loser's own highlights cannot follow (a highlight is exact to its
-    source), so they are revoked first.
+    source), so they are revoked first. Public manifests come from before the
+    caller transferred holdings, so a new placement cannot widen an old token.
     """
     library_entries.lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
     resource_grants.repoint_media_subjects(
-        db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
+        db,
+        loser_media_id=loser_media_id,
+        winner_media_id=winner_media_id,
+        public_capture_manifests=public_capture_manifests,
     )
     resource_grants.delete_media_and_child_highlight_subjects(db, loser_media_id)
     source_attempts.rehome_supersessions(

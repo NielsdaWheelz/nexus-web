@@ -102,6 +102,16 @@ export default function TextSurface({
     },
   });
 
+  const textMarksAt = useCallback((x: number, y: number, target: EventTarget | null) => {
+    if (!(target instanceof Element) || !column.current?.contains(target) || target.closest("a, [data-reader-apparatus-item-id]") || isInteractiveTarget(target, column.current)) return [];
+    const ids = painter.current?.hit(x, y) ?? [];
+    const current = viewRef.current.decorations;
+    const unit = target.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
+    return current?.identity === identity
+      ? ids.flatMap(id => current.marks.filter(mark => mark.id === id && (mark.anchor.kind !== "text" || mark.anchor.unit === unit)))
+      : [];
+  }, [identity]);
+
   useLayoutEffect(() => {
     const port = scrollport.current!;
     const text = createTextGeometry(port, column.current!, { units, length, ranges });
@@ -115,6 +125,7 @@ export default function TextSurface({
       identity,
       retireReflow,
       find: find.source,
+      textMarksAt,
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
           ? text.measurePassage(passage.anchor)
@@ -180,7 +191,7 @@ export default function TextSurface({
       painter.current = null;
       finder.current = null;
     };
-  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow, captureSelection]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow, captureSelection, textMarksAt]);
 
   useLayoutEffect(() => {
     if (finder.current) runtime.updateFind(finder.current.update(doc, structure));
@@ -293,15 +304,8 @@ export default function TextSurface({
     ) return;
     if (openLink(event)) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    const target = event.target as Element;
     const { onMarks } = viewRef.current;
-    if (isInteractiveTarget(target, event.currentTarget)) return;
-    const ids = painter.current?.hit(event.clientX, event.clientY) ?? [];
-    const current = viewRef.current.decorations;
-    const unit = target.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
-    const marks = current?.identity === identity
-      ? ids.flatMap((id) => current.marks.filter((mark) => mark.id === id && (mark.anchor.kind !== "text" || mark.anchor.unit === unit)))
-      : [];
+    const marks = textMarksAt(event.clientX, event.clientY, event.target);
     if (marks.length && onMarks) {
       event.preventDefault();
       onMarks({

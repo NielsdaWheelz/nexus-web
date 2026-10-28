@@ -9,7 +9,7 @@ and authorized media publication; later account admissions never widen a token.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from uuid import UUID
 
 from sqlalchemy import (
@@ -89,9 +89,11 @@ def _exact(subject: ResourceRef) -> ColumnElement[bool]:
     )
 
 
-def _media_tree(media_id: UUID) -> ColumnElement[bool]:
-    """Grants on the media and on its highlights."""
+def _media_tree(media_id: UUID, *, live_highlights_only: bool = False) -> ColumnElement[bool]:
+    """Grants on the media and its highlights; cleanup also includes hidden highlights."""
     child_ids = select(Highlight.id).where(Highlight.anchor_media_id == media_id)
+    if live_highlights_only:
+        child_ids = child_ids.where(Highlight.authored_visible)
     return _exact(ResourceRef("media", media_id)) | (
         (ResourceGrant.subject_scheme == "highlight") & ResourceGrant.subject_id.in_(child_ids)
     )
@@ -165,7 +167,7 @@ def _insert_public_capture_manifest(
 def extend_public_media_capture_manifests(
     db: Session, *, media_id: UUID, capture_ids: Sequence[UUID]
 ) -> None:
-    """Publish already-authorized selected evidence to active public media grants.
+    """Publish authorized selected evidence to public media and live child-highlight grants.
 
     The source publisher holds the media lock and supplies its exact authorized
     manifest, frozen before authority changes for reuse. Only explicit source
@@ -190,8 +192,7 @@ def extend_public_media_capture_manifests(
     grants = list(
         db.scalars(
             select(ResourceGrant.id).where(
-                ResourceGrant.subject_scheme == "media",
-                ResourceGrant.subject_id == media_id,
+                _media_tree(media_id, live_highlights_only=True),
                 ResourceGrant.grantee_user_id.is_(None),
                 ResourceGrant.share_token.is_not(None),
             )
@@ -357,10 +358,41 @@ def decline_received_media_paths(db: Session, *, viewer_user_id: UUID, media_id:
     )
 
 
-def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> int:
+def snapshot_public_capture_manifests_for_repoint(
+    db: Session, *, loser_media_id: UUID, winner_media_id: UUID
+) -> dict[UUID, list[UUID]]:
+    """Freeze each public grantor's winner scope before any holding or grant transfer.
+
+    The caller holds both media locks. A new winner placement must never become
+    authority for extending an old public token.
+    """
+    return {
+        grant.id: capture_manifest_for_media(
+            db, grantor_id=grant.created_by_user_id, media_ids=[winner_media_id]
+        )
+        for grant in db.scalars(
+            select(ResourceGrant).where(
+                ResourceGrant.subject_scheme == "media",
+                ResourceGrant.subject_id == loser_media_id,
+                ResourceGrant.grantee_user_id.is_(None),
+                ResourceGrant.share_token.is_not(None),
+            )
+        )
+    }
+
+
+def repoint_media_subjects(
+    db: Session,
+    *,
+    loser_media_id: UUID,
+    winner_media_id: UUID,
+    public_capture_manifests: Mapping[UUID, Sequence[UUID]],
+) -> int:
     """Move direct-media grants onto the dedupe winner; per audience the oldest row survives.
 
     Grants on the loser's highlights stay put: dedupe does not repoint highlights.
+    Public manifests were frozen before any holding or grant transfer; never
+    recompute them from the new winner authority here.
     """
     rows = db.scalars(
         select(ResourceGrant)
@@ -392,6 +424,11 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
     for row in moved:
         row.subject_id = winner_media_id
     db.flush()
+    for row in moved:
+        if row.grantee_user_id is None and row.share_token is not None:
+            _insert_public_capture_manifest(
+                db, grant_ids=[row.id], capture_ids=public_capture_manifests[row.id]
+            )
     projections.update(annotation_visibility(db, user_ids=affected, media_ids={winner_media_id}))
     invalidate_annotation_visibility(db, projections)
     return len(changed)

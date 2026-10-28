@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { useAuthoredStore } from "@/lib/authored/provider";
@@ -56,6 +56,38 @@ function CaptureReader({ id }: { readonly id: string }) {
   } }), [source, savedView, id, runtime]));
   readerRef.current = reader;
   const state = useReaderState(reader, value => value);
+  const retriedSequence = useRef("0");
+  const missing = state.document.status === "failed" && !state.document.retrying && isApiError(state.document.error) && state.document.error.status === 404;
+  useEffect(() => {
+    if (!missing) return;
+    const controller = new AbortController();
+    let checking = false;
+    let again = false;
+    const check = async () => {
+      if (checking) { again = true; return; }
+      checking = true;
+      try {
+        const { command_seq } = await store.readReplica();
+        if (BigInt(command_seq) <= BigInt(retriedSequence.current)) return;
+        await store.whenUploaded(command_seq, controller.signal);
+        if (controller.signal.aborted) return;
+        const current = reader.getState().document;
+        if (current.status === "failed" && !current.retrying) {
+          retriedSequence.current = command_seq;
+          reader.retryLoad();
+        }
+      } catch {
+        // A later sync status retries the wait; the source failure remains visible.
+      } finally {
+        checking = false;
+        if (again && !controller.signal.aborted) { again = false; void check(); }
+      }
+    };
+    const stop = store.sync_status(status => {
+      if (status === "syncing" || status === "current") void check();
+    });
+    return () => { controller.abort(); stop(); };
+  }, [missing, reader, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
   const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true);
   const stamp = useChangeStamp("Notes", "NoteBodies", "Chats", "Entries");

@@ -33,7 +33,7 @@ from nexus.schemas.import_history import (
     SourceSucceeded,
     assume_safe_failure_code,
 )
-from nexus.services import library_entries
+from nexus.services import library_entries, resource_grants
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.contributor_writes import MediaTarget
@@ -479,6 +479,8 @@ def _supersede(
 
     Publication holds ordered media locks; it never acquires a viewer lock. An
     admission payload records provenance and is never a future filing command.
+    Public capture scope freezes before holdings move. Newly authorized private
+    readers admit their selected roots for authored use, never unseen context.
     """
     from nexus.services.media_parts import require_unpinned_source
 
@@ -488,10 +490,27 @@ def _supersede(
         text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}
     ).all()
     assert len(kinds) == 2 and all(kind in ("pdf", "epub", "web_article") for kind in kinds)
+    public_capture_manifests = resource_grants.snapshot_public_capture_manifests_for_repoint(
+        db, loser_media_id=loser_id, winner_media_id=winner_id
+    )
     library_entries.transfer_current_media_references(
         db, loser_media_id=loser_id, winner_media_id=winner_id
     )
-    delete_duplicate_document_media(db, loser_media_id=loser_id, winner_media_id=winner_id)
+    delete_duplicate_document_media(
+        db,
+        loser_media_id=loser_id,
+        winner_media_id=winner_id,
+        public_capture_manifests=public_capture_manifests,
+    )
+    from nexus.services.x_source import admit_x_captures_for_accounts
+
+    for account_id in resource_grants.media_audience_account_ids(db, media_ids=[winner_id]):
+        # The transferred media authorizes its selected roots. Context still
+        # requires this account's prior admission in capture_manifest_for_media.
+        captures = resource_grants.capture_manifest_for_media(
+            db, grantor_id=account_id, media_ids=[winner_id]
+        )
+        admit_x_captures_for_accounts(db, account_ids=[account_id], capture_ids=captures)
 
 
 def _embed_owners(media_ids: set[UUID]) -> Callable[[Session], list[UUID]]:

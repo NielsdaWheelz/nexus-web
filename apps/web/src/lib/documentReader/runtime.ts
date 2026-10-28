@@ -27,7 +27,7 @@ import {
   type Positioner,
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
-import type { Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
+import type { Mark, Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
 import type { ReaderHost, ReaderNavigationPort, ReaderProgressPort, ReaderSource } from "./ports";
 import type { PdfFindDestination } from "./location";
 import {
@@ -98,6 +98,8 @@ export interface Reader {
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
   measurePassage(passage: Passage): PassageGeometry | null;
+  /** Marks hit in the mounted text publication; empty for other or unavailable surfaces. */
+  textMarksAt(x: number, y: number, target: EventTarget | null): readonly Mark[];
   measureBounds(): DOMRect | null;
   /** Capture the current native range through the mounted publication's surface. */
   captureSelection(): SelectionEvent | null;
@@ -136,6 +138,8 @@ export interface SurfaceHandle extends Positioner {
   readonly identity: string;
   readonly find: FindSource<unknown>;
   measurePassage(passage: Passage): PassageGeometry | null;
+  /** Text surfaces expose their activation hit test. */
+  textMarksAt?(x: number, y: number, target: EventTarget | null): readonly Mark[];
   measureBounds(): DOMRect | null;
   captureSelection(): SelectionEvent | null;
   focusSource(): void;
@@ -407,6 +411,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         surface?.identity === passage.identity
         ? surface.measurePassage(passage)
         : null;
+    },
+    textMarksAt(x, y, target) {
+      return surface?.identity === ready()?.doc.identity ? surface?.textMarksAt?.(x, y, target) ?? [] : [];
     },
     measureBounds() {
       return surface && surface.identity === ready()?.doc.identity

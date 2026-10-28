@@ -431,7 +431,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       {renderComposer(true, false)}
     </MobileSheet> : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
-      onDismiss={composer.dismiss}>
+      containsPoint={(event) => {
+        if (!draft.highlightId || !event.isPrimary || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+        const marks = reader.textMarksAt(event.clientX, event.clientY, event.target);
+        return marks.length === 1 && marks[0]?.id === draft.highlightId;
+      }} onDismiss={composer.dismiss}>
       {(placed, anchorState) => renderComposer(placed, anchorState === "unavailable")}
     </FloatingActionSurface> : null}
     {menu ? <FloatingActionSurface open anchor={chooserAnchor} subscribeAnchor={reader.subscribe} role="group" label="choose highlight" onDismiss={verbs.closeMenu}>
