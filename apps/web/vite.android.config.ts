@@ -61,6 +61,7 @@ export default defineConfig({
           daily: [{ kind: "daily", local_date: "" }],
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
+          highlight_notes: [{ kind: "highlight_notes", ref: "" }],
           annotation_notes: [{ kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],

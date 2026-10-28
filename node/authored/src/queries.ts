@@ -374,6 +374,20 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       const where=cursor===null?'':`WHERE(display_title,ref)>(?,?)`;
       return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
+    case "highlight_notes": return {
+      sql: `WITH attached AS (
+        SELECT l.link_id,l.position_a AS position,l.state_json AS link_json,l.endpoint_b AS note_ref
+        FROM links l INDEXED BY links_a WHERE l.endpoint_a=?1 AND l.visible=1
+        UNION ALL
+        SELECT l.link_id,l.position_b AS position,l.state_json AS link_json,l.endpoint_a AS note_ref
+        FROM links l INDEXED BY links_b WHERE l.endpoint_b=?1 AND l.visible=1
+      ) SELECT json_set(n.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,a.link_json
+        FROM attached a JOIN resources n ON n.ref=a.note_ref
+        WHERE n.kind='note' AND n.visible=1
+          AND NOT EXISTS(SELECT 1 FROM resources h WHERE h.ref=?1 AND (h.kind<>'highlight' OR h.visible=0))
+        ORDER BY a.position COLLATE BINARY NULLS LAST,a.link_id COLLATE BINARY`,
+      params: [query.ref],
+    };
     case "annotation_notes": {
       let cursor: [string,string,string] | null = null;
       if (query.cursor !== null) {

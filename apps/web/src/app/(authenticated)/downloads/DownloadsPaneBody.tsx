@@ -6,6 +6,7 @@ import { DeviceCatalogStatus, DeviceListeningStatus } from "@/lib/native/localSt
 import { useEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ChoiceField from "@/components/ui/ChoiceField";
 import Dialog from "@/components/ui/Dialog";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import ResourceList from "@/components/ui/ResourceList";
@@ -99,13 +100,12 @@ export default function DownloadsPaneBody() {
     {index.auth_required ? <FeedbackNotice content={{ tone: "Warning", title: "sign in for remote downloads and progress sync", message: "downloaded content stays available on this device." }} announcement="Polite" /> : null}
     <div className={styles.summary}>
       <span>{formatByteCount(index.items.reduce((sum, item) => sum + (item.state === "Ready" ? item.size_bytes : 0), 0))} downloaded</span>
-      <label className={styles.policy}><input type="checkbox" checked={index.policy === "AnyConnected"} disabled={busy !== null}
-        onChange={event => {
-          const allow = event.currentTarget.checked;
+      <ChoiceField label="download over mobile data" checked={index.policy === "AnyConnected"} disabled={busy !== null}
+        onChange={allow => {
           if (allow) setConfirmation({ title: "allow mobile data downloads?", message: "this applies to all queued downloads.", label: "allow mobile data", danger: false,
             run: () => { void change("policy", "policy", { value: "AnyConnected" }); } });
           else void change("policy", "policy", { value: "UnmeteredOnly" });
-        }} />download over mobile data</label>
+        }} />
     </div>
     {index.items.length === 0 ? <FeedbackState content={{ tone: "Neutral", title: "no downloads", message: "download episodes or reading copies from their action menus." }} announcement="None" /> :
       <ResourceList ariaLabel="downloads">{index.items.map(item => {

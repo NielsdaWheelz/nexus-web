@@ -3,7 +3,6 @@
 import { useState, type ReactNode } from "react";
 import { Copy, Info, RotateCcw } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import ResourceComposer from "@/components/resources/ResourceComposer";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Button from "@/components/ui/Button";
@@ -35,7 +34,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
   const feedback = useFeedback();
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
   const run = message.trust_trail?.run;
   const pending = message.role === "assistant" && message.status === "pending";
   const copy = async () => {
@@ -53,7 +51,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
     if (activation.kind === "Open") void store.repeat("regenerate", message.id, null, activation.intent);
   };
   return (
-    <>
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
       <div className={styles.left}>
         {details}
@@ -73,24 +70,20 @@ export default function MessageFooter({ message, latest, engaged, details = null
             <Button iconOnly icon={<RotateCcw />} aria-label="regenerate response" className={styles.secondary}
               disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate} />
           ) : null}
-          <MessageMenu message={message} onOpenChange={setMenuOpen} onAdd={() => setAdding(true)} />
+          <MessageMenu message={message} onOpenChange={setMenuOpen} />
         </div>
       )}
     </div>
-    {adding ? (
-      <ResourceComposer destinationRef={`message:${message.id}`} occurrenceKey={`message:${message.id}`} label="add item" />
-    ) : null}
-    </>
   );
 }
 
 /** Resource facts determine applicability; live availability keeps eligible repeats present. */
-function MessageMenu({ message, onOpenChange, onAdd }: { message: Message; onOpenChange(open: boolean): void; onAdd(): void }) {
+function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange(open: boolean): void }) {
   const { command, openDialog } = useChatPane();
   const pane = usePaneRuntime();
   const resource = useResourceActions(canonicalResourceRef({ scheme: "message", id: message.id }));
   const busy = command.kind !== "Idle";
-  const local: ActionDescriptor[] = [{ kind: "command", id: "Resource.AddItem", label: "add item", onSelect: onAdd }, {
+  const local: ActionDescriptor[] = [{
     kind: "command",
     id: "MessageInformation",
     label: "message information…",
@@ -117,8 +110,8 @@ function MessageMenu({ message, onOpenChange, onAdd }: { message: Message; onOpe
     });
   }
   const content: MenuContent = { sections: [
-    { id: "Message", label: options.length ? "this occurrence" : null, options: local },
-    ...(options.length ? [{ id: "Resource", label: "item", options }] : []),
+    { id: "Message", label: null, options: local },
+    ...(options.length ? [{ id: "Resource", label: null, options }] : []),
   ] };
   const source: MenuSource = {
     kind: "Prepared", subjectKey: `${pane?.visitId ?? "workspace"}:message:${message.id}`, title: "message actions",

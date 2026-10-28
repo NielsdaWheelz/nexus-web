@@ -73,6 +73,7 @@ export type AuthoredQuery =
   | { kind: "adjacency"; ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "pages"; cursor: string | null; limit: number }
   | { kind: "daily"; local_date: string }
+  | { kind: "highlight_notes"; ref: ResourceRef }
   | { kind: "annotation_notes"; source_ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "annotations"; source_ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "backlinks"; ref: ResourceRef; cursor: string | null; limit: number }

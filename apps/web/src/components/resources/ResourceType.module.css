@@ -4,3 +4,21 @@
   width: var(--text-md);
   height: var(--text-md);
 }
+
+.title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.title > .icon {
+  margin-block-start: calc((1lh - var(--text-md)) / 2);
+  color: var(--ink-muted);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

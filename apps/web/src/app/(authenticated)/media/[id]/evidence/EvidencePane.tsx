@@ -5,10 +5,11 @@
 // evidence is a separate section that may load late or fail without hiding them.
 // All items uses normal flow; native sidebar scroll never changes the view or text.
 import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check } from "lucide-react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import ChoiceField from "@/components/ui/ChoiceField";
+import choiceStyles from "@/components/ui/ChoiceField.module.css";
+import chrome from "@/components/ui/CompactChrome.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
@@ -66,7 +67,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const firstType = useRef<HTMLButtonElement>(null);
+  const firstType = useRef<HTMLInputElement>(null);
   const ids = useId();
   const pinned = useRef<{ element: HTMLElement; y: number; scrollTop: number } | null>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
@@ -264,8 +265,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (top < 0 || top + Math.min(rect.height, root.clientHeight) > root.clientHeight) root.scrollTop += top;
   }, []);
 
-  if (state.local.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failures = <>
+    {state.local.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} /> : null}
+    {state.remote.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading additional connections…" }} announcement={paneActive ? "Polite" : "None"} /> : null}
     {unlinkFailure ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device",
       message: unlinkFailure.retry ? "keep this page open. retry saving." : "nothing was unlinked. try again." }} announcement="Assertive"
       actions={unlinkFailure.retry ? [{ label: "retry", onClick: unlinkFailure.retry }] : undefined} onDismiss={unlinkFailure.retry ? undefined : () => setUnlinkFailure(null)}
@@ -274,12 +276,19 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
     {state.links.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t read links on this device" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
-    {state.remote.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "citations and librarian links aren’t available right now" }} announcement={paneActive ? "Polite" : "None"}
+    {state.remote.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "additional connections aren’t available right now" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry, busy: state.remote.retrying }]} returnFocus={() => list.current} /> : null}
     {remote?.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
   </>;
-  const counts: Record<Filter, number> = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
-  for (const entry of entries) for (const facet of entryFacets(entry)) counts[facet]++;
+  const totals: Record<Filter, number> = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
+  for (const entry of entries) for (const facet of entryFacets(entry)) totals[facet]++;
+  const remoteComplete = remote?.status === "ready" || remote?.status === "empty";
+  const complete = state.local.status === "ready" && state.links.status === "ready" && remoteComplete;
+  const allOff = FILTERS.every(filter => hidden.has(filter));
+  const showAllTypes = () => {
+    firstType.current?.focus({ preventScroll: true });
+    setHidden(new Set());
+  };
   const placedKeys = new Set(placed.map(entry => entry.key));
   const whole = entries.filter(entry => !placedKeys.has(entry.key) && (entry.kind === "link" || entry.kind === "remote" && entry.root.resolution === null));
   const unavailable = entries.filter(entry => !placedKeys.has(entry.key) && !whole.includes(entry));
@@ -299,23 +308,32 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       if (pinned.current?.element.isConnected) pinned.current.y = pinned.current.element.getBoundingClientRect().top;
     }}>
       {failures}
-      <div className={styles.head}>
+      <div className={`${chrome.compact} ${styles.head}`}>
         {!isMobile ? <div className={styles.mode}>
           <RadioGroup label="connections view" legend="Hidden" presentation="Segmented" value={following ? "follow" : "all"}
             choices={[{ value: "follow", label: <>follow<span className="sr-only"> reading position</span></> },
               { value: "all", label: <>all<span className="sr-only"> items</span></> }]}
             onChange={value => chooseView(value === "follow")} />
         </div> : null}
-        <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <Fragment key={filter}>
-            <Button ref={index === 0 ? firstType : undefined} className={styles.filter} aria-pressed={!hidden.has(filter)}
-              aria-describedby={`${ids}-${filter}`} icon={<Check className={hidden.has(filter) ? styles.unchecked : undefined} />}
-              onClick={() => setHidden(current => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>
-              {FILTER_LABELS[filter]} <span className={styles.count} aria-hidden="true">{counts[filter]}</span>
-            </Button>
-            <span id={`${ids}-${filter}`} hidden>{counts[filter] === 1 ? "1 item" : `${counts[filter]} items`}</span>
-          </Fragment>)}
-        </div>
+        <fieldset className={choiceStyles.group}>
+          <legend className="sr-only">item types</legend>
+          <div className={styles.filters}>
+            {FILTERS.map((filter, index) => {
+              const localStatus = filter === "highlights" ? state.local.status : filter === "links" ? state.links.status : "ready";
+              const count: number | null = localStatus === "ready" && remoteComplete ? totals[filter] : null;
+              const description = count !== null ? count === 1 ? "1 item" : `${count} items`
+                : localStatus === "failed" || state.remote.status === "failed" ? "count unavailable"
+                : remote?.status === "partial" ? "count incomplete" : "count loading";
+              return <Fragment key={filter}>
+                <ChoiceField ref={index === 0 ? firstType : undefined} checked={!hidden.has(filter)}
+                  label={<span className={styles.facetLabel}>{FILTER_LABELS[filter]} <span className={styles.count} aria-hidden="true">{count ?? "—"}</span></span>}
+                  aria-describedby={`${ids}-${filter}`}
+                  onChange={checked => setHidden(current => { const next = new Set(current); if (checked) next.delete(filter); else next.add(filter); return next; })} />
+                <span id={`${ids}-${filter}`} hidden>{description}</span>
+              </Fragment>;
+            })}
+          </div>
+        </fieldset>
       </div>
       <div ref={list} className={styles.list} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {
         const pin = pinned.current;
@@ -332,9 +350,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         lastFocused.current = group;
         pinned.current = { element: control, y: control.getBoundingClientRect().top, scrollTop: event.currentTarget.scrollTop };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
-        {!entries.length ? <FeedbackState content={{ tone: "Neutral", title: state.remote.status === "ready" ? "no connections in this document yet" : "no highlights or links in this document yet" }} announcement="None" />
-          : !visible.size ? <FeedbackState content={{ tone: "Neutral", title: "no connections match the selected types" }} announcement="None"
-            actions={[{ label: "show all types", onClick: () => { firstType.current?.focus({ preventScroll: true }); setHidden(new Set()); } }]} /> : null}
+        {allOff ? <FeedbackState content={{ tone: "Neutral", title: "no types selected" }} announcement="None"
+          actions={[{ label: "show all types", onClick: showAllTypes }]} />
+          : !visible.size ? <FeedbackState content={{ tone: "Neutral", title: !complete ? "no available connections match the selected types"
+            : !entries.length ? "no connections in this document yet" : "no connections match the selected types" }} announcement="None"
+            actions={hidden.size ? [{ label: "show all types", onClick: showAllTypes }] : undefined} /> : null}
         <div data-aligned-connections={aligned || undefined}>
           <ResourceOutlineList scope="reader-connections" ariaLabel="connections">
             {[

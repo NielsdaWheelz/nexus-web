@@ -4,14 +4,12 @@
  * the server's, through the generated wire.
  */
 import {
-  AlignLeft,
   Disc3,
   File,
   FileText,
   Globe,
   Highlighter,
   Library,
-  Link2,
   MessageSquare,
   MessagesSquare,
   NotebookTabs,
@@ -36,7 +34,7 @@ const SCHEMES: Record<ResourceScheme, [LucideIcon, string]> = {
   media: [FileText, "Media"],
   library: [Library, "Library"],
   evidence_span: [TextQuote, "Passage"],
-  content_chunk: [AlignLeft, "Passage"],
+  content_chunk: [TextQuote, "Passage"],
   highlight: [Highlighter, "Highlight"],
   page: [File, "Page"],
   note_block: [StickyNote, "Note"],
@@ -70,8 +68,8 @@ export function formatResourceRef(ref: ResourceRef): string {
   return `${ref.scheme}:${ref.id}`;
 }
 
-export function resourceIconForScheme(scheme: string): LucideIcon {
-  return isScheme(scheme) ? SCHEMES[scheme][0] : Link2;
+export function resourceIconForScheme(scheme: ResourceScheme): LucideIcon {
+  return SCHEMES[scheme][0];
 }
 
 export function resourceTypeLabel(scheme: ResourceScheme): string {

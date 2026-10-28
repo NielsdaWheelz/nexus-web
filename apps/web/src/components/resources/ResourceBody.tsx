@@ -1,3 +1,4 @@
+import { excerptTextParts } from "@nexus/authored/excerpt";
 import ReaderExcerpt from "./ReaderExcerpt";
 import { Fragment } from "react";
 import { MediaTitle } from "@/components/media/MediaIdentity";
@@ -73,6 +74,24 @@ export default function ResourceBody({ body, match = null, full = false }: { bod
       </span>;
     case "reference":
       return <span data-resource-primary data-resource-inline-evidence={inlineEvidence || undefined} className={styles.prose}>{body.label && hasExcerpt(body.label) ? <><span className={styles.quiet}>reference · </span><ExcerptText excerpt={body.label} match={match} /></> : "embedded resource"}</span>;
+  }
+}
+
+/** One literal line for context and attached-note links. */
+export function ResourceIndexBody({ body }: { body: Body }) {
+  switch (body.kind) {
+    case "media": return <MediaTitle subject={{ kind: "Stored", summary: body.media_summary }} />;
+    case "named": return body.title || "untitled";
+    case "passage": return body.excerpt.kind === "content" ? <ExcerptText excerpt={{ text: excerptTextParts(body.excerpt.body).exact || "selected region", truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }} /> : "table excerpt";
+    case "prose": return <span className={body.format === "code" ? styles.code : undefined} style={{ whiteSpace: "inherit" }}>
+      {hasExcerpt(body.excerpt) ? <ExcerptText excerpt={body.excerpt} /> : "empty note"}
+      {body.image_count > 0 ? <span className={styles.bodyCount}> · {body.image_count === 1 ? "image" : `${body.image_count} images`}</span> : null}
+    </span>;
+    case "images": {
+      const alt = body.alts.find(value => value !== null && hasExcerpt(value));
+      return alt ? <ExcerptText excerpt={alt} /> : body.count === 1 ? "image" : `${body.count} images`;
+    }
+    case "reference": return body.label && hasExcerpt(body.label) ? <ExcerptText excerpt={body.label} /> : body.target_ref;
   }
 }
 

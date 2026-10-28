@@ -1,5 +1,5 @@
 .row {
-  --outline-control-size: var(--size-xs);
+  --outline-control-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
   position: relative;
   min-width: 0;
   padding-block: var(--space-1);
@@ -93,7 +93,7 @@
 }
 
 @media (any-pointer: coarse) {
-  .row {--outline-control-size: var(--size-xl);}
+  .row {--outline-control-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
   .content {padding-top: var(--space-2);}
 }
 

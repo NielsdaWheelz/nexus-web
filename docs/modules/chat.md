@@ -248,7 +248,11 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   end (done or lost) is followed by exactly one run read. reload replays from event 0.
 - **the scroll owner** (`useChatScroll.ts`) pins a new question to the top, follows the
   newest text once it overflows, releases on a real gesture and shows Latest only while
-  newer text is below and nothing follows it.
+  newer text is below and nothing follows it. `ChatSurface` lets an oversized composer
+  scroll as a sibling of the transcript: at most half the pane when messages exist,
+  or the whole available height when empty. quotations remain unabridged and have no
+  scrollport of their own. wheel input scrolls the composer before the transcript;
+  browser zoom remains native.
 - **the views**: `ChatSurface` provides the pane context to rows, footers and dialogs;
   `AssistantMessage` owns its details disclosure and failure or reconnect card;
   `MessageDetails` shows `route · model · reasoning key`, the admitted context and the
@@ -262,6 +266,25 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   never select. the reader editor owns save, newline, platform modifier+Enter for new
   chat, and platform modifier+Shift+Enter for the displayed destination or picker;
   reference linking owns its keys first.
+
+### future context rows
+
+`ChatContext` keeps server admission, order and aggregate detach versions. its
+`useContextItem` overlays viewer-owned note/page/highlight content from the local
+authored store; local absence suppresses stale server text but keeps the removable
+row. loading and failed reads remain explicit. failed refresh may retain prior
+local data with retry feedback. source attribution and authorized highlight-id
+navigation remain supplied; local selection clears a stale location label.
+
+`highlight_notes` returns all visible local notes linked to a highlight in one
+sqlite statement, ordered by that endpoint’s bytewise position then link id.
+it excludes hidden notes/links and known hidden local highlights. the caller
+admits visible owned highlights or supplied readable peer quotations; no local
+peer stub is required, and the query grants no remote reading authority.
+android packages this query’s sql hash with its assets.
+
+context previews describe current content eligible for future replies, not prior
+prompt bytes. the existing finite upload barrier remains responsible for send.
 
 ## citation syntax
 

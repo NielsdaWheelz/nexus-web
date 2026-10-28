@@ -1,24 +1,3 @@
-.optionGroup {
-  min-inline-size: 0;
-  inline-size: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.optionGroup legend {
-  margin-block-end: var(--space-1);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.choices {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: var(--space-4);
-  row-gap: var(--space-1);
-}
-
 .hint {
   margin: 0;
   color: var(--ink-muted);
@@ -59,6 +38,15 @@
 .localResult {
   padding: var(--space-2) 0;
 }
+
+.localTitle {
+  display: inline-flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  vertical-align: top;
+}
+
+.accessibleContext { user-select: none; }
 
 .localKind {
   color: var(--ink-muted);

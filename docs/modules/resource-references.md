@@ -11,7 +11,7 @@ conversation messages retain their message layout.
 | owner | responsibility |
 | --- | --- |
 | `schemas/resource_items.py` | generated wire for bounded bodies, attribution, capabilities and source targets |
-| `services/resource_items/items.py` | the one visibility gate (`_rows`, `visible_refs`) and batched current previews with complete primary annotations |
+| `services/resource_items/items.py` | the one visibility gate (`_rows`, `visible_refs`) and batched current previews |
 | `services/resource_items/routing.py` | activations: a route, an outside url or none; passage hrefs only where `locations` says the words land |
 | `services/resource_items/locations.py` | where words land now: the one location proof for capture, routing and resolution |
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
@@ -21,12 +21,14 @@ conversation messages retain their message layout.
 | `ResourceQuotation.tsx` | passive supplied evidence, attribution and source navigation for chat quotes and citation previews |
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
+| `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
+| `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
 | `components/media/MediaIdentity.tsx` | shared index bibliography and passive consumption/remaining-time facts; `MediaFacts` also serves inline search and saved detail |
-| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, gold bullets, editors and recursive lists |
+| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
-| `ResourceComposer.tsx` | independent chat/message context admission using existing insertion primitives |
+| `ResourceComposer.tsx` | chat-context and annotation admission using existing insertion primitives; no message-footer creation |
 | `OutlineInsertionLine.tsx` | one session-owned insertion draft and captured destination |
 | `PageTitleEditor.tsx` | canonical root/inline title editing and text history |
 | `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |
@@ -57,14 +59,15 @@ passage.
 
 ## presentation contract
 
-`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`. an
+`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing,
+authored_by_viewer}`. an
 activation is `{resource_ref, kind: route | external | none, href, unavailable_reason}`;
 a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
 `#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
 `#citation-`, `#retrieval-`) and the web derives the source-target key from it.
 `ref` owns disclosure; `action_ref` owns resource actions; `label` names accessible
-controls and confirmations. `preview` contains `body`, nullable `source` and
-nullable `annotation`. every wire key is present and snake_case; absence is null.
+controls and confirmations. `preview` contains `body` and nullable `source`.
+every wire key is present and snake_case; absence is null.
 
 | body | primary content |
 | --- | --- |
@@ -76,12 +79,29 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | `reference` | an embed note's stored label, or `embedded resource` |
 
 two row families compose the same resource facts. indexes serve collection panes,
-search and chat context: native title links, applicable bibliography,
-consumption and time, existing resource actions, and podcast-show artwork. indexes
-never create outline sessions or editors. captured passages have an independent
-excerpt disclosure; reference pickers keep that control outside their listbox.
-imports/settings retain their
+search and chat context through native links and applicable bibliography. collection
+and search rows retain consumption facts and resource quick actions; context
+shows literal target content, source provenance and minus/overflow controls. indexes
+never create outline sessions or editors. passage previews have an independent
+excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
+
+type derives from the displayed canonical ref, never its body grammar, action
+subject or source. non-note index titles have one passive type prefix inside
+their existing activation; notes reserve no prefix space. rendered podcast
+artwork, including its initials tile, substitutes for that prefix. canonical
+collection `resourceRef` names the displayed resource and its menu subject;
+null-ref external/command rows retain their presentation. generated `identity`
+metadata is omitted only when the glyph/artwork supplies type. provenance, role,
+location and status remain. accessible title composition names type once among
+generated fragments; literal titles are unchanged, including a title `page`.
+
+`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map. all passage schemes
+use `TextQuote`; media retains its generic glyph even when subtype is known.
+resource-specific pane icons consume this vocabulary; a passage's source pane
+still describes its source. invalid canonical refs are defects. availability,
+loading and terminal occurrences do not change type. markers fetch nothing and
+grant no action or editing capability.
 
 the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
 `Details` (wrapping operational/instructional content). index/search reserve empty
@@ -135,6 +155,9 @@ decorate the existing stable more control, whose label names the real recovery
 destination. chat mutation failures retain their supplied commands and use the
 workspace condition owner. static unavailable rows show a bounded reason.
 
+ordinary full passage bodies resolve frozen evidence against the observed capture
+revision and admitted reading. historical bodies use supplied evidence only.
+
 quotations compose supplied evidence without outline state, local resource reads,
 live metadata enrichment, editors or resource menus. passage text is selectable,
 with captured context, colour and omission marks. attribution follows as title,
@@ -147,7 +170,7 @@ draft attachment controls and citation preview lifetimes remain with their calle
 historical outline items likewise retain supplied evidence before considering local
 authorship; ordinary authored rows keep their authoritative local reads.
 
-outlines serve notes, pages and connections: a gold opening bullet, actual
+outlines serve notes, pages and connections: a muted typed opening marker, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource
 ellipsis. immutable references show title, ordered authors and original publication
 in one wrapping flow. no consumption, duration, artwork or inline playback/library
@@ -194,23 +217,29 @@ bibliography once; index consumption composes separately. occurrence, location,
 evidence and relationship facts keep their own identity.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48.
-annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,
-body_text, body_version, activation}`. body and version come from one batched
-statement without recursive enrichment. full annotations increase payload bytes
-and row height; page size does not bound bytes. image alts share one budget. truncation respects graphemes and
-prefers word boundaries; flags describe omitted content. ellipses are rendering,
+image alts share one budget. truncation respects graphemes; flags describe omitted content. ellipses are rendering,
 never stored evidence. omitted quotation tails never touch a nonadjacent suffix.
 search match ranges address codepoints in a separate plain excerpt; no inserted
 emphasis markup enters saved evidence. geometry-only selections say `selected
 region`.
 
-an annotation is the first highlight-note attachment in creation/id order. its
-complete rich content appears with contextual highlighted words before expansion;
-the chevron never hides it. other
-annotations remain reachable through disclosure. notes have no invented owning
-page. relationship rationale belongs to the occurrence. captured
+annotations are independent notes attached by links. outlines initially disclose
+a highlight’s attached notes; folding hides those children. chat context shows
+every current attached-note preview immediately, in highlight-endpoint position
+then link-id order. each is an independent clipped native note link; the primary
+quote and source bibliography remain separate. no primary annotation lives
+in the preview payload. notes have no invented owning page. relationship
+rationale belongs to the occurrence. captured
 quotes never borrow today's colour, annotation or attribution; current annotations
 under a historical branch are labelled as current.
+
+context’s `ResourceIndexBody` renders the six body variants as literal compact
+content, omitting highlight surroundings. local `authoredPreview` projects
+canonical body nodes with the same 600-codepoint budget, grapheme boundaries,
+48-codepoint surroundings, image counts and sole-reference identity. full-body
+and search renderers retain their separate contracts. supporting content sits
+between the primary and metadata and may grow without a note-count cap; controls
+stay aligned with the primary. these rows do not use `UniformIndex`.
 
 ## controls and composition
 
@@ -233,8 +262,12 @@ cancel or lost ownership aborts the hold; a completed hold consumes its click.
 opening never executes. authorized exact unlink preserves both resources and all
 other edges. unavailable navigation can retain a focusable context-only bullet.
 provenance details keep useful creation/rationale; routine “linked by” is omitted.
-chat context uses an independent accessible remove control and its supplied
-aggregate `detach_context` mutation, never one arbitrarily chosen admission edge.
+chat context uses the shared minus icon button and its supplied aggregate
+`detach_context` mutation, never one arbitrarily chosen admission edge. uncertain
+retry retains that exact mutation; definitive refusal requires explicit refresh.
+removal recovers focus to the next usable primary, then the previous, then the pane
+landmark, only while the initiating control still owns focus. a missing writing
+runtime disables activation and explains why.
 
 lists use nested `ul/li` and labelled native controls. branches start collapsed and
 read one bounded exact adjacency hop. root filters never filter children. a
@@ -253,9 +286,8 @@ return controls remain navigation. availability never closes a branch or unmount
 writing. removing a focused chevron returns focus to the same occurrence's bullet.
 ordinary insertion and nesting keep their existing local command owners.
 
-highlight annotations remain full canonical bodies before disclosure. suppress
-only the selected annotation's exact attachment edge; parallel facts survive.
-terminal annotation repeats retain read-only rich bodies and atomic embed links.
+highlight annotations render through ordinary linked-note children.
+terminal note repeats retain read-only rich bodies and atomic embed links.
 annotation child insertion belongs to the annotation note, not the highlight.
 reader roots and source-owned membership never invent an incoming graph mutation.
 

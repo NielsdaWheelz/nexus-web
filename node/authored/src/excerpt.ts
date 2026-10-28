@@ -453,7 +453,7 @@ export function excerptView(full: FrozenExcerpt, mode: "compact" | "full", scope
   if (cutsTable(full.content, admitted.lo, admitted.hi)) throw new TypeError("Excerpt scope does not admit a whole table");
   const window = mode === "compact" ? literalWindow(body, admitted.lo, admitted.hi, 48, 600, 48) : {...admitted, selected_clipped: false};
   if (mode === "compact" && cutsTable(full.content, window.lo, window.hi)) return {kind: "table_summary"};
-  return {kind: "content", body: clipBody(body, window.lo, window.hi), omitted_before: window.lo > 0 ? true : full.truncated_before,
+  return {kind: "content", body: window.lo === 0 && window.hi === size ? body : clipBody(body, window.lo, window.hi), omitted_before: window.lo > 0 ? true : full.truncated_before,
     omitted_after: window.hi < size ? true : full.truncated_after, selected_truncated_before: false, selected_truncated_after: window.selected_clipped};
 }
 function clippedExtent(full: FrozenExcerpt, body: ExcerptBody, lo: number, hi: number): ExcerptExtent | null {
@@ -467,7 +467,14 @@ function clippedExtent(full: FrozenExcerpt, body: ExcerptBody, lo: number, hi: n
 }
 /** Persist only admitted historical words. A partial atomic table is unavailable. */
 export function scopeExcerpt(full: FrozenExcerpt, scope: ExcerptScope): FrozenExcerpt | null {
+  if (scope.kind === "capture") return full;
+  if (scope.kind === "interval" && full.source_extent !== null
+    && scope.start_offset <= full.source_extent.start_offset && scope.end_offset >= full.source_extent.end_offset) {
+    integer(scope.start_offset,0); integer(scope.end_offset,0);
+    return full;
+  }
   const {lo, hi} = intervalBounds(full, scope);
+  if (lo === 0 && hi === contentSize(full.content)) return full;
   if (cutsTable(full.content, lo, hi)) return null;
   const body = clipBody(bodyOf(full), lo, hi);
   return {...body, source_extent: clippedExtent(full, body, lo, hi), truncated_before: full.structure === "captured" ? lo > 0 ? true : full.truncated_before : null, truncated_after: full.structure === "captured" ? hi < contentSize(full.content) ? true : full.truncated_after : null};

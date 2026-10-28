@@ -16,9 +16,10 @@ provenance. library details contains native collection facts. for podcasts, sour
 means the supplied homepage; feed is a separate native rss link. absent facts grant
 no action.
 
-podcast subscription, libraries and more share one finite inline subject across
-ordinary rows and headers. at compact widths the complete menu retains every
-command once. library cards retain their single scoped removal shortcut. captured
+podcast subscription, libraries and more share one finite subject across rows and
+headers. row hosts promote subscription; library management stays in their complete
+menus. headers retain their responsive shortcuts. library cards retain their single
+scoped removal shortcut. captured
 evidence and outline relationships acquire no resource shortcuts. menus retain
 their prepared canonical-facts lifecycle; opening a bulk dialog starts its own
 selection read. [collection actions](collection-actions.md) owns batch semantics.
@@ -55,6 +56,8 @@ selection scope while execution keeps the same catalog command ids.
   published geometry compares raw measurements to its frozen opening snapshot
   within 1/64 css pixel; it never rebases that snapshot. meaning and viewport
   remain exact. rounding buckets cannot define measurement equality.
+  available action sheets derive their fractional layout top from their fixed,
+  bottom-aligned backdrop and panel height, independently of entrance translation.
   non-menu highlight actions and metadata remedies own their visible read lifetimes and
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
@@ -74,6 +77,15 @@ selection scope while execution keeps the same catalog command ids.
   adds exactly one local fork from displayed activation, preserving location.
   that activation participates in menu subject identity, so a changed route
   retires the open menu.
+- menu section captions identify an otherwise hidden action target, never the
+  pane, occurrence, view, resource or client producer. unnamed sections retain
+  their order and separators; command names, choice names and disabled reasons
+  remain explicit. an owned authored resource supplies its label from the same
+  settled local projection as its verbs, admitted only for the invocation's
+  request. that label names local confirmations and both local and delayed source
+  groups. server arrival cannot rename the published target. nonempty delayed
+  source groups expose their caption visibly and accessibly inside their existing
+  width and scroll budget; loading, failed and empty regions keep status content.
 - a bullet relationship menu supplies no resource ref/fork. right-click,
   context-menu key, shift-f10 and stationary touch hold use the shared context
   anchor. native title link menus stay native. movement, scroll, cancellation,
@@ -83,7 +95,8 @@ selection scope while execution keeps the same catalog command ids.
   does not erase an authorized relationship.
 - structural insertion/rearrangement/history use the outline session's direct
   command interface, its keys and the touch accessory, never row/header menu shortcuts.
-  independent chat/message admission retains its own composer. no canonical
+  chat-context and annotation admission retain their own composers; message
+  menus do not open generic creation. no canonical
   `LinkResource` verb or global picker is added. action refs never supply missing
   insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
@@ -125,13 +138,21 @@ selection scope while execution keeps the same catalog command ids.
 - `resourceActions` is the finite media/podcast subject contract shared by pane
   chrome and collection rows. domain hooks supply complete `accessibleLabel`
   values for inline controls and short `menuLabel` values for menu adapters.
-  descriptors retain their own menu labels.
+  descriptors retain their own menu labels, busy and popup semantics. ordinary media
+  library menus say `libraries…`; direct controls say `manage libraries: {title}`.
+  external library recovery retains its check/retry/review label. for this capability,
+  only the chooser and review advertise a dialog; check/retry restores the menu trigger
+  on close. chooser dismissal returns to that trigger; recovery review retains the
+  account owner's pane-landmark anchor.
   `ActionButtons` does not assemble names or know domain state. it
   owns only button anatomy, disabled explanations, event isolation and focus
   recovery. podcast subscription keeps one control key while its verb changes.
-  show indexes, discovery rows and headers expose subscription, libraries and
-  one complete more menu; rows demote shortcuts below their 32em boundary and
-  headers at 479px. library
+  expanded media indexes promote lectern and episode playback; show indexes and
+  discovery rows promote subscription. their complete more menus retain libraries
+  and applicable all-membership commands. row hosts hide `LibraryPlacement`,
+  `PodcastLibraries` and `AddEpisodeToAll` controls and associated explanations at
+  every width; below their 32em boundary only playback survives from the shortcut
+  group. headers retain library shortcuts and demote at 479px. library
   cards retain their scoped single-shortcut policy. shows receive no playback controls.
   live search/chat rows receive explicit subjects matching their own podcast ref;
   captured evidence and editable references receive none.
@@ -230,7 +251,8 @@ retain their separate settlement contracts.
 
 ## invariants
 
-- nothing is cached: every open asks again; closing aborts and forgets.
+- prepared canonical menus fetch facts on every open; closing aborts and forgets
+  that read. external menus project current account-owned commands directly.
 - a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
 - menu preparation shows no provisional command subset. a five-second activation-time
   budget aborts late preparation; failure is a named dialog with shared feedback and retry.

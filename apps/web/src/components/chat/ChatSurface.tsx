@@ -135,7 +135,7 @@ const ChatSurface = forwardRef<
             </div>
           ) : null}
         </div>
-        <div className={styles.composerSlot} onWheel={scroll.onComposerWheel}>
+        <div className={styles.composerSlot} data-has-messages={view.path.length > 0 || undefined} onWheel={scroll.onComposerWheel}>
           {composer}
         </div>
         <MessageDialogs request={dialog} messages={view.messages} onClose={closeDialog} />

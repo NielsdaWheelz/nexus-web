@@ -5,6 +5,7 @@ import { installedApp, remoteReady } from "@/lib/native/admission";
 import { createElement } from "react";
 import { Library, ListMinus, ListPlus, Pause, Play } from "lucide-react";
 import type { ActionButtonSpec } from "@/lib/actions/inlineActions";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
@@ -143,11 +144,11 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
       },
     });
   }
-  if (recovery?.destination === "Library") actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement",
+  if (recovery?.destination === "Library") actions.push({ controlKey: "LibraryPlacement", hasPopup: operation?.failure?.review ? "dialog" : null, id: "LibraryPlacement",
     menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(Library), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
     invoke: recovery.invoke });
   // A failed library creation keeps "manage libraries" open: its editor holds the retry.
-  else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: "manage libraries", accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library),
+  else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: ACTION_CATALOG.LibraryPlacement.label, accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library),
     disabled: holding && !creationFailed || disconnected,
     disabledReason: disconnected ? "requires a connection" : holding && !creationFailed ? heldReason : null, busy: holding && !creationFailed && recovery === null,
     invoke: ({ trigger, returnFocus }) => {
