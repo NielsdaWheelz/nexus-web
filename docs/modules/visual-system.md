@@ -19,6 +19,25 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
 - `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
 
+## design intent
+
+nexus is a private instrument for attention. the rooms, local typography,
+restrained ornament and editorial lists express that purpose. polish preserves
+the user's place, caret, selection and return path across transient surfaces;
+animation cannot substitute for that continuity. consequential save, failure and
+source-availability facts remain visible where the user can act on them.
+
+phone composition allocates space to prose while preserving distinct usable
+targets. fewer simultaneous commands and deliberate selection are the accepted
+cost of that space. shared controls own appearance and interaction primitives;
+domain owners retain command meaning, state and authority. source text, personal
+writing and generated interpretation keep distinguishable attribution.
+
+new contextual intelligence uses the existing [tool authority](model-tools.md)
+and [source evidence](resource-references.md). the
+[reading proposals](../scriptorium.md#contextual-reading-proposals) are ideas,
+not shipped capabilities or a requirement for another dashboard.
+
 ## rooms
 
 `html[data-theme]` is `light` (Study), `dark` (Press, the default) or `elvish`
@@ -63,6 +82,15 @@ uses the same restrained anatomy in every room.
   english beside them carries the meaning. review holds it.
 
 ## signals
+
+each real failure needs a surviving presentation owner. an unresolved writing
+failure after pane closure must identify its document and offer a route back;
+reopening must reach the same unresolved writing owner. dismissing a notice
+cannot discard a command, its retry identity or authored text. the loss
+guard must expose the affected work rather than leave recovery unreachable.
+outline undo and imports keep their own surfaces. this gives up a central recovery
+inbox and routine success history; it does not replace them with badges or let a
+disappearing toast own unfinished work.
 
 `FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` share
 plain-text content and tone tokens. no severity label, coloured card or custom

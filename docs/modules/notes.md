@@ -104,6 +104,8 @@ one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
 acknowledges saved writing. uncertain replies reconcile the same source sequence;
 stale revisions remerge the frozen intent without allocating another touch.
+local acceptance, server acceptance and availability to server tools are distinct
+facts; a local save alone promises neither of the latter two.
 before returning a local receipt, the runtime merges its committed state into
 already open writing documents. subsequent edits therefore see the shared-text
 identities they reference; subscription delivery is not a commit barrier. incoming
