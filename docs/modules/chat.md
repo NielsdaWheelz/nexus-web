@@ -255,6 +255,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   browser zoom remains native.
 - **the views**: `ChatSurface` provides the pane context to rows, footers and dialogs;
   `AssistantMessage` owns its details disclosure and failure or reconnect card;
+  successful answers expose regeneration only in message overflow; eligible
+  failed or cancelled answers retain inline rerun in their failure card.
   `MessageDetails` shows `route · model · reasoning key`, the admitted context and the
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
