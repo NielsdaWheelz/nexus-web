@@ -2,19 +2,19 @@
 
 implementation is integrated. installed lifecycle, editor and scoped-query
 behavior, firefox cold writing and normal compatible-shell activation are
-qualified. paired reader/annotation and stock-firefox 100,000-block capacity
-qualification also passed; handset capacity qualification remains open.
+qualified. paired reader/annotation and the complete 100,000-block server,
+stock-firefox and installed-handset capacity qualification also passed,
+including accepted upload prefixes and exact canonical append order.
 no deployment or production data deletion has been performed.
 [specification](../local-first-writing-spec.md) owns the target.
 this release replaces current online-first writing, not the media/download stack.
 
 prerequisites:
 
-- finish the 100,000-block measurements on the existing samsung handset. retain
-  the qualified firefox budgets, sqlite, native bridge, editor, lifecycle,
-  scoped-query and cold-start contracts.
-- retain the qualified bounded api/node and bff snapshot contracts; finish the
-  client measurements and record actual results in the pr.
+- retain the qualified handset/firefox budgets, sqlite, native bridge, editor,
+  lifecycle, scoped-query and cold-start contracts; record actual results in
+  the pr.
+- retain the qualified bounded api/node and bff snapshot contracts.
 - communicate the accepted firefox forced-quit update boundary in the notes
   module: one online reopen may be needed if forced quit interrupts a waiting
   compatible shell update. normal quit and offline activation are qualified.
@@ -94,5 +94,5 @@ has zero passage anchors. a separate real 0317–0320 conversion preserves two
 nonempty passages, their bindings and nullable provenance; committed unsupported
 body input refuses without changing the old corpus, schema or migration head.
 owned scratch resources were removed; production was read-only. client capacity
-and deployed cutover qualification remain pending; release still takes
-its own stopped-writer backup.
+is qualified. deployed cutover qualification remains pending; release still
+takes its own stopped-writer backup.
