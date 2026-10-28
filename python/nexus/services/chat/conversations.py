@@ -328,7 +328,7 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         list(
             db.scalars(
                 text("""
-        SELECT xp.media_id FROM x_post_sources xp WHERE
+        SELECT xp.media_id FROM x_post_media xp WHERE
             xp.media_id IN (SELECT media_id FROM message_retrievals
                 WHERE assistant_message_id = ANY(:ids))
             OR EXISTS (SELECT 1 FROM messages msg WHERE msg.id = ANY(:ids)

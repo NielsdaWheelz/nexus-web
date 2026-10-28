@@ -7,7 +7,8 @@ import { isCanonicalUuid } from "@/lib/validation";
 // pair in the destination pane's hash: `#mediaId=<uuid>&highlightId=<uuid>`.
 
 export type ReaderSelectionKey = Readonly<{
-  mediaId: string;
+  mediaId: string | null;
+  captureId: string | null;
   highlightId: string;
 }>;
 export type ReaderHighlightChatIntent = Readonly<{
@@ -19,7 +20,8 @@ export async function getReaderQuotePreview(input: {
   key: ReaderSelectionKey;
   signal?: AbortSignal;
 }): Promise<Schema<"ReaderSelectionPreview">> {
-  const path = `/api/chat-reader-selections/highlights/${input.key.highlightId}?media_id=${input.key.mediaId}`;
+  const query = input.key.captureId ? `capture_id=${input.key.captureId}` : `media_id=${input.key.mediaId}`;
+  const path = `/api/chat-reader-selections/highlights/${input.key.highlightId}?${query}`;
   // justify-type-assertion: the query string extends the generated route literal.
   return (await apiFetch<ApiJson<"/chat-reader-selections/highlights/{highlight_id}", "get">>(
     path as ApiPath, { signal: input.signal },
@@ -28,12 +30,14 @@ export async function getReaderQuotePreview(input: {
 
 /** A trusted value that is not canonical is a programmer error. */
 export function assumeReaderSelectionKey(raw: {
-  mediaId: string;
+  mediaId?: string | null;
+  captureId?: string | null;
   highlightId: string;
 }): ReaderSelectionKey {
-  if (!isCanonicalUuid(raw.mediaId) || !isCanonicalUuid(raw.highlightId))
+  const mediaId = raw.mediaId ?? null, captureId = raw.captureId ?? null;
+  if ((mediaId === null) === (captureId === null) || !isCanonicalUuid(mediaId ?? captureId) || !isCanonicalUuid(raw.highlightId))
     throw new Error(`Noncanonical reader selection key ${JSON.stringify(raw)}`);
-  return { mediaId: raw.mediaId, highlightId: raw.highlightId };
+  return { mediaId, captureId, highlightId: raw.highlightId };
 }
 
 /** An empty hash is no intent; any other non-canonical hash is a route error. */
@@ -46,10 +50,10 @@ export function parseReaderSelectionHash(
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   if (raw === "") return { kind: "none" };
   // A canonical uuid encodes to itself, so the raw text is the value.
-  const match = /^mediaId=([^&]*)&highlightId=([^&]*)$/.exec(raw);
-  const [mediaId, highlightId] = match ? [match[1], match[2]] : [null, null];
-  return isCanonicalUuid(mediaId) && isCanonicalUuid(highlightId)
-    ? { kind: "key", key: { mediaId, highlightId } }
+  const match = /^(mediaId|captureId)=([^&]*)&highlightId=([^&]*)$/.exec(raw);
+  const [kind, source, highlightId] = match ? [match[1], match[2], match[3]] : [null, null, null];
+  return isCanonicalUuid(source) && isCanonicalUuid(highlightId)
+    ? { kind: "key", key: { mediaId: kind === "mediaId" ? source : null, captureId: kind === "captureId" ? source : null, highlightId } }
     : { kind: "invalid" };
 }
 
@@ -60,5 +64,5 @@ export function readerHighlightChatIntentHref(
     intent.destination.kind === "New"
       ? "/conversations/new"
       : `/conversations/${intent.destination.conversationId}`;
-  return `${path}#mediaId=${intent.key.mediaId}&highlightId=${intent.key.highlightId}`;
+  return `${path}#${intent.key.captureId ? `captureId=${intent.key.captureId}` : `mediaId=${intent.key.mediaId}`}&highlightId=${intent.key.highlightId}`;
 }

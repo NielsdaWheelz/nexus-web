@@ -37,10 +37,10 @@ const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
+  SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
@@ -66,10 +66,10 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'source_publication',json_extract(p.state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
 const SEARCH_FAMILY = `CASE substr(d.ref,1,instr(d.ref,':')-1)
   WHEN 'note_block' THEN 'notes' WHEN 'page' THEN 'notes' WHEN 'highlight' THEN 'highlights'

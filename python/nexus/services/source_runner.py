@@ -33,7 +33,7 @@ from nexus.schemas.import_history import (
     SourceSucceeded,
     assume_safe_failure_code,
 )
-from nexus.services import library_entries
+from nexus.services import library_entries, resource_grants
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.contributor_writes import MediaTarget
@@ -436,20 +436,6 @@ def _settle(
                 requester_user_id=attempt.created_by_user_id,
                 request_id=request_id,
             )
-        for thread_id, creator_id in db.execute(
-            text("""
-                SELECT m.id, m.created_by_user_id FROM x_thread_sources thread
-                JOIN media m ON m.id = thread.media_id
-                WHERE m.id != :winner AND m.created_by_user_id IS NOT NULL
-                  AND m.id IN (SELECT thread_media_id FROM x_thread_posts
-                               WHERE post_media_id = ANY(:changed))
-                ORDER BY m.id
-            """),
-            {"winner": media_id, "changed": indexed_ids},
-        ):
-            enqueue_metadata_enrichment(
-                db, media_id=thread_id, requester_user_id=creator_id, request_id=request_id
-            )
     for synced_id in (media_id, *outcome.additional_reindex_media_ids):
         _sync_embed_targets(db, synced_id)
     from nexus.services.media_intelligence_lifecycle import ensure_media_unit_in_tx
@@ -457,8 +443,7 @@ def _settle(
     for thread_id in db.scalars(
         text("""
             SELECT media_id FROM x_thread_sources
-            WHERE media_id = ANY(:ids) OR media_id IN (
-                SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = ANY(:ids))
+            WHERE media_id = ANY(:ids)
             ORDER BY media_id
         """),
         {"ids": [media_id, *outcome.additional_reindex_media_ids]},
@@ -494,6 +479,8 @@ def _supersede(
 
     Publication holds ordered media locks; it never acquires a viewer lock. An
     admission payload records provenance and is never a future filing command.
+    Public capture scope freezes before holdings move. Newly authorized private
+    readers admit their selected roots for authored use, never unseen context.
     """
     from nexus.services.media_parts import require_unpinned_source
 
@@ -503,10 +490,27 @@ def _supersede(
         text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}
     ).all()
     assert len(kinds) == 2 and all(kind in ("pdf", "epub", "web_article") for kind in kinds)
+    public_capture_manifests = resource_grants.snapshot_public_capture_manifests_for_repoint(
+        db, loser_media_id=loser_id, winner_media_id=winner_id
+    )
     library_entries.transfer_current_media_references(
         db, loser_media_id=loser_id, winner_media_id=winner_id
     )
-    delete_duplicate_document_media(db, loser_media_id=loser_id, winner_media_id=winner_id)
+    delete_duplicate_document_media(
+        db,
+        loser_media_id=loser_id,
+        winner_media_id=winner_id,
+        public_capture_manifests=public_capture_manifests,
+    )
+    from nexus.services.x_source import admit_x_captures_for_accounts
+
+    for account_id in resource_grants.media_audience_account_ids(db, media_ids=[winner_id]):
+        # The transferred media authorizes its selected roots. Context still
+        # requires this account's prior admission in capture_manifest_for_media.
+        captures = resource_grants.capture_manifest_for_media(
+            db, grantor_id=account_id, media_ids=[winner_id]
+        )
+        admit_x_captures_for_accounts(db, account_ids=[account_id], capture_ids=captures)
 
 
 def _embed_owners(media_ids: set[UUID]) -> Callable[[Session], list[UUID]]:

@@ -2,11 +2,14 @@
 row's raw share token) may read one media or one owned live highlight. Rows are authorization
 paths and teardown references; each mutation invalidates audience visibility for the users it
 affects, bumping their media ``annotations`` lane and waking their writing stream.
-Grants are addressed by their plain id; a create takes the client's id.
+Grants are addressed by their plain id; a create takes the client's id. Public
+capture output is pinned separately in resource_grant_captures at grant creation
+and authorized media publication; later account admissions never widen a token.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from uuid import UUID
 
 from sqlalchemy import (
@@ -19,10 +22,12 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Highlight, ResourceGrant, User
+from nexus.db.models import Highlight, ResourceGrant, ResourceGrantCapture, User
 from nexus.db.retries import TransactionRestart, retry_serializable
+from nexus.ids import new_uuid7
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import new_share_token
 from nexus.services.suggestion_changes import record_input_change
@@ -84,9 +89,11 @@ def _exact(subject: ResourceRef) -> ColumnElement[bool]:
     )
 
 
-def _media_tree(media_id: UUID) -> ColumnElement[bool]:
-    """Grants on the media and on its highlights."""
+def _media_tree(media_id: UUID, *, live_highlights_only: bool = False) -> ColumnElement[bool]:
+    """Grants on the media and its highlights; cleanup also includes hidden highlights."""
     child_ids = select(Highlight.id).where(Highlight.anchor_media_id == media_id)
+    if live_highlights_only:
+        child_ids = child_ids.where(Highlight.authored_visible)
     return _exact(ResourceRef("media", media_id)) | (
         (ResourceGrant.subject_scheme == "highlight") & ResourceGrant.subject_id.in_(child_ids)
     )
@@ -98,11 +105,150 @@ def count_for_media(db: Session, media_id: UUID) -> int:
     return db.execute(count).scalar_one()
 
 
+def media_audience_account_ids(db: Session, *, media_ids: Sequence[UUID]) -> list[UUID]:
+    """Current readable parent audience, including exact grants and suppression."""
+    from nexus.auth.permissions import visible_media_ids_cte_sql
+
+    readable = visible_media_ids_cte_sql().replace(":viewer_id", "audience.id")
+    return (
+        list(
+            db.scalars(
+                text(f"""
+        SELECT audience.id FROM users audience WHERE EXISTS (
+            SELECT 1 FROM ({readable}) readable WHERE readable.media_id=ANY(:ids))
+    """),
+                {"ids": list(media_ids)},
+            )
+        )
+        if media_ids
+        else []
+    )
+
+
+def capture_manifest_for_media(
+    db: Session, *, grantor_id: UUID, media_ids: Sequence[UUID]
+) -> list[UUID]:
+    """Freeze only selected captures/direct context the grantor can read NOW."""
+    from nexus.services.media_text_scope import x_capture_scope_rows_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    return (
+        list(
+            db.scalars(
+                text(f"""
+        SELECT DISTINCT x.capture_id
+        FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:media_ids AS uuid[])) AS media_id")}) x
+        WHERE x.capture_id IN ({readable_x_capture_ids_sql()})
+    """),
+                {"viewer_id": grantor_id, "media_ids": list(media_ids)},
+            )
+        )
+        if media_ids
+        else []
+    )
+
+
+def _insert_public_capture_manifest(
+    db: Session, *, grant_ids: Sequence[UUID], capture_ids: Sequence[UUID]
+) -> None:
+    values = [
+        {"id": new_uuid7(), "grant_id": grant_id, "capture_id": capture_id}
+        for grant_id in sorted(set(grant_ids))
+        for capture_id in sorted(set(capture_ids))
+    ]
+    if values:
+        db.execute(
+            insert(ResourceGrantCapture)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["grant_id", "capture_id"])
+        )
+
+
+def extend_public_media_capture_manifests(
+    db: Session, *, media_id: UUID, capture_ids: Sequence[UUID]
+) -> None:
+    """Publish authorized selected evidence to public media and live child-highlight grants.
+
+    The source publisher holds the media lock and supplies its exact authorized
+    manifest, frozen before authority changes for reuse. Only explicit source
+    publication calls this; account admissions and unrelated imports never do.
+    Retained old rows are harmless: public reads also require current selection.
+    Flush-only; this confers no account admission or account read authority.
+    """
+    from nexus.services.media_text_scope import x_capture_scope_rows_sql
+
+    if not capture_ids:
+        return
+    selected = list(
+        db.scalars(
+            text(f"""
+        SELECT DISTINCT x.capture_id
+        FROM ({x_capture_scope_rows_sql("SELECT CAST(:media_id AS uuid) AS media_id")}) x
+        WHERE x.capture_id=ANY(:capture_ids)
+    """),
+            {"media_id": media_id, "capture_ids": list(capture_ids)},
+        )
+    )
+    grants = list(
+        db.scalars(
+            select(ResourceGrant.id).where(
+                _media_tree(media_id, live_highlights_only=True),
+                ResourceGrant.grantee_user_id.is_(None),
+                ResourceGrant.share_token.is_not(None),
+            )
+        )
+    )
+    _insert_public_capture_manifest(db, grant_ids=grants, capture_ids=selected)
+
+
+def admit_library_captures(
+    db: Session, *, grantor_id: UUID, media_ids: Sequence[UUID], library_ids: Sequence[UUID]
+) -> None:
+    """Transfer a pre-mutation readable manifest to current destination members.
+
+    Call before inserting placements or memberships; a new root must never expand
+    the grantor's authority to nested context while constructing this manifest.
+    """
+    from nexus.services.x_source import admit_x_captures_for_accounts
+
+    captures = capture_manifest_for_media(db, grantor_id=grantor_id, media_ids=media_ids)
+    accounts = list(
+        db.scalars(
+            text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+            {"ids": list(library_ids)},
+        )
+    )
+    admit_x_captures_for_accounts(db, account_ids=accounts, capture_ids=captures)
+
+
+def highlight_parent_media_ids(db: Session, *, highlight_ids: Sequence[UUID]) -> set[UUID]:
+    """Current containing presentations, derived through the shared capture scope."""
+    from nexus.services.media_text_scope import x_capture_scope_rows_sql
+
+    if not highlight_ids:
+        return set()
+    return set(
+        db.scalars(
+            text(f"""
+        SELECT anchor_media_id FROM highlights
+        WHERE id=ANY(:ids) AND anchor_media_id IS NOT NULL
+        UNION
+        SELECT x.reading_media_id
+        FROM ({x_capture_scope_rows_sql("SELECT id AS media_id FROM media")}) x
+        JOIN highlight_fragment_anchors a ON a.fragment_id=x.fragment_id
+        WHERE a.highlight_id=ANY(:ids)
+    """),
+            {"ids": list(highlight_ids)},
+        )
+    )
+
+
 def annotation_visibility(
     db: Session, *, user_ids: set[UUID], media_ids: set[UUID]
 ) -> set[tuple[UUID, UUID]]:
     """Capture readable annotation projections before/after a bounded permission change."""
-    from nexus.auth.permissions import highlight_readability_filter
+    from nexus.auth.permissions import highlight_readability_sql
+    from nexus.services.media_text_scope import highlight_in_reading_scope_sql
 
     if not media_ids:
         return set()
@@ -110,11 +256,15 @@ def annotation_visibility(
         (user_id, media_id)
         for user_id in sorted(user_ids)
         for media_id in db.scalars(
-            select(Highlight.anchor_media_id)
-            .where(Highlight.anchor_media_id.in_(media_ids), highlight_readability_filter(user_id))
-            .distinct()
+            text(f"""
+            SELECT DISTINCT reading.media_id
+            FROM unnest(CAST(:media_ids AS uuid[])) reading(media_id)
+            JOIN highlights h ON h.anchor_media_id=reading.media_id
+              OR {highlight_in_reading_scope_sql("h.id", "reading.media_id")}
+            WHERE {highlight_readability_sql()}
+        """),
+            {"viewer_id": user_id, "media_ids": list(media_ids)},
         )
-        if media_id is not None
     }
 
 
@@ -132,7 +282,7 @@ def invalidate_annotation_visibility(db: Session, projections: set[tuple[UUID, U
 def library_annotation_visibility(
     db: Session, library_id: UUID, *, media_ids: set[UUID] | None = None
 ) -> set[tuple[UUID, UUID]]:
-    """Only media with highlights filed in this library can change annotation visibility."""
+    """Annotation projections over the library's placed media, including capture anchors."""
     users = set(
         db.scalars(text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id})
     )
@@ -143,7 +293,6 @@ def library_annotation_visibility(
             db.scalars(
                 text("""
         SELECT DISTINCT e.media_id FROM library_entries e
-        JOIN highlights h ON h.anchor_media_id=e.media_id
         WHERE e.library_id=:id
     """),
                 {"id": library_id},
@@ -164,20 +313,21 @@ def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = fr
     } | set(also)
     highlight_ids = [row.subject_id for row in previous if row.subject_scheme == "highlight"]
     media = {row.subject_id for row in previous if row.subject_scheme == "media"}
-    media.update(
-        media_id
-        for media_id in db.scalars(
-            select(Highlight.anchor_media_id).where(Highlight.id.in_(highlight_ids))
-        )
-        if media_id is not None
-    )
+    media.update(highlight_parent_media_ids(db, highlight_ids=highlight_ids))
     projections = annotation_visibility(db, user_ids=users, media_ids=media)
+    db.execute(
+        delete(ResourceGrantCapture).where(
+            ResourceGrantCapture.grant_id.in_([row.id for row in previous])
+        )
+    )
     rows = db.execute(
         delete(ResourceGrant)
         .where(*where)
         .returning(ResourceGrant.created_by_user_id, ResourceGrant.grantee_user_id)
     ).all()
     invalidate_annotation_visibility(db, projections)
+    for user_id in sorted(users):
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(user_id)})
     return len(rows)
 
 
@@ -208,10 +358,41 @@ def decline_received_media_paths(db: Session, *, viewer_user_id: UUID, media_id:
     )
 
 
-def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> int:
+def snapshot_public_capture_manifests_for_repoint(
+    db: Session, *, loser_media_id: UUID, winner_media_id: UUID
+) -> dict[UUID, list[UUID]]:
+    """Freeze each public grantor's winner scope before any holding or grant transfer.
+
+    The caller holds both media locks. A new winner placement must never become
+    authority for extending an old public token.
+    """
+    return {
+        grant.id: capture_manifest_for_media(
+            db, grantor_id=grant.created_by_user_id, media_ids=[winner_media_id]
+        )
+        for grant in db.scalars(
+            select(ResourceGrant).where(
+                ResourceGrant.subject_scheme == "media",
+                ResourceGrant.subject_id == loser_media_id,
+                ResourceGrant.grantee_user_id.is_(None),
+                ResourceGrant.share_token.is_not(None),
+            )
+        )
+    }
+
+
+def repoint_media_subjects(
+    db: Session,
+    *,
+    loser_media_id: UUID,
+    winner_media_id: UUID,
+    public_capture_manifests: Mapping[UUID, Sequence[UUID]],
+) -> int:
     """Move direct-media grants onto the dedupe winner; per audience the oldest row survives.
 
     Grants on the loser's highlights stay put: dedupe does not repoint highlights.
+    Public manifests were frozen before any holding or grant transfer; never
+    recompute them from the new winner authority here.
     """
     rows = db.scalars(
         select(ResourceGrant)
@@ -232,37 +413,64 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
     projections = annotation_visibility(
         db, user_ids=affected, media_ids={loser_media_id, winner_media_id}
     )
+    db.execute(
+        delete(ResourceGrantCapture).where(
+            ResourceGrantCapture.grant_id.in_([row.id for row in duplicates])
+        )
+    )
     for row in duplicates:
         db.delete(row)
     db.flush()  # the unique indexes must see the deletes before a survivor moves
     for row in moved:
         row.subject_id = winner_media_id
     db.flush()
+    for row in moved:
+        if row.grantee_user_id is None and row.share_token is not None:
+            _insert_public_capture_manifest(
+                db, grant_ids=[row.id], capture_ids=public_capture_manifests[row.id]
+            )
     projections.update(annotation_visibility(db, user_ids=affected, media_ids={winner_media_id}))
     invalidate_annotation_visibility(db, projections)
     return len(changed)
 
 
-def lock_subject(db: Session, subject: ResourceRef) -> UUID | None:
-    """Lock the complete media family in uuid order and check a highlight is live; None if gone."""
+def lock_subject(db: Session, subject: ResourceRef) -> bool:
+    """Lock a media family, or validate a live retained capture highlight."""
     from nexus.services.library_entries import lock_media_rows_in_order
 
     media_id = subject.id
     if subject.scheme == "highlight":
-        media_id = db.scalar(select(Highlight.anchor_media_id).where(Highlight.id == subject.id))
+        row = db.execute(
+            select(Highlight.anchor_media_id, Highlight.anchor_kind).where(
+                Highlight.id == subject.id, Highlight.authored_visible
+            )
+        ).one_or_none()
+        if row is None:
+            return False
+        media_id = row.anchor_media_id
+        if media_id is None:
+            return row.anchor_kind == "fragment_offsets" and bool(
+                db.scalar(
+                    text("""
+                SELECT 1 FROM highlight_fragment_anchors a JOIN fragments f ON f.id=a.fragment_id
+                WHERE a.highlight_id=:id AND f.x_post_capture_id IS NOT NULL
+            """),
+                    {"id": subject.id},
+                )
+            )
     if media_id is None or not lock_media_rows_in_order(db, [media_id]):
-        return None
-    if subject.scheme == "highlight":
-        same = select(Highlight.id).where(
-            Highlight.id == subject.id,
-            Highlight.anchor_media_id == media_id,
-            Highlight.authored_visible,
+        return False
+    return (
+        subject.scheme != "highlight"
+        or db.scalar(
+            select(Highlight.id).where(
+                Highlight.id == subject.id,
+                Highlight.anchor_media_id == media_id,
+                Highlight.authored_visible,
+            )
         )
-        # No projection row lock: a concurrent deletion only hides the highlight, and every
-        # grant path requires it live, so a grant made meanwhile confers nothing until revival.
-        if db.scalar(same) is None:
-            return None
-    return media_id
+        is not None
+    )
 
 
 def find_grant(
@@ -296,10 +504,37 @@ def insert_grant(
             select(Highlight.anchor_media_id).where(Highlight.id == subject.id)
         ).scalar_one()
     )
-    if media_id is None:
-        # justify-defect: share admission already locked and validated the highlight's anchor.
-        raise AssertionError("Grant subject has no media anchor")
-    lock_media_for_reference(db, media_id)
+    if media_id is not None:
+        lock_media_for_reference(db, media_id)
+    from nexus.services.x_source import admit_x_captures_for_accounts, readable_x_capture_ids_sql
+
+    if media_id is not None:
+        captures = capture_manifest_for_media(db, grantor_id=creator_id, media_ids=[media_id])
+    else:
+        captures = list(
+            db.scalars(
+                text(f"""
+            WITH roots AS (
+                SELECT f.x_post_capture_id AS capture_id FROM highlight_fragment_anchors a
+                JOIN fragments f ON f.id=a.fragment_id WHERE a.highlight_id=:id
+                  AND f.x_post_capture_id IS NOT NULL
+            ), manifest AS (
+                SELECT capture_id FROM roots
+                UNION SELECT c.target_capture_id FROM roots
+                JOIN x_post_capture_contexts c ON c.capture_id=roots.capture_id
+                WHERE c.target_capture_id IS NOT NULL
+            )
+            SELECT capture_id FROM manifest WHERE capture_id IN ({readable_x_capture_ids_sql()})
+        """),
+                {"id": subject.id, "viewer_id": creator_id},
+            )
+        )
+    # Materialized before the grant becomes a new root for either audience.
+    admit_x_captures_for_accounts(
+        db,
+        account_ids=[creator_id, *([] if grantee_id is None else [grantee_id])],
+        capture_ids=captures,
+    )
     grant = ResourceGrant(
         id=id,
         subject_scheme=subject.scheme,
@@ -311,14 +546,20 @@ def insert_grant(
     )
     db.add(grant)
     db.flush()
+    if grantee_id is None:
+        _insert_public_capture_manifest(db, grant_ids=[grant.id], capture_ids=captures)
     invalidate_annotation_visibility(
         db,
         annotation_visibility(
             db,
             user_ids={creator_id} | ({grantee_id} if grantee_id is not None else set()),
-            media_ids={media_id},
+            media_ids=highlight_parent_media_ids(db, highlight_ids=[subject.id])
+            if subject.scheme == "highlight"
+            else {subject.id},
         ),
     )
+    for account_id in {creator_id, *([] if grantee_id is None else [grantee_id])}:
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(account_id)})
     return grant
 
 
@@ -338,16 +579,24 @@ def delete_grant(db: Session, *, viewer_user_id: UUID, grant_id: UUID) -> None:
             found.grantee_user_id,
         ):
             return
-        media_id = lock_subject(db, ResourceRef(found.subject_scheme, found.subject_id))
+        locked = lock_subject(db, ResourceRef(found.subject_scheme, found.subject_id))
+        media_id = (
+            found.subject_id
+            if found.subject_scheme == "media"
+            else db.scalar(
+                select(Highlight.anchor_media_id).where(Highlight.id == found.subject_id)
+            )
+        )
         grant = db.execute(by_id.with_for_update()).one_or_none()
-        if media_id is None or grant is None:
+        if not locked or grant is None:
             return
         if grant.subject_id != found.subject_id:
             raise TransactionRestart("resource grant subject moved before delete")
         _delete(db, ResourceGrant.id == grant_id)
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
-        claim_document_teardown_if_unreferenced_locked(db, media_id)
+        if media_id is not None:
+            claim_document_teardown_if_unreferenced_locked(db, media_id)
         record_input_change(db, owners=[f"{grant.subject_scheme}:{grant.subject_id}"])
 
     retry_serializable(db, "delete_resource_grant", attempt)

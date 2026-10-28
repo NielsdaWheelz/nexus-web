@@ -275,12 +275,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && draft.highlightId === null && identity !== null && draft.passage.identity !== identity);
   const anchor = useCallback(() => {
     if (!draft) return null;
-    const passage = annotation?.placement.kind === "placed" ? { identity: draft.passage.identity, anchor: annotation.placement.anchor } : draft.passage;
-    const measured = reader.measurePassage(passage);
+    const measured = reader.measurePassage(draft.passage);
     if (measured) return measured;
     const bounds = reader.measureBounds();
     return bounds ? { rect: null, lines: [], bounds } : null;
-  }, [annotation, draft, reader]);
+  }, [draft, reader]);
   const chooserAnchor = useCallback(() => {
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
@@ -432,7 +431,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       {renderComposer(true, false)}
     </MobileSheet> : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
-      onDismiss={composer.dismiss}>
+      containsPoint={(event) => {
+        if (!draft.highlightId || !event.isPrimary || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+        const marks = reader.textMarksAt(event.clientX, event.clientY, event.target);
+        return marks.length === 1 && marks[0]?.id === draft.highlightId;
+      }} onDismiss={composer.dismiss}>
       {(placed, anchorState) => renderComposer(placed, anchorState === "unavailable")}
     </FloatingActionSurface> : null}
     {menu ? <FloatingActionSurface open anchor={chooserAnchor} subscribeAnchor={reader.subscribe} role="group" label="choose highlight" onDismiss={verbs.closeMenu}>

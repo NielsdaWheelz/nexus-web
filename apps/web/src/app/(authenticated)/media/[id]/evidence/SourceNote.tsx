@@ -127,7 +127,7 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
       const canonicalUnit = target.kind === "point" ? target.point.unit : target.unit;
       const current = reader.getState().document;
       const mounted = current.status === "ready" && current.doc.kind === "text" ? current.doc.units.find((candidate) =>
-        candidate.xPost?.owner?.media_id === mediaId && candidate.xPost.owner.fragment_id === canonicalUnit && `g${candidate.xPost.owner.generation}` === identity ||
+        candidate.xPost?.owner?.fragment_id === canonicalUnit && current.doc.identity === identity ||
         candidate.id === canonicalUnit && current.doc.identity === identity) : null;
       const mapped = mounted ? target.kind === "point" ? { ...target, point: { ...target.point, unit: mounted.id } } : { ...target, unit: mounted.id } : null;
       const portable = mapped !== null && current.status === "ready" ? sourceTarget(current.doc,mapped) : null;

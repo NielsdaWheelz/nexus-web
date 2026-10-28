@@ -110,8 +110,8 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
     });
   }
   const content: MenuContent = { sections: [
-    { id: "Message", label: options.length ? "this occurrence" : null, options: local },
-    ...(options.length ? [{ id: "Resource", label: "item", options }] : []),
+    { id: "Message", label: null, options: local },
+    ...(options.length ? [{ id: "Resource", label: null, options }] : []),
   ] };
   const source: MenuSource = {
     kind: "Prepared", subjectKey: `${pane?.visitId ?? "workspace"}:message:${message.id}`, title: "message actions",

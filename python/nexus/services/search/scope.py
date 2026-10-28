@@ -59,17 +59,10 @@ def reading_media_ids_sql(roots_sql: str) -> str:
     the original scoped document.
     """
     return f"""
-        WITH roots AS ({roots_sql}),
-        primary_sources AS (
-            SELECT media_id FROM roots
-            UNION
-            SELECT tp.post_media_id FROM x_thread_posts tp
-            JOIN roots ON roots.media_id = tp.thread_media_id
-        )
-        SELECT media_id FROM primary_sources
+        SELECT media_id FROM ({roots_sql}) roots
         UNION
         SELECT edge.child_media_id FROM ({media_containment_edges_sql()}) edge
-        JOIN primary_sources source ON source.media_id = edge.parent_media_id
+        JOIN ({roots_sql}) roots ON roots.media_id=edge.parent_media_id
     """
 
 

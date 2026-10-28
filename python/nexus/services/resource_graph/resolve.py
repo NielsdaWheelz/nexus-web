@@ -218,11 +218,22 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
             GROUP BY m.id, m.title
             """),
             {
-                "ids": list({passage.owner.id for passage in passages.values()}),
+                "ids": list(
+                    {
+                        passage.owner.id
+                        for passage in passages.values()
+                        if passage.owner.scheme == "media"
+                    }
+                ),
                 "viewer_id": viewer_id,
             },
         )
     }
+    fragments = load_resource_batch(
+        db,
+        [passage.owner for passage in passages.values() if passage.owner.scheme == "fragment"],
+        viewer_id=viewer_id,
+    )
     notes = linked_note_blocks_for_highlights(db, viewer_id, ids)
     out = []
     for id_ in ids:
@@ -230,8 +241,14 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
         passage = passages.get(uri)
         if passage is None:
             continue
-        owner = owners[passage.owner.id]
-        source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
+        if passage.owner.scheme == "fragment":
+            owner = fragments[passage.owner.uri]
+            if owner.missing:
+                continue
+            source = f"“{owner.title}”"
+        else:
+            owner = owners[passage.owner.id]
+            source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
         quote = ResolvedQuote(
             exact=passage.quote.exact,
             prefix=passage.quote.prefix or "",
@@ -254,7 +271,7 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
 def _owned_text(ref: ResourceRef, row: Any) -> ResolvedResource:
     """A span is labelled by its work and what tells it apart: its citation label, else
     its first line that is not the work's title. A chunk by its work and first line."""
-    title = str(row.title) if row.owner_kind == "media" else "Note"
+    title = str(row.title) if row.owner_kind in {"media", "fragment"} else "Note"
     passage = row.citation_label
     if ref.scheme == "content_chunk":
         label = f"{title} - chunk: {_first_line(row.body)[:80]}"
@@ -270,8 +287,11 @@ def _owned_text(ref: ResourceRef, row: Any) -> ResolvedResource:
 def _owned_text_sql(table: str, body: str, citation_label: str) -> str:
     return f"""
         SELECT t.id, t.owner_kind, t.{body} AS body,
-            {citation_label} AS citation_label, m.title
+            {citation_label} AS citation_label,
+            COALESCE(m.title,c.payload #>> '{{content,author,name}}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
         FROM {table} t LEFT JOIN media m ON m.id = t.owner_id AND t.owner_kind = 'media'
+        LEFT JOIN fragments f ON f.id=t.owner_id AND t.owner_kind='fragment'
+        LEFT JOIN x_post_captures c ON c.id=f.x_post_capture_id
         WHERE t.id = ANY(:ids)
     """
 
@@ -355,8 +375,10 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _read(ref, _first_line(row.body)[:120] or "Note", row.body),
     ),
     "fragment": (
-        """SELECT t.id, t.idx, t.canonical_text AS body, m.title
-        FROM fragments t JOIN media m ON m.id = t.media_id
+        """SELECT t.id, t.idx, t.canonical_text AS body,
+            COALESCE(m.title,c.payload #>> '{content,author,name}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
+        FROM fragments t LEFT JOIN media m ON m.id = t.media_id
+        LEFT JOIN x_post_captures c ON c.id=t.x_post_capture_id
         WHERE t.id = ANY(:ids)""",
         lambda ref, row: _read(
             ref, f"{row.title} — fragment {row.idx + 1}", row.body, str(row.title)

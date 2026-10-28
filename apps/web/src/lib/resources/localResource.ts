@@ -18,11 +18,16 @@ export function localResourceHref(resource: ResourceProjection,
   { activationRef }: { activationRef: ResourceRef | null } = { activationRef: null }): string | null {
   const own = parseResourceRef(resource.ref);
   if (own?.scheme === "passage_anchor") {
+    if (resource.source_publication?.kind === "x_capture" && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.source_publication.capture_id}#passage-${own.id}`;
     const sourceRef = activationRef ?? resource.source_ref;
     const href = sourceRef ? routeFor(sourceRef) : null;
     return href ? `${href}#passage-${own.id}` : null;
   }
-  if (resource.kind !== "highlight") return routeFor(resource.ref);
+  if (resource.kind !== "highlight") {
+    if (resource.source_publication?.kind === "x_capture" && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.source_publication.capture_id}`;
+    return routeFor(activationRef ?? resource.ref);
+  }
+  if (resource.selection?.publication?.kind === "x_capture" && own && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.selection.publication.capture_id}#highlight-${own.id}`;
   const sourceRef = activationRef ?? resource.source_ref;
   const source = sourceRef ? parseResourceRef(sourceRef) : null;
   return source?.scheme === "media" && own ? `/media/${source.id}#highlight-${own.id}` : sourceRef ? routeFor(sourceRef) : null;

@@ -27,7 +27,7 @@ import {
   type Positioner,
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
-import type { Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
+import type { Mark, Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
 import type { ReaderHost, ReaderNavigationPort, ReaderProgressPort, ReaderSource } from "./ports";
 import type { PdfFindDestination } from "./location";
 import {
@@ -98,6 +98,8 @@ export interface Reader {
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
   measurePassage(passage: Passage): PassageGeometry | null;
+  /** Marks hit in the mounted text publication; empty for other or unavailable surfaces. */
+  textMarksAt(x: number, y: number, target: EventTarget | null): readonly Mark[];
   measureBounds(): DOMRect | null;
   /** Capture the current native range through the mounted publication's surface. */
   captureSelection(): SelectionEvent | null;
@@ -136,6 +138,8 @@ export interface SurfaceHandle extends Positioner {
   readonly identity: string;
   readonly find: FindSource<unknown>;
   measurePassage(passage: Passage): PassageGeometry | null;
+  /** Text surfaces expose their activation hit test. */
+  textMarksAt?(x: number, y: number, target: EventTarget | null): readonly Mark[];
   measureBounds(): DOMRect | null;
   captureSelection(): SelectionEvent | null;
   focusSource(): void;
@@ -250,7 +254,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     options.progress &&
     createProgressSync(options.progress, {
       changed: () => set({ progress: sync!.state() }),
-      generation: () => { const identity = ready()?.doc.identity; return identity?.startsWith("g") ? Number(identity.slice(1)) : null; },
+      generation: () => { const identity = ready()?.doc.identity; return identity?.startsWith("g") ? Number(identity.slice(1).split(":", 1)[0]) : null; },
       remote(snapshot, move) {
         input = { at: -Infinity, direction: "none" };
         if (move) void applySnapshot(snapshot);
@@ -303,14 +307,14 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         freshUsed ? null : options.entry.fresh,
       ]);
       if (controller.signal.aborted) return;
-      if (expectedGeneration !== null && Number(doc.identity.slice(1)) < expectedGeneration) {
+      if (expectedGeneration !== null && Number(doc.identity.slice(1).split(":", 1)[0]) < expectedGeneration) {
         throw new Error("reader response predates the observed publication");
       }
       freshUsed = true;
       const current = ready();
       const displayed = current?.doc.identity === doc.identity
         ? current.doc.kind === "text" && doc.kind === "text"
-          ? { ...current.doc, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
+          ? { ...current.doc, units: doc.units, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
           : { ...current.doc, title: doc.title }
         : doc;
       if (current?.doc.identity === doc.identity && (!recoverPosition || sync?.state().kind !== "LoadFailed")) {
@@ -407,6 +411,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         surface?.identity === passage.identity
         ? surface.measurePassage(passage)
         : null;
+    },
+    textMarksAt(x, y, target) {
+      return surface?.identity === ready()?.doc.identity ? surface?.textMarksAt?.(x, y, target) ?? [] : [];
     },
     measureBounds() {
       return surface && surface.identity === ready()?.doc.identity

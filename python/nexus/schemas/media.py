@@ -19,6 +19,7 @@ from nexus.schemas.media_summary import (
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.x_captures import QuoteRetrieval
 from nexus.schemas.x_source import XArticleContent
 
 
@@ -128,6 +129,11 @@ class MediaOut(BaseModel):
     updated_at: datetime
 
 
+class XQuoteProcessingOut(BaseModel):
+    occurrence_id: UUID
+    retrieval: QuoteRetrieval | None
+
+
 class MediaProcessingSnapshotOut(BaseModel):
     """One processing stream frame: the facts source work, transcripts and indexing change."""
 
@@ -142,3 +148,4 @@ class MediaProcessingSnapshotOut(BaseModel):
     reader_generation: int | None
     transcript_reader_key: str | None
     work_in_flight: bool
+    quote_retrievals: list[XQuoteProcessingOut]

@@ -12,7 +12,7 @@ import json
 import re
 import shutil
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -203,6 +203,16 @@ def article_publication_media_ids(
     db: Session, *, media_id: UUID, prepared: WebArticlePreparedFragment
 ) -> set[UUID]:
     """The old and incoming embed targets the publisher must lock with its media."""
+    from nexus.services.x_ingest import lock_x_capture_revisions
+
+    lock_x_capture_revisions(
+        db,
+        revisions={
+            item.detected.provider_target_ref
+            for item in prepared.document_embeds
+            if item.detected.provider == "x" and item.detected.provider_target_ref is not None
+        },
+    )
     known = reusable_embedded_source_media_ids(
         db,
         urls=[
@@ -270,10 +280,13 @@ def publish_prepared_article(
                 owner_user_id=owner,
                 media_id=media.id,
                 source_attempt_id=attempt.id,
+                parent_source_url=article.document_url or None,
+                parent_title=article.metadata.title.strip() or None
+                if article.metadata is not None
+                else None,
                 occurrences=document_embed_artifact_occurrences(
                     fragment_id=fragment_id, document_embeds=prepared.document_embeds
                 ),
-                extraction_failed=prepared.document_embed_extraction_failed,
                 locked_existing_target_media_ids=locked_target_ids,
             )
             for _child_media_id, child_attempt_id in queued:
@@ -329,6 +342,7 @@ def prepare_article(
     extract_embeds: bool,
     embed_source_html: str | None = None,
     fragment_idx: int = 0,
+    capture_assets: Mapping[str, str] | None = None,
 ) -> WebArticlePreparedFragment:
     """Prepare one fragment, refusing what cannot be published.
 
@@ -344,6 +358,7 @@ def prepare_article(
             fragment_idx=fragment_idx,
             extract_embeds=extract_embeds,
             embed_source_html=embed_source_html,
+            capture_assets=capture_assets,
         )
     # justify-ignore-error: deterministic preparation; the class is logged, the code is terminal.
     except Exception as exc:

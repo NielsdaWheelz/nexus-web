@@ -81,20 +81,24 @@ def lock_account(db: Session, account_id: UUID) -> int:
 
 
 def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> AcceptedChanges:
-    if request.format_revision != 1:
+    if request.format_revision != 2:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
-    if request.replica_id == uuid5(account_id, "authored:server"):
+    if request.replica_id in {
+        uuid5(account_id, "authored:server"),
+        uuid5(account_id, "authored:server:2"),
+    }:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reserved server replica")
     with transaction(db):
         cursor = lock_account(db, account_id)
         db.execute(
             text(
-                "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq) "
-                "VALUES (:a,:r,0) ON CONFLICT DO NOTHING"
+                "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) "
+                "VALUES (:a,:r,0,2) ON CONFLICT DO NOTHING"
             ),
             {"a": account_id, "r": request.replica_id},
         )
         accepted = _accepted(db, account_id, request.replica_id)
+        _require_current_replica(db, account_id, request.replica_id)
     return AcceptedChanges(accepted_command_seq=str(accepted), head_cursor=str(cursor))
 
 
@@ -193,7 +197,10 @@ def _states(db: Session, account_id: UUID, changes: list[Change]) -> Corpus:
 
 
 def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedChanges:
-    if request.replica_id == uuid5(account_id, "authored:server"):
+    if request.replica_id in {
+        uuid5(account_id, "authored:server"),
+        uuid5(account_id, "authored:server:2"),
+    }:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reserved server replica")
     if len(_json(request.model_dump(mode="json")).encode()) > MAX_ENVELOPE_BYTES:
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "Upload exceeds 3 MiB")
@@ -203,6 +210,7 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
     with transaction(db):
         cursor = lock_account(db, account_id)
         accepted = _accepted(db, account_id, request.replica_id)
+        _require_current_replica(db, account_id, request.replica_id)
         frontier = {
             str(replica): int(sequence)
             for replica, sequence in db.execute(
@@ -235,6 +243,7 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
             _validate_source(change, str(request.replica_id), frontier)
             remaining.append(change)
         if remaining:
+            _validate_capture_sources(db, account_id, remaining)
             result = _touched(
                 helper.merge(account_id, _states(db, account_id, remaining), remaining), remaining
             )
@@ -271,6 +280,69 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
             )
             db.execute(text("SELECT pg_notify('nexus_writing',:a)"), {"a": str(account_id)})
     return AcceptedChanges(accepted_command_seq=str(accepted), head_cursor=str(cursor))
+
+
+def _require_current_replica(db: Session, account_id: UUID, replica_id: UUID) -> None:
+    revision = db.scalar(
+        text("SELECT format_revision FROM authored_replicas WHERE account_id=:a AND replica_id=:r"),
+        {"a": account_id, "r": replica_id},
+    )
+    if revision != 2:
+        raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
+
+
+def _validate_capture_sources(db: Session, account_id: UUID, changes: list[Change]) -> None:
+    from nexus.schemas.retrieval import XCaptureOffsetsLocator
+
+    for change in changes:
+        captures = [
+            (r.source_ref, r.selection.value) for r in change.resources if r.kind == "highlight"
+        ]
+        captures += [(p.source_ref, p.capture.value) for p in change.passages]
+        for source_ref, capture in captures:
+            locator = capture.locator
+            if not isinstance(locator, XCaptureOffsetsLocator):
+                continue
+            if (
+                source_ref != f"fragment:{locator.fragment_id}"
+                or capture.publication is None
+                or capture.publication.kind != "x_capture"
+                or capture.publication.capture_id != locator.capture_id
+            ):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST, "Capture identity mismatch"
+                )
+            source = db.scalar(
+                text(
+                    "SELECT f.canonical_text FROM fragments f JOIN x_post_capture_admissions a ON a.capture_id=f.x_post_capture_id AND a.user_id=:a WHERE f.id=:f AND f.x_post_capture_id=:c"
+                ),
+                {"a": account_id, "f": locator.fragment_id, "c": locator.capture_id},
+            )
+            if source is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Capture not found")
+            if (
+                source[locator.start_offset : locator.end_offset] != capture.quote_exact
+                or locator.end_offset > len(source)
+                or (
+                    locator.text_quote_selector is not None
+                    and locator.text_quote_selector["exact"] != capture.quote_exact
+                )
+            ):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST, "Capture quote disagrees with source"
+                )
+        for stub in change.source_stubs:
+            publication = stub.capture.value.publication
+            if publication is not None and publication.kind == "x_capture":
+                fragment = require_ref(stub.source_ref)
+                admitted = fragment.scheme == "fragment" and db.scalar(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM fragments f JOIN x_post_capture_admissions a ON a.capture_id=f.x_post_capture_id AND a.user_id=:a WHERE f.id=:f AND f.x_post_capture_id=:c)"
+                    ),
+                    {"a": account_id, "f": fragment.id, "c": publication.capture_id},
+                )
+                if not admitted:
+                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Capture not found")
 
 
 def _validate_source(change: Change, replica_id: str, frontier: dict[str, int]) -> None:
@@ -494,10 +566,10 @@ def server_command(
     synthesize a stale replacement body: edits carry an actual Yjs baseline delta.
     """
     cursor = lock_account(db, account_id)
-    replica = uuid5(account_id, "authored:server")
+    replica = uuid5(account_id, "authored:server:2")
     db.execute(
         text(
-            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq) VALUES (:a,:r,0) "
+            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,2) "
             "ON CONFLICT DO NOTHING"
         ),
         {"a": account_id, "r": replica},
@@ -633,6 +705,15 @@ def server_command(
 
 def download(db: Session, account_id: UUID, after: int) -> DownloadChanges:
     watermark = head(db, account_id)
+    floor = (
+        db.scalar(
+            text("SELECT snapshot_floor_seq FROM authored_heads WHERE account_id=:a"),
+            {"a": account_id},
+        )
+        or 0
+    )
+    if after < floor:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Cursor requires a new snapshot")
     if after > watermark:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Cursor exceeds account head")
     changes: list[FeedChange] = []
@@ -670,7 +751,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
     )
     yield (
         _json(
-            {"type": "header", "format_revision": 1, "head_cursor": watermark, "lamport": lamport}
+            {"type": "header", "format_revision": 2, "head_cursor": watermark, "lamport": lamport}
         )
         + "\n"
     )
@@ -696,7 +777,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         _json(
             {
                 "type": "footer",
-                "format_revision": 1,
+                "format_revision": 2,
                 "head_cursor": watermark,
                 "lamport": lamport,
                 "counts": counts,

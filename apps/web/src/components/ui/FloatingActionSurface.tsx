@@ -34,6 +34,7 @@ export default function FloatingActionSurface({
   align = "center",
   flip = false,
   preservePointerSelection = false,
+  containsPoint,
   role,
   label,
   className,
@@ -60,6 +61,8 @@ export default function FloatingActionSurface({
   readonly flip?: boolean;
   /** A press inside does not collapse the live text selection. */
   readonly preservePointerSelection?: boolean;
+  /** Treat a pointer press on a logical part of the surface as inside. */
+  readonly containsPoint?: (event: PointerEvent) => boolean;
   readonly role?: "group" | "toolbar" | "dialog";
   readonly label?: string;
   readonly className?: string;
@@ -90,6 +93,7 @@ export default function FloatingActionSurface({
   const focused = useRef(false);
   useOverlay(shown, {
     kind: "transient",
+    containsPoint,
     returnFocus: disclosure,
     skipReturnFocus,
     returnFocusTo: () => trigger ? { element: trigger, preventScroll: true } : null,

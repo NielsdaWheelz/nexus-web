@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urljoin, urlparse
@@ -40,6 +41,8 @@ class DetectedDocumentEmbed:
     authored_text: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    excerpt_html: str | None = None
+    attribution_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,31 +146,47 @@ def _detect_iframe(element: HtmlElement, base_url: str, ordinal: int) -> Detecte
 def _detect_x_blockquote(
     element: HtmlElement, base_url: str, ordinal: int
 ) -> DetectedDocumentEmbed | None:
-    for href in element.xpath(".//a/@href"):
-        if not isinstance(href, str):
-            continue
-        absolute_url = urljoin(base_url, href)
+    # Twitter's attribution permalink follows the quoted prose. Links inside a
+    # paragraph are quotations themselves and cannot establish the source identity.
+    links = element.xpath("./a[@href] | ./footer//a[@href] | ./cite//a[@href]")
+    candidates = []
+    for link in links:
+        absolute_url = urljoin(base_url, link.get("href") or "")
         try:
             validate_requested_url(absolute_url)
         except InvalidRequestError:
             continue
         identity = classify_x_url(absolute_url)
-        if identity is None:
-            continue
-        return DetectedDocumentEmbed(
-            ordinal=ordinal,
-            occurrence_key=occurrence_key(ordinal, "x", identity.provider_id),
-            provider="x",
-            embed_kind="post",
-            source_shape="blockquote",
-            resolution_status="pending",
-            placeholder_text="",
-            source_url=identity.canonical_url,
-            canonical_source_url=identity.canonical_url,
-            provider_target_ref=identity.provider_id,
-            title="Embedded X post",
+        if identity is not None:
+            candidates.append((identity, link))
+    if len({item.provider_id for item, _link in candidates}) != 1:
+        return None
+    identity, _link = candidates[-1]
+    excerpt = deepcopy(element)
+    for image in excerpt.iter("img"):
+        if image.get("src"):
+            image.set("src", urljoin(base_url, image.get("src")))
+    for link in excerpt.iter("a"):
+        if link.get("href"):
+            link.set("href", urljoin(base_url, link.get("href")))
+    return DetectedDocumentEmbed(
+        ordinal=ordinal,
+        occurrence_key=occurrence_key(ordinal, "x", identity.provider_id),
+        provider="x",
+        embed_kind="post",
+        source_shape="blockquote",
+        resolution_status="pending",
+        placeholder_text="",
+        source_url=identity.canonical_url,
+        canonical_source_url=identity.canonical_url,
+        provider_target_ref=identity.provider_id,
+        title=None,
+        excerpt_html=inner_html(excerpt),
+        attribution_text=" ".join(
+            text.strip() for text in element.xpath("./text()") if text.strip()
         )
-    return None
+        or None,
+    )
 
 
 def _replace_with_placeholder(element: HtmlElement, embed: DetectedDocumentEmbed) -> None:

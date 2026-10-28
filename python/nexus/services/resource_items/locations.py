@@ -38,12 +38,14 @@ from nexus.schemas.retrieval import (
     PlaybackTimeRangeLocator,
     TranscriptTimeRangeLocator,
     WebTextOffsetsLocator,
+    XCaptureOffsetsLocator,
 )
 from nexus.services import locator_resolver, text_quote
 from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
     text_scope_rows_sql,
+    x_capture_scope_rows_sql,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
@@ -57,6 +59,7 @@ _OFFSET_WORDS = (
     "message_offsets",
     "web_text_offsets",
     "epub_fragment_offsets",
+    "x_capture_offsets",
 )
 
 
@@ -426,8 +429,99 @@ def media_passages(
         return out
     ids = {
         scheme: [ref.id for ref in refs if ref.scheme == scheme]
-        for scheme in ("highlight", "fragment", "reader_apparatus_item", "passage_anchor")
+        for scheme in (
+            "highlight",
+            "fragment",
+            "reader_apparatus_item",
+            "passage_anchor",
+            "content_chunk",
+            "evidence_span",
+        )
     }
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    capture_rows = db.execute(
+        text(f"""
+            WITH readable AS ({readable_x_capture_ids_sql()}), capture_candidates AS (
+                SELECT 'fragment' AS scheme,f.id,f.id AS fragment_id,f.x_post_capture_id AS capture_id,
+                    f.canonical_text AS exact,''::text AS prefix,''::text AS suffix,NULL::text AS color,
+                    0 AS lo,char_length(f.canonical_text) AS hi
+                FROM fragments f WHERE f.id=ANY(:fragments) AND f.x_post_capture_id IS NOT NULL
+                UNION ALL
+                SELECT 'highlight',h.id,f.id,f.x_post_capture_id,h.exact,h.prefix,h.suffix,h.color,
+                    a.start_offset,a.end_offset
+                FROM highlights h JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
+                JOIN fragments f ON f.id=a.fragment_id
+                WHERE h.id=ANY(:highlights) AND f.x_post_capture_id IS NOT NULL
+                  AND {highlight_visibility_sql("h")}
+                UNION ALL
+                SELECT 'passage_anchor',p.anchor_id::uuid,f.id,f.x_post_capture_id,
+                    p.state #>> '{{capture,value,quote_exact}}',p.state->>'prefix',p.state->>'suffix',NULL::text,
+                    (p.state #>> '{{capture,value,locator,start_offset}}')::integer,
+                    (p.state #>> '{{capture,value,locator,end_offset}}')::integer
+                FROM authored_passages p JOIN fragments f ON p.state->>'source_ref'='fragment:'||f.id::text
+                WHERE p.account_id=:viewer_id AND p.anchor_id=ANY(CAST(:passages AS text[]))
+                  AND p.state #>> '{{capture,value,locator,type}}'='x_capture_offsets'
+                  AND p.state #>> '{{capture,value,locator,capture_id}}'=f.x_post_capture_id::text
+                  AND p.state #>> '{{capture,value,locator,fragment_id}}'=f.id::text
+                UNION ALL
+                SELECT 'content_chunk',cc.id,f.id,f.x_post_capture_id,cc.chunk_text,
+                    ''::text,''::text,NULL::text,
+                    (cc.summary_locator->>'start_offset')::integer,(cc.summary_locator->>'end_offset')::integer
+                FROM content_chunks cc JOIN fragments f ON f.id=cc.owner_id AND cc.owner_kind='fragment'
+                JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
+                    AND state.lexical_revision=state.revision
+                WHERE cc.id=ANY(:chunks) AND cc.summary_locator->>'type'='x_capture_offsets'
+                  AND cc.summary_locator->>'capture_id'=f.x_post_capture_id::text
+                  AND cc.summary_locator->>'fragment_id'=f.id::text
+                UNION ALL
+                SELECT 'evidence_span',es.id,f.id,f.x_post_capture_id,es.span_text,
+                    COALESCE(es.selector #>> '{{text_quote,prefix}}',''),
+                    COALESCE(es.selector #>> '{{text_quote,suffix}}',''),NULL::text,
+                    (es.selector->>'start_offset')::integer,(es.selector->>'end_offset')::integer
+                FROM evidence_spans es JOIN fragments f ON f.id=es.owner_id AND es.owner_kind='fragment'
+                JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
+                    AND state.lexical_revision=state.revision
+                WHERE es.id=ANY(:spans) AND es.selector->>'type'='x_capture_offsets'
+                  AND es.selector->>'capture_id'=f.x_post_capture_id::text
+                  AND es.selector->>'fragment_id'=f.id::text
+            )
+            SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
+            JOIN fragments retained ON retained.id=capture_candidates.fragment_id
+            WHERE lo>=0 AND lo<hi AND hi<=char_length(retained.canonical_text)
+              AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=capture_candidates.exact
+              AND (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text) IS NULL OR EXISTS (
+                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text))::uuid AS media_id")}) occurrence
+                WHERE occurrence.capture_id=capture_candidates.capture_id
+            ))
+        """),
+        {
+            "viewer_id": viewer_id,
+            "fragments": ids["fragment"],
+            "highlights": ids["highlight"],
+            "passages": [str(value) for value in ids["passage_anchor"]],
+            "chunks": ids["content_chunk"],
+            "spans": ids["evidence_span"],
+            "owners": json.dumps(reading_owners, default=str),
+        },
+    ).mappings()
+    for row in capture_rows:
+        quote = CapturedQuote(
+            exact=row["exact"], prefix=row["prefix"], suffix=row["suffix"], color=row["color"]
+        )
+        selector = {"exact": quote.exact, "prefix": quote.prefix, "suffix": quote.suffix}
+        locator = {
+            "type": "x_capture_offsets",
+            "capture_id": str(row["capture_id"]),
+            "fragment_id": str(row["fragment_id"]),
+            "start_offset": row["lo"],
+            "end_offset": row["hi"],
+            "text_quote_selector": selector,
+        }
+        out[f"{row['scheme']}:{row['id']}"] = ScopedMediaPassage(
+            ResourceRef("fragment", row["fragment_id"]), quote, locator
+        )
+
     highlights = (
         {
             row.id: row.reading_media_ids
@@ -754,7 +848,6 @@ class LocationReads:
 
     changed: set[UUID]
     identities: dict[UUID, str]
-    x_posts: set[UUID]
     fragments: list[Any]
     pdfs: dict[UUID, Any]
     pages: list[Any]
@@ -782,22 +875,13 @@ def location_reads(
             )
         ],
     )
-    # An X post's anchors stay source-local while its text is recomposed: it requotes.
-    x_posts = (
-        set(
-            db.scalars(
-                text("SELECT media_id FROM x_post_sources WHERE media_id = ANY(:ids)"),
-                {"ids": media_ids},
-            )
-        )
-        if media_ids
-        else set()
-    )
     fragment_ids = list(
         {
             UUID(str(locator.fragment_id))
             for locator in locators
-            if isinstance(locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator))
+            if isinstance(
+                locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator, XCaptureOffsetsLocator)
+            )
         }
     )
     timed_ids = list(
@@ -818,18 +902,23 @@ def location_reads(
         {UUID(str(locator.message_id)) for locator in locators if locator.type == "message_offsets"}
     )
     note_ids = list({ref.id for ref in owners if ref.scheme == "note_block"})
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
     fragments = (
         list(
             db.execute(
-                text(
-                    "SELECT id, media_id, canonical_text, t_start_ms, t_end_ms FROM fragments"
-                    " WHERE id = ANY(:ids) OR media_id = ANY(:timed) OR media_id = ANY(:x_posts)"
-                    " ORDER BY t_start_ms NULLS LAST, idx"
-                ),
-                {"ids": fragment_ids, "timed": timed_ids, "x_posts": list(x_posts)},
+                text(f"""SELECT id, media_id, x_post_capture_id, canonical_text, t_start_ms, t_end_ms FROM fragments
+                    WHERE (id = ANY(:ids) OR media_id = ANY(:timed))
+                      AND (x_post_capture_id IS NULL OR x_post_capture_id IN ({readable_x_capture_ids_sql()}))
+                    ORDER BY t_start_ms NULLS LAST, idx"""),
+                {
+                    "ids": fragment_ids,
+                    "timed": timed_ids,
+                    "viewer_id": viewer_id,
+                },
             ).mappings()
         )
-        if fragment_ids or timed_ids or x_posts
+        if fragment_ids or timed_ids
         else []
     )
     pdfs = (
@@ -874,7 +963,6 @@ def location_reads(
     return LocationReads(
         changed={id_ for id_ in media_ids if before.get(id_) != after.get(id_)},
         identities=after,
-        x_posts=x_posts,
         fragments=fragments,
         pdfs=pdfs,
         pages=pages,
@@ -914,34 +1002,32 @@ def current_locator(
     suffix = selector.get("suffix") or (quote.suffix if quote else None) or ""
     if owner.id in reads.changed:
         return None
-    if kind == "web_text_offsets" and owner.id in reads.x_posts:
+    if kind == "x_capture_offsets":
         exact = exact or (quote.exact if quote else None)
-        if not exact:
-            return None
-        sources = [
-            text_quote.NormalizedOwnerSource(
-                fragment["id"],
-                None,
-                None,
-                text_quote.normalize_for_match(fragment["canonical_text"]),
-            )
-            for fragment in reads.fragments
-            if fragment["media_id"] == owner.id
-        ]
-        match = text_quote.match_quote_in_sources(
-            sources, exact=_normal(exact), prefix=_normal(prefix), suffix=_normal(suffix)
+        fragment = next(
+            (
+                f
+                for f in reads.fragments
+                if str(f["id"]) == raw["fragment_id"]
+                and str(f["x_post_capture_id"]) == raw["capture_id"]
+            ),
+            None,
         )
-        if match.status is text_quote.QuoteStatus.no_match:
-            match = text_quote.match_quote_in_sources(sources, exact=_normal(exact))
-        if match.status is not text_quote.QuoteStatus.unique:
+        if (
+            fragment is None
+            or owner.scheme != "fragment"
+            or str(owner.id) != raw["fragment_id"]
+            or exact is None
+        ):
             return None
-        return {
-            **raw,
-            "fragment_id": str(match.fragment_id),
-            "start_offset": match.raw_start,
-            "end_offset": match.raw_end,
-            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
-        }
+        start, end = raw["start_offset"], raw["end_offset"]
+        if (
+            not 0 <= start < end <= len(fragment["canonical_text"])
+            or fragment["canonical_text"][start:end] != exact
+            or (quote is not None and quote.exact != exact)
+        ):
+            return None
+        return raw
     if kind in ("web_text_offsets", "epub_fragment_offsets"):
         fragment = next(
             (

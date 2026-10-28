@@ -19,31 +19,35 @@ from nexus.jobs.queue import enqueue_unique_job, revoke_jobs_by_dedupe_keys
 
 MEDIA_UNIT_JOB_KIND = "media_unit_build"
 
+
 # The index identity: the active embedding and the index generation. Every publish and
 # every pending mark writes the state row (a new generation) and only a publish writes
 # chunks, so the generation stands for the chunk texts without reading them (D5).
-_FINGERPRINT_SQL = """
-    SELECT m.id, encode(sha256(convert_to(
-        CASE WHEN xt.media_id IS NULL THEN
-            concat_ws('|', coalesce(own.active_embedding_provider, ''),
-                coalesce(own.active_embedding_model, ''),
-                to_char(own.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'))
-        ELSE coalesce((
-            SELECT string_agg(concat_ws('|', tp.post_media_id::text,
-                coalesce(child.active_embedding_provider, ''),
-                coalesce(child.active_embedding_model, ''),
-                child.status, child.revision::text,
-                to_char(child.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')),
-                ';' ORDER BY tp.ordinal)
-            FROM x_thread_posts tp
-            LEFT JOIN content_index_states child
-              ON child.owner_kind = 'media' AND child.owner_id = tp.post_media_id
-            WHERE tp.thread_media_id = m.id
-        ), '') END, 'UTF8')), 'hex')
-    FROM media m
-    LEFT JOIN x_thread_sources xt ON xt.media_id = m.id
-    LEFT JOIN content_index_states own ON own.owner_kind = 'media' AND own.owner_id = m.id
-    WHERE m.id = ANY(:ids) AND (xt.media_id IS NOT NULL OR own.owner_id IS NOT NULL)
+def primary_index_owners_sql() -> str:
+    """The ordered primary index owners of each media's synthesis."""
+    return """
+        SELECT m.id AS media_id, 'media'::text AS owner_kind, m.id AS owner_id, 0 AS ordinal
+        FROM media m WHERE NOT EXISTS (SELECT 1 FROM x_post_media x WHERE x.media_id=m.id)
+          AND NOT EXISTS (SELECT 1 FROM x_thread_sources x WHERE x.media_id=m.id)
+        UNION ALL
+        SELECT x.media_id, 'fragment', f.id, 0 FROM x_post_media x
+        JOIN fragments f ON f.x_post_capture_id=x.capture_id
+        UNION ALL
+        SELECT x.thread_media_id, 'fragment', f.id, x.ordinal FROM x_thread_posts x
+        JOIN fragments f ON f.x_post_capture_id=x.capture_id
+    """
+
+
+_FINGERPRINT_SQL = f"""
+    SELECT owners.media_id, encode(sha256(convert_to(
+        string_agg(concat_ws('|', owners.owner_kind,owners.owner_id::text,
+            coalesce(s.active_embedding_provider,''),coalesce(s.active_embedding_model,''),
+            s.status,s.revision::text,
+            to_char(s.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')),
+            ';' ORDER BY owners.ordinal,owners.owner_id), 'UTF8')), 'hex')
+    FROM ({primary_index_owners_sql()}) owners
+    JOIN content_index_states s ON s.owner_kind=owners.owner_kind AND s.owner_id=owners.owner_id
+    WHERE owners.media_id=ANY(:ids) GROUP BY owners.media_id
 """
 
 _NO_INDEX = hashlib.sha256(b"").hexdigest()
@@ -70,29 +74,18 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
     Flushes, never commits: the enqueue stays atomic with the index publish that calls it.
     A head ready or building at the current fingerprint is left alone.
     """
-    if db.scalar(text("SELECT 1 FROM x_thread_sources WHERE media_id = :m"), {"m": media_id}):
-        # A thread uses only complete current primary indexes, never a partial summary
-        # of whichever post's asynchronous index happened to finish first.
-        waiting, ready = db.execute(
-            text("""
-            SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready', 'no_text')
-                OR (s.status = 'ready' AND s.lexical_revision IS DISTINCT FROM s.revision)),
-                   count(*) FILTER (WHERE s.status = 'ready' AND s.lexical_revision = s.revision)
-            FROM x_thread_posts tp LEFT JOIN content_index_states s
-              ON s.owner_kind = 'media' AND s.owner_id = tp.post_media_id
-            WHERE tp.thread_media_id = :m
-        """),
-            {"m": media_id},
-        ).one()
-        if waiting or not ready:
-            return
-    elif not db.scalar(
-        text(
-            "SELECT 1 FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :m"
-            " AND status = 'ready' AND lexical_revision = revision"
-        ),
+    waiting, ready = db.execute(
+        text(f"""
+        SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready','no_text')
+                   OR (s.status='ready' AND s.lexical_revision IS DISTINCT FROM s.revision)),
+               count(*) FILTER (WHERE s.status='ready' AND s.lexical_revision=s.revision)
+        FROM ({primary_index_owners_sql()}) owners
+        LEFT JOIN content_index_states s ON s.owner_kind=owners.owner_kind AND s.owner_id=owners.owner_id
+        WHERE owners.media_id=:m
+    """),
         {"m": media_id},
-    ):
+    ).one()
+    if waiting or not ready:
         return
     fingerprint = current_content_fingerprint(db, media_id=media_id)
     live = db.scalar(

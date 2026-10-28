@@ -16,6 +16,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError
 from nexus.schemas.reader import (
     CursorWrite,
@@ -79,25 +80,26 @@ def capture_x_cursor_remap(
     """Before replacing bodies/edges, lock cursors after the caller's ordered media locks."""
     if not media_ids:
         return ()
-    positions: dict[UUID, list[tuple[UUID, TextCursor]]] = {}
+    snapshots: list[XCursorRemapSnapshot] = []
     for row in db.execute(
         text("""SELECT media_id, user_id, cursor FROM reader_media_state
                 WHERE media_id=ANY(:ids) ORDER BY media_id, user_id FOR UPDATE"""),
         {"ids": list(media_ids)},
     ):
-        if row.cursor is None:
+        if row.cursor is None or not can_read_media(db, row.user_id, row.media_id):
             continue
         cursor = _CURSOR.validate_python(row.cursor)
-        if isinstance(cursor, StoredReaderCursorPositioned) and isinstance(
+        if not isinstance(cursor, StoredReaderCursorPositioned) or not isinstance(
             cursor.locator, (WebReaderResumeState, EpubReaderResumeState, XReaderResumeState)
         ):
-            positions.setdefault(row.media_id, []).append((row.user_id, cursor.locator))
-    snapshots: list[XCursorRemapSnapshot] = []
-    for media_id, cursors in positions.items():
-        document = _document(db, media_id)
+            continue
+        document = _document(db, row.media_id, row.user_id)
         snapshots.append(
             XCursorRemapSnapshot(
-                media_id, int(document.identity[1:]), document.units, tuple(cursors)
+                row.media_id,
+                int(document.identity[1:].split(":", 1)[0]),
+                document.units,
+                ((row.user_id, cursor.locator),),
             )
         )
     return tuple(snapshots)
@@ -162,7 +164,8 @@ def _correspondence(
     if (
         metadata is None
         or metadata.owner is None
-        or metadata.owner.media_id != locator.post_media_id
+        or metadata.owner.capture_id != locator.capture_id
+        or metadata.owner.fragment_id != locator.fragment_id
     ):
         return None
     candidates = [
@@ -170,7 +173,8 @@ def _correspondence(
         for unit in after
         if unit.x_post is not None
         and unit.x_post.owner is not None
-        and unit.x_post.owner.media_id == locator.post_media_id
+        and unit.x_post.owner.capture_id == locator.capture_id
+        and unit.x_post.owner.fragment_id == locator.fragment_id
     ]
     if metadata.relation != "embedded":
         return _match_position(old, offset, [unit for unit in candidates if unit.id == old.id])
@@ -222,8 +226,10 @@ def _progress(units: list[ReaderUnitOut], unit_id: str, offset: int) -> float:
 def remap_x_cursors(db: Session, snapshots: Sequence[XCursorRemapSnapshot]) -> None:
     """After flushing new bodies/edges, before advancing parent generations; no activity writes."""
     for snapshot in snapshots:
-        units = _document(db, snapshot.media_id).units
         for viewer_id, before in snapshot.positions:
+            if not can_read_media(db, viewer_id, snapshot.media_id):
+                continue
+            units = _document(db, snapshot.media_id, viewer_id).units
             old = _unit_for(before, snapshot.units)
             match = None if old is None else _correspondence(before, old, snapshot.units, units)
             if match is None:
@@ -237,7 +243,7 @@ def remap_x_cursors(db: Session, snapshots: Sequence[XCursorRemapSnapshot]) -> N
                 cursor = StoredReaderCursorUnresolved(
                     previous_locator=before,
                     from_generation=snapshot.generation,
-                    post_media_id=before.post_media_id
+                    capture_id=before.capture_id
                     if isinstance(before, XReaderResumeState)
                     else None,
                     source_revision_id=before.source_revision_id
@@ -264,7 +270,8 @@ def remap_x_cursors(db: Session, snapshots: Sequence[XCursorRemapSnapshot]) -> N
                 locator: TextCursor = XReaderResumeState(
                     kind="x",
                     occurrence_id=unit.id,
-                    post_media_id=metadata.owner.media_id,
+                    capture_id=metadata.owner.capture_id,
+                    fragment_id=metadata.owner.fragment_id,
                     source_revision_id=metadata.source_revision_id,
                     locations=locations,
                     text=quote,
@@ -448,7 +455,8 @@ def _admit_x(db: Session, viewer_id: UUID, media_id: UUID, locator: XReaderResum
     if (
         source is None
         or source.owner is None
-        or source.owner.media_id != locator.post_media_id
+        or source.owner.capture_id != locator.capture_id
+        or source.owner.fragment_id != locator.fragment_id
         or source.source_revision_id != locator.source_revision_id
         or offset is None
         or unit is None
@@ -492,7 +500,7 @@ def _admit_web(db: Session, media_id: UUID, locator: WebReaderResumeState) -> No
         text(
             "SELECT char_length(canonical_text) FROM fragments"
             " WHERE media_id = :media_id AND id = :fragment_id"
-            " AND NOT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id = :media_id)"
+            " AND NOT EXISTS (SELECT 1 FROM x_post_media WHERE media_id = :media_id)"
         ),
         {"media_id": media_id, "fragment_id": fragment_id},
     )
@@ -559,7 +567,7 @@ def reconcile_part_bounds(db: Session, media_id: UUID) -> None:
         unresolved = StoredReaderCursorUnresolved(
             previous_locator=previous,
             from_generation=scope.body_generation - 1,
-            post_media_id=None,
+            capture_id=None,
             source_revision_id=None,
             excerpt="",
             offset_in_excerpt=0,

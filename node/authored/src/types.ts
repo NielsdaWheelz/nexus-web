@@ -1,16 +1,17 @@
 /** Shared authored state and replication vocabulary. Decimal counters are exact signed
  * 64-bit SQL values. Patches carry causal evidence, never replacement projections. */
-export const FORMAT_REVISION = 1;
+export const FORMAT_REVISION = 2;
 export const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 export type Counter = string;
 export type ResourceRef = string;
 export type Vector = Readonly<Record<string, Counter>>;
 export interface Stamp { lamport: Counter; replica_id: string }
 export interface Register<T> { value: T; stamp: Stamp }
-export type Publication = { kind: "reader"; generation: number } | { kind: "note_text"; sha256: string };
+export type Publication = { kind: "reader"; generation: number } | { kind: "note_text"; sha256: string } | { kind: "x_capture"; capture_id: string };
 export interface QuoteSelector extends Record<string, unknown> { exact: string; prefix: string | null; suffix: string | null }
 export interface Quad { x1: number; y1: number; x2: number; y2: number; x3: number; y3: number; x4: number; y4: number }
 export type Locator =
+  | { type: "x_capture_offsets"; capture_id: string; fragment_id: string; start_offset: number; end_offset: number; text_quote_selector: QuoteSelector | null }
   | { type: "web_text_offsets"; media_id: string; fragment_id: string; start_offset: number; end_offset: number; media_kind: string | null; text_quote_selector: QuoteSelector | null }
   | { type: "epub_fragment_offsets"; media_id: string; section_id: string | null; fragment_id: string; start_offset: number; end_offset: number; media_kind: string | null; text_quote_selector: QuoteSelector | null }
   | { type: "note_block_offsets"; block_id: string; start_offset: number; end_offset: number; text_quote_selector: QuoteSelector | null; body_version: number | null }
@@ -21,7 +22,7 @@ export type Locator =
   | { type: "message_offsets"; conversation_id: string; message_id: string; start_offset: number; end_offset: number; message_seq: number | null; text_quote_selector: QuoteSelector | null }
   | { type: "external_url"; url: string; title: string | null; display_url: string | null; accessed_at: string | null };
 export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
-export type HighlightLocator = Extract<Locator, {type:"web_text_offsets" | "epub_fragment_offsets" | "pdf_page_geometry"}>;
+export type HighlightLocator = Extract<Locator, {type:"x_capture_offsets" | "web_text_offsets" | "epub_fragment_offsets" | "pdf_page_geometry"}>;
 export interface SelectionCapture { publication: Publication | null; locator: HighlightLocator; quote_exact: string; prefix: string | null; suffix: string | null; passage_ref: ResourceRef | null }
 interface ResourceCausality { ref: ResourceRef; touch_vv: Vector; delete_vv: Vector }
 export interface NotePatch extends ResourceCausality { kind: "note"; body_update: string | null }
@@ -38,7 +39,7 @@ export interface SourceCapture { kind: string; label: string; publication: Publi
 export interface SourceStub { source_ref: ResourceRef; capture: Register<SourceCapture> }
 export interface Change { command_seq: Counter; lamport: Counter; resources: ResourcePatch[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export interface Corpus { resources: ResourceState[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
-export interface ResourceProjection { authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: Record<string, unknown> | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; selection: SelectionCapture | null; color: HighlightColor | null; embedded_refs: string[] }
+export interface ResourceProjection { authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: Record<string, unknown> | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; source_publication: Publication | null; selection: SelectionCapture | null; color: HighlightColor | null; embedded_refs: string[] }
 export interface MergeResult extends Corpus { projections: ResourceProjection[] }
 export interface FeedChange { server_seq: Counter; replica_id: string; change: Change }
 export interface ReplicaState { account_id: string; replica_id: string; command_seq: Counter; store_revision: Counter; lamport: Counter; server_cursor: Counter; format_revision: number; provisioning_complete: boolean }

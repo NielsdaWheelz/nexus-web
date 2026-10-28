@@ -20,6 +20,7 @@ import {
   type SelectionCapture,
   type SelectionNotice,
 } from "@/lib/documentReader/DocumentReader";
+import { sameAnchor } from "@/lib/documentReader/anchors";
 import { captureSelection, recolorHighlight, resizeHighlight, type SourceLabel } from "@/lib/documentReader/annotations";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import type { HighlightColor } from "@/lib/documentReader/model";
@@ -111,6 +112,7 @@ export function useAnnotationVerbs(input: {
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
+  const activatedMark = useRef<Mark | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
   const [colour, setColour] = useState<string | null>(null);
@@ -265,9 +267,10 @@ export function useAnnotationVerbs(input: {
   const editBounds = useCallback((id: string) => {
     const annotation = store.annotation(id);
     if (annotation?.placement.kind !== "placed") { setNotice({ tone: "Neutral", title: "this highlight isn’t shown in this version" }); return; }
-    const anchor = annotation.placement.anchor;
+    const chosen = activatedMark.current;
+    const anchor = chosen?.id === id && marks?.some(mark => mark.id === id && sameAnchor(mark.anchor, chosen.anchor)) ? chosen.anchor : annotation.placement.anchor;
     startBounds(id, anchor.kind === "text" ? { kind: "unit", unit: anchor.unit } : { kind: "page", page: anchor.page });
-  }, [startBounds, store]);
+  }, [marks, startBounds, store]);
   const remove = useCallback((id: string) => {
     const annotation = store.annotation(id);
     if (!annotation || !writing) return;
@@ -431,6 +434,7 @@ export function useAnnotationVerbs(input: {
       setSelectionIssue(null);
       setFocused(event.marks[0]?.id ?? null);
       const only = event.marks.length === 1 ? event.marks[0] : null;
+      activatedMark.current = only ?? null;
       if (!only) { if (event.marks.length) setMenu(event); return; }
       // library members' highlights are read-only server evidence.
       if (store.annotation(only.id)) composer.activate(only, event.identity, event.input !== "touch");
@@ -447,6 +451,7 @@ export function useAnnotationVerbs(input: {
     chooseMark(id) {
       const mark = menu?.marks.find((entry) => entry.id === id);
       if (mark && menu) {
+        activatedMark.current = mark;
         if (store.annotation(id)) composer.activate(mark, menu.identity, menu.input !== "touch");
         else openEvidence(id);
       }

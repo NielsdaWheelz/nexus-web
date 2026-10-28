@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, Highlight, ResourceEdge, ResourceViewState, XPostSource
+from nexus.db.models import Conversation, Highlight, ResourceEdge, ResourceViewState, XPostMedia
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
 from nexus.services import authored
@@ -424,9 +424,9 @@ def _lock_citation_media(db: Session, edges: Sequence[EdgeCreate | EdgeOut]) -> 
         return []
     post_ids = list(
         db.scalars(
-            select(XPostSource.media_id)
-            .where(XPostSource.media_id.in_(ids))
-            .order_by(XPostSource.media_id)
+            select(XPostMedia.media_id)
+            .where(XPostMedia.media_id.in_(ids))
+            .order_by(XPostMedia.media_id)
         )
     )
     for media_id in post_ids:

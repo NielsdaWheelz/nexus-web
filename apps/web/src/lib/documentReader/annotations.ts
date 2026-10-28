@@ -62,10 +62,10 @@ const mediaRef = (id: string) => `media:${id}`;
 const chars = (text: string) => [...text];
 
 /** The canonical owner of a mounted unit's offsets, or null for a public source unit. */
-function ownerOf(doc: TextDocument, mediaId: string, unit: TextUnit): { mediaId: string; generation: number | null; fragment: string } | null {
-  if (unit.xPost) return unit.xPost.owner ? { mediaId: unit.xPost.owner.media_id, generation: unit.xPost.owner.generation, fragment: unit.xPost.owner.fragment_id } : null;
-  if (doc.part) return { mediaId: doc.part.mediaId, generation: doc.part.generation, fragment: unit.id };
-  return { mediaId, generation: doc.generation, fragment: unit.id };
+function ownerOf(doc: TextDocument, mediaId: string, unit: TextUnit): { mediaId: string; generation: number | null; fragment: string; captureId: string | null } | null {
+  if (unit.xPost) return unit.xPost.owner ? { mediaId, generation: null, fragment: unit.xPost.owner.fragment_id, captureId: unit.xPost.owner.capture_id } : null;
+  if (doc.part) return { mediaId: doc.part.mediaId, generation: doc.part.generation, fragment: unit.id, captureId: null };
+  return { mediaId, generation: doc.generation, fragment: unit.id, captureId: null };
 }
 
 /** Every source whose highlights may paint on this publication. */
@@ -74,7 +74,7 @@ export function annotationSources(doc: ReaderDocument | null, mediaId: string): 
   const owners = new Set<string>();
   for (const unit of doc.units) {
     const owner = ownerOf(doc, mediaId, unit);
-    if (owner) owners.add(mediaRef(owner.mediaId));
+    if (owner) owners.add(owner.captureId ? `fragment:${owner.fragment}` : mediaRef(owner.mediaId));
   }
   return owners.size ? [...owners] : [mediaRef(doc.part?.mediaId ?? mediaId)];
 }
@@ -142,6 +142,12 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const exact = text.slice(anchor.start, anchor.end).join("");
   const prefix = text.slice(Math.max(0, anchor.start - CONTEXT), anchor.start).join("");
   const suffix = text.slice(anchor.end, anchor.end + CONTEXT).join("");
+  if (owner.captureId) {
+    const sourceRef = `fragment:${owner.fragment}`;
+    const locator: Locator = { type: "x_capture_offsets", capture_id: owner.captureId, fragment_id: owner.fragment, start_offset: anchor.start, end_offset: anchor.end, text_quote_selector: { exact, prefix, suffix } };
+    const passage = passageOf(unit.text, anchor.start, anchor.end);
+    return { sourceRef, passage: passage && { ...passage, source_ref: sourceRef }, selection: { publication: { kind: "x_capture", capture_id: owner.captureId }, locator, quote_exact: exact, prefix, suffix, passage_ref: null } };
+  }
   const offsets = { media_id: owner.mediaId, fragment_id: owner.fragment, start_offset: anchor.start + unit.sourceStartOffset,
     end_offset: anchor.end + unit.sourceStartOffset, media_kind: null, text_quote_selector: { exact, prefix, suffix } };
   const locator: Locator = doc.format === "epub" ? { type: "epub_fragment_offsets", section_id: null, ...offsets } : { type: "web_text_offsets", ...offsets };
@@ -155,7 +161,7 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
 export function sourceUnits(doc: TextDocument, mediaId: string, source: string): { unit: TextUnit; generation: number | null; fragment: string }[] {
   return doc.units.flatMap(unit => {
     const owner = ownerOf(doc, mediaId, unit);
-    return owner && owner.mediaId === source ? [{ unit, generation: owner.generation, fragment: owner.fragment }] : [];
+    return owner && owner.captureId === null && owner.mediaId === source ? [{ unit, generation: owner.generation, fragment: owner.fragment }] : [];
   });
 }
 
@@ -166,6 +172,13 @@ export function placeSelection(doc: ReaderDocument, mediaId: string, selection: 
     if (doc.kind !== "pdf" || locator.media_id !== mediaId) return null;
     return publication?.kind === "reader" && doc.generation !== null && publication.generation === doc.generation
       ? { kind: "placed", anchor: { kind: "pdf", page: locator.page_number, quads: locator.quads } } : { kind: "unlocated" };
+  }
+  if (doc.kind === "text" && locator.type === "x_capture_offsets") {
+    const unit = doc.units.find(candidate => candidate.xPost?.owner?.capture_id === locator.capture_id && candidate.xPost.owner.fragment_id === locator.fragment_id);
+    if (!unit) return null;
+    const text = chars(unit.text);
+    return locator.start_offset >= 0 && locator.end_offset <= text.length && locator.start_offset < locator.end_offset && text.slice(locator.start_offset, locator.end_offset).join("") === selection.quote_exact
+      ? { kind: "placed", anchor: { kind: "text", unit: unit.id, start: locator.start_offset, end: locator.end_offset } } : { kind: "unlocated" };
   }
   if (doc.kind !== "text" || !("media_id" in locator)) return null;
   const units = sourceUnits(doc, mediaId, locator.media_id);
@@ -211,10 +224,16 @@ export function locatePassage(doc: ReaderDocument, mediaId: string, passage: Pas
 } | null {
   const ownReading = passage.source_ref === mediaRef(mediaId);
   const { locator, publication, quote_exact } = passage.capture.value;
+  if (locator?.type === "x_capture_offsets") {
+    const placed = placeSelection(doc, mediaId, { locator, publication, quote_exact, prefix: passage.prefix, suffix: passage.suffix, passage_ref: `passage_anchor:${passage.anchor_id}` });
+    if (placed?.kind !== "placed" || placed.anchor.kind !== "text") return null;
+    const anchor = placed.anchor;
+    return { target: { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end }, inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
+  }
   const source = locator && "media_id" in locator ? mediaRef(locator.media_id) : canonicalSourceRef ?? passage.source_ref;
   if (!ownReading && !annotationSources(doc, mediaId).includes(source)) return null;
   const capturedGeneration = locator?.type === "pdf_page_geometry" && doc.kind === "pdf" ? doc.generation
-    : locator && "fragment_id" in locator && doc.kind === "text"
+    : locator && "media_id" in locator && "fragment_id" in locator && doc.kind === "text"
       ? sourceUnits(doc, mediaId, locator.media_id).find(entry => entry.fragment === locator.fragment_id)?.generation ?? null : null;
   if (publication?.kind === "reader" && capturedGeneration !== null && publication.generation === capturedGeneration &&
       locator && (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets" || locator.type === "pdf_page_geometry")) {
@@ -300,8 +319,16 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
     });
     const size = (anchor: MarkAnchor) => anchor.kind === "text" ? anchor.end - anchor.start
       : anchor.quads.reduce((sum, quad) => sum + Math.abs((quad.x2 - quad.x1) * (quad.y3 - quad.y1)), 0);
-    const marks = annotations.flatMap(annotation => annotation.placement.kind === "placed"
-      ? [{ id: annotation.id, color: annotation.color, anchor: annotation.placement.anchor }] : [])
+    const marks = annotations.flatMap(annotation => {
+      if (annotation.placement.kind !== "placed") return [];
+      const anchor = annotation.placement.anchor;
+      const locator = annotation.selection.locator;
+      if (doc?.kind === "text" && locator.type === "x_capture_offsets" && anchor.kind === "text") {
+        return doc.units.filter(unit => unit.xPost?.owner?.capture_id === locator.capture_id && unit.xPost.owner.fragment_id === locator.fragment_id)
+          .map(unit => ({ id: annotation.id, color: annotation.color, anchor: { ...anchor, unit: unit.id } }));
+      }
+      return [{ id: annotation.id, color: annotation.color, anchor }];
+    })
       .sort((a, b) => size(a.anchor) - size(b.anchor) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     state = { ...state, annotations, marks };
     for (const listener of listeners) listener();
