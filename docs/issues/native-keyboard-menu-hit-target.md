@@ -13,6 +13,12 @@ an actual layout/hit-target defect from automation-induced visual-viewport
 scrolling before changing product code. capture pre-click layout/visual viewport,
 scroll, button/bar rectangles and hit targets; preserve the original action.
 
-resolved when an ordinary native menu activation reaches saved-local status
-with gboard open and this journey completes offline restart/reconnect with exact
-canonical writing. no current native completion claim.
+later physical editor journeys passed, including `200436-ce8138582475` /
+session22008, after dismissing the keyboard before opening saved-local status.
+those results qualify the editor journey, not this keyboard-open menu action.
+no current product cause or resolution of the original observation is proved.
+
+resolved when an ordinary native menu activation with gboard open reaches
+saved-local status and the journey completes offline restart/reconnect with
+exact canonical writing. preserve the original action and measure its geometry;
+do not substitute keyboard dismissal or forced activation for this witness.
