@@ -112,6 +112,7 @@ WITH visible_media AS (
         m.processing_status::text AS processing_status, m.updated_at AS media_updated_at,
         rp.source_issues, COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
         msa.id AS attempt_id, msa.status AS attempt_status, msa.error_code AS attempt_error_code,
+        (msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL) AS has_import_lineage,
         msa.created_at AS attempt_created_at, msa.finished_at AS attempt_finished_at,
         msa.updated_at AS attempt_updated_at,
         CASE WHEN msa.source_type = ANY(CAST(:counted_source_types AS text[]))
@@ -173,7 +174,6 @@ WITH visible_media AS (
     ) live_jobs ON TRUE
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
     LEFT JOIN background_jobs holder ON holder.id = capacity.job_id
-    WHERE msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL
 ), media_classified AS (
     SELECT media_work.*,
         CASE WHEN attempt_id IS NULL THEN NULL
@@ -195,6 +195,8 @@ WITH visible_media AS (
             WHEN metadata_unfinished_count > 0 THEN 'Active'
             ELSE 'Complete' END AS metadata_classification
     FROM media_work
+), import_media AS (
+    SELECT * FROM media_classified WHERE has_import_lineage
 ), upload_sessions AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
         input_origin->>'kind' AS origin_kind, input_origin->>'source_url' AS capture_url,
@@ -211,7 +213,7 @@ WITH visible_media AS (
     UNION ALL
     SELECT 'media:' || media_id::text, NULL, media_id, NULL, NULL, NULL, NULL, NULL, NULL,
         NULL, NULL, NULL, NULL
-    FROM media_work w
+    FROM import_media w
     WHERE NOT EXISTS (SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id)
 ), import_work AS (
     SELECT r.ref_key, r.session_id, r.media_id, r.derived_state, r.origin_kind,
@@ -250,7 +252,7 @@ WITH visible_media AS (
         COALESCE(w.source_issue_count, 0) AS source_issue_count, w.source_issues,
         w.source_job_id, w.source_job_status, w.source_job_available_at, w.index_job_id,
         w.index_job_status, w.index_job_available_at, w.capacity_job_id, now() AS database_now
-    FROM import_refs r LEFT JOIN media_classified w ON w.media_id = r.media_id
+    FROM import_refs r LEFT JOIN import_media w ON w.media_id = r.media_id
     WHERE r.derived_state IS DISTINCT FROM 'Published' OR w.media_id IS NOT NULL
 ), obligations AS (
     SELECT ref_key, 'source' AS key, source_classification AS classification,
@@ -374,7 +376,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                 count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
                     AS needs_attention_count,
                 count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
-                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM media_work)
+                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM import_media)
                     + (SELECT count(*) FROM obligations
                        WHERE classification = 'Active' AND NOT has_live_job))::integer
                     AS unfinished_work_count
@@ -483,12 +485,18 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
 def read_media_search_obligation(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> ImportObligation | None:
-    """One media's search obligation as Imports shows it, for an owner presenting index
-    work in place (piece section preparation); None when the viewer has no such import."""
+    """A visible media's current index obligation, independent of import lineage.
+
+    Imports membership remains lineage-bound; section preparation observes the same
+    actual index work for every readable source, including sources outside Imports.
+    """
     row = (
         db.execute(
             text(
-                f"{_CTE} SELECT *, primary_key AS view_key FROM imports WHERE media_id = :media_id"
+                f"""{_CTE}
+                SELECT *, {_queue_code("index_job_error_code")} AS search_failure_code,
+                    now() AS database_now
+                FROM media_classified WHERE media_id = :media_id"""
             ),
             {**_params(viewer_id), "media_id": media_id},
         )

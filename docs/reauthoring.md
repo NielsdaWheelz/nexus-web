@@ -317,6 +317,15 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+contents and extracted works against `16ac7ae2b` adds 553 authored runtime lines
+(1,010 added, 457 deleted): media/workflow +480, reader web ui +5, wire schemas
++60 and import projection +8. one complete contents snapshot, contextual actions
+and explicit draft/retry owners replace the paginated piece catalogue, separate
+navigation read, duplicate cards and permanent preparation/pinning copy.
+range preview owns exact creation conflicts; index facts remain observable without
+changing import-history membership. generated wire, docs and disposable cases
+are excluded; earlier area totals retain their stated bases.
+
 contained-work form removal against `d4d108f2d` removes 19 authored runtime lines
 (13 added, 32 deleted): piece editor -5, piece commands -5, discovery -1,
 piece schemas -5 and database models -3. the classification control, enum,

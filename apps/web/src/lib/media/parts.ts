@@ -3,12 +3,9 @@ import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 
-export async function partPage(source: string, cursor: string | null, signal: AbortSignal) {
-  const body = await apiFetch<ApiJson<"/media/{source_media_id}/parts", "get">>(`/api/media/${source}/parts${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`, { signal });
-  return { ...body.page, rows: body.data };
-}
+export const sourceContents = (source: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{source_media_id}/parts", "get">>(`/api/media/${source}/parts`, { signal }).then(body => body.data);
+export const candidateDetail = (source: string, candidate: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{source_media_id}/part-candidates/{candidate_id}", "get">>(`/api/media/${source}/part-candidates/${candidate}`, { signal }).then(body => body.data);
 export const partDefinition = (id: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{media_id}/part", "get">>(`/api/media/${id}/part`, { signal }).then(body => body.data);
-export const partNavigation = (id: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{media_id}/navigation", "get">>(`/api/media/${id}/navigation`, { signal }).then(body => body.data);
 export const previewPart = (source: string, selection: Schema<"SectionSelection">, signal: AbortSignal) => apiFetch<ApiJson<"/media/{source_media_id}/parts/preview", "post">>(`/api/media/${source}/parts/preview`, { method: "POST", body: JSON.stringify({ selection }), signal }).then(body => body.data);
 export async function savePart(source: string, id: string | null, request: Schema<"PartCreate"> | Schema<"PartUpdate">) {
   const body = id === null
