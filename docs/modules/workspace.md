@@ -10,6 +10,27 @@ sheets are mounted.
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
 
+## failure containment
+
+the composition owner places each failure boundary around the capability that
+can stop independently. its fallback depends only on infrastructure outside the
+failed subtree. root entry failure must not require a provider inside that
+boundary; an inner pane failure must leave the account's writing owner and
+unrelated panes alive. rendering a fallback never creates replacement domain
+state or clears a stored workspace to conceal its failure.
+
+workspace defects must use the existing bounded, sanitized client report with
+failure scope and build identity. retain the initiating exception; exclude authored
+content and expected stale-build responses. a visible notice alone is neither
+diagnosis nor evidence that reload is safe. [unsaved work](#unsaved-work) owns
+the loss decision.
+
+the current outer fallback obtains its loss guard above the boundary and accepts
+an explicit account identity when account context is unavailable. workspace
+defects still have a [reporting gap](../issues/workspace-defects-have-no-client-report.md).
+separate root and inner compositions cost explicit wiring; they keep failure
+presentation from depending on the capability it is supposed to contain.
+
 ## persisted workspace sessions
 
 the workspace separates routes
@@ -955,8 +976,10 @@ restore navigation without discarded authored input.
 
 the same registry conditionally installs `beforeunload` and answers the android
 shell's cancelable `nexus:request-exit` event. false or suppressed confirmation
-refuses loss. browser-owned unload text and controls are intentional. memory can
-still be lost to process death or tab discard; nothing promises local durability.
+refuses loss. browser-owned unload text and controls are intentional. uncommitted
+memory-only input can still be lost to process death or tab discard. locally
+committed writing is durable and pending sync alone never requires a loss warning;
+[notes](notes.md#merge-and-local-commit) owns that acceptance boundary.
 canonical deletion is applied independently: refusal of later pane removal keeps
 unavailable changed input copyable and cannot undo the deletion.
 

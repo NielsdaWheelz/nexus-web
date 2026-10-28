@@ -268,6 +268,22 @@ ignores hidden geometry. mobile always uses ordinary flow.
 
 ## historical targets and arrival
 
+passage capture preserves owner, publication, quotation, surrounding context and
+extent proof. read-side identity lookup and durable materialization derive the
+same anchor identity from the proven owner and normalized quote/context;
+publication and locator evidence remain validation inputs, not identity fields.
+exact words alone cannot distinguish repeated occurrences.
+location resolution may prove where captured words land now; it never rewrites
+the historical words or treats stale offsets as present authority. genuine
+ambiguity stays explicit, even when that refuses an otherwise useful action.
+
+the current [server materialization gap](../issues/passage-materialization-drops-captured-context.md)
+drops captured context between those owners; browser authored linking preserves it.
+current citation reopening already
+uses captured evidence independently of a temporary index span's survival;
+[reindex preservation](../issues/reindex-invalidates-saved-evidence-targets.md)
+still needs separate qualification for generated graph facts and actual consumers.
+
 `POST /resource-items/source-targets/resolve` accepts one key: current `resource`,
 saved `reader_quote` message, `citation` edge, or saved `retrieval` id. historical
 keys resolve their frozen facts; none reconstruct history from today's target.

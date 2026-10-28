@@ -135,7 +135,8 @@ dependencies.
 | Process                | Code                                                  | Hosted                           | Role                                      |
 | ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
 | Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
-| Caddy edge             | `deploy/hetzner/Caddyfile`                            | **Hetzner VPS** (Docker Compose) | TLS termination and exact route proxying  |
+| api ingress            | `deploy/cloudflare/tunnel-config.json`                 | cloudflare edge and outbound tunnel | public https to the private caddy listener |
+| private api proxy      | `deploy/hetzner/Caddyfile`                              | hetzner vps (docker compose)      | private http reverse proxy to fastapi      |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
 | Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + owners  | **same Hetzner VPS**             | user-waiting queue work                    |
 | Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + owners  | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
@@ -189,68 +190,48 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 
 ---
 
-## 4. Architectural principles (the constitution)
+## 4. architectural principles (the constitution)
 
-These are the load-bearing rules that explain _why_ the code looks the way it
-does. Full normative text lives in [`rules/`](rules/index.md); this is the
-orientation summary.
+an operation has one declared meaning and an owning module that enforces it.
+acknowledgement names a committed fact; failure preserves the information needed
+to understand its outcome. a single user still has concurrent tabs, devices,
+workers and agent calls. those lifetimes require explicit contracts within the
+existing relational runtime and domain boundaries.
 
-**Layering & ownership** ([`rules/layers.md`](rules/layers.md),
-[`rules/codebase.md`](rules/codebase.md), [`rules/cleanliness.md`](rules/cleanliness.md)).
-Top to bottom: node Next middleware (silent entry resolution + CSP) →
-the session protocol (`apps/web/src/lib/auth/session.ts`, the _only_
-verified-session authorization boundary, over the one Supabase boundary
-`apps/web/src/lib/supabase/`) → Next `/api/*` routes (dumb proxy, no business logic) →
-FastAPI middleware (JWT verify, request-id, viewer injection) → FastAPI route
-handlers (validate input, call one service, shape the response) → **services**
-(`python/nexus/services/`, all business logic, no HTTP/framework types,
-dependencies passed as explicit parameters never globals) → models
-(`db/models.py`). One capability has one primary form; no barrels/re-exports;
-side effects only in entrypoints.
+this overview is an owner map, not a second rulebook. binding repository decisions
+in [AGENTS.md](../AGENTS.md) and [local rules](local-rules/index.md) take precedence
+over conflicting shared guidance. [shared rules](rules/index.md) retain their
+upstream ownership. wire absence, identities, write retries and database
+concurrency must not be inferred from historical summaries here.
 
-**Error vs defect** ([`rules/errors.md`](rules/errors.md),
-[`rules/correctness.md`](rules/correctness.md)). _Errors_ are expected, modelled
-failures with typed codes. _Defects_ are broken invariants ("should never
-happen") — they are **never** turned into UI states, retryable branches, or
-persisted status fields; observing one in production triggers a code change. No
-`T | null`/`Optional` in service APIs to represent classifiable absence — classify
-immediately as a typed error or a defect. Parse at the boundary, trust inward.
-Branch exhaustively on finite value sets (`assert_never`); no bare
-`except Exception` swallowing.
+| concern | authoritative owner |
+| --- | --- |
+| wire and write conventions | [repository decisions](../AGENTS.md), [typed wire](local-rules/typed-wire.md), and each command's module contract |
+| independent failure containment | [workspace](modules/workspace.md#failure-containment) |
+| query work and cancellation | [search](modules/search.md#work-bounds) |
+| aggregate connection and memory capacity | [production composition](../deployment.md#capacity-contract) |
+| writing durability and replication | [notes](modules/notes.md#merge-and-local-commit) |
+| resource lifetime versus relationships | [resource graph](modules/resource-graph.md#ordinary-links) |
+| captured evidence and current source location | [resource references](modules/resource-references.md#historical-targets-and-arrival) |
+| outline occurrence order and command ownership | [notes interaction](modules/notes.md#outline-interaction) |
+| visual continuity and feedback | [visual system](modules/visual-system.md#design-intent) |
+| agent authority, provenance and reversal | [model tools](modules/model-tools.md) |
+| verification | [local verification contract](local-rules/testing-standards.md) |
 
-**Transport is a dumb pipe** ([`rules/modules/transport.md`](rules/modules/transport.md)).
-Application work that must survive a disconnect is decoupled from the transport —
-which is exactly why a chat answer is a durable `ChatRun` executed by the worker
-and merely _tailed_ over SSE, not driven by the HTTP connection.
+accepted contracts bind every new or changed behavior. existing violations remain
+explicit issue records, repaired incrementally by consequence and the scope of
+current work; an unrelated change does not require a repository-wide rewrite.
+approved replacements cut over coherently at their owning boundary. proposals
+remain nonbinding until accepted. review enforces these distinctions; documentation
+does not itself establish implementation or verification.
 
-**Database** ([`rules/database.md`](rules/database.md)). UUID `id` PKs (never
-exposed to users), `timestamptz` with `now()` defaults, right-open `[start, end)`
-intervals. **No `ON DELETE CASCADE`** — cleanup is explicit in application code.
-**No `INSERT ... ON CONFLICT` upserts** and **no `rowcount`-driven control flow**:
-do an explicit `SELECT` then `INSERT/UPDATE/DELETE`, safe under SERIALIZABLE.
-The database clock (`now()` in SQL) is authoritative, not the app clock.
-
-**Concurrency** ([`rules/concurrency.md`](rules/concurrency.md)). All backend code
-may run concurrently on multiple servers. SERIALIZABLE handles DB-only races —
-**don't** layer `SELECT FOR UPDATE`/advisory locks on top of it. Multi-system
-mutation ordering is the reverse of observation order: **create** external system
-first then local DB; **delete** local DB first then external system.
-
-**Identities** ([`rules/keys-and-identities.md`](rules/keys-and-identities.md)).
-`*Id` = private meaningless UUID identity (never exposed outward); `*Key` =
-meaningful identity; `*Handle` = outward opaque sealed identity; `*Token`/`*ApiKey`
-= outward bearer authority; `*Ref` = lower-layer/provider pointers.
-
-**Retries, polling, timing** ([`rules/retries.md`](rules/retries.md),
-[`rules/polling.md`](rules/polling.md), [`rules/timing.md`](rules/timing.md)).
-Server-side retries are bounded (infra ≈30s, external services ≈5min); retry
-exhaustion is a defect unless explicitly handled. Prefer push/event-driven over
-polling; unavoidable polling carries a `justify-polling` tag. Schedules are
-self-bounding (cadence + termination in one definition).
-
-The universal escape hatch is the inline `justify-*` tag (`justify-defect`,
-`justify-concurrency`, `justify-polling`, `justify-ignore-error`, etc.) — any
-deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md).
+module docs distinguish current behavior from approved replacements and link
+unmet requirements to individual [issue records](issues/). those records bind
+evidence to its source/deployment and observation limits; a historical diagnosis
+does not establish a current defect. proposed
+[reproducer retention](issues/critical-behavior-reproducer-retention-policy.md)
+does not change the verification contract. contextual
+[reading ideas](scriptorium.md#contextual-reading-proposals) remain proposals.
 
 ---
 

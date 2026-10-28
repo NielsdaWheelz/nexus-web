@@ -26,6 +26,30 @@ the shared [resource item](resource-references.md). consumers do not reconstruct
 targets from snippets or hrefs. browser responses have no score or second locator
 schema. wire schemas are generated; see [typed wire](../local-rules/typed-wire.md).
 
+## work bounds
+
+ranking, authorization and the amount of work are separate contracts. a response
+limit bounds displayed results, not candidate materialization, database memory
+or elapsed time. preserve the accepted owner grouping, best evidence and tie
+rules when changing execution. an early candidate cap that changes winners is
+a ranking decision, not a transparent optimization. hydrate selected results
+without broadening the ranked work or copying full bodies into candidate sets.
+
+the caller's original deadline covers provider transport, admission and database
+work. cancellation stops subsequent local requests and retries and joins cleanup;
+cleanup may finish after the response deadline. running synchronous provider work
+in a thread does not give it the awaiting task's cancellation lifetime. strict
+retrieval's remaining [embedding gap](../issues/tool-search-embedding-outlives-deadline.md)
+must retain its own declared fallback semantics when repaired.
+
+[production composition](../../deployment.md#capacity-contract) owns aggregate
+capacity. query qualification uses representative data and warmed connections;
+fewer simultaneous queries or longer timeouts alone do not establish bounded
+work. current gaps are [aggregate memory qualification](../issues/production-database-connection-budgets-implicit.md)
+and [background admission occupancy](../issues/production-search-admission-contention.md).
+slower background refresh is an explicit cost of foreground progress; useful
+background completion remains required.
+
 ## browser discovery
 
 `GET /search/preview` requires `phase=direct|lexical|hybrid`. each returns
@@ -251,27 +275,32 @@ cursor rejection requires explicit page-one refresh, never an automatic restart.
 browser routes own one native async operation/session, raced against disconnect
 and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
-deadline. cancellation joins cleanup. api caps are direct400/lexical1500/hybrid3000
-ms; client and bff whole-read caps are1000/2250/3750 ms, including body/decode and
+deadline. cancellation joins cleanup. current enforced api caps are
+direct400/lexical1500/hybrid5000 ms; client and bff whole-read caps are
+1000/2250/5750 ms, including body/decode and
 the complete prefix walk. search has no automatic retries. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
 cancellation; cleanup may outlast it, while the browser cap bounds waiting.
-provisional warm release p95 budgets are direct500/keyword2000/related4000 ms from
+historical qualification targets are being reconsidered; no replacement numeric
+deadline has been approved. the previous provisional warm release
+p95 budgets were direct500/keyword2000/related4000 ms from
 the last keystroke through paint, including settling and transport. existing stricter
 failure cutoffs remain distinct. keyword delivery uses the earliest validated
 complete lexical or hybrid response reflected in results; record phase failures
 separately. hybrid success proves neither lexical-request latency nor reliability.
 preserve faster regression baselines and historical
-verdicts; extending a timeout is not a speed improvement. the provisional
-cold-session first-action bounds are keyword3000/related4000ms from the last
+verdicts; extending a timeout is not a speed improvement. the previous provisional
+cold-session first-action bounds were keyword3000/related4000ms from the last
 keystroke through paint, after normal startup and with restoration traffic retained,
 without a cold-percentile or per-query empty-cache promise.
 publication overlap needs its own measured finite bound; recurrent pressure is
 ordinary use.
 
-occasional restored-pane related failure during publication is accepted when
-useful results remain visible, failure is explicit and retry remains available.
-this does not waive active after-input failure or change any deadline.
+the previous rollout accepted occasional restored-pane related failure during
+publication when useful results remained visible, failure was explicit and retry
+remained available.
+that historical allowance does not approve a current failure mode or change any
+deadline; revised acceptance requires an explicit owner decision.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the
