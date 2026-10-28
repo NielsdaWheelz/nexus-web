@@ -76,7 +76,7 @@ export default function ResourceIndexRow({
     case "prose": {
       const literal = body.kind === "passage" ? body.exact.text : body.excerpt.text;
       if (source?.title?.trim()) title = source.title.trim();
-      else if (!literal || literal.startsWith(item.label)) {
+      else if (literal.startsWith(item.label)) {
         title = typeLabel;
         titleProvidesType = true;
       } else title = item.label;
