@@ -41,7 +41,6 @@ export function truncatePaneSearchQuery(query: string): string {
 export type PaneQuery =
   | {
       readonly kind: "Controls";
-      readonly label: string;
       readonly content: ReactNode;
       readonly focusInput: () => boolean;
     }

@@ -286,7 +286,6 @@ export default function BrowsePaneBody() {
   const queryControls = useMemo(
     () => query === null ? undefined : {
       kind: "Controls" as const,
-      label: "Search across sources",
       content: <BrowseToolbar query={query} inputRef={inputRef} onQuery={onQuery} />,
       focusInput,
     },

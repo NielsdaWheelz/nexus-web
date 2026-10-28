@@ -198,7 +198,6 @@ export default function PodcastsPaneBody() {
       : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
-    label: "Filter followed podcasts",
     focusInput,
     content: <PaneQueryToolbar
       inputRef={inputRef}
