@@ -1,7 +1,7 @@
 """piece definitions, candidate decisions and source lifetime admission.
 
 creates replay the original normalized accepted selector before current navigation
-admission; mutable labels never define identity. updates set absolute values and
+admission; mutable titles never define identity. updates set absolute values and
 accept an already-desired result before version refusal. candidate bindings never
 change identity. commands own retry/commit; publication helpers compose in the
 caller's existing transaction. every writer takes the complete source barrier,
@@ -50,7 +50,6 @@ from nexus.schemas.media_parts import (
     PartCreate,
     PartDefinition,
     PartFinding,
-    PartForm,
     PartListRow,
     PartPage,
     PartPreview,
@@ -420,7 +419,6 @@ def publish_part(
     part_id: UUID,
     extent: ProvedPartSelection,
     title: str,
-    form: PartForm | None,
     candidate: MediaPartCandidate,
     decision: Literal["accepted"] | None,
 ) -> PartReceipt:
@@ -463,7 +461,7 @@ def publish_part(
     )
     if inserted is None:
         raise _conflict("identity_conflict", "this piece id is already in use")
-    part = MediaPart(media_id=part_id, source_media_id=extent.source_media_id, version=1, form=form)
+    part = MediaPart(media_id=part_id, source_media_id=extent.source_media_id, version=1)
     _set_extent(part, extent)
     db.add(part)
     db.add(ReaderPublication(id=new_uuid7(), media_id=part_id, generation=1, source_issues=[]))
@@ -602,7 +600,6 @@ def create_part(
             part_id=request.id,
             extent=extent,
             title=request.title,
-            form=request.form,
             candidate=_candidate(
                 db,
                 source_media_id=extent.source_media_id,
@@ -661,7 +658,7 @@ def update_part(
             extent.end_cut.path,
             extent.end_cut.edge,
         )
-        changed = media.title != request.title or part.form != request.form or body_changed
+        changed = media.title != request.title or body_changed
         if changed:
             require_part_definition_version(
                 db, media_id=media_id, expected_version=request.expected_version
@@ -669,7 +666,7 @@ def update_part(
             if extent is not None:
                 _extent_conflict(db, extent, except_id=media_id)
                 _set_extent(part, extent)
-            media.title, part.form = request.title, request.form
+            media.title = request.title
             if body_changed:
                 publication = db.scalar(
                     select(ReaderPublication)
@@ -786,7 +783,6 @@ def decide_candidate(
                     part_id=request.part_id,
                     extent=extent,
                     title=finding.title,
-                    form=finding.form,
                     candidate=candidate,
                     decision="accepted",
                 )
@@ -960,7 +956,6 @@ def get_part_definition(db: Session, *, viewer_id: UUID, media_id: UUID) -> Part
             ),
         ),
         title=media.title,
-        form=part.form,
         version=part.version,
         body_generation=_receipt(db, part).body_generation,
         selection=selection,

@@ -1,7 +1,7 @@
 # contained work metadata release
 
 release the [piece bibliography contract](../modules/media-metadata.md) with
-migration `0321` after `0320`. this record owns release operations, not
+migration `0322` after form removal `0321`. this record owns release operations, not
 implementation proof.
 
 - census child edition scalars, child publisher credits and unpublished candidate

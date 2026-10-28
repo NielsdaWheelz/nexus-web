@@ -8409,8 +8409,6 @@ export interface components {
         };
         /** PartCreate */
         PartCreate: {
-            /** Form */
-            form: ("essay" | "poem" | "letter" | "short_story" | "section") | null;
             /**
              * Id
              * Format: uuid
@@ -8426,8 +8424,6 @@ export interface components {
             body_generation: number;
             capabilities: components["schemas"]["PartCapabilities"];
             extent: components["schemas"]["NavigationTextRangeOut"];
-            /** Form */
-            form: ("essay" | "poem" | "letter" | "short_story" | "section") | null;
             /**
              * Media Id
              * Format: uuid
@@ -8478,8 +8474,6 @@ export interface components {
             contributors: components["schemas"]["PartContributorSlice"][] | null;
             /** Evidence */
             evidence: components["schemas"]["PartEvidence"][];
-            /** Form */
-            form: ("essay" | "poem" | "letter" | "short_story" | "section") | null;
             /** Section Ids */
             section_ids: string[];
             /** Title */
@@ -8590,8 +8584,6 @@ export interface components {
         PartUpdate: {
             /** Expected Version */
             expected_version: number;
-            /** Form */
-            form: ("essay" | "poem" | "letter" | "short_story" | "section") | null;
             selection: components["schemas"]["SectionSelection"] | null;
             /** Title */
             title: string;

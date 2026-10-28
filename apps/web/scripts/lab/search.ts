@@ -202,7 +202,7 @@ if mode == "seed":
     await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=create_part", file=sys.stderr, flush=True)
     with factory() as db:
-        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece",form=None))
+        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece"))
         assert receipt.media_id==part
     print("seed_stage=await_partition_text", file=sys.stderr, flush=True)
     await_current_text(source,witness=True,preparation=preparation)

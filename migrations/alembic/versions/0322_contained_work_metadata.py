@@ -11,8 +11,8 @@ from datetime import datetime
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0321"
-down_revision: str | Sequence[str] | None = "0320"
+revision: str = "0322"
+down_revision: str | Sequence[str] | None = "0321"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

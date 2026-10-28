@@ -8,13 +8,13 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-contained-work bibliography against `d4d108f2d`: +247 authored runtime lines
-(413 added, 166 deleted): web +49, python +198. independent piece facts,
+contained-work bibliography against `16ac7ae2b`: +246 authored runtime lines
+(412 added, 166 deleted): web +48, python +198. independent piece facts,
 source-owned edition facts and shared contributor admission replace copied
 bibliography, retarget preparation and duplicated result rendering. metadata
 observation refreshes all changed facts; versioned piece drafts survive conflicts.
 shared provider failures let research continue from available evidence. migration
-0321 adds 171 lines separately; generated wire, locks, docs and disposable cases
+0322 adds 171 lines separately; generated wire, locks, docs and disposable cases
 are excluded. earlier counts retain their bases.
 
 local-first cutover at `1ed35d40b` against main `d71cfb1e4`: -2,803 authored
@@ -325,6 +325,13 @@ the historical counting scripts were in `nexus-web-campaign-artifacts/2026-10-18
 since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counting #626, #629 and #632, stacked into #633): +36,905 authored lines net and +41.9k docs, against the campaign's -47,149 in 48. after #641 theirs are 52 (+28,661) and the campaign's 18 (-7,703): the rise since, +20,958.
 
 ## areas
+
+contained-work form removal against `d4d108f2d` removes 19 authored runtime lines
+(13 added, 32 deleted): piece editor -5, piece commands -5, discovery -1,
+piece schemas -5 and database models -3. the classification control, enum,
+schema fields and publication/update plumbing are deleted. generated wire,
+migration, retained search caller and documentation are outside this count;
+earlier area totals retain their stated bases.
 
 playback queue adds 2,692 authored runtime lines against `51fc75cd9`
 (3,443 added, 751 deleted), including new modules. it removes browser descriptor

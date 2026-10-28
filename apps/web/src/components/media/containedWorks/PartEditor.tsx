@@ -19,7 +19,7 @@ import styles from "./parts.module.css";
 
 type Navigation = Schema<"MediaNavigationOut">;
 type Draft = {
-  title: string; first: string; last: string; form: Schema<"PartCreate">["form"] | null;
+  title: string; first: string; last: string;
   baseline: string; request: { id: string | null; body: Schema<"PartCreate"> | Schema<"PartUpdate"> } | null;
   definition: Schema<"PartDefinition"> | null; conflict: boolean; saved: Schema<"PartDefinition"> | null;
   busy: boolean; error: string | null;
@@ -38,15 +38,14 @@ export default function PartEditor({ source, initialSection, navigation, page, d
   readonly onClose: () => void; readonly onSaved: () => void;
 }) {
   const initialTitle = definition?.title ?? navigation?.sections.find(section => section.section_id === initialSection)?.label ?? "";
-  const initialForm = definition?.form ?? null;
   const firstSelection = definition?.selection?.section_ids[0] ?? initialSection;
   const lastSelection = definition?.selection?.section_ids.at(-1) ?? initialSection;
-  const initial = { title: initialTitle, first: firstSelection, last: lastSelection, form: initialForm };
+  const initial = { title: initialTitle, first: firstSelection, last: lastSelection };
   const state = useResourceDraft<Draft>(definition === null ? `piece:${source}:${initialSection}` : `piece:${definition.media_id}`, () => ({
     ...initial, baseline: JSON.stringify(initial), definition, conflict: false, saved: null, request: null, busy: false, error: null,
-  }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last, form: value.form }) !== value.baseline,
+  }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last }) !== value.baseline,
     unconfirmed: value.request !== null, stopsBrowserWork: false }));
-  const { title, first, last, form, busy, request, error, conflict, saved } = state.value;
+  const { title, first, last, busy, request, error, conflict, saved } = state.value;
   const guard = useWorkGuard();
   const bounds = navigation !== null && page !== null && page.navigation_key !== null && page.source_generation !== null;
   const choices = page?.section_choices ?? [];
@@ -120,8 +119,8 @@ export default function PartEditor({ source, initialSection, navigation, page, d
     const current = state.read();
     if (current.busy || current.conflict || current.title.trim() === "" || bounds && currentPreview === null && current.request === null) return;
     const sent = current.request ?? { id: definition?.media_id ?? null, body: definition === null
-      ? { id: crypto.randomUUID(), title: current.title, form: current.form, selection: selector! }
-      : { expected_version: current.definition!.version, title: current.title, form: current.form, selection: unchangedBounds ? null : selector } };
+      ? { id: crypto.randomUUID(), title: current.title, selection: selector! }
+      : { expected_version: current.definition!.version, title: current.title, selection: unchangedBounds ? null : selector } };
     const account = captureApiAccount();
     state.set(value => ({ ...value, request: sent, busy: true, error: null }));
     try {
@@ -129,10 +128,10 @@ export default function PartEditor({ source, initialSection, navigation, page, d
       if (!isCurrentApiAccount(account)) return;
       state.set(value => ({ ...value, request: null, busy: false,
         definition: value.definition !== null && "expected_version" in sent.body
-          ? { ...value.definition, version: receipt.version, title: sent.body.title, form: sent.body.form,
+          ? { ...value.definition, version: receipt.version, title: sent.body.title,
               selection: sent.body.selection ?? value.definition.selection }
           : value.definition,
-        baseline: JSON.stringify({ title: value.title, first: value.first, last: value.last, form: value.form }) }));
+        baseline: JSON.stringify({ title: value.title, first: value.first, last: value.last }) }));
       onSaved();
       onClose();
     } catch (failure) {
@@ -152,10 +151,6 @@ export default function PartEditor({ source, initialSection, navigation, page, d
     onDismissRequest={() => guard.confirmLoss({ scopes: [], ownerIds: [state.owner] }) ? "accepted" : "blocked"}>
     <div className={styles.editor}>
       <label>title<Input value={title} disabled={blocking} onChange={event => state.set(value => ({ ...value, title: event.target.value }))} /></label>
-      <SelectField layout="Stacked" label="form" value={form ?? ""} disabled={blocking}
-        onChange={event => { const form = event.target.value; state.set(value => ({ ...value, form: (["essay", "poem", "letter", "short_story", "section"] as const).find(candidate => candidate === form) ?? null })); }}>
-        <option value="">unknown</option>{["essay", "poem", "letter", "short_story", "section"].map(form => <option key={form} value={form}>{form.replace("_", " ")}</option>)}
-      </SelectField>
       {bounds ? <>
         <SelectField layout="Stacked" label="first section" value={first} disabled={blocking} onChange={event => {
           const first = event.target.value; state.set(value => ({ ...value, first, last: first }));
@@ -174,7 +169,6 @@ export default function PartEditor({ source, initialSection, navigation, page, d
       {conflict && saved ? <section aria-label="current saved piece">
         <h3>current saved piece</h3>
         <p>title: {saved.title}</p>
-        <p>form: {saved.form?.replace("_", " ") ?? "unknown"}</p>
         <p>extent: {saved.selection?.section_ids.map(id => navigation?.sections.find(section => section.section_id === id)?.label ?? "section no longer available").join(" – ") ?? "saved passage"}</p>
         <Button disabled={busy || bounds && currentPreview === null} onClick={() => void keepChanges()}>keep my changes</Button>
       </section> : conflict ? <Button onClick={() => void loadSaved()}>retry loading current piece</Button> : null}
