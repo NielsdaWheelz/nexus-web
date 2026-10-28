@@ -79,7 +79,11 @@ export default function ResourceIndexRow({
       else if (literal.startsWith(item.label)) {
         title = typeLabel;
         titleProvidesType = true;
-      } else title = item.label;
+      } else {
+        title = item.label;
+        // The API supplies a type-only label for an empty prose note.
+        titleProvidesType = body.kind === "prose" && !literal && parsed.scheme === "note_block";
+      }
       break;
     }
     case "reference": title = item.label; break;
