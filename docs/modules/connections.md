@@ -59,6 +59,14 @@ wins. descendants, aliases and captured citation targets create no reader roots.
 current resource presentation is hydrated in batches; primary annotations carry
 their complete canonical rich body and body version.
 
+native evidence retains the current reading's scope. generic graph refs first
+resolve their source target in that reading; only a matching source with a
+located complete passage selects its bounded presentation and destination.
+other refs retain their own authorized current presentation. local placement
+is projected separately from the same source-target result; missing local
+geometry never makes a readable foreign resource unavailable. historical
+connection snapshots do not supply current root bodies.
+
 root placement uses only that resource's own current local extent. whole resources
 and other-source passages have no local extent; rejected local locations remain
 visible as unavailable. placed roots precede `unanchored connections`, whose
