@@ -114,6 +114,7 @@ export default function ContributorFilter({
               key={item.handle}
               className={styles.suggestion}
               onClick={() => {
+                inputRef.current?.focus({ preventScroll: true });
                 onAdd(item);
                 setQuery("");
               }}

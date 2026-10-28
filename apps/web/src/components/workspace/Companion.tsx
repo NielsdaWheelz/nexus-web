@@ -26,6 +26,8 @@ import { FindResults } from "@/components/find/FindBar";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
+import { TabList } from "@/components/ui/Tabs";
+import compact from "@/components/ui/CompactChrome.module.css";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import type { FindController } from "@/lib/find/useFind";
 import {
@@ -460,51 +462,28 @@ export default function Companion(props: {
     }
   };
   const header = (requestDismiss: () => void) => (
-    <header ref={headerRef} className={styles.header}>
-      {companion ? (
-        <div
-          className={styles.tabs}
-          role="tablist"
+    <header ref={headerRef} className={`${styles.header} ${compact.compact}`}>
+      {companion && activeId !== null ? (
+        <TabList
+          value={activeId}
           aria-label="Secondary surfaces"
-        >
-          {tabs.map(({ id }, index) => {
+          className={styles.tabs}
+          onSelect={select}
+          items={tabs.map(({ id }) => {
             const Icon = ICONS[id];
-            const selected = id === activeId;
-            return (
-              <button
-                key={id}
-                ref={(element) => {
-                  if (element) tabRefs.current.set(id, element);
-                  else tabRefs.current.delete(id);
-                }}
-                id={`${baseId}-${id}-tab`}
-                type="button"
-                role="tab"
-                aria-controls={`${baseId}-${id}-panel`}
-                aria-selected={selected}
-                tabIndex={selected ? 0 : -1}
-                className={styles.tab}
-                onClick={() => select(id)}
-                onKeyDown={(event) => {
-                  const last = tabs.length - 1;
-                  const byKey: Partial<Record<string, number>> = {
-                    ArrowRight: index === last ? 0 : index + 1,
-                    ArrowLeft: index === 0 ? last : index - 1,
-                    Home: 0,
-                    End: last,
-                  };
-                  const next = byKey[event.key];
-                  if (next === undefined) return;
-                  event.preventDefault();
-                  select(tabs[next]!.id);
-                }}
-              >
-                <Icon size={16} aria-hidden="true" />
-                <span className={styles.tabLabel}>{title(id)}</span>
-              </button>
-            );
+            return {
+              value: id,
+              id: `${baseId}-${id}-tab`,
+              panelId: `${baseId}-${id}-panel`,
+              label: title(id),
+              icon: <Icon size={16} aria-hidden="true" />,
+              ref: (element: HTMLButtonElement | null) => {
+                if (element) tabRefs.current.set(id, element);
+                else tabRefs.current.delete(id);
+              },
+            };
           })}
-        </div>
+        />
       ) : (
         <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
       )}
@@ -521,7 +500,6 @@ export default function Companion(props: {
         iconOnly
         aria-label={activeId ? `close ${title(activeId)}` : "close inspector"}
         data-companion-close="true"
-        className={styles.close}
         onClick={requestDismiss}
         icon={<X size={15} aria-hidden="true" />} />
     </header>

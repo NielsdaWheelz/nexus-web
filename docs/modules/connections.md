@@ -85,6 +85,17 @@ body stays empty. apparatus producers trim canonical text, so the bounded head
 retains this empty/nonempty distinction. source details apply the same quote
 contract; location reasons do not grant or deny insertion.
 
+the reader exposes four quiet native checkbox facets below its follow/all radio
+choice. controls reflow by companion width. counts are exact only when every
+contributing source is complete: highlights require local annotations and remote
+evidence; links require local links and remote evidence; citations and librarian
+links require remote evidence. a ready remote map is complete only at ready/empty,
+not partial. otherwise the count is a dash described as unavailable, incomplete
+or loading, in that precedence. partial totals never masquerade as exact zero or
+a lower bound. available content survives another source loading or failing.
+all types off offers show-all regardless of completeness; resetting focuses the
+first checkbox. incomplete empty inventories cannot claim global absence.
+
 facets/counts cover distinct direct roots only and can overlap. native highlights
 and source references add their own facets; ordinal citations add citations;
 assistant/discovery facts add librarian links (`machine_links`); other facts add

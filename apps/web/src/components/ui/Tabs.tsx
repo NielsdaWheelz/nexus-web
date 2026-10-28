@@ -1,138 +1,64 @@
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useId,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import type { ReactElement, ReactNode, Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
-import styles from "./Tabs.module.css";
+import selection from "./Selection.module.css";
 
-type TabsContextValue = {
-  value: string;
-  onValueChange: (next: string) => void;
-  idFor: (value: string) => string;
+type TabItem<V extends string> = {
+  readonly value: V;
+  readonly id: string;
+  readonly panelId: string;
+  readonly label: ReactNode;
+  readonly icon?: ReactElement;
+  readonly ref?: Ref<HTMLButtonElement>;
 };
 
-const TabsContext = createContext<TabsContextValue | null>(null);
+type TabListProps<V extends string> = {
+  readonly value: V | null;
+  readonly items: readonly TabItem<V>[];
+  readonly onSelect: (value: V) => void;
+  readonly "aria-label": string;
+  readonly className?: string;
+};
 
-function useTabs(): TabsContextValue {
-  const context = useContext(TabsContext);
-  if (!context) throw new Error("Tabs parts must be used inside <Tabs>");
-  return context;
-}
-
-/**
- * Segmented tabs, the aria tabs pattern: arrow keys move focus and select,
- * wrapping; each panel is named by its tab.
- */
-export function Tabs({
-  value,
-  onValueChange,
-  className,
-  children,
-}: {
-  value: string;
-  onValueChange: (next: string) => void;
-  className?: string;
-  children: ReactNode;
-}) {
-  const base = useId();
-  const idFor = (tab: string) => `${base}-${tab.replace(/\W/g, "_")}`;
+/** Controlled tab selection; the host owns panel lifetime and guarded focus. */
+export function TabList<V extends string>({
+  value, items, onSelect, "aria-label": label, className,
+}: TabListProps<V>) {
   return (
-    <TabsContext value={{ value, onValueChange, idFor }}>
-      <div className={cx(styles.root, className)}>{children}</div>
-    </TabsContext>
-  );
-}
-
-export function TabsList({
-  children,
-  "aria-label": label,
-}: {
-  children: ReactNode;
-  "aria-label": string;
-}) {
-  const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    const tabs = [
-      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        '[role="tab"]',
-      ),
-    ];
-    const next = nextRovingIndexForKey({
-      key: event.key,
-      currentIndex: Math.max(
-        0,
-        tabs.findIndex((tab) => tab === document.activeElement),
-      ),
-      itemCount: tabs.length,
-      orientation: "horizontal",
-      wrap: true,
-      homeEnd: false,
-    });
-    if (next === null) return;
-    event.preventDefault();
-    tabs[next]?.focus();
-    tabs[next]?.click();
-  };
-  return (
-    <div
-      role="tablist"
-      aria-label={label}
-      className={styles.list}
-      onKeyDown={move}
-    >
-      {children}
-    </div>
-  );
-}
-
-export function TabsTrigger({
-  value,
-  children,
-  "aria-label": label,
-}: {
-  value: string;
-  children: ReactNode;
-  "aria-label"?: string;
-}) {
-  const tabs = useTabs();
-  const selected = tabs.value === value;
-  return (
-    <button
-      type="button"
-      role="tab"
-      id={tabs.idFor(value)}
-      aria-label={label}
-      aria-selected={selected}
-      tabIndex={selected ? 0 : -1}
-      className={cx(styles.trigger, selected && styles.selected)}
-      onClick={() => tabs.onValueChange(value)}
-    >
-      {children}
-    </button>
-  );
-}
-
-export function TabsContent({
-  value,
-  children,
-}: {
-  value: string;
-  children: ReactNode;
-}) {
-  const tabs = useTabs();
-  if (tabs.value !== value) return null;
-  return (
-    <div
-      role="tabpanel"
-      aria-labelledby={tabs.idFor(value)}
-      className={styles.content}
-    >
-      {children}
+    <div role="tablist" aria-label={label} className={className}>
+      {items.map((item, index) => (
+        <button
+          key={item.value}
+          ref={item.ref}
+          type="button"
+          role="tab"
+          id={item.id}
+          aria-controls={item.panelId}
+          aria-selected={value === item.value}
+          tabIndex={value === item.value ? 0 : -1}
+          className={cx(selection.surface, selection.target, value === item.value && selection.selected)}
+          onClick={() => onSelect(item.value)}
+          onKeyDown={(event) => {
+            if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 ||
+              event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+            const next = nextRovingIndexForKey({
+              key: event.key,
+              currentIndex: index,
+              itemCount: items.length,
+              orientation: "horizontal",
+              wrap: true,
+            });
+            if (next === null) return;
+            event.preventDefault();
+            onSelect(items[next]!.value);
+          }}
+        >
+          {item.icon ? <span aria-hidden="true">{item.icon}</span> : null}
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }

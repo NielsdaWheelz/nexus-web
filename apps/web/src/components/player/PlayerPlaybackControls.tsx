@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
+import ChoiceField from "@/components/ui/ChoiceField";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -118,14 +119,8 @@ export function SkipSilenceField({
   readonly onChange: (checked: boolean) => void;
   readonly label: string;
 }) {
-  const helpId = useId();
-  return <label className={styles.silenceField}>
-    <span className={styles.switch}>
-      <input type="checkbox" aria-label={label} aria-describedby={helpId} checked={checked} onChange={event => onChange(event.currentTarget.checked)} />
-      <span>{label}</span>
-    </span>
-    <span id={helpId} className={styles.eyebrow}>shorten quiet gaps between speech.</span>
-  </label>;
+  return <ChoiceField label={label} checked={checked} onChange={onChange}
+    description="shorten quiet gaps between speech." />;
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */

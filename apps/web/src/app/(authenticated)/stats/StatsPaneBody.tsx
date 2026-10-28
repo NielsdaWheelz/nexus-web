@@ -9,7 +9,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import Chip from "@/components/ui/Chip";
+import AppliedFilters from "@/components/ui/AppliedFilters";
 import Input from "@/components/ui/Input";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
@@ -702,6 +702,7 @@ function Controls(props: {
   chipLabel: (key: "media" | "contributor" | "device", value: string) => string;
 }) {
   const { view, update, onFilter } = props;
+  const modalitySelect = useRef<HTMLSelectElement>(null);
   const today = browserToday();
   const thisYear = Number(today.slice(0, 4));
   const year = view.year ?? thisYear;
@@ -715,11 +716,12 @@ function Controls(props: {
     : periodStart(shift(1), view.period) <= periodStart(today, view.period);
   const chips = (["media", "contributor", "device"] as const).flatMap((key) => {
     const value = view.filters[key];
-    return value ? [[key, value] as const] : [];
+    const category = key === "media" ? "Work" : key === "contributor" ? "Author" : "Device";
+    return value ? [{ id: key, label: `${category}: ${props.chipLabel(key, value)}` }] : [];
   });
   return (
     <div className={styles.controls}>
-      <div role="group" aria-label="Stats view">
+      <div className={styles.viewGroup} role="group" aria-label="Stats view">
         <Button
           aria-pressed={view.view === "stats"}
           onClick={() => update({ view: "stats", period: "day" })}
@@ -779,6 +781,7 @@ function Controls(props: {
       )}
       {yearView || view.period !== "all" ? (
         <div
+          className={styles.dateGroup}
           role="group"
           aria-label={yearView ? "Year navigation" : "Date navigation"}
         >
@@ -803,6 +806,7 @@ function Controls(props: {
           <SelectField
             layout="Stacked"
             label="Modality"
+            ref={modalitySelect}
             size="sm"
             value={view.filters.modality ?? ""}
             onChange={(event) => onFilter("modality", event.target.value)}
@@ -812,16 +816,10 @@ function Controls(props: {
               <option key={modality}>{modality}</option>
             ))}
           </SelectField>
-          {chips.map(([key, value]) => (
-            <Chip
-              key={key}
-              removable
-              removeLabel={`Clear ${key} filter`}
-              onRemove={() => onFilter(key, "")}
-            >
-              {props.chipLabel(key, value)}
-            </Chip>
-          ))}
+          <AppliedFilters chips={chips} returnFocusTo={modalitySelect} onRemove={(id) => {
+            // justify-type-assertion: AppliedFilters returns one of these chips' ids.
+            onFilter(chips.find((chip) => chip.id === id)!.id, "");
+          }} />
         </>
       )}
     </div>
@@ -968,7 +966,7 @@ export default function StatsPaneBody() {
               (row) => row.contributor_handle === value,
             )?.display_name
           : activity?.devices.find((row) => row.device_id === value)?.label;
-    return label ?? `Selected ${key === "media" ? "work" : key}`;
+    return label ?? value;
   };
   const totals = data?.activity.totals;
   const kept = data?.retained_artifacts;
