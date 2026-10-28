@@ -2,7 +2,6 @@
 
 import { useCallback, type RefObject } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -17,16 +16,17 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
 }) {
   const actions = useMediaActions(subject, null);
   const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; }, [triggerRef]);
-  const commands: ActionDescriptor[] = actions.map(action => {
-    return {
-      kind: "command", id: action.id,
-      label: action.id === "LibraryPlacement" ? ACTION_CATALOG.LibraryPlacement.label : action.menuLabel,
-      icon: action.icon,
-      disabled: action.disabled || undefined,
-      disabledReason: action.disabledReason ?? undefined,
-      onSelect: () => action.invoke({ trigger: triggerRef.current, returnFocus, afterRemoval: returnFocus }),
-    };
-  });
+  const commands: ActionDescriptor[] = actions.map(action => ({
+    kind: "command", id: action.id,
+    label: action.menuLabel,
+    icon: action.icon,
+    disabled: action.disabled,
+    disabledReason: action.disabledReason ?? undefined,
+    busy: action.busy,
+    hasPopup: action.hasPopup ?? undefined,
+    restoreFocusOnClose: action.hasPopup === null,
+    onSelect: ({ triggerEl }) => action.invoke({ trigger: triggerEl, returnFocus, afterRemoval: returnFocus }),
+  }));
   return <ContextualActionMenu
     title={subject.title} subjectKey={subjectKey}
     sections={[{ id: "View", actions: [...commands, ...viewActions] }]}

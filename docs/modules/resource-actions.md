@@ -16,9 +16,10 @@ provenance. library details contains native collection facts. for podcasts, sour
 means the supplied homepage; feed is a separate native rss link. absent facts grant
 no action.
 
-podcast subscription, libraries and more share one finite inline subject across
-ordinary rows and headers. at compact widths the complete menu retains every
-command once. library cards retain their single scoped removal shortcut. captured
+podcast subscription, libraries and more share one finite subject across rows and
+headers. row hosts promote subscription; library management stays in their complete
+menus. headers retain their responsive shortcuts. library cards retain their single
+scoped removal shortcut. captured
 evidence and outline relationships acquire no resource shortcuts. menus retain
 their prepared canonical-facts lifecycle; opening a bulk dialog starts its own
 selection read. [collection actions](collection-actions.md) owns batch semantics.
@@ -125,13 +126,21 @@ selection scope while execution keeps the same catalog command ids.
 - `resourceActions` is the finite media/podcast subject contract shared by pane
   chrome and collection rows. domain hooks supply complete `accessibleLabel`
   values for inline controls and short `menuLabel` values for menu adapters.
-  descriptors retain their own menu labels.
+  descriptors retain their own menu labels, busy and popup semantics. ordinary media
+  library menus say `libraries…`; direct controls say `manage libraries: {title}`.
+  external library recovery retains its check/retry/review label. for this capability,
+  only the chooser and review advertise a dialog; check/retry restores the menu trigger
+  on close. chooser dismissal returns to that trigger; recovery review retains the
+  account owner's pane-landmark anchor.
   `ActionButtons` does not assemble names or know domain state. it
   owns only button anatomy, disabled explanations, event isolation and focus
   recovery. podcast subscription keeps one control key while its verb changes.
-  show indexes, discovery rows and headers expose subscription, libraries and
-  one complete more menu; rows demote shortcuts below their 32em boundary and
-  headers at 479px. library
+  expanded media indexes promote lectern and episode playback; show indexes and
+  discovery rows promote subscription. their complete more menus retain libraries
+  and applicable all-membership commands. row hosts hide `LibraryPlacement`,
+  `PodcastLibraries` and `AddEpisodeToAll` controls and associated explanations at
+  every width; below their 32em boundary only playback survives from the shortcut
+  group. headers retain library shortcuts and demote at 479px. library
   cards retain their scoped single-shortcut policy. shows receive no playback controls.
   live search/chat rows receive explicit subjects matching their own podcast ref;
   captured evidence and editable references receive none.
@@ -230,7 +239,8 @@ retain their separate settlement contracts.
 
 ## invariants
 
-- nothing is cached: every open asks again; closing aborts and forgets.
+- prepared canonical menus fetch facts on every open; closing aborts and forgets
+  that read. external menus project current account-owned commands directly.
 - a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
 - menu preparation shows no provisional command subset. a five-second activation-time
   budget aborts late preparation; failure is a named dialog with shared feedback and retry.
