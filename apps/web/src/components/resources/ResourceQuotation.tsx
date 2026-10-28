@@ -57,15 +57,22 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
       ? <blockquote className={styles.body}><ResourceBody body={body} /></blockquote>
       : <div className={styles.body}><ResourceBody body={body} /></div> : null}
     <figcaption className={styles.attribution}>
-      {!distinctSource ? glyph : null}
-      <ResourceLink item={item} label={title} />
-      {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
-      {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
-      {role ? <> · {role}</> : null}
-      {distinctSource ? <div className={styles.source}>
-        {glyph}{sourceTitle}
-        {sourceAuthors.length > 0 ? <> — <ContributorCreditList credits={sourceAuthors} maxVisible={sourceAuthors.length} /></> : null}
-        {source.location_label?.trim() ? <> · {source.location_label}</> : null}
+      <div className={styles.identity}>
+        {!distinctSource ? glyph : null}
+        <span className={styles.identityText}>
+          <ResourceLink item={item} label={title} />
+          {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
+          {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
+          {role ? <> · {role}</> : null}
+        </span>
+      </div>
+      {distinctSource ? <div className={styles.identity}>
+        {glyph}
+        <span className={styles.identityText}>
+          {sourceTitle}
+          {sourceAuthors.length > 0 ? <> — <ContributorCreditList credits={sourceAuthors} maxVisible={sourceAuthors.length} /></> : null}
+          {source.location_label?.trim() ? <> · {source.location_label}</> : null}
+        </span>
       </div> : null}
     </figcaption>
   </figure>;
