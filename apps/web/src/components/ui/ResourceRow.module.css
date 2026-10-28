@@ -83,6 +83,10 @@ a.primary:hover { text-decoration: underline; }
   letter-spacing: var(--tracking-tight);
 }
 
+.supporting { min-width: 0; }
+.hasSupport { align-items: start; }
+.supporting a:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+
 .metadata,
 .excerpt {
   min-width: 0;
@@ -159,6 +163,7 @@ a.primary:hover { text-decoration: underline; }
     grid-row: 1;
   }
 
+  .grid:not(.details) .supporting,
   .grid:not(.details) .metadata,
   .grid:not(.details) .excerpt { grid-column: 1 / -1; }
 }
@@ -191,6 +196,7 @@ a.primary:hover { text-decoration: underline; }
     grid-row: 1;
   }
 
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .supporting,
   .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .metadata,
   .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .excerpt { grid-column: 1 / -1; }
 }

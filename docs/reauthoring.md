@@ -427,6 +427,14 @@ generated wire, migration and docs. it deletes reference-token editors, branch
 focus/zoom, internal outline dragging, link-note paths and index outline sessions.
 these are scoped feature changes; earlier area totals retain their stated bases.
 
+chat context rows against `9c809765c`: +154 authored runtime lines (256 added,
+102 deleted), including the new local composition hook. literal compact bodies,
+complete locally owned annotation reads and provenance metadata reuse the existing
+row shell. this removes the adapter’s generic index arm, context podcast quick
+facts/actions, textual removal control and redundant touch sizing. the existing
+server membership/detach owner and search presentation remain authoritative.
+generated assets, temporary qualification cases and docs are excluded.
+
 durable writing recounts its 31 touched areas against main `d56c9e5f1`:
 192,268 authored runtime lines become 197,757 (+5,489 net; 9,967 added,
 4,478 deleted). the journal and immutable delivery intents replace the volatile

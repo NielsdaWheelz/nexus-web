@@ -267,6 +267,25 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   chat, and platform modifier+Shift+Enter for the displayed destination or picker;
   reference linking owns its keys first.
 
+### future context rows
+
+`ChatContext` keeps server admission, order and aggregate detach versions. its
+`useContextItem` overlays viewer-owned note/page/highlight content from the local
+authored store; local absence suppresses stale server text but keeps the removable
+row. loading and failed reads remain explicit. failed refresh may retain prior
+local data with retry feedback. source attribution and authorized highlight-id
+navigation remain supplied; local selection clears a stale location label.
+
+`highlight_notes` returns all visible local notes linked to a highlight in one
+sqlite statement, ordered by that endpoint’s bytewise position then link id.
+it excludes hidden notes/links and known hidden local highlights. the caller
+admits visible owned highlights or supplied readable peer quotations; no local
+peer stub is required, and the query grants no remote reading authority.
+android packages this query’s sql hash with its assets.
+
+context previews describe current content eligible for future replies, not prior
+prompt bytes. the existing finite upload barrier remains responsible for send.
+
 ## citation syntax
 
 draft and sent reader quotes and citation previews share `ResourceQuotation`.

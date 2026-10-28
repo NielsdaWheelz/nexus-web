@@ -29,7 +29,7 @@ export type ResourceRowPrimary =
   | { kind: "static" };
 
 type RowContent =
-  | { kind: "Index"; metadata: ReactNode }
+  | { kind: "Index"; metadata: ReactNode; supportingContent?: ReactNode }
   | { kind: "Search"; metadata: ReactNode; excerpt: ReactNode }
   | { kind: "Details"; body: ReactNode };
 
@@ -79,13 +79,14 @@ export default function ResourceRow({
     case "Details": secondary = <div className={styles.body} data-row-expanded="">{content.body}</div>; break;
     case "Index":
     case "Search": secondary = <>
+      {content.kind === "Index" && content.supportingContent != null ? <div className={styles.supporting}>{content.supportingContent}</div> : null}
       <div className={styles.metadata}>{content.metadata}</div>
       {content.kind === "Search" ? <div className={styles.excerpt}>{content.excerpt}</div> : null}
     </>; break;
     default: assertNever(content);
   }
   return <Root {...rootProps} className={cx(styles.row, density === "compact" && styles.compact, selected && styles.selected, rootProps?.className)}>
-    <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details)}>
+    <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details, content.kind === "Index" && content.supportingContent != null && styles.hasSupport)}>
       {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
       <div className={styles.content}>
         {activation}
