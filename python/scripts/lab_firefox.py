@@ -59,11 +59,11 @@ def _request(
     if not isinstance(envelope, dict) or "value" not in envelope:
         raise RuntimeError("native firefox returned no webdriver value")
     value = envelope["value"]
-    if isinstance(value, dict):
-        code = value.get("error")
-        if isinstance(code, str):
-            raise WebDriverError(code, value.get("message"))
     if response.is_error:
+        if isinstance(value, dict):
+            code = value.get("error")
+            if isinstance(code, str):
+                raise WebDriverError(code, value.get("message"))
         raise RuntimeError(f"native firefox webdriver http status {response.status_code}")
     return value
 
