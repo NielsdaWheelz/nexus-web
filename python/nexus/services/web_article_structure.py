@@ -15,6 +15,7 @@ from lxml.html import HtmlElement, fragment_fromstring
 
 from nexus.errors import ResourceLimitError
 from nexus.logging import get_logger
+from nexus.schemas.capture_limits import WEB_ARTICLE_HTML_MAX_BYTES
 from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.schemas.source_issues import SourceIssue, TooManyNotes
 from nexus.services.canonicalize import (
@@ -46,8 +47,6 @@ from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
 logger = get_logger(__name__)
-
-WEB_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)

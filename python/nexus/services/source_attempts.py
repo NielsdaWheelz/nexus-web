@@ -22,9 +22,11 @@ from uuid import UUID, uuid5
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import Media, MediaSourceAttempt
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import enqueue_job
+from nexus.schemas.extension_capture import CaptureTarget
 from nexus.schemas.import_history import (
     SafeFailureCode,
     SourceAccepted,
@@ -33,11 +35,17 @@ from nexus.schemas.import_history import (
     SourceSucceeded,
     assume_safe_failure_code,
 )
-from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
+from nexus.schemas.imports import (
+    BrowserCaptureOffer,
+    RepairSourceOffer,
+    RetrySourceOffer,
+    SourceRecoveryInput,
+)
 from nexus.schemas.x_source import XArticleContent
 from nexus.services import source_types as st
 from nexus.services.capabilities import SourceRecoveryAnswer, is_same_source_terminal_error
 from nexus.services.import_history import append_processing_event
+from nexus.services.upload_session_state import UPLOAD_SESSION_DERIVED_STATE_SQL
 from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_article_content_facts
 
@@ -78,6 +86,8 @@ def create_attempt(
     provider_target_ref: str | None,
     payload: dict[str, object],
     status: Literal["accepted", "succeeded", "failed"] = "accepted",
+    failure_code: str | None = None,
+    failure_message: str | None = None,
 ) -> MediaSourceAttempt:
     """Append one attempt to the media's chain and record its acceptance.
 
@@ -105,8 +115,8 @@ def create_attempt(
     if status != st.ACCEPTED:
         attempt.finished_at = func.now()
     if status == st.FAILED:
-        attempt.error_code = media.last_error_code
-        attempt.error_message = media.last_error_message
+        attempt.error_code = failure_code or media.last_error_code
+        attempt.error_message = failure_message or media.last_error_message
     db.add(attempt)
     db.flush()
     record_event(db, attempt, SourceAccepted(source_attempt_id=id, attempt_no=attempt.attempt_no))
@@ -118,7 +128,7 @@ def create_attempt(
             attempt,
             SourceFailed(source_attempt_id=id, origin="Domain", terminal=True, progress=None),
             failure_code=assume_safe_failure_code(
-                media.last_error_code or ApiErrorCode.E_INGEST_FAILED.value
+                attempt.error_code or ApiErrorCode.E_INGEST_FAILED.value
             ),
         )
     return attempt
@@ -219,6 +229,28 @@ def source_repairable_sql(media_alias: str) -> str:
 )"""
 
 
+def web_recovery_eligible_sql(media_alias: str, viewer_expr: str) -> str:
+    """The single read and admission predicate for an unpublished ordinary web source."""
+    visible = visible_media_ids_cte_sql().replace(":viewer_id", viewer_expr)
+    return f"""(
+        {media_alias}.created_by_user_id = {viewer_expr}
+        AND {media_alias}.kind = 'web_article' AND {media_alias}.canonical_url IS NULL
+        AND {media_alias}.requested_url IS NOT NULL
+        AND {media_alias}.id IN ({visible})
+        AND NOT EXISTS (SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id = {media_alias}.id)
+        AND NOT EXISTS (SELECT 1 FROM reader_publications rp WHERE rp.media_id = {media_alias}.id)
+        AND NOT EXISTS (SELECT 1 FROM fragments f WHERE f.media_id = {media_alias}.id)
+        AND NOT EXISTS (SELECT 1 FROM passage_anchors pa WHERE pa.owner_scheme = 'media' AND pa.owner_id = {media_alias}.id)
+        AND NOT EXISTS (SELECT 1 FROM media_file mf WHERE mf.media_id = {media_alias}.id)
+        AND NOT EXISTS (SELECT 1 FROM media_upload_sessions us WHERE us.published_media_id = {media_alias}.id
+            AND COALESCE(us.input_origin->'capture_binding'->>'kind', '') <> 'WebRecovery')
+        AND (SELECT source_type FROM media_source_attempts first_attempt
+             WHERE first_attempt.media_id = {media_alias}.id ORDER BY attempt_no LIMIT 1) = 'generic_web_url'
+        AND (SELECT status FROM media_source_attempts latest
+             WHERE latest.media_id = {media_alias}.id ORDER BY {st.LATEST_ORDER_SQL} LIMIT 1) = 'failed'
+    )"""
+
+
 @dataclass(frozen=True, slots=True)
 class SourceRecoveryFacts:
     """What the policy decides on, for one media's latest attempt."""
@@ -233,6 +265,9 @@ class SourceRecoveryFacts:
     is_creator: bool
     native_article_id: str | None
     article_content: XArticleContent | None
+    browser_recovery_offer: BrowserCaptureOffer | None
+    is_web_recovery_source: bool
+    capture_session_state: str | None
 
 
 def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
@@ -265,6 +300,15 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
         return None
     if not facts.is_creator:
         return "NotOwner"
+    if facts.browser_recovery_offer is not None and facts.capture_session_state == "AwaitingBytes":
+        return None
+    if facts.browser_recovery_offer is not None and (
+        facts.capture_session_state in ("VerificationFailed", "CapabilityExpired")
+        or facts.error_code in ("E_SOURCE_ACCESS_DENIED", "E_SOURCE_NOT_READABLE")
+        or facts.is_web_recovery_source
+        and facts.error_code in _LOST_STORED_SOURCE_CODES
+    ):
+        return facts.browser_recovery_offer
     restriction = reacquisition_restriction(facts.source_type, facts.error_code)
     if restriction is not None:
         return restriction
@@ -276,6 +320,7 @@ def source_refreshable(facts: SourceRecoveryFacts) -> bool:
     A ready epub is published, and its reader identities are never replaced (I9)."""
     return (
         facts.is_creator
+        and not (facts.is_web_recovery_source and facts.processing_status == "ready_for_reading")
         and facts.attempt_status in (st.SUCCEEDED, st.FAILED)
         and facts.processing_status in ("ready_for_reading", "failed")
         and not (facts.source_type in st.EPUB_SOURCE_TYPES and facts.processing_status != "failed")
@@ -317,7 +362,39 @@ def recovery_facts(
         )
         == "dead"
     )
+    eligible = db.scalar(
+        text(f"SELECT {web_recovery_eligible_sql('m', ':viewer_id')} FROM media m WHERE m.id=:id"),
+        {"viewer_id": viewer_id, "id": media.id},
+    )
+    binding = attempt.source_payload.get("capture_binding")
+    is_web_recovery = (
+        attempt.source_type == st.BROWSER_ARTICLE_CAPTURE
+        and isinstance(binding, dict)
+        and binding.get("kind") == "WebRecovery"
+    )
+    capture_state = db.scalar(
+        text(f"""SELECT {UPLOAD_SESSION_DERIVED_STATE_SQL}
+        FROM media_upload_sessions WHERE created_by_user_id=:viewer_id AND published_at IS NULL
+        AND input_origin->'capture_binding'->>'kind'='WebRecovery'
+        AND input_origin->'capture_binding'->'target'->>'media_id'=:media_id
+        AND input_origin->'capture_binding'->'target'->>'expected_source_attempt_id'=:attempt_id
+        ORDER BY created_at DESC, id DESC LIMIT 1"""),
+        {"viewer_id": viewer_id, "media_id": str(media.id), "attempt_id": str(attempt.id)},
+    )
+    source_url = attempt.requested_url if is_web_recovery else media.requested_url
     return SourceRecoveryFacts(
+        capture_session_state=capture_state,
+        browser_recovery_offer=BrowserCaptureOffer(
+            source_url=source_url,
+            target=CaptureTarget(
+                media_id=media.id,
+                expected_source_attempt_id=attempt.id,
+                expected_reader_generation=None,
+            ),
+        )
+        if eligible and source_url is not None
+        else None,
+        is_web_recovery_source=is_web_recovery,
         attempt_id=attempt.id,
         attempt_status=attempt.status,
         error_code=attempt.error_code,

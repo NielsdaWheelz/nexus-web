@@ -1,6 +1,6 @@
 /**
  * What a reader is told about a media's failed import or unavailable search. The copy
- * per failure code is `lib/imports/copy.ts`'s; this maps it, the source url and the
+ * per failure code is `lib/imports/copy.ts`'s; this maps it and the
  * retrieval status to shared feedback. Recovery commands are named, not repeated: the action
  * catalog owns their wording, and Imports offers them.
  */
@@ -15,18 +15,13 @@ type MediaErrorInput =
       kind: "Source";
       processingStatus: MediaDetail["processing_status"];
       lastErrorCode: string | null;
-      // Unread (issue media-pane-contract-leftovers): its owner drops it.
-      capabilities: { can_retry: boolean };
-      sourceUrl: string | null;
     }
   | { kind: "Retrieval"; retrievalStatus: string | null; textSearchReady: boolean };
 
 export interface MediaErrorPresentation extends FeedbackContent {
   kind: MediaErrorInput["kind"];
-  action: { kind: "None" } | { kind: "OpenSource"; href: string };
 }
 
-const NONE = { kind: "None" } as const;
 const RETRIEVAL: Record<string, FeedbackContent | null> = {
   ready: null,
   pending: { tone: "Neutral", title: "preparing text search" },
@@ -50,9 +45,9 @@ export function mediaErrorMessage(
       );
     if (input.textSearchReady && (input.retrievalStatus === "pending" || input.retrievalStatus === "indexing" || input.retrievalStatus === "failed" || input.retrievalStatus === "suspended")) {
       const stopped = input.retrievalStatus === "failed" || input.retrievalStatus === "suspended";
-      return { kind: "Retrieval", tone: stopped ? "Warning" : "Neutral", title: stopped ? "text search is ready; related matches are unavailable" : "text search is ready; related matches are preparing", action: NONE };
+      return { kind: "Retrieval", tone: stopped ? "Warning" : "Neutral", title: stopped ? "text search is ready; related matches are unavailable" : "text search is ready; related matches are preparing" };
     }
-    return banner && { kind: "Retrieval", ...banner, action: NONE };
+    return banner && { kind: "Retrieval", ...banner };
   }
   if (input.processingStatus === "suspended")
     return {
@@ -60,7 +55,6 @@ export function mediaErrorMessage(
       tone: "Danger",
       title: "processing stopped before this import finished",
       message: `automatic retries are used up. ${ACTION_CATALOG.RepairSource.label} in imports runs the stopped attempt again.`,
-      action: NONE,
     };
   if (input.processingStatus !== "failed") return null;
   // A failure with no recorded code says only what the catalog says of a stopped import.
@@ -68,10 +62,6 @@ export function mediaErrorMessage(
   if (!isSafeFailureCode(code))
     // justify-defect: last_error_code is same-system source state.
     throw new Error(`Unsupported media source error code: ${code}`);
-  const { title, explanation, recovery } = FAILURE_COPY[code];
-  const action =
-    recovery === "OpenOriginal" && input.sourceUrl !== null
-      ? ({ kind: "OpenSource", href: input.sourceUrl } as const)
-      : NONE;
-  return { kind: "Source", tone: "Danger", title, message: explanation, action };
+  const { title, explanation } = FAILURE_COPY[code];
+  return { kind: "Source", tone: "Danger", title, message: explanation };
 }

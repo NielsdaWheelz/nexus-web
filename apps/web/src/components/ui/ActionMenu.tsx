@@ -922,7 +922,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       </span>
     </>;
     return <li role={sheet ? undefined : "none"} key={option.id}>
-      {option.kind === "link" ? <a {...common} href={option.disabled ? undefined : option.href}
+      {option.kind === "link" ? <a {...common} href={option.disabled ? undefined : option.href} target={option.target} rel={option.target === "_blank" ? "noopener noreferrer" : undefined}
         role={sheet ? "link" : "menuitem"} data-workspace-rich-target={option.onActivate ? "true" : undefined}>{body}</a> :
         <button {...common} type="button" role={sheet ? undefined : control.menuRole}
           aria-checked={sheet ? undefined : control.menuChecked} aria-pressed={sheet ? control.barPressed : undefined}

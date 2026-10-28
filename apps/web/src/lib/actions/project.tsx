@@ -886,9 +886,10 @@ export function projectResourceActions(
           submitMetadataResultReview(id, action.job_id),
         );
       case "Recovery":
-        return make(action.offer.kind, blocked, () =>
-          recoverMedia(id, action.offer),
-        );
+        if (action.offer.kind === "BrowserCapture") return { kind: "link", id: "BrowserCapture", label: ACTION_CATALOG.BrowserCapture.label,
+          icon: createElement(ACTION_CATALOG.BrowserCapture.icon, { size: 16, "aria-hidden": true }), href: action.offer.source_url, target: "_blank" };
+        const offer = action.offer;
+        return make(offer.kind, blocked, () => recoverMedia(id, offer));
       default: {
         const [execute, options] = verbs[action.kind];
         const descriptor = make(action.kind, blocked, execute, options);
@@ -906,6 +907,7 @@ export function projectResourceActions(
       return descriptor === null ? [] : [[descriptor.id, descriptor] as const];
     }),
   );
+  if (byId.has("BrowserCapture")) byId.delete("OpenSource");
   const playback = facts.actions.find(action => action.kind === "Playback");
   if (playback !== undefined && playback.kind === "Playback" && playbackSource !== null) {
     byId.set("PlayFromHere", make("PlayFromHere", playback.blocked, () => ctx.player.commands.playAudio({

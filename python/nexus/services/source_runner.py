@@ -48,9 +48,11 @@ from nexus.services.search import projection
 from nexus.services.source_adapters import (
     PreparedFileSource,
     PreparedNativeArticle,
+    PreparedWebRecovery,
     acquire,
     publish_prepared_file,
     publish_prepared_native_article,
+    publish_prepared_web_recovery,
 )
 from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
 from nexus.services.source_publication import (
@@ -150,6 +152,9 @@ def _run(
         if isinstance(acquired, PreparedXSource):
             outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
             return source_outcome_to_job_result(outcome)
+        if isinstance(acquired, PreparedWebRecovery):
+            outcome = _publish_web_recovery(session_factory, media_id, acquired, fence, request_id)
+            return source_outcome_to_job_result(outcome)
         if isinstance(acquired, PreparedNativeArticle):
             outcome = _publish_native_article(
                 session_factory, media_id, acquired, fence, request_id
@@ -195,6 +200,45 @@ def _publish_file(
         media_ids=(media_id,),
         mutate=publish,
         discover=_embed_owners({media_id}),
+    )
+
+
+def _publish_web_recovery(
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    prepared: PreparedWebRecovery,
+    fence: SourcePublicationFence,
+    request_id: str | None,
+) -> SourceRunOutcome:
+    children: set[UUID] = set()
+
+    def discover(db: Session) -> set[UUID]:
+        children.clear()
+        children.update(
+            article_publication_media_ids(db, media_id=media_id, prepared=prepared.fragment)
+        )
+        return children | set(_embed_owners({media_id})(db))
+
+    def publish(db: Session, attempt: MediaSourceAttempt) -> SourceRunOutcome:
+        outcome = publish_prepared_web_recovery(
+            db,
+            media_id=media_id,
+            attempt=attempt,
+            prepared=prepared,
+            locked_target_ids=frozenset(children),
+            request_id=request_id,
+        )
+        _settle(db, attempt, media_id, outcome, request_id)
+        record_input_change(db, owners=(f"media:{ident}" for ident in {media_id, *children}))
+        return outcome
+
+    return run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_web_recovery",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish,
+        discover=discover,
     )
 
 

@@ -58,11 +58,15 @@ from nexus.schemas.extension_capture import (
     ARTICLE_PACKET_MAX_BYTES,
     ArticlePacket,
     BrowserCapture,
+    CaptureTarget,
     CaptureTargetOut,
     CreateCaptureRequest,
     LocalFile,
+    RecoveryCandidate,
+    RecoveryCandidatePage,
+    TargetSummary,
+    WebRecoveryBinding,
     XArticleBinding,
-    XArticleNativeTarget,
     decode_article_packet,
 )
 from nexus.schemas.import_history import (
@@ -72,7 +76,7 @@ from nexus.schemas.import_history import (
     UploadRecoveryAccepted,
     UploadVerificationFailureCode,
 )
-from nexus.schemas.import_refs import UploadImportRef, format_import_ref
+from nexus.schemas.import_refs import MediaImportRef, UploadImportRef, format_import_ref
 from nexus.schemas.media_sources import (
     CreateUploadRequest,
     Published,
@@ -84,6 +88,7 @@ from nexus.schemas.x_source import XPriorSource
 from nexus.services import libraries, library_entries, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -120,16 +125,6 @@ _SOURCE_TYPES = {
     ("epub", "BrowserCapture"): st.BROWSER_EPUB_CAPTURE,
     ("web_article", "BrowserCapture"): st.BROWSER_ARTICLE_CAPTURE,
 }
-UPLOAD_SESSION_DERIVED_STATE_SQL = """
-        CASE
-            WHEN published_at IS NOT NULL THEN 'Published'
-            WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
-            WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
-            ELSE 'AwaitingBytes'
-        END"""
-"""The one statement of a session's state, for Imports' set-wise reads."""
-
-UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "CapabilityExpired")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +140,16 @@ class _Generation:
     expires_at: datetime
     candidate_media_id: UUID
     capture: BrowserCapture | None
+
+    @property
+    def import_ref(self) -> str:
+        if self.capture is not None and isinstance(
+            self.capture.capture_binding, WebRecoveryBinding
+        ):
+            return format_import_ref(
+                MediaImportRef(media_id=self.capture.capture_binding.target.media_id)
+            )
+        return format_import_ref(UploadImportRef(session_id=self.session_id))
 
     @classmethod
     def of(cls, session: MediaUploadSession) -> _Generation:
@@ -179,7 +184,29 @@ def capture_target(db: Session, *, viewer_id: UUID, source_url: str) -> CaptureT
     article_id = classify_x_article_url(source_url)
     carrier_id = classify_x_article_carrier_url(source_url)
     if article_id is None and carrier_id is None:
-        return CaptureTargetOut(x_article_binding=None, target_title=None)
+        page = recovery_targets(
+            db,
+            viewer_id=viewer_id,
+            source_url=source_url,
+            q="",
+            cursor=None,
+            limit=2,
+            exact_only=True,
+        )
+        exact = page.items
+        return CaptureTargetOut(
+            capture_binding=exact[0].binding
+            if len(exact) == 1 and page.next_cursor is None
+            else None,
+            target_summary=exact[0].summary
+            if len(exact) == 1 and page.next_cursor is None
+            else None,
+            web_match="None"
+            if not exact
+            else "Unique"
+            if len(exact) == 1 and page.next_cursor is None
+            else "Ambiguous",
+        )
     db.commit()
     get_repeatable_read_db(db)
     if carrier_id is not None:
@@ -205,15 +232,108 @@ def capture_target(db: Session, *, viewer_id: UUID, source_url: str) -> CaptureT
     if media is not None:
         latest = sa.latest_attempt(db, media.id, lock=False)
         assert latest is not None
-        target = XArticleNativeTarget(
+        target = CaptureTarget(
             media_id=media.id,
             expected_source_attempt_id=latest.id,
             expected_reader_generation=read_publication_generation(db, media_id=media.id),
         )
     return CaptureTargetOut(
-        x_article_binding=XArticleBinding(article_id=article_id, native_target=target),
-        target_title=media.title if media is not None else None,
+        capture_binding=XArticleBinding(article_id=article_id, target=target),
+        target_summary=_target_summary(media) if media is not None else None,
+        web_match="None",
     )
+
+
+def _target_summary(media: Media) -> TargetSummary:
+    url = media.requested_url or media.canonical_source_url or ""
+    parsed = urlparse(url)
+    label = (parsed.hostname or "") + (parsed.path or "")
+    title = label if media.title == url[:255] else media.title
+    return TargetSummary(
+        title=title, source_label=label, source_url=url, accepted_at=media.created_at
+    )
+
+
+def recovery_targets(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source_url: str,
+    q: str,
+    cursor: str | None,
+    limit: int,
+    exact_only: bool = False,
+) -> RecoveryCandidatePage:
+    normalized, query = normalize_url_for_display(source_url), q.strip().casefold()
+    binding = {
+        "list": "web_recovery_targets",
+        "viewer": str(viewer_id),
+        "source_url": normalized,
+        "q": query,
+        "exact_only": exact_only,
+    }
+    plan = [
+        SortKey("created_at", "desc", KeysetValueKind.DateTime),
+        SortKey("id", "desc", KeysetValueKind.Uuid),
+    ]
+    eligible = sa.web_recovery_eligible_sql("m", ":viewer_id")
+    rows, next_cursor = keyset_page(
+        db,
+        binding=binding,
+        plan=plan,
+        cursor=cursor,
+        limit=limit,
+        params={
+            "viewer_id": viewer_id,
+            "source_url": normalized,
+            "q": query,
+            "exact_only": exact_only,
+        },
+        sql=lambda predicate, order: f"""
+            SELECT facts.* FROM (
+                SELECT m.id, m.created_at, m.requested_url, m.title, latest.id AS attempt_id,
+                    original.canonical_source_url AS original_url,
+                    lower(substring(m.requested_url from '^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]+)')) ||
+                        COALESCE(substring(m.requested_url from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+([^?#]*)'), '') AS source_label
+                FROM media m
+                JOIN LATERAL (SELECT id FROM media_source_attempts WHERE media_id=m.id
+                    ORDER BY {st.LATEST_ORDER_SQL} LIMIT 1) latest ON true
+                JOIN LATERAL (SELECT canonical_source_url FROM media_source_attempts WHERE media_id=m.id
+                    ORDER BY attempt_no LIMIT 1) original ON true
+                WHERE {eligible}
+            ) facts
+            WHERE (NOT :exact_only OR facts.original_url=:source_url)
+              AND (:q = '' OR position(:q in lower(facts.source_label)) > 0 OR
+                position(:q in lower(CASE WHEN facts.title=left(facts.requested_url,255)
+                    THEN facts.source_label ELSE facts.title END)) > 0)
+              {predicate} ORDER BY {order} LIMIT :limit
+        """,
+    )
+    items = []
+    for row in rows:
+        label = row["source_label"]
+        title = label if row["title"] == row["requested_url"][:255] else row["title"]
+        items.append(
+            RecoveryCandidate(
+                binding=WebRecoveryBinding(
+                    target=CaptureTarget(
+                        media_id=row["id"],
+                        expected_source_attempt_id=row["attempt_id"],
+                        expected_reader_generation=None,
+                    ),
+                    source_relation="ExactUrl"
+                    if row["original_url"] == normalized
+                    else "AlternativeCopy",
+                ),
+                summary=TargetSummary(
+                    title=title,
+                    source_label=label,
+                    source_url=row["requested_url"],
+                    accepted_at=row["created_at"],
+                ),
+            )
+        )
+    return RecoveryCandidatePage(items=items, next_cursor=next_cursor)
 
 
 def _carrier_article_id(db: Session, *, viewer_id: UUID, carrier_id: str) -> str | None:
@@ -291,8 +411,35 @@ def _lock_capture_target(
     """Carrier, article identity, media, then attempt/publication; no I/O or fallback."""
     article_id = classify_x_article_url(capture.source_url)
     carrier_id = classify_x_article_carrier_url(capture.source_url)
-    binding = capture.x_article_binding
+    binding = capture.capture_binding
     recognized = article_id is not None or carrier_id is not None
+    if isinstance(binding, WebRecoveryBinding):
+        if (
+            kind != "web_article"
+            or recognized
+            or binding.target.expected_reader_generation is not None
+        ):
+            raise _capture_changed()
+        library_entries.lock_media_rows_in_order(db, [binding.target.media_id])
+        media = db.get(Media, binding.target.media_id, populate_existing=True)
+        if media is None or not db.scalar(
+            text(
+                f"SELECT {sa.web_recovery_eligible_sql('m', ':viewer_id')} FROM media m WHERE m.id=:id"
+            ),
+            {"viewer_id": viewer_id, "id": binding.target.media_id},
+        ):
+            raise _capture_changed()
+        latest = sa.latest_attempt(db, media.id, lock=False)
+        same = normalize_url_for_display(media.requested_url or "") == normalize_url_for_display(
+            capture.source_url
+        )
+        if (
+            latest is None
+            or latest.id != binding.target.expected_source_attempt_id
+            or (binding.source_relation == "ExactUrl") != same
+        ):
+            raise _capture_changed()
+        return media
     if binding is None:
         if kind == "web_article" and recognized:
             raise _capture_changed()  # unfinished pre-cutover intents require a fresh capture
@@ -313,7 +460,7 @@ def _lock_capture_target(
         if current is not None and current != binding.article_id:
             raise _capture_changed()
     media = _native_article_target(db, viewer_id=viewer_id, article_id=binding.article_id)
-    target = binding.native_target
+    target = binding.target
     if target is None:
         if media is not None:
             raise _capture_changed()
@@ -366,7 +513,7 @@ def create_session(
     except StorageError as exc:
         raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
     return UploadRequired(
-        import_ref=format_import_ref(UploadImportRef(session_id=answer.session_id)),
+        import_ref=answer.import_ref,
         session_id=answer.session_id,
         generation=answer.generation,
         upload_url=upload_url,
@@ -393,6 +540,18 @@ def _admit(
         session = db.get(
             MediaUploadSession, request.id, with_for_update=True, populate_existing=True
         )
+        if (
+            isinstance(origin, BrowserCapture)
+            and isinstance(origin.capture_binding, WebRecoveryBinding)
+            and request.library_ids
+        ):
+            if session is not None and session.created_by_user_id == viewer_id:
+                raise ConflictError(
+                    ApiErrorCode.E_UPLOAD_INTENT_MISMATCH, "This file does not match the upload."
+                )
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Recovery does not accept destinations."
+            )
         if session is not None:
             if session.created_by_user_id != viewer_id:
                 raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Upload session id is taken.")
@@ -418,7 +577,11 @@ def _admit(
             )
         if session is None:
             library_ids = sorted(set(request.library_ids))
-            libraries.resolve_writable_destinations(db, viewer_id, library_ids)
+            if not (
+                isinstance(origin, BrowserCapture)
+                and isinstance(origin.capture_binding, WebRecoveryBinding)
+            ):
+                libraries.resolve_writable_destinations(db, viewer_id, library_ids)
             session = MediaUploadSession(
                 id=request.id,
                 created_by_user_id=viewer_id,
@@ -504,9 +667,10 @@ def confirm_session(
     origin_kind: OriginKind,
     session_id: UUID,
     generation: int,
-    expected_removal_revision: int,
-    destinations: list[DestinationGuard],
+    expected_removal_revision: int | None,
+    destinations: list[DestinationGuard] | None,
     request_id: str | None,
+    recovery: bool = False,
 ) -> Published:
     """Verify the current generation's bytes and publish them once.
 
@@ -517,6 +681,16 @@ def confirm_session(
     """
     with transaction(db):
         session = _owned(db, viewer_id, origin_kind, session_id, lock=False)
+        binding_payload = session.input_origin.get("capture_binding")
+        is_recovery = (
+            session.input_origin.get("kind") == "BrowserCapture"
+            and isinstance(binding_payload, dict)
+            and binding_payload.get("kind") == "WebRecovery"
+        )
+        if is_recovery != recovery:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Capture confirmation does not match its purpose."
+            )
         if session.published_at is not None:
             return _published(db, viewer_id, session)
         _require_current(db, session, generation)
@@ -550,12 +724,12 @@ def confirm_session(
         now = _now(db)
         capture = current.capture
         media = None
-        native_replacement = False
+        targeted_capture = False
         if capture is not None:
             media = _lock_capture_target(
                 db, viewer_id=viewer_id, capture=capture, kind=current.kind
             )
-            native_replacement = media is not None
+            targeted_capture = media is not None
             if media is None:
                 sa.lock_identity(db, f"browser_capture:{viewer_id}:{current.kind}:{capture.sha256}")
                 media = _held_capture(db, viewer_id, current.kind, capture.sha256)
@@ -563,16 +737,19 @@ def confirm_session(
         _require_current(db, session, generation)
         if media is not None:
             library_entries.lock_media_rows_in_order(db, [media.id])
-        destination_ids = library_entries.validate_acquisition_destinations(
-            db,
-            viewer_id=viewer_id,
-            expected_removal_revision=expected_removal_revision,
-            destinations=destinations,
-        )
-        if media is None or native_replacement:
+        destination_ids: list[UUID] = []
+        if not recovery:
+            assert expected_removal_revision is not None and destinations is not None
+            destination_ids = library_entries.validate_acquisition_destinations(
+                db,
+                viewer_id=viewer_id,
+                expected_removal_revision=expected_removal_revision,
+                destinations=destinations,
+            )
+        if media is None or targeted_capture:
             if media is None:
                 media = _new_media(db, session, current, candidate, now)
-            prior = sa.latest_attempt(db, media.id, lock=False) if native_replacement else None
+            prior = sa.latest_attempt(db, media.id, lock=False) if targeted_capture else None
             carrier_id = classify_x_article_carrier_url(capture.source_url) if capture else None
             attempt = sa.create_attempt(
                 db,
@@ -583,18 +760,20 @@ def confirm_session(
                     (current.kind, "BrowserCapture" if capture else "LocalFile")
                 ],
                 requested_url=capture.source_url if capture else media.requested_url,
-                canonical_source_url=media.canonical_source_url,
+                canonical_source_url=normalize_url_for_display(capture.source_url)
+                if recovery and capture is not None
+                else media.canonical_source_url,
                 provider=media.provider,
                 provider_target_ref=(carrier_id or (prior.provider_target_ref if prior else None))
-                if native_replacement
+                if targeted_capture
                 else None,
                 payload={
                     # a packet's only copy; a file's bytes are its media_file
                     **({"storage_path": candidate.storage_path} if candidate.packet else {}),
                     **(
                         {
-                            "x_article_binding": capture.x_article_binding.model_dump(mode="json")
-                            if capture.x_article_binding
+                            "capture_binding": capture.capture_binding.model_dump(mode="json")
+                            if capture.capture_binding
                             else None
                         }
                         if candidate.packet and capture
@@ -609,10 +788,12 @@ def confirm_session(
             latest = sa.latest_attempt(db, media.id, lock=False)
             assert latest is not None  # every published media was accepted through an attempt
             published_attempt_id = latest.id
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, destination_ids
-        )
-        library_entries.finish_acquisition_destinations(db, destinations=destinations)
+        if not recovery:
+            assert destinations is not None
+            library_entries.assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, media.id, destination_ids
+            )
+            library_entries.finish_acquisition_destinations(db, destinations=destinations)
         db.execute(
             delete(MediaUploadSessionDestination).where(
                 MediaUploadSessionDestination.upload_session_id == session.id
@@ -831,11 +1012,25 @@ def delete_library_destination_support_in_current_transaction(
 
 
 def delete_published_media_support_in_current_transaction(db: Session, *, media_id: UUID) -> None:
-    """Every receipt of a media goes before the media and its attempts."""
+    """Remove published receipts and bound pending web recoveries before media teardown."""
     session_ids = list(
         db.scalars(
             select(MediaUploadSession.id)
-            .where(MediaUploadSession.published_media_id == media_id)
+            .where(
+                (MediaUploadSession.published_media_id == media_id)
+                | (
+                    (
+                        MediaUploadSession.input_origin["capture_binding"]["kind"].astext
+                        == "WebRecovery"
+                    )
+                    & (
+                        MediaUploadSession.input_origin["capture_binding"]["target"][
+                            "media_id"
+                        ].astext
+                        == str(media_id)
+                    )
+                )
+            )
             .order_by(MediaUploadSession.id)
             .with_for_update()
         )
@@ -895,6 +1090,17 @@ def _require_current(db: Session, session: MediaUploadSession, generation: int) 
         )
 
 
+def _session_import_ref(session: MediaUploadSession) -> str:
+    origin = session.input_origin
+    if origin.get("kind") == "BrowserCapture":
+        capture = BrowserCapture.model_validate(origin)
+        if isinstance(capture.capture_binding, WebRecoveryBinding):
+            return format_import_ref(
+                MediaImportRef(media_id=capture.capture_binding.target.media_id)
+            )
+    return format_import_ref(UploadImportRef(session_id=session.id))
+
+
 def _published(db: Session, viewer_id: UUID, session: MediaUploadSession) -> Published:
     assert session.published_media_id is not None
     try:
@@ -906,7 +1112,7 @@ def _published(db: Session, viewer_id: UUID, session: MediaUploadSession) -> Pub
             raise
         placements = None
     return Published(
-        import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
+        import_ref=_session_import_ref(session),
         session_id=session.id,
         media_id=session.published_media_id,
         current_placements=placements,
@@ -916,7 +1122,7 @@ def _published(db: Session, viewer_id: UUID, session: MediaUploadSession) -> Pub
 
 def _rejected(session: MediaUploadSession) -> Rejected:
     return Rejected(
-        import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
+        import_ref=_session_import_ref(session),
         session_id=session.id,
         code=cast(UploadVerificationFailureCode, session.verification_error_code),
     )

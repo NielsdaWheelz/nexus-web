@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchImportDetail } from "@/lib/imports/api";
+import { useImports } from "@/lib/imports/ImportsProvider";
+
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,
 // find, the chrome around it, and reading activity. Everything positional is
@@ -118,6 +121,30 @@ export default function MediaPaneBody() {
   if (attemptId !== null && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination")
     return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
   return <MediaRoute key={id} id={id} />;
+}
+
+function FailedSource({ mediaId, code, content, announcement }: {
+  mediaId: string;
+  code: string | null;
+  content: import("@/components/feedback/Feedback").FeedbackContent;
+  announcement: "Polite" | "None";
+}) {
+  const { observation } = useImports();
+  const detail = usePaneFreeServerValue({
+    key: `failed-source:${mediaId}`,
+    stale: observation,
+    load: signal => fetchImportDetail(`media:${mediaId}`, signal),
+  });
+  const offer = detail.status === "ready" ? detail.data.item.obligations.source?.recovery : null;
+  if (offer?.kind !== "BrowserCapture") return <FeedbackState content={content} announcement={announcement} />;
+  let title = content.title;
+  if (code === "E_SOURCE_ACCESS_DENIED") title = "this page blocked the import.";
+  if (code === "E_SOURCE_NOT_READABLE") title = "no readable article was found.";
+  return <>
+    <FeedbackState content={{ tone: "Danger", title }} announcement={announcement}
+      actions={[{ label: "open source in new tab", href: offer.source_url, target: "_blank" }]} />
+    <p>when the article is visible, use nexus capture to finish this import.</p>
+  </>;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
@@ -863,8 +890,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     kind: "Source",
     processingStatus: media.processing_status,
     lastErrorCode: media.last_error_code,
-    capabilities: { can_retry: media.capabilities?.can_retry === true },
-    sourceUrl: media.canonical_source_url,
   });
   const failure = arrival.failure;
   const arrivalNotice = staleBuild || isStaleBuild(failure?.error)
@@ -898,9 +923,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
             />
           ) : sourceError ? (
-            <FeedbackState content={sourceError} announcement={paneActive ? "Polite" : "None"}
-              actions={sourceError.action.kind === "OpenSource" ? [{ label: "open source", href: sourceError.action.href }] : undefined}
-            />
+            media.processing_status === "failed" ? <FailedSource mediaId={id} code={media.last_error_code} content={sourceError} announcement={paneActive ? "Polite" : "None"} />
+              : <FeedbackState content={sourceError} announcement={paneActive ? "Polite" : "None"} />
           ) : (
             <FeedbackState content={{ tone: "Neutral", title: "preparing this item for reading" }} announcement={paneActive ? "Polite" : "None"} />
           )}
