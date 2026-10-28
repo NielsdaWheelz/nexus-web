@@ -23,12 +23,9 @@ from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_items.locations import source_identities
-from nexus.services.search.admission import (
-    BACKGROUND_COMPUTATION_SECONDS,
-    remaining_milliseconds,
-    search_session_async,
-)
+from nexus.services.search.admission import remaining_milliseconds, search_session_async
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
+from nexus.services.search.policy import BACKGROUND_COMPUTATION_SECONDS
 from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
     FORMAT_STORAGE,
@@ -129,7 +126,7 @@ async def search_scopes_async(
     """One scoped page; foreground retains its caller's absolute deadline.
 
     Background passes ``deadline=None`` explicitly: its owned computation starts
-    after embedding, immediately before admission, with the shared 400 ms budget.
+    after embedding, immediately before admission, with the shared computation allowance.
     """
     assert (deadline is None) == (purpose == "background")
     families = _families(base)

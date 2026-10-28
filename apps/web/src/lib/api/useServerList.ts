@@ -114,6 +114,8 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
+  /** Whole-walk budget; a null page count means traversal to the end. */
+  readonly prefixTimeoutMs?: (pages: number | null) => number;
   readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
   /** Omit for ordinary sequential traversal; false leaves continuation to `more()`. */
@@ -288,7 +290,10 @@ function useList<T, M>(
         }
         const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
           op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
-        return owner.read(requestKey, signal => requestWithRetry(read, signal, latest.current), controller.signal);
+        const pages = toEnd ? null : op === "More" && latest.current.retry === "manual" ? 1
+          : op === "More" ? wantPages + 1 : wantPages;
+        const timeoutMs = latest.current.prefixTimeoutMs?.(pages) ?? latest.current.timeoutMs;
+        return owner.read(requestKey, signal => requestWithRetry(read, signal, { ...latest.current, timeoutMs }), controller.signal);
       })()
         .then(
           result => {

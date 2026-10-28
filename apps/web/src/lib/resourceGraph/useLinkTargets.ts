@@ -9,6 +9,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import { useSettled } from "@/lib/api/serverState";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
+import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 export type LinkTargetResult =
   | Schema<"ResourceTargetResourceOut">
@@ -37,6 +38,8 @@ export function useLinkTargets(
     stale,
     // The endpoint fixes its page size; no limit parameter is supported.
     pageSize: 10,
+    readPolicy: "search:target-picker-prefix",
+    prefixTimeoutMs: pages => SEARCH_READ_TIMEOUT_MS.hybrid * (pages ?? 101),
     active: active && raw === settled,
     id: targetKey,
     fetchPage: async (cursor, _limit, signal) => {

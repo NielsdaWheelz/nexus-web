@@ -42,11 +42,8 @@ from nexus.schemas.suggestions import (
 from nexus.services import suggestion_changes, suggestions
 from nexus.services.consumption.lectern import has_capacity
 from nexus.services.resource_graph.refs import assert_resource_ref
-from nexus.services.search.admission import (
-    BACKGROUND_COMPUTATION_SECONDS,
-    SearchAdmissionBusy,
-    search_session_async,
-)
+from nexus.services.search.admission import SearchAdmissionBusy, search_session_async
+from nexus.services.search.policy import BACKGROUND_COMPUTATION_SECONDS
 from nexus.services.search.service import read_snapshot
 
 logger = get_logger(__name__)

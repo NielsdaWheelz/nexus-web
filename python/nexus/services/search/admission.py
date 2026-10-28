@@ -28,7 +28,6 @@ from nexus.logging import get_logger
 
 logger = get_logger(__name__)
 _RETIREMENT_POLL_SECONDS = 0.005
-BACKGROUND_COMPUTATION_SECONDS = 0.400
 _RETIREMENT_CONFIRMATION_SECONDS = 10.0
 
 

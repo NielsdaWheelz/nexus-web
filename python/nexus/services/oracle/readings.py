@@ -48,6 +48,7 @@ from nexus.services.resource_graph.citations import (
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search import projection
 from nexus.services.search.admission import search_session_async
+from nexus.services.search.policy import FOREGROUND_SEARCH_SECONDS
 from nexus.services.search.semantic import Embedding, embed_text, nearest_chunks
 from nexus.services.search.service import read_snapshot
 from nexus.services.suggestion_changes import record_input_change
@@ -261,7 +262,7 @@ _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:exclud
 async def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:
     """Retrieve both lanes and choose the plate; a typed Failure when they cannot."""
     db.commit()  # end the job's reads: no transaction spans the embedding call
-    deadline = asyncio.get_running_loop().time() + 5
+    deadline = asyncio.get_running_loop().time() + FOREGROUND_SEARCH_SECONDS
     async with asyncio.timeout_at(deadline):
         try:
             embedding = await embed_text(question)

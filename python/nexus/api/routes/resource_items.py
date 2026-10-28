@@ -26,6 +26,7 @@ from nexus.schemas.resource_search import (
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_items import actions, evidence, items
 from nexus.services.search import pickers
+from nexus.services.search.policy import FOREGROUND_SEARCH_SECONDS
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -39,7 +40,7 @@ async def search_resource_targets(
     result = await run_search_operation(
         http_request,
         phase="picker",
-        allowance=timedelta(seconds=5),
+        allowance=timedelta(seconds=FOREGROUND_SEARCH_SECONDS),
         read=lambda deadline: pickers.search_targets(
             viewer_id=viewer.user_id, request=request, deadline=deadline
         ),

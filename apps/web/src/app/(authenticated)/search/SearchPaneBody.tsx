@@ -30,7 +30,7 @@ import { PASSAGE_KINDS } from "@/lib/search/kinds";
 import { effectiveSearchKinds, emptySearchQuery, searchHasSemanticFamily, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage, type SearchPhase } from "@/lib/search/searchApi";
 import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/search/searchParams";
-import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
+import { searchPrefixTimeoutMs } from "@/lib/search/policy";
 import { SEARCH_ACTION_LABELS, searchProgress } from "@/lib/search/progress";
 import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
@@ -117,7 +117,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     key: enabled ? lexicalGeneration.key : null,
     stale: visit.adopted?.key === lexicalGeneration.key ? selectedStamp("lexical") : lexicalGeneration.stamp,
     pageSize: 20, drain: false, retainPreviousKey: true, active: active && enabled, visit: LEXICAL_VISIT,
-    retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.lexical,
+    retry: "manual", readPolicy: "search:lexical-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
       const page = await fetchSearchResultPage(query, { phase: "lexical", limit, cursor, signal });
@@ -128,7 +128,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     key: hybridWanted ? hybridGeneration.key : null,
     stale: visit.adopted?.key === hybridGeneration.key ? selectedStamp("hybrid") : hybridGeneration.stamp,
     pageSize: 20, drain: false, retainPreviousKey: true, active: active && hybridWanted, visit: HYBRID_VISIT,
-    retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.hybrid,
+    retry: "manual", readPolicy: "search:hybrid-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
       const page = await fetchSearchResultPage(query, { phase: "hybrid", limit, cursor, signal });

@@ -15,7 +15,7 @@ import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
 import { AuthUnavailable, verify } from "@/lib/supabase/auth";
 import { WIRE_REVISION } from "./wire.gen";
-import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
+import { SEARCH_BFF_TIMEOUT_MS } from "@/lib/search/policy";
 import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 /**
@@ -119,9 +119,10 @@ async function forward(input: {
     mark("client_abort");
     controller.abort();
   };
-  const searchTimeout = (path === "/search" || path === "/search/preview")
-    ? searchPhase === "direct" ? SEARCH_READ_TIMEOUT_MS.direct : searchPhase === "hybrid" ? SEARCH_READ_TIMEOUT_MS.hybrid : SEARCH_READ_TIMEOUT_MS.lexical
-    : null;
+  const searchTimeout = path === "/resource-items/targets/search" ? SEARCH_BFF_TIMEOUT_MS.hybrid
+    : (path === "/search" || path === "/search/preview")
+      ? searchPhase === "direct" ? SEARCH_BFF_TIMEOUT_MS.direct : searchPhase === "hybrid" ? SEARCH_BFF_TIMEOUT_MS.hybrid : SEARCH_BFF_TIMEOUT_MS.lexical
+      : null;
   const boundedJson = isSuggestionJsonPath(path) || searchTimeout !== null;
   let bodyOwnsDeadline = false;
   const deadline = setTimeout(() => {

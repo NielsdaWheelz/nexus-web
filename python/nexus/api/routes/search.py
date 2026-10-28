@@ -19,6 +19,7 @@ from nexus.schemas.search import (
     SearchView,
 )
 from nexus.services.search import discovery
+from nexus.services.search.policy import FOREGROUND_SEARCH_SECONDS
 from nexus.services.search.query import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -29,9 +30,9 @@ from nexus.services.search.query import (
 
 router = APIRouter(tags=["search"])
 _PHASE_CAPS = {
-    "direct": timedelta(milliseconds=400),
-    "lexical": timedelta(milliseconds=1500),
-    "hybrid": timedelta(milliseconds=5000),
+    "direct": timedelta(seconds=5),
+    "lexical": timedelta(seconds=FOREGROUND_SEARCH_SECONDS),
+    "hybrid": timedelta(seconds=FOREGROUND_SEARCH_SECONDS),
 }
 
 
