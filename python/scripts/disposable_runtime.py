@@ -977,7 +977,8 @@ def main() -> int:
                 "fake-codex-host",
                 [
                     sys.executable,
-                    str(ROOT / "python/scripts/lab_fake_codex.py"),
+                    "-m",
+                    "python.scripts.lab_fake_codex",
                     "--origin",
                     fake_origin,
                     "--ca-file",
@@ -988,7 +989,7 @@ def main() -> int:
                     str(host_codex_dir / "app-server.sock"),
                 ],
                 base_env,
-                inputs,
+                ROOT,
             )
             ready(
                 "native codex host socket",
