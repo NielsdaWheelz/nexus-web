@@ -161,7 +161,7 @@ const Row = memo(function Row({ message, ordinal, live, latest, siblings, engage
   return (
     <div className={styles.message} data-message-id={message.id} data-role="user" role="group" aria-label="Your message">
       <div className={styles.userPrompt}>
-        {quote ? <QuotedPassage quote={{ kind: "Sent", selection: quote }} occurrenceKey={`quote:${message.id}`} /> : null}
+        {quote ? <QuotedPassage quote={{ kind: "Sent", selection: quote }} /> : null}
         <span
           className={styles.userBody}
           data-pane-find-block="true"

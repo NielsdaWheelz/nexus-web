@@ -1,9 +1,9 @@
 "use client";
 
-// One occurrence of a resource in an outline branch. Authored refs (notes, pages,
-// highlights) always render from the local store by ref, whichever prop supplied
-// them: a server item never replaces local writing. Other refs render their server
-// item; by ref they show the local source stub's literal label until it arrives.
+// One occurrence of a resource in an outline branch. Historical items render their
+// supplied evidence; ordinary authored refs render from the local store. Other
+// refs render their server item; by ref they show the local source stub's literal
+// label until it arrives.
 // The occurrence owns only its relationship menu (its outline's unlink, server-fact
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Writing rows keep native bullet navigation first and local disclosure last.
@@ -99,7 +99,11 @@ type Shared = {
   | {writing: true; projection: ResourceProjection; childrenAvailable: boolean | null}
   | {writing?: false; projection?: never; childrenAvailable?: never}
 );
-type Props = ({item: Item; resourceRef?: never} | {resourceRef: string; item?: never}) & Shared;
+type Props = Shared & (
+  | {item: Item; resourceRef?: never; historical?: boolean; writing?: false}
+  | {item: Item; resourceRef?: never; historical?: false; writing: true}
+  | {resourceRef: string; item?: never; historical?: false}
+);
 /** What the shared occurrence chrome shows for one resource. */
 interface Presentation {
   ref: string;
@@ -127,6 +131,7 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
 }
 
 export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props) {
+  if(item!==undefined&&shared.historical)return <RemoteRow {...shared} item={item}/>;
   if(shared.writing)return <AuthoredRow {...shared} subject={item?.ref??resourceRef!}/>;
   if(item!==undefined)return item.authored_by_viewer&&AUTHORED.test(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
   return <LocalRow {...shared} subject={resourceRef!}/>;
@@ -177,13 +182,13 @@ function RemoteRow(props: Shared & {item: Item}) {
 /** A non-authored ref: the stub's literal capture until the server item arrives, in one Occurrence. */
 function ReferenceRow(props: Shared & {subject: string}) {
   const runtime = usePaneRuntime();
-  const remote = usePaneFreeServerValue<Item>({key: props.historical ? null : `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
+  const remote = usePaneFreeServerValue<Item>({key: `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
     load: signal => resolveResourceItem(props.subject, signal)});
   const local = useAuthoredQuery(props.writing || remote.status === "ready" ? null : {kind: "resource", ref: props.subject});
   const stub = props.writing ? props.projection : local.data?.rows[0]?.resource ?? null;
   const parsed = parseResourceRef(props.subject);
   // Absent locally and still being read remotely is not yet "unavailable": show the literal ref.
-  const settled = props.historical || remote.status === "failed";
+  const settled = remote.status === "failed";
   const label = stub ? localResourceLabel(stub) : settled ? "unavailable resource" : props.subject;
   if(remote.status==="ready"&&remote.data.authored_by_viewer&&AUTHORED.test(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props, runtime), ref: props.subject} : {

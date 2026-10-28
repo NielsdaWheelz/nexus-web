@@ -1,0 +1,6 @@
+.icon {
+  display: block;
+  flex-shrink: 0;
+  width: var(--text-md);
+  height: var(--text-md);
+}

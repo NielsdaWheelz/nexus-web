@@ -18,6 +18,7 @@ conversation messages retain their message layout.
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
+| `ResourceQuotation.tsx` | passive supplied evidence, attribution and source navigation for chat quotes and citation previews |
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
@@ -131,6 +132,18 @@ navigation; the index never recursively expands matching results. failure marks
 decorate the existing stable more control, whose label names the real recovery
 destination. chat mutation failures retain their supplied commands and use the
 workspace condition owner. static unavailable rows show a bounded reason.
+
+quotations compose supplied evidence without outline state, local resource reads,
+live metadata enrichment, editors or resource menus. passage text is selectable,
+with captured context, colour and omission marks. attribution follows as title,
+ordered authors and supplied locator; the title opens the captured occurrence.
+whole-resource references show their identity once. the type glyph describes the
+attributed identity, never the management subject. missing facts remain absent.
+`ResourceLink` owns explicit source-only access when the exact location is lost;
+withheld evidence shows one unavailable notice, without recovering local content.
+draft attachment controls and citation preview lifetimes remain with their callers.
+historical outline items likewise retain supplied evidence before considering local
+authorship; ordinary authored rows keep their authoritative local reads.
 
 outlines serve notes, pages and connections: a gold opening bullet, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource

@@ -156,8 +156,10 @@ export default function ChatComposer(props: {
         {quote ? (
           <QuotedPassage
             quote={quote}
-            occurrenceKey={`pending-quote:${props.scope}`}
-            onRemove={locked ? undefined : props.onRemoveQuote}
+            onRemove={locked ? undefined : (event) => {
+              if (document.activeElement === event.currentTarget) textarea.current?.focus({ preventScroll: true });
+              props.onRemoveQuote();
+            }}
             onRetry={props.onRetryQuote}
           />
         ) : null}
