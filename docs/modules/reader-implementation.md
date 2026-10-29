@@ -334,6 +334,19 @@ input cancels active positioning without acknowledging a settled failure. rollba
 and visit snapshots contain only mode, origin and origin availability. they cannot
 restore feedback or positioning. a failed rollback makes no preservation promise.
 
+hosted contents owns its ordinary navigation request while mounted. it uses the
+existing destination admission and awaits `inspect`; only `Arrived`/`Unchanged`
+reveal primary content through the companion controller. another request, source,
+visit or interaction owner defeats late dismissal/focus. successful inspection
+paint survives contents unmount. covering contents presents only its own exact
+failure occurrence; a column leaves feedback in the source. generic contents
+keeps host-independent navigation and native alternate-opening intent.
+
+the quick section picker remains mounted-document navigation. current location
+uses `aria-current="location"`, not selection state. ordinary opening reveals it
+once; explicit first/last keyboard opening wins. live location updates neither
+retire the menu nor reclaim focus/scroll.
+
 `inspect` accepts a target or an abort-aware asynchronous target resolver. admission
 captures the departure before resolution; stale completion cannot position or
 publish unavailability. explicit navigation and reading intent also retire pending
@@ -699,7 +712,15 @@ zero never disables a filter. while inline reference linking holds a reference,
 both the view and the filters disable natively and one visible reason, "finish
 linking or return to prose first", describes each of them.
 
-connections view is remembered in the pane-visit memento. on desktop a segmented
+reader connections view is remembered in the pane-visit memento. filter and follow
+preferences survive independently of publication. active row, normal-flow anchor
+and source-text disclosure belong to the body/generation/part publication key;
+source-text keys also identify source media and occurrence. native scroll writes
+visit data without requiring a react render. initial layout, including failed
+detail reads, restores the same visible anchor until user input or an explicit
+arrival wins. publication replacement retires browsing geometry; a missing
+anchor starts the list naturally. writing and outline folds keep their owners.
+on desktop a segmented
 `RadioGroup` with a hidden legend shows `follow` and `all`, named natively
 `follow reading position` and `all items`, with no routine help; mobile derives a normal-flow list without
 changing that preference on scroll or layout changes. exact item navigation

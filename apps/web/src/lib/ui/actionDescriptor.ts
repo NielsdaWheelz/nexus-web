@@ -95,6 +95,7 @@ interface ActionBase {
 export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "command";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onSelect: (detail: ActionSelectDetail) => void;
       readonly state?: ActionControlState;
@@ -104,6 +105,7 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly target?: "_blank";
