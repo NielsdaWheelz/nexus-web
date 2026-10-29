@@ -45,6 +45,17 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+compact palette against integrated prerequisite `f642ed365`: +147 net
+authored runtime lines (788 added, 641 deleted): web +63, shared authored
++71, search python +13. one relevance-ordered list and bounded held-result admission
+replace per-source caps, phase-only holding, repeated query actions and separate
+mobile text menus. captured workflow return state owns selection and scroll.
+query status and notices use the existing scrollport and announcement owner;
+source literals own visual and spoken evidence. existing palette-selection
+history remains authoritative for recent picks. no persistence format or database
+migration. docs, generated files and disposable cases excluded; prerequisite pane
+list and already-merged command interpretation retain their separate counts.
+
 mobile nexus header icons against `492d01595`: +5 authored runtime lines
 (32 added, 27 deleted), all workspace/navigation web source. one account-owned
 mark replaces desktop-local icon/badge anatomy; mobile account and dismissal use
@@ -612,7 +623,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | authors | 3,658 | reauthored #549 | #670 +8 · resource insertion +11 · #700 -7 · unsaved work -43 · collection loading -14 · media controls +20 · durable writing +0 · dropdown primitives -220 · native control cutover · author editing -932 · bounded indexes +3 · resource menu parity · contained works +21 · contained bibliography: shared source-handle admission · pane query overflow -1 | keep |
 | ingest source lifecycle, post room | 4,317 | reauthored #599 | #619 +62 · x threads +63 · #670 +514 · reader python ingest +25 · ingest follow-ups +13 · podcast details +4 · libraries retention +50 · contained works +19 · browser recovery · x captures: fenced quote work and durable exact capture receipts | keep |
 | reader python: apparatus | 3,580 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +9 · contained works +193 · x captures: capture locators in shared evidence scope | read-path functions with 13b |
-| nexus launcher | 3,867 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · persistent player +3 · notes re-slice (server) +1 · media controls +1 · durable writing +2 · dropdown primitives -23 · native control cutover · feedback activity · indexed search (bounded integrated checks pass) · fork gesture +10 · menu actions +3 · command palette -104 | keep (no second pass) |
+| nexus launcher | 3,867 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · persistent player +3 · notes re-slice (server) +1 · media controls +1 · durable writing +2 · dropdown primitives -23 · native control cutover · feedback activity · indexed search (bounded integrated checks pass) · fork gesture +10 · menu actions +3 · command palette -104 · compact palette: bounded admission and one held list | keep (no second pass) |
 | add content | 3,415 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · #670 +117 · shift-open +14 · #702 +10 · unsaved work -106 · collection loading +4 · libraries retention +32 · dropdown primitives +1 · native control cutover | re-slice: single-screen editor |
 | reader python: read model | 4,356 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 · contained works +944 · x captures: pinned direct context and source-only reading | reader python read (13b, deferred) |
 | consumption history and stats | 3,183 | reauthored #417 #595 | x threads +1 · shift-open -11 · collection loading -4 · podcast collection +7 · durable writing +0 · native control cutover · feedback activity · podcast catalogue +1 · pane controls -1 · menu actions +2 | keep |

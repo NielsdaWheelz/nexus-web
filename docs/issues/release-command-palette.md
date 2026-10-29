@@ -1,10 +1,12 @@
 # command palette release
 
-implementation in progress; qualification pending. contracts:
+implementation complete; browser and installed-emulator storage qualification
+complete. the owner deferred physical touch and spoken accessibility on
+2026-10-28; neither is verified. contracts:
 [search](../modules/search.md#launcher), [navigation](../modules/app-navigation.md#nexus-content-grammar).
 
 - pair consuming web code with android's packaged `SEARCH_READ_SQL` allowlist
-  for the compound `search_preview` and `search_admission` queries. qualify both sqlite hosts;
+  for the compound `search_preview` and `search_admission` queries. both sqlite hosts have been exercised;
   no old-shell query fallback or kotlin ranking copy.
 - regenerate web wire types after `/search/preview` declared maxima change
   from `4/2/2` to `8/8/8`. wire 17 already follows deployed wire 16 (see `docs/reauthoring.md`);
@@ -12,6 +14,7 @@ implementation in progress; qualification pending. contracts:
 - no authored format change, database migration, corpus rebuild or new index
   belongs to this design. record a newly demonstrated requirement before adding it.
 
-resolved when paired artifacts, required platform qualification and the wire
-decision are recorded in the implementation pr/release. this record authorizes
-no deployment and claims no completed checks.
+resolved when paired artifacts, observed qualification, deferred observations
+and the wire decision are recorded in the implementation pr/release. this record authorizes
+no deployment. remaining observations: [physical touch](command-palette-physical-touch.md)
+and [spoken accessibility](search-screen-reader-acceptance.md).

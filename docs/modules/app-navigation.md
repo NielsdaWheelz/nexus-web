@@ -166,7 +166,7 @@ are omitted; meaningful hints and argument previews remain on both surfaces.
 
 a result has one dominant canonical title or prose body. include only already
 projected distinguishing facts: source, author, location, current/minimized state
-or literal evidence. suppress generic type badges and ordinary open state; never
+or literal evidence. suppress generic pane/place/command/recent badges and ordinary open state; never
 fetch metadata to decorate a row. preserve source paragraph boundaries, omission
 marks and literal match ranges. essential identity and refusal reasons may wrap;
 secondary evidence stays bounded, without selection-driven expansion.
