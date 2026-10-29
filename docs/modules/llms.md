@@ -38,6 +38,15 @@ Primary owners (the first nine under `services/generation/`):
 
 queue ownership is documented in [jobs.md](jobs.md).
 
+release quiescence belongs to the existing stopped-writer controller, not to a
+generation maintenance mode. after verified api/worker/codex shutdown it requires
+zero nonterminal chats, open calls and pending/failed/running jobs before replacing
+inputs. refusal preserves admitted specifications and receipts; exact original
+containers may reopen only while the durable pre-mutation recovery record remains
+valid. terminal calls' historical tool statuses are not active work. see the
+[drain contract](../release-generation-drain-spec.md) and
+[release recovery procedure](../../deployment.md#refusal-recovery).
+
 ## Catalog and exact selection
 
 `GET /llm-catalog` is the only product catalog API. It composes the authenticated

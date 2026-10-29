@@ -1,11 +1,11 @@
 # generation quiescence before release
 
-investigated planning draft, 2026-10-28; pr 5 of the release repair scope.
-source inspected: `96a3b7bdf` and deployed `3d81ef45`. published for review at the owner's request.
-specification only; no services, admissions, jobs or production data were changed.
+the release owner is `deploy/hetzner/release.py`; operator commands live in
+[deployment.md](../deployment.md#refusal-recovery). this contract adds no general
+maintenance subsystem, admission flag or database state.
 
-recommendation: add a quiescence check to the existing release owner's stopped
-writer boundary. accept a planned single-user outage. do not introduce a general
+the quiescence check belongs to the existing release owner's stopped-writer
+boundary. accept a planned single-user outage. do not introduce a general
 maintenance mode, new database state, job scheduler or preparatory application
 release unless the concrete refusal/recovery rehearsal proves one necessary.
 
@@ -15,8 +15,7 @@ before an incompatible provider/host cutover, stop new generation admissions,
 settle accepted work under its original runtime, and prove zero nonterminal
 generations. preserve admitted specifications, receipts, usage and saved history.
 
-the model release requires this invariant but the controller only stops processes
-at `deploy/hetzner/release.py:758`. worker shutdown sets a stop signal; the worker
+the prior controller only stopped processes. worker shutdown sets a stop signal; the worker
 loop schedules periodic producers before consuming jobs and can reschedule
 released work. clean process exits do not prove drained generations. no general
 admission/producer pause was found in the survey; individual chat cancellation
@@ -58,12 +57,15 @@ chat intent before that. inspect durable jobs and accepted domain work together.
   unresolved open rows refuse even if a job is dead or missing; no live process
   does not automatically make an unclosed generation truthful history.
 
-## proposed small procedure
+## stopped-writer procedure
 
 1. before replacing inputs, retain the actual deployed image identities, compose
    and immutable config references needed for recovery. use private existing
    artifacts; add no release-state database or second current pointer. a sha alone
-   is insufficient because candidate input installation precedes shutdown.
+   is insufficient. retain exact original container/image ids and host-input
+   fingerprints before stopping; candidate host/Caddy installation follows the
+   final census. the containers retain their original environment and immutable
+   bind paths even if `current.env` already points to candidate configuration.
 2. choose a no-use window after ordinary work settles. commit/sync device writing,
    close clients and stop operator/maintenance writers. inspect a bounded
    preflight census; use ordinary chat cancellation where deliberately requested.
@@ -87,12 +89,23 @@ chat intent before that. inspect durable jobs and accepted domain work together.
 the smallest pre-migration recovery uses the original stopped container ids:
 their images and environment are still intact. under the existing release lock,
 prove the database identity/revision is unchanged and no competing writer or
-mutation one-off exists, restore the captured host input files/config references,
-then start those exact original containers through a release-owned procedure.
+mutation one-off exists, verify the captured host input files/config references,
+then start those exact original containers through `release.py --restore-original`.
 do not recreate them from candidate compose or invoke an old deployment script.
 refuse this path once postgres recreation/migration has begun or original
 containers/inputs are unavailable. the implementation must rehearse start order,
 readiness and identity before naming it an available recovery command.
+
+the durable host record has two states: `recoverable` before candidate mutation,
+and `invalidated` before the first candidate host/Caddy install or postgres
+mutation. it survives controller loss. an invalidated record stays invalidated
+across forward retries; no retry recaptures old containers against changed host
+files. the controller removes it only after successful health/isolation and
+current-pointer publication. incomplete original cohorts cannot be restored.
+recovery stops partially restored originals, excludes competing nexus one-offs
+and all other database client sessions, then starts codex, api and both workers
+in dependency order with health and api runtime identity checks. operator writers
+outside controller ownership must remain stopped.
 
 strongest objection: shutdown itself can interrupt/reschedule accepted work, and
 an earlier idle census can race a periodic producer. the conservative final gate
@@ -116,9 +129,10 @@ this is the experiment that decides whether a broader drain control is needed.
 if periodic work prevents a usable quiet window, identify that specific producer
 before adding a pause capability. no blanket runtime redesign follows from a
 hypothetical busy system. exact old-cohort restoration commands, one-off ownership
-checks and remaining accepted-domain census coverage must be resolved before
-implementation approval. an independent source review supports this narrower
-boundary; no such rehearsal ran in this investigation.
+checks and accepted-domain census coverage must be qualified before merge.
+the original investigation's independent source review supported this narrower
+boundary; that investigation ran no recovery rehearsal. current proof belongs
+in the implementation pr, not this contract.
 
 ## acceptance, costs and dependencies
 

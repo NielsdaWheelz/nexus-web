@@ -3,17 +3,20 @@
 
     PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py <source-sha>
     PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --check [<source-sha>]
+    PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --restore-original
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> stop -> backup -> postgres -> migrate -> up -> limits -> caddy
+    preflight -> images -> capture -> stop -> census -> invalidate recovery -> inputs
+              -> backup -> postgres -> migrate -> up -> limits -> caddy
               -> health -> isolation -> current pointer -> prune
 
 Postgres package capability is checked before writers stop and in final health.
 The whole pass holds the host backup lock, so the nightly backup never meets
 stopped writers or a migration. `--check` runs preflight and the read-only
-proofs against the SHA the host records. There is no attempt/resume state
-machine: the host keeps one `current` pointer and nothing else. Every mutation
+proofs against the SHA the host records. One small original-cohort record permits
+restoration after a pre-mutation refusal or controller loss. Candidate mutation
+invalidates that path; later failures recover forward. Every mutation
 runs over ssh; the read-only proofs address containers by Compose project label,
 so they need nothing installed on the host.
 """
@@ -25,10 +28,13 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
 from nexus.release_backup import (
@@ -57,6 +63,7 @@ CONFIG_FILE = "/etc/nexus/current.env"
 BACKUP_CONFIG_FILE = "/etc/nexus/backup.env"
 CADDYFILE = "/etc/nexus/Caddyfile"
 CURRENT_POINTER = "/var/lib/nexus/releases/current"
+ORIGINAL_COHORT = "/var/lib/nexus/releases/original-cohort.json"
 BOOT_GUARD_SERVICE = "nexus-codex-state-boot-guard.service"
 RESOURCE_SLICE = "system-nexus.slice"
 CODEX_STATE = "/srv/nexus/codex-state"
@@ -73,7 +80,7 @@ BACKUP_LOCK_WAIT = 45 * 60
 BACKUP_MAX_AGE_HOURS = 36
 
 # Declared host inputs: the isolation contract lives in these files, and the
-# release installs them before it converges anything.
+# release installs them only after the final stopped-writer census.
 HOST_INPUTS = (
     ("docker-compose.yml", COMPOSE_FILE, "0444"),
     (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
@@ -146,6 +153,19 @@ print(json.dumps({'heads': heads, 'ancestor': ancestor}))
 
 class Failure(RuntimeError):
     """The release cannot proceed. Repair the named cause and rerun."""
+
+
+class OriginalCohort(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    state: Literal["recoverable", "invalidated"]
+    containers: dict[str, str]
+    images: dict[str, str]
+    source_sha: str | None
+    postgres: str
+    database_identity: str
+    database_revision: str
+    host_inputs: dict[str, str | None]
 
 
 def note(message: str) -> None:
@@ -735,9 +755,241 @@ def assert_isolation() -> None:
 # ---------------------------------------------------------------------------
 
 
+def writer_containers() -> dict[str, str]:
+    writers: dict[str, str] = {}
+    for service in (*WRITERS, CODEX_AGENT_HOST):
+        identifier = host(
+            "docker ps --all --quiet --filter label=com.docker.compose.project=nexus"
+            f" --filter label=com.docker.compose.service={service}"
+            " --filter label=com.docker.compose.oneoff=False"
+        ).strip()
+        if identifier:
+            if CONTAINER_ID.fullmatch(identifier) is None:
+                raise Failure(f"{service} has ambiguous containers")
+            writers[service] = identifier
+    return writers
+
+
+def host_input_hashes() -> dict[str, str | None]:
+    paths = [destination for _, destination, _ in HOST_INPUTS] + [CADDYFILE]
+    script = (
+        "import hashlib,json,pathlib,sys; "
+        "print(json.dumps({p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() "
+        "if pathlib.Path(p).is_file() else None for p in sys.argv[1:]}))"
+    )
+    return json.loads(host(f"sudo python3 -c {shlex.quote(script)} {shlex.join(paths)}"))
+
+
+def save_original(cohort: OriginalCohort) -> None:
+    # Publish before stopping; invalidate before the first candidate mutation.
+    # A controller loss can leave either complete state, never a partial record.
+    script = """
+import os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+os.umask(0o077)
+with path.with_suffix('.new').open('w') as output:
+    output.write(sys.stdin.read())
+    output.flush()
+    os.fsync(output.fileno())
+os.replace(path.with_suffix('.new'), path)
+directory = os.open(path.parent, os.O_RDONLY)
+try:
+    os.fsync(directory)
+finally:
+    os.close(directory)
+"""
+    host(
+        f"sudo python3 -c {shlex.quote(script)} {ORIGINAL_COHORT}",
+        stdin=cohort.model_dump_json().encode(),
+    )
+
+
+def assert_original_unchanged(cohort: OriginalCohort) -> None:
+    if (
+        writer_containers() != cohort.containers
+        or container("postgres") != cohort.postgres
+        or database_identity(psql) != cohort.database_identity
+        or database_revision(psql) != cohort.database_revision
+        or host_input_hashes() != cohort.host_inputs
+        or any(
+            inspect(identifier)["Image"] != cohort.images[service]
+            for service, identifier in cohort.containers.items()
+        )
+    ):
+        raise Failure("original containers, database or host inputs changed; restoration refused")
+
+
+def original_cohort() -> OriginalCohort | None:
+    command = f"if test -e {ORIGINAL_COHORT}; then cat {ORIGINAL_COHORT}; fi"
+    recorded = host(f"sudo sh -c {shlex.quote(command)}").strip()
+    if not recorded:
+        return None
+    return OriginalCohort.model_validate_json(recorded)
+
+
+def stop_writers(writers: dict[str, str]) -> None:
+    identifiers = [writers[service] for service in WRITERS if service in writers]
+    if identifiers:
+        host(f"docker stop --time 30 {shlex.join(identifiers)}", timeout=300)
+    if CODEX_AGENT_HOST in writers:
+        host(
+            f"docker stop --time 45 {shlex.quote(writers[CODEX_AGENT_HOST])}",
+            timeout=120,
+        )
+
+
+def assert_no_writers(writers: dict[str, str], *, clean_exit: bool) -> None:
+    if writer_containers() != writers:
+        raise Failure("writer container identities changed across shutdown")
+    for service, identifier in writers.items():
+        state = inspect(identifier)["State"]
+        if (
+            state["Status"] != "exited"
+            or state["Running"]
+            or state["Pid"] != 0
+            or (clean_exit and (state["OOMKilled"] or state["Error"] or state["ExitCode"] != 0))
+        ):
+            raise Failure(
+                f"{service} did not stop: status={state['Status']} exit_code={state['ExitCode']}"
+                f" running={state['Running']} pid={state['Pid']} oom_killed={state['OOMKilled']}"
+                f" runtime_error={bool(state['Error'])}"
+            )
+    running = host("docker ps --quiet --filter label=com.docker.compose.project=nexus").split()
+    for identifier in running:
+        labels = inspect(identifier)["Config"]["Labels"]
+        service = labels.get("com.docker.compose.service")
+        if labels.get("com.docker.compose.oneoff") != "False" or service not in {
+            "postgres",
+            "caddy",
+            "cloudflared",
+            "codex-egress-policy",
+        }:
+            raise Failure(f"active application/one-off container {identifier} service={service}")
+    sessions = psql(
+        "SELECT coalesce(json_agg(s), '[]') FROM (SELECT pid, application_name, state"
+        " FROM pg_stat_activity WHERE datname = current_database()"
+        " AND backend_type = 'client backend' AND pid <> pg_backend_pid() LIMIT 20) s"
+    )
+    if json.loads(sessions):
+        raise Failure(f"database still has application/operator sessions: {sessions}")
+
+
+def assert_generation_quiescence() -> None:
+    census = json.loads(
+        psql(
+            "SELECT json_build_object("
+            "'chat_runs', (SELECT coalesce(json_agg(r), '[]') FROM (SELECT id, status"
+            " FROM chat_runs WHERE status NOT IN ('complete', 'error', 'cancelled') LIMIT 20) r),"
+            "'llm_calls', (SELECT coalesce(json_agg(c), '[]') FROM (SELECT id, owner_kind, owner_id"
+            " FROM llm_calls WHERE outcome IS NULL LIMIT 20) c),"
+            "'background_jobs', (SELECT coalesce(json_agg(j), '[]') FROM (SELECT id, kind, status"
+            " FROM background_jobs WHERE status IN ('pending', 'failed', 'running') LIMIT 20) j))"
+        )
+    )
+    if any(census.values()):
+        raise Failure(
+            f"accepted work remains (up to 20 ids per category): {json.dumps(census)};"
+            " settle through compatible original owners before retrying"
+        )
+    note("final stopped-writer census: no nonterminal chats, open calls or unfinished jobs")
+
+
+def restore_original() -> None:
+    cohort = original_cohort()
+    if cohort is None or cohort.state != "recoverable":
+        raise Failure("no recoverable original cohort; use normal forward-only recovery")
+    note("restoring the captured original containers, without candidate compose/config")
+    stop_writers(cohort.containers)
+    assert_no_writers(cohort.containers, clean_exit=False)
+    assert_original_unchanged(cohort)
+    # Restore dependency order without recreating any container or consulting current.env.
+    deadline = time.monotonic() + 240
+    for services in (
+        (CODEX_AGENT_HOST,),
+        ("api",),
+        ("worker-interactive", "worker-background"),
+    ):
+        identifiers = [cohort.containers[service] for service in services]
+        host(f"docker start {shlex.join(identifiers)}")
+        while True:
+            pending = [
+                service
+                for service in services
+                if inspect(cohort.containers[service])["State"].get("Health", {}).get("Status")
+                != "healthy"
+            ]
+            if not pending:
+                break
+            if time.monotonic() >= deadline:
+                raise Failure(
+                    f"original containers are not healthy: {pending}; keep recovery inputs"
+                )
+            time.sleep(2)
+        if services == ("api",):
+            version = json.loads(inside("api", "curl -fsS http://127.0.0.1:8000/version"))["data"]
+            if (
+                version.get("source_sha") != cohort.source_sha
+                or version.get("expected_database_revision") != cohort.database_revision
+            ):
+                raise Failure(
+                    "restored API runtime identity differs from the captured original cohort"
+                )
+    note(
+        "original cohort restored; settle accepted work through its ordinary owners before retrying"
+    )
+
+
+def quiesce(starting_revision: str) -> None:
+    """Close the actual writer boundary before permitting candidate mutation."""
+    cohort = original_cohort()
+    if cohort is not None and cohort.state == "recoverable":
+        assert_original_unchanged(cohort)
+    writers = writer_containers()
+    if cohort is None:
+        complete = writers.keys() == {*WRITERS, CODEX_AGENT_HOST}
+        cohort = OriginalCohort(
+            state="recoverable" if complete else "invalidated",
+            containers=writers,
+            images={
+                service: inspect(identifier)["Image"] for service, identifier in writers.items()
+            },
+            source_sha=(
+                inspect(writers["api"])["Config"]["Labels"].get("org.opencontainers.image.revision")
+                if "api" in writers
+                else None
+            ),
+            postgres=container("postgres"),
+            database_identity=database_identity(psql),
+            database_revision=starting_revision,
+            host_inputs=host_input_hashes(),
+        )
+        if complete and (cohort.source_sha is None or SHA.fullmatch(cohort.source_sha) is None):
+            raise Failure(
+                "the original API has no immutable source identity; restoration unavailable"
+            )
+        save_original(cohort)
+        if not complete:
+            note("no complete original cohort; only forward recovery is available")
+    note(
+        f"stopping the writers at revision {starting_revision or '(none)'};"
+        " the API is down from here until `up` succeeds"
+    )
+    stop_writers(writers)
+    assert_no_writers(writers, clean_exit=True)
+    if starting_revision:
+        assert_generation_quiescence()
+    elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
+        raise Failure(
+            "the database holds tables but no Alembic revision; repair it before releasing"
+        )
+    if cohort.state == "recoverable":
+        cohort.state = "invalidated"
+        save_original(cohort)
+
+
 def release(source_sha: str, workspace: Path) -> None:
     candidate = preflight(source_sha, workspace, deploying=True)
-    install_host_inputs()
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
     host(f"docker pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
@@ -756,49 +1008,14 @@ def release(source_sha: str, workspace: Path) -> None:
         raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
 
     assert_tunnel_token_readable(candidate)
-    install_caddy()
     starting_revision = database_revision(psql)
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
-    note(
-        f"stopping the writers at revision {starting_revision or '(none)'};"
-        " the API is down from here until `up` succeeds"
-    )
-    compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
-    compose(candidate, f"stop --timeout 45 {CODEX_AGENT_HOST}", timeout=120)
-    for service in (*WRITERS, CODEX_AGENT_HOST):
-        stopped_container = host(
-            "docker ps --all --quiet"
-            " --filter label=com.docker.compose.project=nexus"
-            f" --filter label=com.docker.compose.service={service}"
-            " --filter label=com.docker.compose.oneoff=False"
-        ).strip()
-        if not stopped_container:
-            continue
-        if CONTAINER_ID.fullmatch(stopped_container) is None:
-            raise Failure(f"{service} has ambiguous containers")
-        stopped_state = inspect(stopped_container)["State"]
-        if (
-            stopped_state["Status"] != "exited"
-            or stopped_state["Running"]
-            or stopped_state["Pid"] != 0
-            or stopped_state["OOMKilled"]
-            or stopped_state["Error"]
-            or stopped_state["ExitCode"] != 0
-        ):
-            raise Failure(
-                f"{service} did not stop cleanly: "
-                f"status={stopped_state['Status']} exit_code={stopped_state['ExitCode']} "
-                f"running={stopped_state['Running']} pid={stopped_state['Pid']} "
-                f"oom_killed={stopped_state['OOMKilled']} "
-                f"runtime_error={bool(stopped_state['Error'])}"
-            )
+    quiesce(starting_revision)
+    install_host_inputs()
+    install_caddy()
     if starting_revision:
         backup(candidate, starting_revision)
-    elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
-        raise Failure(
-            "the database holds tables but no Alembic revision; repair it before releasing"
-        )
     else:
         note("the database is empty; there is nothing to back up")
 
@@ -848,6 +1065,7 @@ def release(source_sha: str, workspace: Path) -> None:
     health(candidate)
     assert_isolation()
     host(f"sudo tee {CURRENT_POINTER}", stdin=f"{source_sha}\n".encode())
+    host(f"sudo rm -- {ORIGINAL_COHORT}")
     note(f"released {source_sha}")
     # Retention follows only this release's verified backup. The nightly job
     # prunes again, so a failure here leaves the finished release standing.
@@ -893,16 +1111,24 @@ def check(source_sha: str | None, workspace: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Release the Nexus backend to Hetzner.")
     parser.add_argument("source_sha", nargs="?")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--check",
         action="store_true",
         help="run preflight and the read-only proofs against the recorded release",
+    )
+    mode.add_argument(
+        "--restore-original",
+        action="store_true",
+        help="restore exact captured originals under the backup lock, only before candidate mutation",
     )
     arguments = parser.parse_args(argv)
     source_sha: str | None = arguments.source_sha
     if source_sha is not None and SHA.fullmatch(source_sha) is None:
         parser.error("source SHA must be 40 lowercase hex characters")
-    if not arguments.check and source_sha is None:
+    if arguments.restore_original and source_sha is not None:
+        parser.error("original-cohort restoration takes no candidate SHA")
+    if not arguments.check and not arguments.restore_original and source_sha is None:
         parser.error("a release requires its source SHA")
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
         if arguments.check:
@@ -927,7 +1153,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise Failure(
                     f"could not take {BACKUP_LOCK}: ssh failed or a nightly backup ran on"
                 )
-            release(str(source_sha), Path(temporary))
+            if arguments.restore_original:
+                restore_original()
+            else:
+                release(str(source_sha), Path(temporary))
     return 0
 
 

@@ -23,14 +23,15 @@ revisions in `python/uv.lock`, and native `0.165.0` in `node/codex/bun.lock`.
   and their complete live contract qualify. anthropic bounded synthetic checks
   are authorized under standard retention; the earlier refusal was reversed.
 
-release review at `3b32fcc4e`: the drain requirement above lacks an implemented
-operator procedure. `deploy/hetzner/release.py:758` stops processes;
+release review at `3b32fcc4e`: the previous drain requirement lacked an implemented
+operator procedure. the previous `deploy/hetzner/release.py:758` stopped processes;
 `apps/worker/main.py:35-46` requests shutdown, while
 `python/nexus/jobs/worker.py:55-59,182-186` schedules periodic work and can return
 released work to the queue. clean exits do not prove zero nonterminal generations.
 no general admission/producer pause was found; the existing chat cancel route
-handles individual runs. before release, qualify a concrete quiescence procedure
-or add narrowly scoped admission/producer draining at the existing owners.
+handles individual runs. the controller now has a final stopped-writer census
+and exact-id `--restore-original` recovery before candidate mutation. before
+production release, perform the concrete [quiescence procedure](../../deployment.md#refusal-recovery).
 prove no new admissions and zero queued/running generations before migration;
 do not manufacture completion by rewriting queue rows or accepted requests.
 
@@ -43,10 +44,13 @@ the old-cohort restoration/settlement path before relying on this procedure.
 144 historical running tool receipts belong to already-failed generations and
 are tracked [separately](terminal-generations-retain-running-tool-receipts.md).
 no general admission/pause subsystem is yet justified by the observed workload.
-pre-migration refusal recovery should preserve original stopped container ids
-and actual host/config inputs before replacement, then restore/start that exact
-cohort only while the database is unchanged. do not reconstruct it from candidate
-compose or treat an old deployment script as a qualified recovery path.
+refusal recovery preserves original stopped container/image ids and untouched
+host inputs, with a durable two-state record. original containers retain their
+environment and immutable bind paths even if `current.env` names candidate
+configuration. recovery starts that exact cohort only while postgres identity,
+revision and host inputs are unchanged; candidate mutation invalidates it before
+installation and keeps it invalid across failed forward retries. do not recreate
+the old cohort from candidate compose or use an old deployment script.
 
 proof and exact tested source cohorts belong in the pr. delete this release
 record after the deployed cohort and drain are verified; laboratory success does

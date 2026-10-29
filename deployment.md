@@ -60,8 +60,9 @@ qualification remains open in the
   entrypoint. It converges the backend and then binds the frontend.
 - The release is **linear and idempotent**. There is no attempt state, no
   resume mode and no rollback settlement: after a failure, repair the named
-  cause and rerun the same command. The only durable release state on the host
-  is `/var/lib/nexus/releases/current`.
+  cause and rerun the same command. `/var/lib/nexus/releases/current` records
+  the released sha. a small `original-cohort.json` beside it permits exact-id
+  restoration only before candidate mutation; it is not a migration rollback.
 - a release requires a clean checkout where `HEAD == source-sha`, with that
   commit an ancestor of the freshly fetched `origin/main`.
 - the images deployed come from attempt **1** of a `main` or `release/` branch
@@ -212,6 +213,8 @@ may hold them.
 
 Nothing restarts. The next release picks up whatever the pointers name. See
 `deploy/env/README.md`.
+old-cohort restoration starts captured containers with their retained environment
+and mounts; it never reconstructs them from these potentially newer pointers.
 
 for owner-chat shared memory, pass the central private nexus `client.json` as
 `NEXUS_MEMORY_CLIENT_CONFIG` to that publisher. it validates and publishes a
@@ -241,20 +244,24 @@ host backup lock from before preflight until it exits (see
 1. **preflight** — ssh reachable; clean checkout at the requested commit in `origin/main` history; candidate
    manifest resolved from one first-attempt push; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
-2. **inputs** — install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
+2. **images** — pull both application digests; prove the oci revision label and
+   baked runtime identity against the manifest. pull the configured immutable
+   postgres image and pinned connector, prove its non-root credential access,
+   and require 2 gib free under `/` again. prove database ancestry.
+3. **quiescence** — capture the original api/worker/codex container and image ids,
+   postgres identity/revision and untouched host-input fingerprints durably.
+   stop those exact writers (30s grace, 45s for codex) and verify clean exits,
+   no active nexus application/one-off container and no other database client
+   session. require zero nonterminal chats, open llm calls and all
+   pending/failed/running jobs. any residual work refuses with bounded ids/kinds,
+   before input installation or schema mutation. see [refusal recovery](#refusal-recovery).
+4. **inputs and backup** — durably invalidate original-cohort restoration, then
+   install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
    script, its systemd unit, the `docker.service` drop-in and the nightly backup
    script, service and timer; give the backup one-off (uid 10001) the receipt
    root `/var/backups/nexus/r2`; reload systemd, enable the boot guard, enable
-   and start the nightly timer and start the resource slice.
-3. **images** — pull both application digests; prove the oci revision label and
-   baked runtime identity against the manifest. pull the configured immutable
-   postgres image and pinned connector, prove
-   its non-root credential access, and require 2 gib free under `/` again.
-   validate/install private caddy configuration before service recreation.
-4. **backup** — read the current Alembic revision, prove it descends from the
-   candidate head, stop `api`, `worker-interactive` and `worker-background`,
-   then stop the codex host with at least 45 seconds of grace and require exit 0
-   from every writer and host before running
+   and start the nightly timer and start the resource slice. validate/install
+   private caddy configuration, then run
    `nexus.release_backup create --backup-key releases/<candidate-sha>/database.dump`:
    one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
@@ -282,11 +289,44 @@ host backup lock from before preflight until it exits (see
    fetch that must serve the SHA with `Cache-Control: no-store`.
 10. **isolation** — see below.
 11. **current pointer** — write the SHA to `/var/lib/nexus/releases/current`,
-    then, if step 4 took a backup, prune expired archives. a failed release
+    remove the original-cohort record, then, if step 4 took a backup, prune expired archives. a failed release
     prunes nothing; a failed prune is reported and leaves the release standing.
 
-steps 4–6 are the ordered guarantee: writers stop, the dump is verified and
+steps 3–6 are the ordered guarantee: writers stop, the final census is empty,
+the dump is verified and
 off-host, postgres prerequisites converge, and only then does the schema move.
+
+### refusal recovery
+
+before releasing, commit/sync device writing, close clients and stop operator
+and maintenance writers. the controller cannot prevent an operator from opening
+a new writer outside its ownership. the all-jobs census deliberately also refuses
+unrelated unfinished work. historical running tool receipts on terminal calls are
+not active generations and are never rewritten by this procedure.
+
+after refusal or controller loss before candidate mutation, deliberately run:
+
+```bash
+PYTHONPATH=python uv run --project python --frozen --no-sync \
+  python deploy/hetzner/release.py --restore-original
+```
+
+this backend recovery action takes the same host backup lock. it verifies the
+recorded postgres container, database identity/revision, original image/container
+ids and unchanged host inputs, stops any partially restored originals, and refuses
+competing one-offs or database sessions. it starts those exact original containers
+in codex → api → worker order, requiring health and the original api runtime
+identity. neither candidate compose nor `current.env` recreates anything. the
+original containers retain their captured environment and immutable bind paths.
+settle accepted work through ordinary owners, then retry the normal release.
+
+the record has only `recoverable` and `invalidated` states. invalidation is durable
+before host/Caddy installation or postgres mutation and survives failed forward
+retries; those retries never recapture old ids against changed inputs. restoration
+refuses missing/changed originals or an invalidated record. an incomplete initial
+cohort also has no restoration path. after mutation, repair and recover forward.
+the record is removed only after successful health/isolation and current-pointer
+publication. do not delete it to make restoration or a census pass.
 
 ## Database backups
 
