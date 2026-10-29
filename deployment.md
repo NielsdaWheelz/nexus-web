@@ -162,7 +162,8 @@ rule: repair visibility and publish a fresh source commit, never rerun it.
 backend publication uses a fresh github-hosted `ubuntu-24.04` linux/x64 vm
 per job. devbox labs, rehearsal data and retained images cannot consume its
 build capacity. hosted-runner availability and quota govern scheduling; local
-build cache does not survive the job. pr static checks remain self-hosted.
+build cache does not survive the job. pr static checks also use a fresh
+github-hosted `ubuntu-24.04` linux/x64 vm.
 
 before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
