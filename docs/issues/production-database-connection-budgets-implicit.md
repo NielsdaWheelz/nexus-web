@@ -28,3 +28,16 @@ their deadlines, worker leases progress, and no postgres recovery/oom occurs.
 keep the existing release workload qualification distinct from a maximum-load
 claim. private evidence: campaign `attempts/58c7ecae6/postgres-memory-diagnosis/`
 and `capacity-2g-reaudit-20261014/`.
+
+2026-10-26 profiling now reproduces a concrete consequence on deployed3d81ef45
+and the verified0317 nightly corpus: ordinary UI reads across retained api
+connections exhaust the512mib database before the next search. a one-backend
+four-cycle control largely plateaus and releases its private memory on close.
+four warmed backends allow the selected keyword statements to complete, with
+limited margin; this neither sets a safe pool size nor budgets async waiters,
+listeners, worker processes or concurrent reader peaks. the exact-image clone
+is amd64-emulated on arm64 and has rebuilt indexes/statistics. evidence and
+remaining attribution limits are in
+[the search incident](production-search-postgres-oom.md). prioritize an explicit
+aggregate physical-backend/private-memory budget and verify all connection
+owners; reducing one pool alone does not establish the full contract.
