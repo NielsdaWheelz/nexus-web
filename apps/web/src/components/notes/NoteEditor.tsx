@@ -39,6 +39,7 @@ import ResourceOutlineList, {
 } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import NoteBodyPreview from "./NoteBodyPreview";
+import AuthoredReadFailure from "./AuthoredReadFailure";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
 import ResourceLink from "@/components/resources/ResourceLink";
 import {
@@ -73,7 +74,7 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackFailure, FieldFeedback, useFeedback, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -295,7 +296,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const attachment = useEditorDraft<{
     row_id: string | null;
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
-    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null;
+    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null; occurrence: object;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
     value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
   busy.current = attachment.value?.pending === true;
@@ -334,6 +335,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
+  const attachmentFeedbackOccurrence = useFeedbackOccurrence(attachmentFeedback !== null, props.editorKey);
   const [referenceFocused, setReferenceFocused] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(true);
   const referenceHost = activeRowId !== null && props.projection ? props.projection.reference(activeRowId) : props.reference ?? null;
@@ -432,7 +434,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       else latest.current.onEdit(edit);
       queueMicrotask(() => bindingRef.current?.refresh());
       return true;
-    } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); return false; }
+    } catch { warn("insertion needs review", "your existing writing is kept."); return false; }
   }, [warn]);
   const refreshMarks = useCallback((state: EditorState) => {
     const field = editingField(state);
@@ -604,7 +606,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       const abort = () => controller.abort();
       signal.addEventListener("abort", abort, { once: true });
       const unsubscribe = uploadHost.subscribe(() => { if (!uploadHost.is_owned()) controller.abort(); });
-      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: null };
+      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: retained?.failure ?? null, occurrence: retained?.occurrence ?? {} };
       setAttachment(task);
       busy.current = true;
       view.setProps({ editable: () => false });
@@ -844,7 +846,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           selectionAfter: original.row_id === editingField(current.state)?.row_id ? fieldSelection(current.state, field) : original.selection,
         }, original.row_id);
         else { if (!binding) replaceDoc(current, docFromBody(latest.current.body)); transferred = true; }
-      } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
+      } catch { warn("insertion needs review", "your existing writing is kept."); }
       finally {
         if (transferred && !current.isDestroyed && compositionBase.current === original) {
           compositionBase.current = null;
@@ -977,8 +979,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         let pasted = slice;
         if (latest.current.projection) {
           try { pasted = inlinePaste(slice, editingField(current.state)?.kind ?? "body"); }
-          catch (error) {
-            warn("paste not applied", error instanceof Error ? error.message : "this clipboard content cannot be inserted here.");
+          catch {
+            warn("paste not applied", "this clipboard content cannot be inserted here.");
             return true;
           }
         }
@@ -1233,7 +1235,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const composingField = compositionBase.current !== null && changed?.row_id === compositionBase.current.row_id;
         if (binding && tr.docChanged && !external && !editingQuery && !(composingField && compositionBase.current?.reference)) {
           try { binding.apply(tr); }
-          catch (error) { warn("edit couldn’t be applied", error instanceof Error ? error.message : "your existing writing is kept."); return; }
+          catch { warn("edit couldn’t be applied", "your existing writing is kept."); return; }
         }
         if(binding && !editingQuery)tr.setMeta("addToHistory",false);
         const before = view.state;
@@ -1471,16 +1473,16 @@ function NoteEditorContent(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {attachmentFeedback ? <FeedbackNotice content={attachmentFeedback} announcement="Polite" /> : null}
-      {attachmentValue && !attachmentValue.pending && !attachmentValue.body ? <FeedbackNotice announcement="Polite"
+      {attachmentFeedback ? <FeedbackFailure scope="Local" occurrence={attachmentFeedbackOccurrence} content={attachmentFeedback} announcement="Polite" /> : null}
+      {attachmentValue && attachmentValue.failure && !attachmentValue.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite"
         content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={attachmentValue.upload.expired
           ? [{ label: "discard attachment", onClick: discardAttachment }] : [{
-          label: attachmentValue.upload.review_required ? "review and save" : "check save", onClick: () => {
+          label: attachmentValue.upload.review_required ? "review and save" : "check save", busy: attachmentValue.pending, onClick: () => {
             const task = readAttachment(), view = viewRef.current;
             if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
           },
         }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {attachmentValue?.body ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
+      {attachmentValue?.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
         label: "insert attachment", onClick: () => {
           const task = readAttachment(), view = viewRef.current;
           if (!view || view.composing || compositionBase.current !== null) return;
@@ -1779,15 +1781,21 @@ function EmbeddedResource({
 function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
   const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
   const resource = read.data?.rows[0]?.resource;
-  return <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
-    ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
-    : read.error ? "annotation unavailable" : read.data ? "annotation unavailable" : "loading annotation…"}</a>;
+  return <>
+    <FeedbackBusy subject={resourceRef} pending={read.pending}/>
+    <AuthoredReadFailure {...read} title="couldn’t refresh this annotation"/>
+    <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
+      ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
+      : read.data ? "annotation unavailable" : "annotation"}</a>
+  </>;
 }
 function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, onRevealRoot, beforeCollapse}: {
   resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
 }) {
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const failureOccurrence = useFeedbackOccurrence(failed, resourceRef);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const item =
@@ -1800,14 +1808,14 @@ function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containing
   useEffect(() => {
     if (item) return;
     const controller = new AbortController();
-    setFailed(false);
+    setLoading(true);
     void resolveResourceItem(resourceRef, controller.signal).then(
-      setResolved,
+      value => {if (!controller.signal.aborted) {setResolved(value); setFailed(false); setLoading(false);}},
       (error: unknown) => {
         if (controller.signal.aborted || handleUnauthenticated(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error))
           setDefect({ error });
-        else setFailed(true);
+        else {setFailed(true); setLoading(false);}
       },
     );
     return () => controller.abort();
@@ -1830,19 +1838,8 @@ function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containing
       />
     </ResourceOutlineList>
   ) : (
-    <p role={failed ? "alert" : "status"}>
-      {failed ? (
-        <>
-          couldn’t load embedded resource{" "}
-          <Button
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            retry
-          </Button>
-        </>
-      ) : (
-        "loading embedded resource…"
-      )}
-    </p>
+    failed ? <FeedbackFailure scope="Local" occurrence={failureOccurrence}
+      content={{tone: "Warning", title: "couldn’t open embedded resource"}} announcement="Polite"
+      actions={[{label: "retry", busy: loading, onClick: () => setAttempt(value => value + 1)}]}/> : null
   );
 }

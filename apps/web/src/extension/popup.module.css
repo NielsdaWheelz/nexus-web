@@ -124,3 +124,6 @@ body {
   justify-content: flex-end;
   gap: var(--space-2);
 }
+
+.popup { position: relative; padding-inline-end: calc(var(--space-4) + var(--size-xl) + var(--space-2)); }
+.recovery { position: absolute; inset-inline-end: var(--space-3); inset-block-start: var(--space-3); }

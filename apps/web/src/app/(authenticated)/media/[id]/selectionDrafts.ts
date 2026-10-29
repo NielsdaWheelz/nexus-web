@@ -28,8 +28,8 @@ export function recordDraftEdit(history: DraftHistory, edit: NoteEdit): DraftHis
 
 export type DraftIssue =
   | { kind: "Source" | "Capture" | "Capacity"; message: string }
-  /** A local commit that did not persist: its frozen command retries; the input stays. */
-  | { kind: "Failed"; message: string; retry: () => void };
+  /** Preparation retries its retained gesture; commit retries its frozen account command. */
+  | { kind: "Failed"; phase: "Preparation" | "Commit"; message: string; retry: () => void };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" | "LookupFailed" }

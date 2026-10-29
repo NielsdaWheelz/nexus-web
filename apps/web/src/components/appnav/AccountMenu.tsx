@@ -7,13 +7,11 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { useFeedback } from "@/components/feedback/Feedback";
-import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
-import { readDeviceStartup, sessionSignIn, sessionSignOut } from "@/lib/native/client";
+import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
+import { useAuthoredSignIn, useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
 import { prepareAuthoredSignOut } from "@/lib/authored/signOut";
 import { importAttentionDescription } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -133,9 +131,7 @@ export default function AccountMenu(props: {
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
   const workspace = useWorkspaceStore();
-  const feedback = useFeedback();
-  const [signingIn, setSigningIn] = useState(false);
-  const signInRunning = useRef(false);
+  const { signIn, busy: signingIn } = useAuthoredSignIn();
   const signOut = useContext(SignOutContext);
   const { summary } = useImports();
   const status = useAuthoredStatus();
@@ -177,26 +173,6 @@ export default function AccountMenu(props: {
     ),
   });
 
-  const signIn = async () => {
-    if (signInRunning.current) return;
-    if (!installedApp) {
-      window.location.assign(loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)));
-      return;
-    }
-    signInRunning.current = true;
-    setSigningIn(true);
-    try {
-      const result = await sessionSignIn();
-      if (result === "DifferentAccount") feedback.receipt({ tone: "Warning", title: "use the account already open here", message: "sign in with the account already open on this device to continue syncing." });
-      else if (result === "Failed") feedback.receipt({ tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." });
-    } catch (error) {
-      reportError(error);
-      feedback.receipt({ tone: "Warning", title: "couldn’t sign in", message: "your notes remain saved on this device. try signing in again." });
-    } finally {
-      signInRunning.current = false;
-      setSigningIn(false);
-    }
-  };
 
   const options: ActionDescriptor[] = [
     syncStatusOption(status, cause, { onSignIn: () => void signIn(), busy: signingIn || signOut.busy }),

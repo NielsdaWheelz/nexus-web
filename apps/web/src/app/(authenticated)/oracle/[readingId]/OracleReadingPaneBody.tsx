@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  FeedbackNotice,
+  FeedbackNotice, FeedbackFailure, useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
@@ -199,8 +199,9 @@ export default function OracleReadingPaneBody() {
         ? undefined
         : canonicalResourceRef({ scheme: "oracle_reading", id: readingId }),
   });
+  const readOccurrence = useFeedbackOccurrence(loadError !== null, readingId);
+  const retryOccurrence = useFeedbackOccurrence(retryError !== null, attempt.current?.id ?? readingId);
   if (defect) throw defect.error;
-
   const reload = () => {
     detail.refetch();
     setLoads((count) => count + 1);
@@ -212,13 +213,12 @@ export default function OracleReadingPaneBody() {
       : { ...attempt.current, openIntent: intent === "new_pane" ? intent : attempt.current.openIntent };
     attempt.current = frozen;
     setRetrying(true);
-    setRetryError(null);
     try {
       await openAsyncResult({
         ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const next = await createReading({ id: frozen.id, question: frozen.question });
-          if (live.current) attempt.current = null;
+          if (live.current) {attempt.current = null; setRetryError(null);}
           return { target: { href: `/oracle/${next}` }, title: "reading started", openLabel: "open reading" };
         },
       });
@@ -413,20 +413,21 @@ export default function OracleReadingPaneBody() {
                 actions={[{ label: "start a new reading", onClick: intent => void retryReading(intent), busy: retrying }]}
               />
               {retryError !== null && (
-                <FeedbackNotice content={retryError} announcement="Assertive" />
+                <FeedbackFailure scope="Local" occurrence={retryOccurrence} content={retryError} announcement="Assertive"
+                  actions={[{label: "retry starting reading", onClick: intent => void retryReading(intent), busy: retrying}]}/>
               )}
 
             </section>
           )}
 
           {loadError !== null && reading?.status !== "complete" && (
-            <section className={styles.errorPanel}>
-              <FeedbackNotice
+            <>
+              <FeedbackFailure scope="Local" occurrence={readOccurrence}
                 content={loadError}
                 announcement="Assertive"
                 actions={[{ label: "reconnect reading", onClick: reload, busy: detail.status === "failed" ? detail.retrying : detail.status === "ready" && detail.refreshing }]}
               />
-            </section>
+            </>
           )}
         </article>
       </div>

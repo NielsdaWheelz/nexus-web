@@ -40,6 +40,7 @@ export interface LibraryPlacementSession {
   readonly options: LibraryPlacementOpenOptions;
 }
 interface Change {
+  readonly occurrence: object;
   readonly row: Target;
   readonly libraryId: string;
   readonly included: boolean;
@@ -51,6 +52,8 @@ interface Change {
   readonly complete: ((confirmed: boolean) => void) | null;
 }
 interface Failure {
+  readonly occurrence: object;
+  readonly change: Change | null;
   readonly content: FeedbackContent;
   readonly uncertain: boolean;
 }
@@ -64,10 +67,11 @@ interface Target {
   visible: number;
   reading: Promise<boolean> | null;
   dirty: boolean;
-  readError: FeedbackContent | null;
+  readError: {content: FeedbackContent; occurrence: object} | null;
   unavailable: boolean;
 }
 interface Creation {
+  readonly occurrence: object;
   readonly id: string;
   readonly name: string;
   readonly initial_items: readonly string[];
@@ -135,9 +139,10 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       } catch (error) {
         if (!active || lifetime !== run || run.signal.aborted) return false;
         row.dirty = true;
-        row.readError = isAbortError(error)
+        const content: FeedbackContent | null = isAbortError(error)
           ? { tone: "Warning", title: "libraries couldn’t be loaded", message: "reload libraries to continue." }
           : report(error, "libraries couldn’t be loaded");
+        row.readError = content === null ? null : {content, occurrence: row.readError?.occurrence ?? {}};
         if (isApiError(error) && error.status === 404) { row.unavailable = true; row.data = null; }
       }
       return false;
@@ -157,7 +162,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   };
   const refuseLane = (libraryId: string) => {
     for (const next of [...(lanes.get(libraryId) ?? [])]) {
-      next.row.failures.set(libraryId, { content: CHANGED, uncertain: false });
+      next.row.failures.set(libraryId, { content: CHANGED, occurrence: next.occurrence, change: null, uncertain: false });
       next.row.results.set(libraryId, "Refused");
       next.complete?.(false);
       remove(next);
@@ -203,7 +208,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
             ? { tone: "Warning" as const, title: "change not confirmed", message: "check change before choosing again." }
             : isApiError(error) && error.code === "E_RESOURCE_CONFLICT" ? CHANGED
               : report(error, "library change wasn’t applied");
-          if (content !== null) change.row.failures.set(libraryId, { content, uncertain });
+          if (content !== null) change.row.failures.set(libraryId, { content, occurrence: change.occurrence, change: uncertain ? change : null, uncertain });
           change.row.results.set(libraryId, uncertain ? "Unknown" : "Refused");
           change.row.dirty = true;
           change.complete?.(false);
@@ -223,7 +228,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     const cell = row.data?.find(item => item.library_id === libraryId);
     if (!cell || row.removalRevision === null) return;
     const lane = lanes.get(libraryId) ?? [];
-    const change: Change = { row, libraryId, included: desired, expectedRevision: cell.order_revision,
+    const change: Change = { occurrence: {}, row, libraryId, included: desired, expectedRevision: cell.order_revision,
       removalRevision: desired ? row.removalRevision : null, predecessor: lane.at(-1) ?? null,
       acknowledgedRevision: null, phase: "Queued", complete };
     row.failures.delete(libraryId);
@@ -255,7 +260,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         : report(outcome.error, "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
       if (outcome.kind === "Refused") {
         creations.delete(attempt.id);
-        for (const row of attempt.targets) row.failures.set(attempt.id, { content: attempt.error, uncertain: false });
+        for (const row of attempt.targets) row.failures.set(attempt.id, { content: attempt.error, occurrence: attempt.occurrence, change: null, uncertain: false });
         retryRead(attempt.targets);
       }
     }
@@ -295,19 +300,16 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     });
     const readFailure = all.find(row => row.readError !== null)?.readError ?? null;
     const creation = [...creations.values()].find(attempt => attempt.error !== null && attempt.targets.some(row => all.includes(row)));
-    const unknown = all.flatMap(row => row.queue).find(change => change.phase === "Unknown");
-    let failure = all.flatMap(row => [...row.failures.values()])[0]?.content ?? null;
+    const commandFailure = all.flatMap(row => [...row.failures.values()])[0] ?? null;
+    const unknown = commandFailure?.change ?? all.flatMap(row => row.queue).find(change => change.phase === "Unknown");
+    let failure = commandFailure?.content ?? null;
     if (failure !== null && all.some(row => [...row.results.values()].includes("Applied")) && all.length > 1)
       failure = { tone: "Warning", title: "some items changed; remaining changes need review" };
-    const error: ChooserError | null = readFailure !== null ? { content: readFailure, retry: () => retryRead(all), busy: all.some(row => row.reading !== null), commandKey: "library-read" }
-      : creation?.error ? { content: creation.error, retry: () => void create(creation), busy: creation.running, commandKey: `library-create:${creation.id}` }
-        : failure !== null ? { content: failure, retry: unknown ? () => check(unknown) : null, retryLabel: "check change", busy: unknown ? running.has(unknown.libraryId) : false } : null;
-    const pending = rows.reduce((count, row) => count + row.queue.filter(change => change.phase === "Queued" || change.phase === "Sending").length, 0);
-    const applied = rows.reduce((count, row) => count + [...row.results.values()].filter(result => result === "Applied").length, 0);
+    const error: ChooserError | null = readFailure !== null ? { occurrence: readFailure.occurrence, content: readFailure.content, retry: () => retryRead(all), busy: all.some(row => row.reading !== null), commandKey: "library-read" }
+      : creation?.error ? { occurrence: creation.occurrence, content: creation.error, retry: () => void create(creation), busy: creation.running, commandKey: `library-create:${creation.id}` }
+        : failure !== null && commandFailure !== null ? { occurrence: commandFailure.occurrence, content: failure, retry: unknown ? () => check(unknown) : null, retryLabel: "check change", busy: unknown ? running.has(unknown.libraryId) : false } : null;
     return { items, error, loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
       summary: known ? `${pluralize(items.filter(item => item.confirmed !== null && item.confirmed.included === item.confirmed.total).length, "library", "libraries")} included` : "membership unknown",
-      status: [pending > 0 ? `${pending} ${pending === 1 ? "change" : "changes"} pending` : null,
-        applied > 0 ? `${applied} ${applied === 1 ? "change" : "changes"} applied` : null].filter(Boolean).join(" · ") || undefined,
       creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null && row.queue.length === 0)
         && ![...creations.values()].some(attempt => attempt.targets.some(row => all.includes(row))),
       pendingNames: [...creations.values()].map(attempt => attempt.name),
@@ -342,7 +344,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         || current.pendingNames.some(pending => pending.toLowerCase() === name.toLowerCase())) return false;
       const removal = rows[0]?.removalRevision;
       if (removal === null || removal === undefined) return false;
-      const attempt: Creation = { id: crypto.randomUUID(), name, initial_items: rows.map(row => resourceRef(row.target)),
+      const attempt: Creation = { occurrence: {}, id: crypto.randomUUID(), name, initial_items: rows.map(row => resourceRef(row.target)),
         expected_removal_revision: removal, targets: rows, running: false, error: null };
       creations.set(attempt.id, attempt);
       void create(attempt);
@@ -490,7 +492,6 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
         disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
         onSet={({ destination, included }) => included && chooseExternal(destination, external)}
-        status={external.pending ? "saving for this library…" : creation.status}
         error={creation.error}
         create={{ available: !external.pending && !controller.hasPendingExternalCreation(external.target), pendingNames: creation.pendingNames,
           onCreate: name => {

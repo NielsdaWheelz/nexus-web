@@ -8,7 +8,8 @@
  * Acknowledged changes speak through the refreshed podcast state.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { useFeedback, type FeedbackContent, type FeedbackContextValue } from "@/components/feedback/Feedback";
+import { FeedbackFailure, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { assertNever } from "@/lib/assertNever";
 import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
@@ -39,33 +40,23 @@ interface Entry {
   uncertain: boolean;
   requestId: string | null;
   failure: FeedbackContent | null;
-  /** Withdraws the latest failure report once the entry is checked, resent or retired. */
-  retract: (() => void) | null;
 }
 const EMPTY: readonly Entry[] = [];
 
-function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackContextValue, fail: (input: { error: unknown }) => void) {
+function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error: unknown }) => void) {
   let lifetime: AbortController | null = null;
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
   let snapshot = EMPTY;
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   const emit = () => { snapshot = [...entries.values()]; for (const listener of listeners) listener(); };
-  const retire = (entry: Entry) => { entries.delete(entry.subject); entry.unregister(); entry.retract?.(); emit(); };
-  const report = (entry: Entry) => {
-    const content = podcastPendingNotice(entry);
-    if (content === null) return;
-    entry.retract = feedback.receipt({ ...content, title: `${content.title} · ${entry.title}` }, entry.phase === "Unknown"
-      ? { label: "check change", onClick: () => { void commands.check(entry.key); } }
-      : { label: "review current state", onClick: () => commands.review(entry.key) });
-  };
+  const retire = (entry: Entry) => { entries.delete(entry.subject); entry.unregister(); emit(); };
   const current = (entry: Entry, scope: AbortController) => lifetime === scope && !scope.signal.aborted && entries.get(entry.subject) === entry;
   async function send(entry: Entry): Promise<boolean> {
     const scope = lifetime;
     if (scope === null || scope.signal.aborted || entries.get(entry.subject) !== entry) return false;
     entry.phase = "Sending";
-    entry.failure = null;
-    entry.retract?.(); entry.retract = null;
+
     emit();
     const command = entry.command;
     try {
@@ -97,7 +88,6 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
         if ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error)) fail({ error });
       }
       emit();
-      report(entry);
       return false;
     }
     if (!current(entry, scope)) return false;
@@ -111,7 +101,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
       if (lifetime === null || lifetime.signal.aborted || entries.has(input.subject)) return Promise.resolve(false);
       const key = `podcast-command:${accountId}:${crypto.randomUUID()}`;
       const entry: Entry = { ...input, key, body: JSON.stringify(input.command.body), onAccepted: input.onAccepted ?? null, phase: "Sending", uncertain: false, requestId: null, failure: null,
-        unregister: () => {}, retract: null };
+        unregister: () => {} };
       entry.unregister = guard.register({ id: key, scope: { kind: "account" }, subscribe, read: () => ({ changed: false, unconfirmed: entry.phase !== "Refused", stopsBrowserWork: false }) });
       entries.set(input.subject, entry); emit(); return send(entry);
     },
@@ -121,7 +111,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
       if (entry === undefined || entry.phase !== "Unknown" || scope === null) return;
       const command = entry.command;
       if (command.kind !== "Import") { await send(entry); return; }
-      entry.phase = "Sending"; entry.retract?.(); entry.retract = null; emit();
+      entry.phase = "Sending"; emit();
       try {
         const operation = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => getPodcastImport(command.libraryId, command.importId, signal) });
         if (!current(entry, scope)) return;
@@ -129,14 +119,13 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
           ? operation.state === "cancelled" || operation.state === "complete"
           : operation.attempt_version === command.body.expected_attempt_version + 1;
         if (confirmed) { retire(entry); publishChange("Podcasts", "Entries"); }
-        else { entry.phase = "Unknown"; emit(); report(entry); }
+        else { entry.phase = "Unknown"; emit(); }
       } catch (error) {
         if (!current(entry, scope)) return;
         entry.phase = "Unknown";
         if (isApiError(error)) entry.requestId = error.requestId ?? null;
         else if (!isAbortError(error)) fail({ error });
         emit();
-        report(entry);
       }
       invalidateReads("Podcasts", "Entries");
     },
@@ -158,20 +147,34 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
 
 export function usePodcastCommands(accountId: string, fail: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
-  const feedback = useFeedback();
-  const owner = useMemo(() => createOwner(accountId, guard, feedback, fail), [accountId, guard, feedback, fail]);
+  const owner = useMemo(() => createOwner(accountId, guard, fail), [accountId, guard, fail]);
   useLayoutEffect(() => owner.start(), [owner]);
   // A fresh command object per published change re-renders the subjects that read `pending`.
-  useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
-  return { commands: { ...owner.commands } };
+  const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
+  return { commands: { ...owner.commands }, feedback: entries.map(entry => <PodcastCommandFailure key={entry.key} subject={entry.subject} />) };
 }
 
 /** The subject's own notice for a retained command that did not settle. */
 export function podcastPendingNotice(entry: Entry): FeedbackContent | null {
-  if (entry.phase === "Sending") return null;
+  if (entry.phase === "Sending" && !entry.uncertain && entry.failure === null) return null;
   return entry.failure ?? {
     tone: "Warning", title: "change not confirmed",
     message: "the request may have succeeded. checking retains the original ids and guards.",
     requestId: entry.requestId ?? undefined,
   };
+}
+
+/** The retained command supplies identical content and actions in its live hosts. */
+export function PodcastCommandFailure({subject}: {subject: string}) {
+  const {ctx} = useActionRuntime();
+  const entry = ctx.podcasts.pending(subject);
+  if (entry === null) return null;
+  const content = podcastPendingNotice(entry);
+  if (content === null) return null;
+  const unknown = entry.uncertain;
+  return <FeedbackFailure scope="Local" occurrence={entry.command} announcementOccurrence={entry.failure ?? entry.command}
+    content={{...content, message: [entry.title, content.message].filter(Boolean).join(" · ")}} announcement="Polite"
+    actions={unknown ? [{label: "check change", onClick: () => {void ctx.podcasts.check(entry.key);}, busy: entry.phase === "Sending"},
+      {label: "review current state", onClick: () => ctx.podcasts.review(entry.key)}]
+      : [{label: "review current state", onClick: () => ctx.podcasts.review(entry.key)}]} />;
 }

@@ -52,3 +52,6 @@
 .close {
   flex: 0 0 auto;
 }
+
+.surface { padding-inline-end: calc(var(--size-xl) + var(--space-2)); }
+.recoverySlot { position: absolute; inset-inline-end: var(--space-1); inset-block-start: var(--space-1); }

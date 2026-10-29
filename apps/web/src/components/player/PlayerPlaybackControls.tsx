@@ -4,6 +4,7 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
+import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -160,6 +161,9 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   const commands = usePlayerCommands();
   const { ctx } = useActionRuntime();
   const [preparation, setPreparation] = useState<PreparationState>(null);
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [opening, setOpening] = useState(false);
+  const occurrence = useFeedbackOccurrence(failure !== null || opening, expectedSubject);
   const resolve = async (signal: AbortSignal): Promise<OpenResult | null> => {
     try {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(`/api/media/${mediaId}/reader`, { signal });
@@ -176,7 +180,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   const report = (error: unknown) => {
     if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
     if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-    ctx.feedback.receipt(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
+    setFailure(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
   };
   const activate = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -188,19 +192,21 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       return;
     }
     const originPaneId = ctx.workspace().state.active_primary_pane_id;
+    setOpening(true);
     void openAsyncResult({ ctx, originPaneId, intent: "new_pane", subject: chapter.title,
       mayOpen: () => subject.current === expectedSubject,
       onOpened,
       create: async () => {
         const result = await resolve(ctx.sessionSignal());
-        if (!result && !ctx.sessionSignal().aborted) ctx.feedback.receipt({ tone: "Warning", title: "no transcript at this time", message: chapter.title });
+        if (!ctx.sessionSignal().aborted) setFailure(result ? null : {tone: "Warning", title: "no transcript at this time", message: chapter.title});
         return result;
       },
-    }).catch(report);
+    }).catch(report).finally(() => setOpening(false));
   };
   return <li className={styles.chapterRow}>
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> : null}
     <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current ? "true" : undefined}
-      disabled={expectedSubject === null} onClick={activate} onKeyDown={activate}>
+      aria-busy={opening} disabled={expectedSubject === null} onClick={activate} onKeyDown={activate}>
       <span>{chapter.title}</span>
       <span className={styles.time}>{formatClock(chapter.start_ms / 1000)}</span>
     </button>

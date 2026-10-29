@@ -14,6 +14,7 @@ import {
   useFeedback,
   type FeedbackAction,
   type FeedbackContextValue,
+  FeedbackFailure,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
@@ -37,6 +38,7 @@ import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
+import { useConversationCreationOwner, type ConversationCreationInput } from "@/lib/chat/conversationIndex";
 import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
@@ -53,6 +55,9 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
+import { DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
+import { ReaderSettingsFailure } from "@/lib/reader/ReaderContext";
+import { PlayerFailures, usePlayerFailurePresentation } from "@/components/player/GlobalPlayerSurfaces";
 import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
 import { usePodcastCommands } from "@/lib/podcasts/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -125,6 +130,7 @@ export interface ActionContext {
   readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
+  readonly createConversationAbout: (input: ConversationCreationInput) => Promise<void>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly podcastLibraryCreation: ReturnType<typeof useDestinationCreation>;
   readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
@@ -150,6 +156,8 @@ interface Runtime {
   readonly busy: BusyKeys;
   readonly defect: { error: unknown } | null;
   readonly overlayPresentation: ReactNode;
+  readonly retainedFeedback: ReactNode;
+  readonly playerFeedback: ReactNode;
 }
 
 interface BusyKeys {
@@ -256,6 +264,8 @@ export default function ResourceActionsProvider({
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
   const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
+  const playerFeedback = usePlayerFailurePresentation();
+  const conversationCreation = useConversationCreationOwner(accountId);
   const [destinationCreation] = useState(createDestinationCreation);
   const podcastLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
   const workGuard = useWorkGuard();
@@ -322,6 +332,7 @@ export default function ResourceActionsProvider({
       podcastSettings: podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
+      createConversationAbout: conversationCreation.create,
       podcastLibraryCreation,
       overlays: { open },
     }),
@@ -345,6 +356,7 @@ export default function ResourceActionsProvider({
       podcastEpisodes.commands,
       podcasts.commands,
       podcastSettings.commands,
+      conversationCreation.create,
       mediaContinuations,
       observeChatCommand,
       podcastLibraryCreation,
@@ -406,12 +418,15 @@ export default function ResourceActionsProvider({
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,
     overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
-  }), [ctx, run, busy, defect, overlay, close]);
+    retainedFeedback: <>{chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
+      {consumption.collectionFailures.map(failure => <FeedbackFailure key={failure.key} scope="Local" occurrence={failure.occurrence} content={failure.content} actions={failure.actions} announcement="Polite" />)}
+      {lectern.collectionFailure ? <FeedbackFailure scope="Local" occurrence={lectern.collectionFailure.occurrence} content={lectern.collectionFailure.content} actions={lectern.collectionFailure.actions} announcement="Polite" /> : null}</>,
+    playerFeedback,
+  }), [ctx, run, busy, defect, overlay, close, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, playerFeedback]);
 
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
-      {chatCommandFeedback}
       <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"}
         returnFocusFallback={confirmation?.afterRemoval} onClose={() => setConfirmation(null)}>
         {confirmation?.confirmation ? <>
@@ -426,4 +441,9 @@ export default function ResourceActionsProvider({
       </Dialog>
     </RuntimeContext.Provider>
   );
+}
+
+/** Existing account command owners project through each mounted pane's real host. */
+export function RetainedActionFeedback() {
+  return <>{useActionRuntime().retainedFeedback}<ReaderSettingsFailure /><DeviceSettingsStatus /><PlayerFailures /></>;
 }

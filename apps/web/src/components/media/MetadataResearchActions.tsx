@@ -1,8 +1,8 @@
 "use client";
 
 import { installedApp } from "@/lib/native/admission";
-import { useEffect, useId, useState } from "react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useEffect, useId, useRef, useState } from "react";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
@@ -10,7 +10,7 @@ import {
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
+import { apiTransportFeedback, outcomeUnknown, isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
@@ -50,6 +50,7 @@ export function MetadataReviewButton({
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const fail = useThrowLater();
+  const occurrence = useFeedbackOccurrence(failure !== null || pending, jobId);
   const review = async (trigger: HTMLButtonElement) => {
     if (pending) return;
     setPending(true);
@@ -66,7 +67,7 @@ export function MetadataReviewButton({
               ? { tone: "Warning" as const, title: "this result changed", message: "only a result with no findings can be marked reviewed.", requestId: modeled.requestId }
               : null);
         if (content === null) fail({ error });
-        else setFailure(content);
+        else setFailure(outcomeUnknown(modeled) && modeled.code !== "E_UNAUTHENTICATED" ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content);
       }
     } finally {
       setPending(false);
@@ -74,7 +75,7 @@ export function MetadataReviewButton({
   };
   return (
     <>
-    <Button
+    <Button reserveIcon busyKey={jobId}
       data-metadata-action=""
       aria-disabled={pending || undefined}
       aria-busy={pending || undefined}
@@ -83,7 +84,7 @@ export function MetadataReviewButton({
     >
       mark reviewed
     </Button>
-    {failure === null ? null : <div data-metadata-feedback=""><FeedbackNotice content={failure} announcement="Polite" /></div>}
+    {failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure} content={failure} announcement="Polite" />}
     </>
   );
 }
@@ -120,13 +121,20 @@ export default function MetadataResearchActions({
     retry.reason === "source_context_missing";
   const remedies = useResourceActions(remedyNeeded ? ref : null);
   const { prepare, state } = remedies;
-  const [remedyAttempt, setRemedyAttempt] = useState(0);
+  const remedyRequest = useRef<AbortController | null>(null);
+  const remedyFailure = state?.kind === "Failed" ? state.feedback : state?.kind === "Loading" ? state.failure?.feedback ?? null : null;
+  const failureOccurrence = useFeedbackOccurrence(failure !== null, mediaId);
+  const remedyOccurrence = useFeedbackOccurrence(remedyFailure !== null, mediaId);
   useEffect(() => {
     if (!remedyNeeded) return;
     const controller = new AbortController();
+    remedyRequest.current = controller;
     prepare(controller.signal);
-    return () => controller.abort();
-  }, [prepare, remedyNeeded, remedyAttempt]);
+    return () => {
+      if (remedyRequest.current === controller) remedyRequest.current = null;
+      controller.abort();
+    };
+  }, [prepare, remedyNeeded]);
   const sourceRemedy = state?.kind === "Ready" ? state.options.find(
     (action) =>
       action.kind === "command" &&
@@ -161,12 +169,12 @@ export default function MetadataResearchActions({
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button data-metadata-action="" aria-disabled={installedApp || undefined}
+        isStaleBuild(pending.error) ? <Button reserveIcon data-metadata-action="" aria-disabled={installedApp || undefined}
           tooltip={installedApp ? { text: "install the current nexus apk, then reopen the app." } : undefined}
           onClick={() => { if (!installedApp) window.location.reload(); }}>
           {installedApp ? "update nexus" : "reload app"}
         </Button> :
-        <Button
+        <Button reserveIcon
           data-metadata-action=""
           aria-busy={pending.kind === "sending" || undefined}
           aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
@@ -181,7 +189,7 @@ export default function MetadataResearchActions({
           }}
         >retry same request</Button>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
-        <Button
+        <Button reserveIcon
           data-metadata-action=""
           aria-disabled={!ctx.online || undefined}
           aria-describedby={!ctx.online ? reasonId : undefined}
@@ -191,16 +199,15 @@ export default function MetadataResearchActions({
           {metadataResearchLabel(operation, retry.purpose)}
         </Button>
       ) : null}
-      {failure !== null || remedyNeeded && (state === null || state.kind === "Loading" || state.kind === "Failed") ? <div data-metadata-feedback="">
-      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
-      {remedyNeeded && (state === null || state.kind === "Loading") ? <FeedbackStatus
-        content={{ tone: "Neutral", title: "loading actions…" }} announcement="Polite"
-      /> : null}
-      {remedyNeeded && state?.kind === "Failed" ? <FeedbackNotice content={state.feedback} announcement="Polite"
-        actions={[{ label: "retry", onClick: () => setRemedyAttempt((attempt) => attempt + 1) }]} /> : null}
-      </div> : null}
+      {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite" /> : null}
+      {remedyNeeded && (state === null || state.kind === "Loading") && remedyFailure === null ? <FeedbackBusy pending /> : null}
+      {remedyNeeded && remedyFailure ? <FeedbackFailure scope="Local" occurrence={remedyOccurrence} content={remedyFailure} announcement="Polite"
+        actions={[{label: "retry", busy: state?.kind === "Loading", onClick: () => {
+          const request = remedyRequest.current;
+          if (request !== null && !request.signal.aborted) prepare(request.signal);
+        }}]} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
-        <Button
+        <Button reserveIcon
           data-metadata-action=""
           onClick={(event) => {
             const detail = prepareActionSelect(event, event.currentTarget);

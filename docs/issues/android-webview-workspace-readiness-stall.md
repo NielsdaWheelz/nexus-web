@@ -5,3 +5,11 @@ on the isolated android 15 avd `nexus_reader_chrome_20261022_1847` (gesture navi
 the pdf region did not appear within 60 seconds on either run. a subsequent login navigation timed out waiting for `load`; diagnostic navigation reached `domcontentloaded` but `document.readyState` stayed `interactive` and the same suspense skeleton remained for another 10 seconds. the web and api origins responded locally; cdp observed no failed or pending browser requests or console errors. on both runs, a force-stop/start of only the isolated app, retaining its data and installed apk, cleared the condition; the hosted pdf then rendered, handled paper taps and completed its download.
 
 reproduce with this avd, provider and apk: authenticate, open the seeded article, use its normal offline download, then call cdp `page.goto` for the seeded pdf in the same webview. a genuine in-app route transition has not been qualified; a brief native-tap attempt did not change the route, with a system notification permission dialog later observed on this fresh installation. on any stall, inspect the document readiness, suspense output, network requests, and server bootstrap logs before restarting. resolve when the cause is identified and the same journey repeatedly reaches a rendered pdf without a workspace skeleton stall; verify the current apk separately.
+
+quiet-feedback run `20261028-204142-1322e584d9a6`, source `491237e95`, also
+stalled after a confirmed article download and owned cdp navigation to `/downloads`.
+this used api 34 with webview `113.0.5672.136`: readiness remained `interactive`,
+the body was empty and no page defects were recorded. a pending-request inventory
+was not captured. private evidence is in the native-proof checkout's run artifacts.
+independent shelf/capture qualification uses an explicit owned process restart;
+it does not qualify or resolve this navigation path.

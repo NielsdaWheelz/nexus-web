@@ -208,9 +208,10 @@ opening it does not navigate or enrich the held row.
 
 desktop is at most 640px wide with a 48px query and 36px ordinary rows; coarse
 pointer targets remain 44px and mobile targets 48px. one scrollport owns results
-and following notices. a reserved query slot shows delayed busy or explicit notice
+and following lookup/scope guidance. a reserved query slot shows delayed busy or explicit recovery
 access. no visible tutorial or empty status band. one polite owner announces
-operational feedback; notices never automatically steal focus or scroll.
+operational feedback through the shared scoped presenter; failure recovery remains
+outside the result flow and never automatically steals focus or scroll.
 external retrieval uses existing typed browse/preview owners without implicit ingest.
 
 desktop uses a combobox with a one-column grid popup. each candidate cell

@@ -3,7 +3,7 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
@@ -24,6 +24,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
+      <FeedbackRecoveryControl />
     </header>
   );
 }
@@ -72,15 +73,10 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title="add to today" onBack={controller.back} />
-          {page.submit.kind !== "Ready" && page.submit.content ? (
-            <FeedbackNotice
-              content={page.submit.content}
-              announcement="Assertive"
-              actions={page.submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
-            />
-          ) : (
-            <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
-          )}
+          <p>{page.text}</p>
+          <FeedbackBusy pending={page.submit.kind === "Running"} />
+          <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}
+            aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={() => controller.retryCapture("default")}>retry saving</Button>
         </section>
       );
     case "CreateLibrary":

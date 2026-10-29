@@ -9,7 +9,8 @@ import type { Intent } from "@nexus/authored/commands";
 import type { ResourceProjection } from "@nexus/authored/types";
 import { pageTitle } from "@nexus/authored/queries";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useLocalOutlineRoot, type LocalOutlineHandle } from "@/components/notes/LocalOutline";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -34,7 +35,7 @@ export default function PagePaneBody() {
   const accountId = useAuthoredAccountId();
   const page = usePaneParam("pageId");
   const date = usePaneParam("localDate");
-  if (writing === null) return <PaneLoadingState label="preparing your notes" announcement="None" />;
+  if (writing === null) return <PaneLoadingState />;
   return <PageAccount key={accountId} writing={writing} pageId={page} localDate={date} />;
 }
 
@@ -54,13 +55,15 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
     prelude: newPage ? [{ kind: "create_page", ref: `page:${createdId}`, title: "", local_date: null }] : [],
   }), [createdId, newPage, pageId]);
   const [dailyAttempt, setDailyAttempt] = useState(0);
+  const [dailyRetrying, setDailyRetrying] = useState(localDate !== null);
   const [daily, setDaily] = useState<{ writing: WritingRuntime; date: string; value: ResolvedPage | null; error: unknown | null } | null>(null);
   useEffect(() => {
     if (localDate === null) return;
     let retired = false;
+    setDailyRetrying(true);
     void dailyPage(writing, localDate).then(value => {
-      if (!retired) setDaily({ writing, date: localDate, value, error: null });
-    }).catch(error => { if (!retired) setDaily({ writing, date: localDate, value: null, error }); });
+      if (!retired) {setDailyRetrying(false); setDaily({ writing, date: localDate, value, error: null });}
+    }).catch(error => { if (!retired) {setDailyRetrying(false); setDaily(old => ({ writing, date: localDate, value: old?.writing === writing && old.date === localDate ? old.value : null, error }));} });
     return () => { retired = true; };
   }, [dailyAttempt, localDate, writing]);
   const currentDaily = daily?.writing === writing && daily.date === localDate ? daily : null;
@@ -81,12 +84,17 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   const id = ref?.slice("page:".length) ?? null;
   usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
   usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
-  const error = currentDaily?.error ?? read.error;
-  if (error !== null && error !== undefined) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open this page on this device" }} announcement="Assertive"
-    actions={[{ label: "retry", onClick: localDate === null ? read.retry : () => setDailyAttempt(attempt => attempt + 1) }]} />;
-  if (!ready || ref === null || id === null) return <PaneLoadingState label="loading page…" announcement="None" />;
-  if (gone) return <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />;
-  return <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />;
+  const dailyError = currentDaily?.error ?? null;
+  const dailyOccurrence = useFeedbackOccurrence(dailyError !== null, localDate);
+  const error = dailyError ?? read.error;
+  const failure = <AuthoredReadFailure error={error} occurrence={dailyError !== null ? dailyOccurrence : read.occurrence}
+    pending={dailyError !== null ? dailyRetrying : read.pending}
+    retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
+    title="couldn’t open this page on this device"/>;
+  return <>{failure}{!ready || ref === null || id === null
+    ? <FeedbackBusy subject={localDate ?? pageId ?? createdId} pending={error === null}/>
+    : gone ? <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />
+    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />}</>;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
@@ -148,9 +156,10 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
       return () => controller.abort();
     }
   }, [claim, delivery, id, newPage, root.rootReady]);
+  const entryOccurrence = useFeedbackOccurrence(entryError !== null, rootRef);
   return <div>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
-    {entryError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
+    {entryError !== null ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
     {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}

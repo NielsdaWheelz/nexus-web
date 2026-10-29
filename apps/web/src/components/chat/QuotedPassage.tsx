@@ -4,8 +4,9 @@ import { X } from "lucide-react";
 import type { MouseEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import {
-  FeedbackNotice,
-  FeedbackStatus,
+  FeedbackFailure,
+  FeedbackBusy,
+  useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ResourceQuotation from "@/components/resources/ResourceQuotation";
@@ -58,10 +59,11 @@ export default function QuotedPassage({ quote, onRemove, onRetry }: {
   onRemove?: MouseEventHandler<HTMLButtonElement>;
   onRetry?: () => void;
 }) {
+  const occurrence = useFeedbackOccurrence(quote.kind === "Failed");
   const selection = quote.kind === "Ready" || quote.kind === "Sent" ? quote.selection : null;
   return <div className={styles.quote} role="group" aria-label="Quoted passage">
     {onRemove ? <Button icon={<X />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
-    {selection ? <ResourceQuotation item={selection.item} /> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}
+    {selection ? <ResourceQuotation item={selection.item} /> : quote.kind === "Failed" ? <FeedbackFailure scope="Local" occurrence={occurrence} content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackBusy pending />}
     <p className="sr-only" role="status" aria-live="polite">{onRemove && selection ? "Quoted passage attached." : ""}</p>
   </div>;
 }

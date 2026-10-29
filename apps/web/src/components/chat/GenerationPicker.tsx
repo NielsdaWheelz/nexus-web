@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import ChoicePicker, { type ChoiceOption } from "@/components/ui/ChoicePicker";
 import type { ServerValue } from "@/lib/api/serverState";
 import {
@@ -34,6 +34,8 @@ export default function GenerationPicker({
   onChange(value: SelectionEditor): void;
   disabled: boolean;
 }) {
+  const failure = catalogRead.status === "loading" ? null : catalogRead.error;
+  const occurrence = useFeedbackOccurrence(failure !== null);
   // Complete only the committed unresolved intent. No deferred callback can
   // overwrite a later explicit choice, and exact selections are never normalized.
   useLayoutEffect(() => {
@@ -41,11 +43,14 @@ export default function GenerationPicker({
     const next = chooseModel(catalogRead.data, value.route, value.model_key, value.mode, value);
     if (next.kind === "Selected") onChange(next);
   }, [catalogRead, value, onChange, disabled]);
-  if (catalogRead.status !== "ready")
-    return catalogRead.status === "failed"
-      ? <FeedbackNotice content={{ tone: "Warning", title: "model availability couldn’t be loaded" }} announcement="Polite"
-          actions={[{ label: "retry", onClick: catalogRead.refetch, busy: catalogRead.retrying }]} />
-      : <FeedbackStatus content={{ tone: "Neutral", title: "loading models…" }} announcement="Polite" />;
+  if (catalogRead.status !== "ready") return <div className={styles.picker}>
+    <FeedbackBusy pending={catalogRead.status === "loading"} />
+    {catalogRead.status === "failed" ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: "model availability couldn’t be loaded" }} announcement="Polite"
+      actions={[{label: "retry", onClick: catalogRead.refetch, busy: catalogRead.retrying}]} /> : null}
+    <ChoicePicker label="provider" value={null} options={[]} disabled footer={null} onOpen={catalogRead.refetch} onChange={() => {}} />
+    <ChoicePicker label="model" value={null} options={[]} disabled footer={null} onOpen={catalogRead.refetch} onChange={() => {}} />
+    <EffortPicker variant={null} value={value} disabled onOpen={catalogRead.refetch} onChange={() => {}} />
+  </div>;
   const catalog = catalogRead.data;
   const refresh = catalogRead.error ? catalogRead.refetch : catalogRead.revalidate;
   const route = editorRoute(value);
@@ -93,6 +98,8 @@ export default function GenerationPicker({
   }
   return (
     <div className={styles.picker}>
+      <FeedbackBusy pending={false} />
+      {catalogRead.error ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{tone: "Warning", title: "couldn’t refresh model availability"}} announcement="Polite" actions={[{label: "retry", onClick: catalogRead.refetch, busy: catalogRead.refreshing}]} /> : null}
       <ChoicePicker label="provider" value={providerId} options={providers} disabled={disabled}
         footer={null} onOpen={refresh}
         onChange={(key) => {

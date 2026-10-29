@@ -6,9 +6,12 @@ wording. [recent resources](recent-history.md) owns local history failure
 separately; a ranking failure never changes recent history.
 
 an accepted eligible selection sends exactly query and target href. the send
-closure retains its serialized body, coalesces concurrent sends and offers
-`retry save` only for the latest selection. a lost reply may make an explicit
-retry count the selection twice; these are ranking statistics, not an
+closure retains its serialized body and coalesces concurrent sends. a failure
+offers `retry save` only if it is still the latest selection when the failure
+arrives. the account-scoped transient feedback owner controls the receipt's
+lifetime; a later selection does not retract an already offered retry. the
+closure stops sending when the nexus owner unmounts. a lost reply may make an
+explicit retry count the selection twice; these are ranking statistics, not an
 idempotent resource write or a history replay. successful acknowledgement
 invalidates frecency. offline selection learning does not queue a later write.
 

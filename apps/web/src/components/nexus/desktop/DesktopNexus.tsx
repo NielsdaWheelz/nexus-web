@@ -105,7 +105,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const root = (
     <>
       {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><Button onClick={controller.escape}>cancel</Button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
-      <div className={styles.inputRow} onPointerDownCapture={controller.interact}>
+      <div className={styles.inputRow} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
         <span className="sr-only">Find anything…</span>
         <Input
           ref={inputRef}
@@ -177,7 +177,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             }
           }}
         />
-        <NexusQueryStatus controller={controller} noticeId={NOTICE_ID} />
+        <NexusQueryStatus />
       </div>
       <span id={HELP_ID} className="sr-only">
         {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.`

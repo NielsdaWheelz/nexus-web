@@ -11,7 +11,7 @@ import MediaActions from "@/components/media/MediaActions";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
-  FeedbackNotice,
+  FeedbackFailure, useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
@@ -166,6 +166,8 @@ export default function BrowsePreviewPaneBody() {
               },
             },
   });
+  const readOccurrence = useFeedbackOccurrence(failure !== null);
+  const openingOccurrence = useFeedbackOccurrence(opening.failure !== null);
   usePaneReturnReady(failure !== null || (preview !== null && owned === null));
 
   if (failure !== null) {
@@ -174,7 +176,7 @@ export default function BrowsePreviewPaneBody() {
     return (
       <PaneSurface
         state={
-          <FeedbackNotice
+          <FeedbackFailure scope="Local" occurrence={readOccurrence}
             content={failure.content}
             announcement="Assertive"
             actions={failure.retryable && resource.status === "failed"
@@ -189,8 +191,8 @@ export default function BrowsePreviewPaneBody() {
     return (
       <PaneSurface
         state={
-          opening.failure !== null ? <FeedbackNotice content={opening.failure} announcement="Polite" actions={[{ label: "retry opening", onClick: resolve, busy: opening.running !== null }]} />
-            : <PaneLoadingState label={preview?.kind === "Podcast" || preview?.kind === "Episode" ? "opening catalogue…" : "loading preview…"} announcement="Polite" />
+          opening.failure !== null ? <FeedbackFailure scope="Local" occurrence={openingOccurrence} content={opening.failure} announcement="Polite" actions={[{ label: "retry opening", onClick: resolve, busy: opening.running !== null }]} />
+            : <PaneLoadingState />
         }
       />
     );

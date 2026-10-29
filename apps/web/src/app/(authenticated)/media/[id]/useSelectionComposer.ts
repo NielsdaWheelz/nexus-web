@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -38,7 +38,7 @@ import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } fr
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
-import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure, type LocalCommit } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { bodyHasContent, emptyBody } from "@nexus/authored/body";
@@ -74,10 +74,10 @@ export function useSelectionComposer(input: {
   sourceLabel: (sourceRef: string) => SourceLabel | null;
   active: boolean;
   isMobile: boolean;
-  onError: (error: unknown, title: string) => void;
+  onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
+  onFailure: (content: FeedbackContent, actions: FeedbackActions) => void;
 }) {
-  const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError } = input;
-  const feedback = useFeedback();
+  const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError, onFailure } = input;
   const memory = useChatSelection();
   const { fresh: freshMemory, read: memoryRead } = memory;
   const guard = useWorkGuard();
@@ -315,11 +315,11 @@ export function useSelectionComposer(input: {
   };
 
   /** One local command for the opened draft; the input stays until its commit is durable. */
-  const submit = async ({ command, opened }: { command: Command; opened: Opening | null }): Promise<{ id: string } | null> => {
+  const submit = async ({ command, opened, recovery = null }: { command: Command; opened: Opening | null; recovery?: Extract<ComposerDraft["issue"], {kind: "Failed"}> | null }): Promise<{ id: string } | null> => {
     const entry = opened && get(opened.draftId);
     // a failed frame is retried, never resubmitted under a new identity.
     if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive ||
-      (command.kind === "Save" && entry.bodyRole === "question") || entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
+      (command.kind === "Save" && entry.bodyRole === "question") || (entry.issue !== null && entry.issue !== recovery) || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
     const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
@@ -330,13 +330,13 @@ export function useSelectionComposer(input: {
     }
     const submitted = entry;
     const operationId = createRandomId();
-    store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind }, issue: null }));
+    store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind }, issue: recovery }));
     const note = command.kind === "Save" && bodyHasContent(submitted.body) ? submitted.body : null;
     const id = submitted.highlightId ?? crypto.randomUUID();
     let intent: { openingId: string; attention: number; layer: Layer | null; generation: number } | null = command.kind === "Save"
       ? { openingId: opened.id, attention: attention.current, layer: getInteractionOwner(), generation: getInteractionGeneration() } : null;
     let createdBody: string | null = null;
-    let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = null;
+    let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = recovery;
     const finish = (receipt?: LocalCommit) => {
       const created = receipt?.change.resources.find(resource => resource.ref === `highlight:${id}`);
       if (submitted.highlightId === null && created?.kind === "highlight" && created.body_update !== null) createdBody = created.body_update;
@@ -385,7 +385,7 @@ export function useSelectionComposer(input: {
       }
       if (error instanceof LocalCommitError) {
         intent = null;
-        failed = { kind: "Failed", message: LOCAL_FAILURE, retry: () => {
+        failed = { kind: "Failed", phase: "Commit", message: LOCAL_FAILURE, retry: () => {
           const value = get(entry.id);
           if (!value || value.issue !== failed || value.operation) return;
           if (command.kind === "Save" && current.current?.id === opened.id && activeRef.current &&
@@ -402,7 +402,16 @@ export function useSelectionComposer(input: {
         void error.completion.then(finish, () => undefined);
         return null;
       }
-      // nothing committed: the input stays and the same gesture may run again.
+      if (isAuthoredStorageFailure(error)) {
+        failed = recovery?.phase === "Preparation" ? recovery : {kind: "Failed", phase: "Preparation", message: "couldn’t prepare this passage", retry: () => {
+          const value = get(entry.id);
+          if (!value || value.issue !== failed || value.operation) return;
+          void submit({command, opened, recovery: failed});
+        }};
+        store.update(entry.id, value => value.operation?.id === operationId ? {...value, operation: null, issue: failed} : value);
+        return null;
+      }
+      // Nothing committed; unexpected failures retain their defect boundary.
       store.update(entry.id, value => value.operation?.id === operationId ? { ...value, operation: null } : value);
       onError(error, "couldn’t save this passage");
       return null;
@@ -442,8 +451,8 @@ export function useSelectionComposer(input: {
     const held = readerRecovery(attempt ?? null) ? attempt : null;
     // a closed composer cannot show this refusal; one receipt names it and its way back.
     if (submitted && outcome.kind === "Failed" && current.current?.draftId !== entry.id)
-      feedback.receipt({ tone: "Warning", title: "highlight saved; question not sent", message: outcome.feedback.title },
-        { label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" });
+      onFailure({ tone: "Warning", title: "highlight saved; question not sent", message: outcome.feedback.title },
+        [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }]);
     switch (outcome.kind) {
       case "Accepted": {
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held, chatIssue: null }));
@@ -538,29 +547,6 @@ export function useSelectionComposer(input: {
         (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
     };
     const account = ctx.sessionSignal();
-    let reported: "Unconfirmed" | "RefreshRequired" | null = null;
-    let stopSend: (() => void) | null = null;
-    // The open composer shows an uncertain send beside its input; once closed, its
-    // onset is reported once with the recovery the chat owner still holds.
-    const inspectSend = () => {
-      const state = owner.getSnapshot();
-      if (account.aborted || !owner.isActive() || state.kind === "Idle" || state.command.kind !== "Send" || state.command.runId !== runId) {
-        stopSend?.(); stopSend = null; return;
-      }
-      if (state.kind === "Busy" || reported === state.kind || current.current?.draftId === entry.id) return;
-      reported = state.kind;
-      feedback.receipt(state.kind === "Unconfirmed" ? { ...state.feedback, title: "highlight saved; send not confirmed" } : state.feedback,
-        { label: state.kind === "RefreshRequired" ? "refresh chat" : "retry same send", onClick: (intent: OpenIntent) => {
-          const latest = owner.getSnapshot();
-          if (account.aborted || !owner.isActive() || latest.kind === "Idle" || latest.command.kind !== "Send" || latest.command.runId !== runId) return;
-          void openAsyncResult({ ctx, intent, disposition: "Fork",
-            create: async () => {
-              const outcome = await owner.retry(intent);
-              return account.aborted ? null : chatOutcome(entry, outcome, target, true);
-            },
-          }).catch(error => { if (!account.aborted) onError(error, "chat retry didn’t finish"); });
-        } });
-    };
     const execute = async (): Promise<OpenResult | null> => {
       const ensured = entry.highlightId ? { id: entry.highlightId } : await submit({ command: { kind: "Ensure" }, opened });
       if (!ensured || ctx.sessionSignal().aborted) return null;
@@ -607,8 +593,7 @@ export function useSelectionComposer(input: {
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
         : { kind: "New" as const }, content: question.content, selection: selection.selection, reader_selection: { key: preview.key, revision: preview.revision } };
-      stopSend = owner.subscribe(inspectSend);
-      const result = await owner.execute({ kind: "Send", request, selectionRoute: selection.route, runId, viewId: pane.paneId, openIntent }, () => {
+      const sendingResult = owner.execute({ kind: "Send", request, selectionRoute: selection.route, runId, viewId: pane.paneId, openIntent }, () => {
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
           const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
@@ -618,7 +603,14 @@ export function useSelectionComposer(input: {
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
-      inspectSend();
+      ctx.observeChatCommand({id: `reader-send:${runId}`, title: "highlight question", owner,
+        present: outcome => {chatOutcome(entry, outcome, target, true);},
+        retry: async intent => {await openAsyncResult({ctx, intent, disposition: "Fork", create: async () => {
+          const outcome = await owner.retry(intent);
+          return account.aborted ? null : chatOutcome(entry, outcome, target, true);
+        }});},
+      });
+      const result = await sendingResult;
       return chatOutcome(entry, result, target, true);
     };
     try {
@@ -631,7 +623,6 @@ export function useSelectionComposer(input: {
       if (failure.kind === "Defect") onError(failure.error, "Chat couldn’t be prepared");
     }
     finally {
-      if (!owner.isActive() || owner.getSnapshot().kind === "Idle") inspectSend();
       store.update(entry.id, value => value.chatAttempt?.kind === "Preparing" && value.chatAttempt.runId === runId ? { ...value, chatAttempt: null } : value);
     }
   };
@@ -682,6 +673,8 @@ export function useSelectionComposer(input: {
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
     draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    hiddenPreparationFailures: drafts.flatMap(entry => entry.id !== draft?.id && entry.issue?.kind === "Failed" && entry.issue.phase === "Preparation"
+      ? [{id: entry.id, issue: entry.issue, busy: entry.operation !== null, text: bodyHasContent(entry.body) ? entry.body.body_text : null}] : []),
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
     reselection, cancelReselection,
     reselect() {
@@ -710,6 +703,8 @@ export function useSelectionComposer(input: {
     refreshChat, retryChat,
     retryCatalog: refreshCatalog,
     retryRecall: memory.enter,
+    recallFailureOccurrence: memory.failureOccurrence,
+    recallPending: memoryRead.status === "loading" || (memoryRead.status === "ready" ? memoryRead.refreshing : memoryRead.retrying),
     recoverModel() {
       const issue = draft?.chatIssue;
       if (issue?.kind === "Model" || issue?.kind === "Catalog" || issue?.kind === "Recall") void sendChat(issue.destination, "default", { selection: issue.selection });
@@ -730,14 +725,15 @@ export function useSelectionComposer(input: {
           // a captured passage target materializes its own binding in the same command as the link.
           void submit({ command: { kind: "Ensure" }, opened: current.current }).then(async result => {
             if (!result) return;
-            const prepared = await prepareTarget(writing, target);
-            await createLink(writing, { source_ref: `highlight:${result.id}`, target_ref: prepared.ref, source_label: null,
-              target_label: target.kind === "resource" ? item.label : null, after: null, prelude: prepared.intents });
+            const link = async () => {
+              const prepared = await prepareTarget(writing, target);
+              await createLink(writing, {source_ref: `highlight:${result.id}`, target_ref: prepared.ref, source_label: null,
+                target_label: target.kind === "resource" ? item.label : null, after: null, prelude: prepared.intents});
+            };
+            await link().catch(error => onError(error, "couldn’t link this passage", link));
           })
             .catch((error: unknown) => {
-              if (error instanceof LocalCommitError) feedback.receipt({ tone: "Danger", title: "couldn’t link on this device", message: "keep this page open. retry saving." },
-                { label: "retry", onClick: () => { void error.retry().catch(() => {}); } });
-              else onError(error, "couldn’t link this passage");
+              if (!(error instanceof LocalCommitError)) onError(error, "couldn’t link this passage");
             });
         } };
     },

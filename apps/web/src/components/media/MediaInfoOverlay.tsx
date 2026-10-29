@@ -6,7 +6,7 @@
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import { formatPublicationDate } from "@/lib/resources/metadata";
 import InformationFrame from "@/components/resources/InformationFrame";
 import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
@@ -85,6 +85,8 @@ function MediaInfo({
   readonly onReread: () => void;
 }) {
   const display = useRenderEnvironment();
+  const refreshOccurrence = useFeedbackOccurrence(refreshError, media.id);
+  const disconnectedOccurrence = useFeedbackOccurrence(disconnected, media.id);
   const instant = (value: string | null | undefined): ReactNode =>
     value ? (
       <time dateTime={value}>
@@ -126,8 +128,8 @@ function MediaInfo({
         {media.title}
       </div>
       {refreshError ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "couldn’t refresh metadata", message: "the last loaded values are still shown." }}
+        <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
+          content={{ tone: "Warning", title: "couldn’t refresh metadata" }}
           announcement="Polite"
           actions={[{ label: "retry", onClick: onReread, busy: refreshing }]}
         />
@@ -169,6 +171,7 @@ function MediaInfo({
         fact("publisher", sourceEdition.publisher),
         fact("isbn", sourceEdition.isbn),
       ]) : null}
+      {disconnected ? <FeedbackFailure scope="Local" occurrence={disconnectedOccurrence} content={{tone: "Warning", title: "metadata updates disconnected"}} announcement="Polite" actions={[{label: "reconnect", onClick: () => reconnectMetadataOperations(media.id)}]} /> : null}
       {group(metadataOperationName(operation?.purpose ?? metadata.retry.purpose), [
         fact(
           "status",
@@ -251,16 +254,7 @@ function MediaInfo({
             ? `${operation.selection.route} / ${operation.selection.model} / ${operation.selection.reasoning}`
             : null,
         ),
-        fact(
-          "live status",
-          disconnected ? (
-            <FeedbackNotice
-              content={{ tone: "Warning", title: "metadata updates disconnected" }}
-              announcement="Polite"
-              actions={[{ label: "reconnect", onClick: () => reconnectMetadataOperations(media.id) }]}
-            />
-          ) : null,
-        ),
+
       ])}
       {sourceEdition === null ? group("source", [
         fact("media type", media.kind.replaceAll("_", " ")),
@@ -384,7 +378,7 @@ export default function MediaInfoOverlay({
   });
   const content =
     media.status === "loading" ? (
-      <FeedbackState content={{ tone: "Neutral", title: "loading metadata…" }} announcement="Polite" />
+      <FeedbackBusy pending />
     ) : media.status === "failed" ? (
       <FeedbackState
         content={{ tone: "Danger", title: "couldn’t load metadata", requestId: media.error.requestId }}

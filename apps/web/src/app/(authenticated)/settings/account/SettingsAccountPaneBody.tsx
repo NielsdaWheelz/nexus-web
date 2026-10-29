@@ -1,17 +1,22 @@
 "use client";
 
-import { useState, type ComponentProps, type FormEvent } from "react";
+import { useEffect, useState, type ComponentProps, type FormEvent } from "react";
 import {
+  Announcement,
   FeedbackNotice,
+  FeedbackFailure,
+  useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { Check, Copy } from "lucide-react";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, outcomeUnknown } from "@/lib/api/client";
 import {
   modeledApiError,
   useServerValue,
@@ -21,7 +26,7 @@ import {
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -54,7 +59,7 @@ function failure(
   const modeled = modeledApiError(error, fail);
   if (modeled === null) return { feedback: null, done: false };
   const { requestId } = modeled;
-  const feedback =
+  const feedback: FeedbackContent =
     invalid && modeled.code === "E_INVALID_REQUEST"
       ? { tone: "Danger" as const, title, message: invalid, requestId }
       : (apiTransportFeedback(modeled, title) ?? {
@@ -62,7 +67,8 @@ function failure(
           title,
           requestId,
         });
-  return { feedback, done: false };
+  return { feedback: outcomeUnknown(modeled) && !feedback.reload && modeled.code !== "E_UNAUTHENTICATED"
+    ? {...feedback, title: "change not confirmed", message: "the request may have succeeded."} : feedback, done: false };
 }
 
 /** One profile field: its current value, a draft, and a save. */
@@ -94,12 +100,12 @@ function ProfileForm(props: {
   const setPending = (pending: boolean) => draft.set(value => ({ ...value, pending }));
   const { pending } = draft.value;
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const occurrence = useFeedbackOccurrence(feedback !== null || pending);
   const value = draft.value.text ?? current ?? "";
   const next = (props.normalize ?? String)(value.trim());
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPending(true);
-    setFeedback(null);
     const outcome = await props.save(next);
     setPending(false);
     setFeedback(outcome.feedback);
@@ -109,10 +115,8 @@ function ProfileForm(props: {
     <PaneSection title={props.title}>
       <form className={styles.form} onSubmit={submit}>
         {feedback ? (
-          <FeedbackNotice
-            content={feedback}
-            announcement={feedback.tone === "Info" ? "Polite" : "Assertive"}
-          />
+          feedback.tone === "Info" ? <FeedbackNotice content={feedback} announcement="Polite" />
+            : <FeedbackFailure scope="Local" occurrence={occurrence} content={feedback} announcement="Assertive" />
         ) : null}
         <p className={styles.current}>
           Current: {props.current || "(not set)"}
@@ -127,7 +131,7 @@ function ProfileForm(props: {
           />
         </label>
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
-        <Button
+        <Button reserveIcon
           type="submit"
           emphasis="strong"
           aria-busy={pending || undefined}
@@ -164,7 +168,7 @@ export default function SettingsAccountPaneBody() {
   const [saved, setSaved] = useState<{ profile: Profile; over: number } | null>(
     null,
   );
-  const [copied, setCopied] = useState<"Copied" | "Copy failed" | null>(null);
+  const [copyFailure, setCopyFailure] = useState<object | null>(null);
   usePaneReturnReady(account.status !== "loading");
   const profile =
     account.status !== "ready"
@@ -173,6 +177,8 @@ export default function SettingsAccountPaneBody() {
         ? saved.profile
         : account.data;
 
+  const copied = useCopyFeedback(profile?.email_ingest_address);
+  useEffect(() => setCopyFailure(null), [profile?.email_ingest_address]);
   // PATCH /me sets absolute values: a retry that already landed is a no-op success.
   const patch = async (
     body: { display_name: string | null } | { calendar_time_zone: string },
@@ -223,22 +229,24 @@ export default function SettingsAccountPaneBody() {
   };
   const copy = async (address: string) => {
     try {
-      await copyText(address);
-      setCopied("Copied");
-      setTimeout(() => setCopied(null), 2000);
+      await copied.copy(address);
+      setCopyFailure(null);
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) fail({ error });
-      else setCopied("Copy failed");
+      else setCopyFailure({});
     }
   };
 
   const loadTitle = "Account settings couldn’t be loaded";
   const loadError = account.status === "loading" ? null : account.error;
+  const occurrence = useFeedbackOccurrence(loadError !== null);
   return (
     <PaneSurface>
       <DeviceSettingsStatus />
+      {copyFailure ? <FeedbackFailure scope="Local" occurrence={copyFailure} content={{ tone: "Warning", title: "couldn’t copy address", message: "select the address and copy it." }} announcement="Polite" onDismiss={() => setCopyFailure(null)} /> : null}
+      {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
       {loadError ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={occurrence}
           content={
             apiTransportFeedback(loadError, loadTitle) ?? {
               tone: "Danger",
@@ -303,9 +311,10 @@ export default function SettingsAccountPaneBody() {
               <code>{profile.email_ingest_address}</code>
             </p>
             <Button
+              icon={copied.copied ? <Check /> : <Copy />}
               onClick={() => void copy(profile.email_ingest_address ?? "")}
             >
-              {copied ?? "Copy address"}
+              Copy address
             </Button>
             <p className={styles.current}>
               Forward newsletters here. Rotating the address is an env change +

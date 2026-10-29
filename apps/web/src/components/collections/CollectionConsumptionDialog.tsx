@@ -2,7 +2,7 @@
 
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -28,6 +28,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   const target = selection.kind === "Podcast" ? { kind: "Podcast" as const, podcast_id: selection.podcast_id } : selection;
   const pending = ctx.consumption.pendingCollection(target);
   const connectionRequired = installedApp && !ctx.online;
+  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
+  const connectionOccurrence = useFeedbackOccurrence(connectionRequired);
   const scopeLabel = selection.kind === "Podcast" && selection.state !== "all"
     ? `all ${selection.state === "in_progress" ? "in-progress" : selection.state} episodes`
     : podcast ? "the whole podcast" : "the whole library";
@@ -39,8 +41,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   };
   return <Dialog open title={`mark ${verb}`} onClose={onClose} returnFocusTo={returnFocusTo} returnFocusFallback={returnFocusFallback}>
     <div className={styles.form}>
-      {source.status === "loading" ? <PaneLoadingState label="checking selected items…" announcement="Polite" /> : source.status === "failed"
-        ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />
+      {source.status === "loading" ? <PaneLoadingState /> : source.status === "failed"
+        ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />
         : <>
           <p>{source.data.label}</p>
           <p>{source.data.items.length} {podcast ? "episode" : "item"}{source.data.items.length === 1 ? "" : "s"} selected · {scopeLabel}.</p>
@@ -49,16 +51,16 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           <p>positions, observed history and lectern membership stay. progress is saved before changing state.</p>
           <p>undo restores the explicit states changed by the acknowledged request. it remains available in this account session; reload or sign-out clears it.</p>
           {source.data.items.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}
-          {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "review selection again", onClick: source.refetch }]} /> : null}
+          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "review selection again", onClick: source.refetch }]} /> : null}
         </>}
-      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: pending.phase === "Sending" ? "changing selected items…" : "change not confirmed", message: pending.phase === "Sending" ? "this selection is already changing." : "the request may have succeeded. retry sends the same request." }} announcement="Polite"
-        actions={pending.phase === "Sending" ? undefined : [
-          { label: "retry same request", disabledReason: connectionRequired ? "requires a connection" : undefined, onClick: () => ctx.consumption.retry(pending.commandKey) },
-          { label: "stop tracking", onClick: () => ctx.consumption.forget(pending.commandKey) },
+      {pending !== null && pending.failed ? <FeedbackFailure scope="Local" occurrence={pending.occurrence} content={{ tone: "Warning", title: "change not confirmed", message: "the request may have succeeded. retry sends the same request." }} announcement="Polite"
+        actions={[
+          { label: "retry same request", busy: pending.phase === "Sending", disabledReason: connectionRequired ? "requires a connection" : undefined, onClick: () => ctx.consumption.retry(pending.commandKey) },
+          { label: "stop tracking", busy: pending.phase === "Sending", onClick: () => ctx.consumption.forget(pending.commandKey) },
         ]} /> : null}
-      {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
+      {connectionRequired ? <FeedbackFailure scope="Local" occurrence={connectionOccurrence} content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>
+        <Button reserveIcon emphasis="strong" aria-busy={pending?.phase === "Sending"} disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>
         <Button onClick={onClose}>cancel</Button>
       </div>
       {source.status === "loading" ? <span className="sr-only">{title}</span> : null}

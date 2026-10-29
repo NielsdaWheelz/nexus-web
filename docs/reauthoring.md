@@ -54,8 +54,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-recent resources against `b79cf2f56`: +921 net authored runtime lines
-(1,269 added, 348 deleted): web +597, android +352, python -28. device-local
+recent resources against `10aa3df7b`: +915 net authored runtime lines
+(1,275 added, 360 deleted): web +591, android +352, python -28. device-local
 ordered use replaces server palette-selection recency; existing navigation,
 playback, reading leases and presentation batches retain their responsibilities.
 held targets remain in metadata queries until the palette releases them.
@@ -64,6 +64,14 @@ selection receipts are removed. revision decoding is shared with the extension.
 migration 0328 adds 48 lines separately; android lab route ownership removes
 five net lines (seven added, twelve deleted). generated wire, docs and temporary
 verification cases are excluded; historical totals retain their stated bases.
+
+quiet feedback against `b79cf2f56`: +980 authored runtime lines (3,339 added,
+2,359 deleted), all web source. scoped passive layers replace the workspace-only
+portal, cold skeletons, request-status rows and duplicated copy timers. the
+existing authored runtime separates document-read recovery from failed writes;
+command owners retain exact retry and loss protection. mounted controls and
+content geometry stay with their existing hosts. docs, generated output and
+disposable cases are excluded; earlier area totals retain their stated bases.
 
 compact palette and inline pane list against `480c20a39`: +699 net authored
 runtime lines (1,704 added, 1,005 deleted): web +612, shared authored +74,

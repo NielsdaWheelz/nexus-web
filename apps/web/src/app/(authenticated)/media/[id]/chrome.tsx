@@ -5,7 +5,7 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Moon, Sun } from "lucide-react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
@@ -68,9 +68,10 @@ export function useReaderChrome(input: {
   const summary = seed === null ? null : summaries.resolve(seed);
   // The item's own summary refresh failure stays with the item, beside its controls.
   const { error: summaryError, retrying: summaryRetrying, retry: retrySummary } = summaries;
-  const summaryNotice = useMemo(() => summaryError === null ? null : <FeedbackNotice
+  const summaryOccurrence = useFeedbackOccurrence(summaryError !== null, id);
+  const summaryNotice = useMemo(() => summaryError === null ? null : <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
     content={{ tone: "Warning", title: "couldn’t update items", requestId: summaryError.requestId }} announcement="Polite"
-    actions={[{ label: "try again", busy: summaryRetrying, onClick: retrySummary }]} />, [summaryError, summaryRetrying, retrySummary]);
+    actions={[{ label: "try again", busy: summaryRetrying, onClick: retrySummary }]} />, [summaryError, summaryRetrying, retrySummary, summaryOccurrence]);
   const navigation = useMemo(
     () => {
       const hasNavigation = readable && (kind === "pdf" || kind === "text" && sectioned);

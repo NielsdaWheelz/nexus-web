@@ -2,6 +2,7 @@
 
 import { useRef, type ReactNode } from "react";
 import { useCollectionLayout } from "@/lib/ui/collection";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import { X } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
@@ -34,6 +35,7 @@ export default function Dialog({
         <>
           <header className={styles.header}>
             <h2 className={styles.title}>{title}</h2>
+            <FeedbackRecoveryControl />
             <button
               type="button"
               className={styles.closeBtn}

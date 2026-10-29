@@ -6,7 +6,7 @@
 
 import { useCallback, useId, useMemo, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
@@ -120,6 +120,7 @@ export default function PodcastsPaneBody() {
   };
   const list = unstamped(snapshot);
   const failure = list.status === "loading" ? null : list.error;
+  const readOccurrence = useFeedbackOccurrence(failure !== null, key);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const libraries = useServerValue({
@@ -129,6 +130,7 @@ export default function PodcastsPaneBody() {
   });
   const libraryItems = libraries.status === "ready" ? libraries.data.items : [];
   const libraryFailure = libraries.status === "loading" ? null : libraries.error;
+  const libraryOccurrence = useFeedbackOccurrence(libraryFailure !== null, "Podcasts.Libraries");
   const retryLibraries = () => { void libraries.refetch().catch(() => {}); };
   const selectedLibraryId = libraryId !== null && !libraryItems.some(library => library.id === libraryId) ? libraryId : null;
   const savedSelectedLibrary = useCatalogRead(value => selectedLibraryId === null ? null : catalogLibrary(value, selectedLibraryId));
@@ -142,6 +144,7 @@ export default function PodcastsPaneBody() {
       return getLibrary(selectedLibraryId, signal).then(read => read.data);
     },
   });
+  const selectedOccurrence = useFeedbackOccurrence(selectedLibrary.status !== "loading" && selectedLibrary.error !== null);
   const selectedLibraryFailure = selectedLibrary.status !== "loading" && selectedLibrary.error !== null
     ? libraryErrorFeedback(selectedLibrary.error, "selected library couldn’t be loaded", throwDefect)
     : null;
@@ -242,7 +245,7 @@ export default function PodcastsPaneBody() {
     return (
       <>
         {readFeedback.announcement}
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={podcastErrorMessage(
             failure,
             "couldn’t load shows",
@@ -286,7 +289,7 @@ export default function PodcastsPaneBody() {
         anchorKey={text}
         notice={<>
           {list.status === "ready" && failure !== null ? (
-            <FeedbackNotice
+            <FeedbackFailure scope="Local" occurrence={readOccurrence}
               content={podcastErrorMessage(
                 failure,
                 "couldn’t refresh shows",
@@ -295,14 +298,14 @@ export default function PodcastsPaneBody() {
               actions={[{ label: "try again", onClick: retry, busy }]}
             />
           ) : selectedLibraryFailure !== null ? (
-            <FeedbackNotice
+            <FeedbackFailure scope="Local" occurrence={selectedOccurrence}
               content={selectedLibraryFailure}
               announcement={selectedLibrary.status === "ready" ? "None" : "Polite"}
               actions={[{ label: "retry library", onClick: selectedLibrary.refetch, busy: selectedLibrary.status === "failed" ? selectedLibrary.retrying : selectedLibrary.status === "ready" && selectedLibrary.refreshing }]}
               returnFocus={() => inputRef.current}
             />
           ) : libraryFailure !== null ? (
-            <FeedbackNotice
+            <FeedbackFailure scope="Local" occurrence={libraryOccurrence}
               content={podcastErrorMessage(
                 libraryFailure,
                 libraries.status === "ready" ? "couldn’t refresh libraries" : "couldn’t load libraries",

@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { ApiJson } from "@/lib/api/wire";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isStaleBuild, type ApiError } from "@/lib/api/client";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
+import { FeedbackBusy, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { authoredItem } from "@/lib/notes/presentation";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
@@ -17,52 +20,81 @@ function replaceExcerptBody(subject: ResourceItem, projected: ResourceItem): Res
   return { ...subject, label: projected.label, preview: { ...subject.preview, body: projected.preview.body } };
 }
 
-/** Compare the admitted compact capture before replacing it with full evidence. */
+/** Retry keeps the admitted capture; only explicit reload accepts a newer one. */
 function useFullExcerpt(observed: ResourceItem) {
   const [subject, setSubject] = useState(observed);
   const local = subject.authored_by_viewer && /^(highlight|passage_anchor):/u.test(subject.ref);
   const body = subject.preview.body;
   const readingRef = observed.preview.body.kind === "passage" ? observed.preview.body.reading_ref : null;
   const query = useAuthoredQuery(local && body.kind === "passage" ? { kind: "excerpt", ref: subject.ref, reading_ref: readingRef } : null);
-  const [remote, setRemote] = useState<{ item: ResourceItem | null; conflict: boolean; failed: boolean }>({ item: null, conflict: false, failed: false });
+  const [request, setRequest] = useState<{ mode: "Capture" | "Reload"; attempt: number }>({ mode: "Capture", attempt: 0 });
+  const [remote, setRemote] = useState<{ item: ResourceItem | null; conflict: boolean; error: ApiError | null; pending: boolean }>({ item: null, conflict: false, error: null, pending: !local });
+  const fail = useThrowLater();
   useEffect(() => {
     if (local || body.kind !== "passage" || body.capture_revision === null) return;
+    const captureRevision = body.capture_revision;
     const controller = new AbortController();
-    const parameters = new URLSearchParams({ excerpt_mode: "full", expected_capture_revision: body.capture_revision });
-    if (readingRef !== null) parameters.set("reading_media_id", readingRef.replace(/^media:/u, ""));
-    setRemote({ item: null, conflict: false, failed: false });
-    void apiFetch<ApiJson<"/resource-items/{resource_ref}", "get">>(`/api/resource-items/${encodeURIComponent(subject.ref)}?${parameters}`, { signal: controller.signal, cache: "no-store" }).then(response => {
-      if (!controller.signal.aborted) setRemote({ item: replaceExcerptBody(subject, response.data), conflict: false, failed: false });
+    setRemote(previous => ({ ...previous, pending: true }));
+    const load = async () => {
+      if (request.mode === "Reload") return resolveResourceItem(subject.ref, controller.signal, readingRef);
+      const parameters = new URLSearchParams({ excerpt_mode: "full", expected_capture_revision: captureRevision });
+      if (readingRef !== null) parameters.set("reading_media_id", readingRef.replace(/^media:/u, ""));
+      return (await apiFetch<ApiJson<"/resource-items/{resource_ref}", "get">>(`/api/resource-items/${encodeURIComponent(subject.ref)}?${parameters}`, { signal: controller.signal, cache: "no-store" })).data;
+    };
+    void load().then(projected => {
+      if (controller.signal.aborted) return;
+      const replacement = replaceExcerptBody(subject, projected);
+      if (request.mode === "Reload" && !replacement.missing && replacement.preview.body.kind === "passage" && replacement.preview.body.capture_revision !== null) {
+        setSubject(replacement);
+        setRequest(previous => ({ mode: "Capture", attempt: previous.attempt + 1 }));
+        setRemote(previous => ({ ...previous, item: replacement, conflict: false, pending: true }));
+      } else setRemote({ item: replacement, conflict: false, error: null, pending: false });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setRemote({ item: null, conflict: isApiError(error) && error.status === 409, failed: true });
+      if (controller.signal.aborted) return;
+      if (request.mode === "Capture" && isApiError(error) && error.code === "E_RESOURCE_CONFLICT") {
+        setRemote(previous => ({ ...previous, conflict: true, error: null, pending: false }));
+        return;
+      }
+      const failure = modeledApiError(error, fail);
+      if (failure) setRemote(previous => ({ ...previous, error: failure, pending: false }));
     });
     return () => controller.abort();
-  }, [subject, local, body, readingRef]);
+  }, [subject, local, body, readingRef, request, fail]);
   const resource = query.data?.rows[0]?.resource;
   const conflict = local ? resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision : remote.conflict;
   const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef)) : null : remote.item;
-  const reload = () => {
-    if (local) { if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef))); query.retry(); }
+  const retry = () => {
+    if (local) query.retry();
     else {
-      setRemote({ item: null, conflict: false, failed: false });
-      void resolveResourceItem(subject.ref, undefined, readingRef).then(projected => {
-        const replacement = replaceExcerptBody(subject, projected);
-        if (replacement.missing || replacement.preview.body.kind !== "passage" || replacement.preview.body.capture_revision === null)
-          setRemote({ item: replacement, conflict: false, failed: false });
-        else setSubject(replacement);
-      }).catch(() => setRemote({ item: null, conflict: false, failed: true }));
+      setRemote(previous => ({ ...previous, pending: true }));
+      setRequest(previous => ({ ...previous, attempt: previous.attempt + 1 }));
     }
   };
-  return { item: full, conflict, unavailable: local && query.data !== null && (query.data.scope_available === false || resource === undefined || resource.excerpt === null), failed: local ? query.error !== null : remote.failed, reload };
+  const reload = () => {
+    if (local) {
+      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef)));
+      query.retry();
+    } else {
+      setRemote(previous => ({ ...previous, pending: true }));
+      setRequest(previous => ({ mode: "Reload", attempt: previous.attempt + 1 }));
+    }
+  };
+  return { item: full ?? subject, conflict, unavailable: local && query.data !== null && (query.data.scope_available === false || resource === undefined || resource.excerpt === null),
+    query, error: remote.error, pending: local ? query.pending : remote.pending, retry, reload };
 }
 
 function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boolean }) {
   const loaded = useFullExcerpt(item);
-  if (loaded.conflict) return <p>this excerpt changed. <Button type="button" onClick={loaded.reload}>reload excerpt</Button></p>;
-  if (loaded.unavailable) return <p>excerpt unavailable in this reading.</p>;
-  if (loaded.failed) return <p>couldn’t load this excerpt. <Button type="button" onClick={loaded.reload}>retry</Button></p>;
-  if (!loaded.item) return <p role="status">loading excerpt…</p>;
-  return quotation ? <ResourceQuotation item={loaded.item} /> : <ResourceBody body={loaded.item.preview.body} full />;
+  const occurrence = useFeedbackOccurrence(loaded.error !== null, item.ref);
+  return <>
+    <FeedbackBusy pending={loaded.pending} subject={item.ref} />
+    <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t load this excerpt" />
+    {loaded.error ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={loaded.error} content={apiTransportFeedback(loaded.error, "couldn’t load this excerpt") ?? { tone: "Warning", title: "couldn’t load this excerpt", requestId: loaded.error.requestId }} announcement="Polite"
+      actions={isStaleBuild(loaded.error) ? undefined : [{ label: "retry", onClick: loaded.retry, busy: loaded.pending }]} /> : null}
+    {loaded.conflict ? <p>this excerpt changed. <Button type="button" reserveIcon aria-disabled={loaded.pending || undefined} aria-busy={loaded.pending} onClick={loaded.reload}>reload excerpt</Button></p>
+      : loaded.unavailable ? <p>excerpt unavailable in this reading.</p>
+        : quotation ? <ResourceQuotation item={loaded.item} /> : <ResourceBody body={loaded.item.preview.body} full />}
+  </>;
 }
 
 /** Full ordinary bodies query frozen authored evidence; historical bodies stay supplied. */

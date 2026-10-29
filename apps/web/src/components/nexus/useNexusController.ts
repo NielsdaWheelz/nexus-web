@@ -546,7 +546,14 @@ export function useNexusController() {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         if (error instanceof LocalCommitError) {
           if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
-          setPage({...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t save on this device",message:"keep this page open. retry saving."},unconfirmed:false}});
+          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t confirm saving on this device",message:"keep nexus open. retry saving."},unconfirmed:false}};
+          setPage(retryable);
+          void error.completion.then(() => {
+            if (!visible.current || currentPage.current !== retryable || ctx.sessionSignal().aborted || captureAttempt.current?.noteId !== running.noteId) return;
+            captureAttempt.current.promise = Promise.resolve("");
+            captureAttempt.current.retry = null;
+            capture({...retryable, submit: {kind: "Running", unconfirmed: false}});
+          }, () => {});
           return;
         }
         const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
@@ -785,9 +792,8 @@ export function useNexusController() {
 
   if (defect) throw defect.error;
   const resultsHeld = list.identity === listIdentity && list.pending;
-  const titlesFailed = panes.some(pane => pane.presentation.status === "Failed");
   const noticeText = [find.progress.kind === "Notice" ? find.progress.text : null, resultsHeld ? "search update ready" : null,
-    !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, titlesFailed ? "pane titles unavailable" : null, lookupGuidance].filter(Boolean).join(" ") || null;
+    !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, lookupGuidance].filter(Boolean).join(" ") || null;
   return {
     interactionLayer,
     open,
@@ -805,6 +811,9 @@ export function useNexusController() {
     failures: find.failures,
     recentStatus: { blank: !parsed.text, snapshot: recent.snapshot, readFailure: recent.readFailure, writeFailure: recent.writeFailure, read: recent.read },
     searchProgress: find.progress,
+    searchFailures: find.readFailures,
+    localSearchFailures: find.localFailures,
+    searchIdentity: find.queryIdentity,
     resultsHeld,
     noticeText,
     searchUnavailable: find.searchUnavailable,
@@ -851,8 +860,6 @@ export function useNexusController() {
       if (recentlyClosedExpanded) requestPaneFocus("RecentlyClosedDisclosure");
       setRecentlyClosedExpanded((expanded) => !expanded);
     },
-    titlesFailed,
-    retryTitles: presentations.retryTitles,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
       id: snapshot.pane.id,
       presentation: presentations.forVisit(snapshot.pane.current_visit),

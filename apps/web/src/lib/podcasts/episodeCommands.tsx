@@ -9,7 +9,8 @@
  * Queued episodes speak through their own transcript state.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { useFeedback, type FeedbackAction, type FeedbackContent, type FeedbackContextValue } from "@/components/feedback/Feedback";
+import { FeedbackFailure, type FeedbackAction, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { ApiError, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
@@ -18,7 +19,7 @@ import { isAbortError } from "@/lib/errors";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 import { requestEpisodeTranscripts } from "@/lib/podcasts/api";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { useLatestWorkspace, type WorkspaceStoreValue } from "@/lib/workspace/store";
+import { type WorkspaceStoreValue } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { remoteReady } from "@/lib/native/admission";
 
@@ -31,10 +32,9 @@ interface Entry {
   readonly commandKey: string;
   readonly kind: Command["kind"];
   readonly body: string;
-  readonly unregister: () => void;
-  /** Withdraws the unconfirmed report once this entry is forgotten or retired. */
-  retract: (() => void) | null;
-  phase: "sending" | "unconfirmed";
+  unregister: () => void;
+  readonly occurrence: object;
+  phase: "sending" | "unconfirmed" | "refused";
   uncertain: boolean;
   requestId: string | null;
   failure: FeedbackContent | null;
@@ -55,7 +55,7 @@ export function viewImportsAction(workspace: () => WorkspaceStoreValue, inspect:
   } };
 }
 
-function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackContextValue, workspace: () => WorkspaceStoreValue, fail: (input: { error: unknown }) => void) {
+function createCommands(accountId: string, guard: WorkGuard, fail: (input: { error: unknown }) => void) {
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
   let snapshot = EMPTY;
@@ -73,7 +73,6 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
   const retire = (entry: Entry) => {
     entries.delete(entry.podcastId);
     entry.unregister();
-    entry.retract?.();
     publish();
   };
   const inspectEntry = () => {
@@ -121,15 +120,11 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
       }
       if (sent && defect) entry.uncertain = true;
       if (!entry.uncertain) {
-        const content = entry.failure;
-        retire(entry);
-        if (!defect && content !== null) feedback.receipt({ ...content, title: `${content.title} · ${entry.title}` });
+        entry.phase = "refused";
+        publish();
       } else {
         entry.phase = "unconfirmed";
         publish();
-        entry.retract = feedback.receipt({ ...UNCONFIRMED_TRANSCRIPTS, title: `${UNCONFIRMED_TRANSCRIPTS.title} · ${entry.title}`,
-          message: `selection: ${entry.scopeLabel}. ${UNCONFIRMED_TRANSCRIPTS.message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`,
-          requestId: entry.requestId ?? undefined }, viewImportsAction(workspace, inspectEntry));
       }
       if (defect || (sent && !isRefusal(error) && !outcomeUnknown(error) && !isAbortError(error) && !unauthenticated)) fail({ error });
     } finally {
@@ -166,9 +161,10 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
         const entry: Entry = {
           podcastId: input.podcastId, title: input.title, scopeLabel: input.scopeLabel,
           commandKey, kind: input.command.kind, body: JSON.stringify(input.command.body),
-          phase: "sending", uncertain: false, failure: null, requestId: null, retract: null,
-          unregister: guard.register({ id: commandKey, scope: { kind: "account" }, read: () => ({ changed: false, unconfirmed: true, stopsBrowserWork: false }), subscribe }),
+          phase: "sending", uncertain: false, failure: null, requestId: null, occurrence: {},
+          unregister: () => {},
         };
+        entry.unregister = guard.register({id: commandKey, scope: {kind: "account"}, read: () => ({changed: false, unconfirmed: entry.phase !== "refused", stopsBrowserWork: false}), subscribe});
         entries.set(entry.podcastId, entry);
         publish();
         void send(entry, scope);
@@ -177,6 +173,11 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
       pending(podcastId: string) {
         const entry = entries.get(podcastId);
         return entry === undefined ? null : { phase: entry.phase, kind: entry.kind, commandKey: entry.commandKey };
+      },
+      feedback(podcastId: string) {
+        const entry = entries.get(podcastId);
+        return entry !== undefined && entry.phase !== "sending" ? {occurrence: entry.occurrence, uncertain: entry.uncertain, content: entry.uncertain ? {...UNCONFIRMED_TRANSCRIPTS,
+          message: `selection: ${entry.scopeLabel}. ${UNCONFIRMED_TRANSCRIPTS.message}`, requestId: entry.requestId ?? undefined} : entry.failure} : null;
       },
       inspect(commandKey: string) {
         const entry = find(commandKey);
@@ -193,11 +194,20 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
 
 export function usePodcastEpisodeCommands(accountId: string, reportDefect: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
-  const feedback = useFeedback();
-  const workspace = useLatestWorkspace();
-  const owner = useMemo(() => createCommands(accountId, guard, feedback, workspace, reportDefect), [accountId, guard, feedback, workspace, reportDefect]);
+  const owner = useMemo(() => createCommands(accountId, guard, reportDefect), [accountId, guard, reportDefect]);
   useLayoutEffect(() => owner.start(), [owner]);
   // A fresh command object per published change re-renders the dialog that reads `pending`.
-  useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
-  return { commands: { ...owner.commands } };
+  const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
+  return { commands: { ...owner.commands }, feedback: entries.map(entry => <PodcastEpisodeFailure key={entry.commandKey} podcastId={entry.podcastId} />) };
+}
+
+export function PodcastEpisodeFailure({podcastId}: {podcastId: string}) {
+  const {ctx} = useActionRuntime();
+  const failure = ctx.podcastEpisodes.feedback(podcastId);
+  const pending = ctx.podcastEpisodes.pending(podcastId);
+  if (failure === null || failure.content === null || pending === null) return null;
+  return <FeedbackFailure scope="Local" occurrence={failure.occurrence} content={failure.content} announcement="Polite"
+    actions={failure.uncertain ? [viewImportsAction(ctx.workspace, () => ctx.podcastEpisodes.inspect(pending.commandKey)),
+      {label: "stop tracking", onClick: () => ctx.podcastEpisodes.forget(pending.commandKey)}]
+      : [{label: "review episodes", onClick: () => {ctx.podcastEpisodes.inspect(pending.commandKey); ctx.podcastEpisodes.forget(pending.commandKey);}}]} />;
 }

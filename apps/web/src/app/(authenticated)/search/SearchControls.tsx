@@ -47,7 +47,7 @@ export default function SearchControls(props: {
   readonly query: SearchQuery;
   readonly commit: (next: SearchQuery) => void;
   readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly status: { readonly text: string; readonly detail?: string; readonly announce: boolean; readonly action?: { label: string; onClick: () => void; busy: boolean } };
+  readonly status: { readonly text: string; readonly detail?: string; readonly speech: string | null; readonly action?: { label: string; onClick: () => void; busy: boolean } };
 }) {
   const { query, commit, inputRef, status } = props;
   const [draft, setDraft] = useState(query.text);
@@ -258,13 +258,11 @@ export default function SearchControls(props: {
           <>
             <span
               id={statusId}
-              role={status.announce ? "status" : undefined}
-              aria-live={status.announce ? "polite" : undefined}
-              aria-atomic={status.announce ? true : undefined}
             >
               <span>{status.text}</span>{status.detail ? ` ${status.detail}` : null}
+              <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{status.speech}</span>
             </span>
-            {status.action ? <Button onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
+            {status.action ? <Button reserveIcon busyKey={query.text} onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
           </>
         ),
       }}

@@ -60,5 +60,5 @@ export function useOutlineWindow(query: OutlineQuery, branch: OutlineBranch, run
     // The serialized account/query/branch key owns the captured projection identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, key, branch, read.data]);
-  return {window, loading: read.error === null && (window === null || window.data !== read.data), error: read.error, retry: read.retry};
+  return {window, loading: read.pending || window === null && read.error === null, error: read.error, occurrence: read.occurrence, retry: read.retry};
 }
