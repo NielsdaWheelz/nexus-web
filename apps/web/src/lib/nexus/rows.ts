@@ -415,7 +415,7 @@ export function pickerTarget(target: NexusTarget, panes: readonly NexusPane[]): 
     }
     case "Resource": return target.activation.kind === "route" ? target : null;
     case "InternalHref": case "OpenDailyPage": case "CreatePage": case "CreateLibrary": case "ChooseCreate": case "ChooseBrowse": case "UseText": return target;
-    case "OpenAcceptedSource": case "OpenAdd": case "ResumeCurrentPlayback": case "ManagePanes": return null;
+    case "OpenAcceptedSource": case "OpenAdd": case "ResumeCurrentPlayback": return null;
   }
 }
 
