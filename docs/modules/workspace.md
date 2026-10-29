@@ -4,8 +4,8 @@
 
 The workspace module owns authenticated pane composition. It decides which
 primary panes, desktop pane-strip controls, desktop canvas affordances,
-desktop-attached secondary panes, fixed primary chrome, and mobile secondary
-sheets are mounted.
+desktop-attached secondary panes, fixed primary chrome, and mobile companion
+tasks are mounted.
 
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
@@ -729,7 +729,7 @@ tab order and remembered/explicit selection remain independent of that default.
 `revealPrimary({focusTarget})` closes a covering companion and transfers focus
 after modality releases; a column stays open and uses guarded source focus.
 column close returns focus to its opener or explicit destination, else pane
-chrome. a sheet initially focuses its selected tab and returns without scrolling
+chrome. a covering frame initially focuses its selected tab and returns without scrolling
 to a live external opener, else the pane landmark. promotion records the live
 external opener; demotion retains inspector focus on the same connected control,
 else its selected tab. a hidden pane and another interaction owner take precedence

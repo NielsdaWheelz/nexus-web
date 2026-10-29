@@ -310,8 +310,8 @@ there; this quiet interval does not assert portable keyboard completion. close,
 replacement and unmount cancel admission; prepared actions retain their original
 five-second deadline. published geometry and resize retirement remain strict.
 
-Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
-wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
+Enter and Space use ordinary opening; ArrowDown requests the first item,
+ArrowUp the last. arrows wrap, Home/End and typeahead navigate items. desktop items have `tabIndex=-1`;
 disabled items remain arrow-focusable and display a wrapping reason. Tab and
 Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
