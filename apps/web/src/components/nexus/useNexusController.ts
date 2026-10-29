@@ -754,7 +754,8 @@ export function useNexusController() {
     enterNewPane: () => { rootFocus.current = "Search"; setRootMode("NewPane"); setFocusRevision((value) => value + 1); },
     submitInput(activation: NexusTargetActivation) {
       const admission = parsed.intent.kind === "Command" ? NEXUS_COMMANDS[parsed.intent.id].action("") : queryAction;
-      if (rootMode === "NewPane" && admission?.kind === "Available" && parsed.intent.kind !== "Search" && pickerTarget(admission.target, panes) === null) {
+      const deliberateSelection = !viewport.isMobile && list.identity === listIdentity && list.moved && currentActive?.key != null;
+      if (rootMode === "NewPane" && !deliberateSelection && admission?.kind === "Available" && parsed.intent.kind !== "Search" && pickerTarget(admission.target, panes) === null) {
         setAnnouncement("this action isn’t available in this picker");
         return;
       }
