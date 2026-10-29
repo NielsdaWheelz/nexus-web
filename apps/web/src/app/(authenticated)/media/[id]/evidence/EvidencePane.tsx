@@ -50,6 +50,11 @@ function entryMatches(entry: EvidenceEntry, id: string): boolean {
   return matches(entry.root, id);
 }
 
+function rowControls(row: HTMLElement): HTMLElement[] {
+  return [row, ...row.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')]
+    .filter(node => !node.closest("[hidden], [inert]") && node.getClientRects().length > 0);
+}
+
 /** Where an entry sits in the mounted publication; null when it has no own extent. */
 function extentOf(entry: EvidenceEntry, doc: ReaderDocument): { kind: "text"; start: Extract<ReaderPoint, {kind: "text"}>; anchor: MarkAnchor } | { kind: "pdf"; anchor: MarkAnchor } | null {
   if (entry.kind === "remote") return entry.root.resolution?.kind === "Resolved" ? rootExtent(entry.root.resolution, doc) : null;
@@ -493,8 +498,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   };
   const mounted = new Set(rowWindow.rendered.map(slot => slot.key));
   const retained = entries.filter(entry => rowWindow.held.has(entry.key) && !mounted.has(entry.key));
-  const focusable = (row: HTMLElement) => [row, ...row.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')]
-    .filter(node => !node.closest("[hidden], [inert]") && node.getClientRects().length > 0);
   useLayoutEffect(() => {
     if (!focusRequest) return;
     if (focusRequest.isCurrent()) {
@@ -502,11 +505,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       const occurrence = focusRequest.occurrence ? root?.querySelector<HTMLElement>(`[data-outline-occurrence="${CSS.escape(focusRequest.occurrence)}"]`) ?? root : root;
       if (!occurrence) return;
       revealInSidebar(occurrence);
-      const controls = focusable(occurrence);
+      const controls = rowControls(occurrence);
       (focusRequest.last ? controls.at(-1) : controls[0])?.focus({preventScroll: true});
     }
     setFocusRequest(null);
-  });
+  }, [focusRequest, mountedKeys, revealInSidebar]);
   return (
     <div ref={pane} className={styles.pane}
       onPointerDownCapture={stopRestore}
@@ -547,7 +550,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         if (event.defaultPrevented || event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
         const row = (event.target as HTMLElement).closest<HTMLElement>("[data-group]");
         if (!row) return;
-        const controls = focusable(row);
+        const controls = rowControls(row);
         if (event.target !== (event.shiftKey ? controls[0] : controls.at(-1))) return;
         const index = order.findIndex(entry => entry.key === row.dataset.group);
         const next = order[index + (event.shiftKey ? -1 : 1)];
