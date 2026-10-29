@@ -58,7 +58,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
       onContextMenu={event => event.stopPropagation()}>
-      <ContextualActionMenu title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
+      <ContextualActionMenu navigation={null} title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
         sections={[{id: "Occurrence", actions}]} renderContextAnchor={context => row.href ? <a {...context}
           className={`${styles.control} ${styles.bullet}`} href={row.href} data-outline-bullet="true" data-row-focusable="true"
           aria-label={`open ${identity}: ${row.label}`} data-workspace-rich-target="true"

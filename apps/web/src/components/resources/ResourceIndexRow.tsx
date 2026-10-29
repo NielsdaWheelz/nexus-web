@@ -11,6 +11,9 @@ import MediaIdentity from "@/components/media/MediaIdentity";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { assertNever } from "@/lib/assertNever";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
@@ -45,6 +48,8 @@ export default function ResourceIndexRow({
   primaryControl?: ReactNode;
   attention?: string;
 }) {
+  const pane = usePaneRuntime();
+  const touch = useTouchCapable();
   const status = presentation.kind === "Context" && presentation.primary.kind === "Status" ? presentation.primary.label : null;
   const item = useResolvedResourceItem(supplied);
   const parsed = parseResourceRef(item.ref);
@@ -152,7 +157,11 @@ export default function ResourceIndexRow({
       {presentation.kind === "Search" && subject ? <ResourceActions subject={subject} density="Row" returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
       <ContextualActionMenu title={currentLabel} subjectKey={occurrenceKey} sections={[]}
         triggerRef={setMore} actionFocus={actionFocus} triggerAttributes={{ "data-row-actions-control": "" }}
-        resourceRef={assumeCanonicalResourceRef(item.action_ref)} displayedActivation={status === null ? item.activation : undefined}
+        resourceRef={assumeCanonicalResourceRef(item.action_ref)} navigation={status !== null ? null : {
+          key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
+          fork: touch && pane && item.activation.kind === "route" && item.activation.href !== null
+            ? paneForkLink({ runtime: pane, target: { href: item.activation.href, labelHint: currentLabel }, disabledReason: null }) : null,
+        }}
         showSourceSubject={item.action_ref !== item.ref} label={menuLabel}
         renderTrigger={(props) => <>
           <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
