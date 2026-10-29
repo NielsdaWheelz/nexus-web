@@ -1271,11 +1271,21 @@ def _plan_indexes(db, inventory):
         converted_states[(row["owner_kind"], str(row["owner_id"]))] = row
         new_states[old] = row
     publications = []
+    publication_owners = {
+        "note_ids": [_parts(ref)[1] for ref in mapping],
+        "highlight_ids": [_parts(ref)[1] for ref in mapping.values()],
+    }
     for table, column, literal in (
         ("content_chunks", "summary_locator", "chunk_text"),
         ("evidence_spans", "selector", "span_text"),
     ):
-        for row in _rows(db, table):
+        for row in _rows(
+            db,
+            table,
+            where="WHERE (owner_kind='note_block' AND owner_id=ANY(CAST(:note_ids AS uuid[]))) "
+            "OR (owner_kind='highlight' AND owner_id=ANY(CAST(:highlight_ids AS uuid[])))",
+            params=publication_owners,
+        ):
             old = _ref(row["owner_kind"], row["owner_id"])
             if old in mapping.values():
                 _refuse(
