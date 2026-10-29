@@ -7,7 +7,37 @@ FROM scratch AS extension-arm64
 ADD --checksum=sha256:0fbc59149ecbebb161d6cab62c161f33a7f7f0c2f54b69e7e8597a12f05e8038 https://github.com/paradedb/paradedb/releases/download/v0.26.2/postgresql-15-pg-search_0.26.2-1PARADEDB-bookworm_arm64.deb /pg-search.deb
 
 FROM extension-${TARGETARCH} AS extension
-FROM pgvector/pgvector:pg15@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
+FROM pgvector/pgvector:pg15@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9 AS postgres-base
+
+# Rebuild the pinned upstream package without the IVF interrupt patch.
+FROM postgres-base AS vector-build
+ADD --checksum=sha256:cac0b10c360f05b2d521200105ba3697e773d4cd3731f5a915a7e37ebe0bea85 https://github.com/pgvector/pgvector/archive/refs/tags/v0.8.7.tar.gz /tmp/pgvector.tar.gz
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --no-upgrade \
+        build-essential "postgresql-server-dev-15=$PG_VERSION" \
+    && test "$PG_MAJOR" = 15 \
+    && test "$(/usr/lib/postgresql/15/bin/pg_config --version | awk '{print $2}')" = "${PG_VERSION%%-*}" \
+    && tar -xzf /tmp/pgvector.tar.gz -C /tmp \
+    && cd /tmp/pgvector-0.8.7 \
+    && cmp vector.control /usr/share/postgresql/15/extension/vector.control \
+    && make -j1 PG_CONFIG=/usr/lib/postgresql/15/bin/pg_config OPTFLAGS="" \
+    && make PG_CONFIG=/usr/lib/postgresql/15/bin/pg_config OPTFLAGS="" DESTDIR=/out install \
+    && test -s /out/usr/lib/postgresql/15/lib/bitcode/vector.index.bc \
+    && mkdir -p /out/usr/share/doc/pgvector \
+    && { \
+        printf 'upstream_version=0.8.7\narchive_sha256=cac0b10c360f05b2d521200105ba3697e773d4cd3731f5a915a7e37ebe0bea85\npatch=none\noptflags=empty\n'; \
+        printf 'postgres_headers=%s\n' "$(dpkg-query -W -f='${Version}' postgresql-server-dev-15)"; \
+        printf 'binary_sha256=%s\n' "$(sha256sum /out/usr/lib/postgresql/15/lib/vector.so | awk '{print $1}')"; \
+    } > /out/usr/share/doc/pgvector/nexus-build.txt \
+    && cd /out \
+    && find usr/lib/postgresql/15 usr/share/postgresql/15/extension -type f -print0 \
+        | LC_ALL=C sort -z | xargs -0 sha256sum > usr/share/doc/pgvector/nexus-package.sha256
+
+FROM postgres-base
+COPY --from=vector-build /out/usr/lib/postgresql/15/ /usr/lib/postgresql/15/
+COPY --from=vector-build /out/usr/share/postgresql/15/extension/ /usr/share/postgresql/15/extension/
+COPY --from=vector-build /out/usr/share/doc/pgvector/ /usr/share/doc/pgvector/
+COPY --chmod=0755 docker/pgvector/check-runtime.sh /usr/local/bin/nexus-postgres-check
 COPY --from=extension /pg-search.deb /tmp/pg-search.deb
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --no-upgrade \

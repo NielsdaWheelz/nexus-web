@@ -62,6 +62,25 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+search reliability against exact main `e2192e593`: +1,332 net authored runtime
+lines (2,360 added, 1,028 deleted): `python/nexus` 2,244 added, 980 deleted,
+net +1,264; `apps/web/src` 98 added, 42 deleted, net +56;
+`apps/worker` 18 added, 6 deleted, net +12; api entrypoint unchanged.
+migrations add 73 and delete 1 separately: 0329 adds 62; the bounded 0327
+publication read adds 11 and deletes 1. runtime plus migrations total +1,404
+net authored lines (2,433 added, 1,029 deleted).
+exact original-float windows, scoped batches and owned async reads
+replace ann/count routing, repeated source reads and subsecond verdicts. current
+client intent replaces server capacity waits and manual capacity retry; completed
+pages and remaining execution allowance survive deferral. finite
+role pools, control reserves, owned async startup/retirement and one bulk-hydration
+permit retain bounded resource ownership. generated output, migrations, configuration,
+manifests, locks, docs and lab tooling are excluded; executable runtime settings
+in `python/nexus/config.py` are counted. qualification limits remain with
+[release-search](issues/release-search.md); this accounting establishes no runtime
+or release acceptance.
+existing area totals retain their stated bases.
+
 recent resources against `10aa3df7b`: +915 net authored runtime lines
 (1,275 added, 360 deleted): web +591, android +352, python -28. device-local
 ordered use replaces server palette-selection recency; existing navigation,

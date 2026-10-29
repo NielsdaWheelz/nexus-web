@@ -20,6 +20,7 @@ from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
 from nexus.auth.verifier import TokenVerifier
 from nexus.config import get_settings
+from nexus.db.engine import async_database_scope, bind_database_role
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.responses import api_error_handler, error_response, http_exception_handler
@@ -38,6 +39,7 @@ _SELECTION_ROUTES = re.compile(r"/chat-runs|/messages/[^/]+/(?:rerun|regenerate)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Validate composition and prepare local embedding SDK code before serving reads."""
+    bind_database_role("api")
     settings = get_settings()
     get_runtime_identity()
     validate_policy()
@@ -54,8 +56,11 @@ async def lifespan(app: FastAPI):
         memory_config=memory_config,
     )
     app.state.generation_catalog = Catalog(settings, app.state.toolbox)
-    yield
-    await app.state.httpx_client.aclose()
+    async with async_database_scope():
+        try:
+            yield
+        finally:
+            await app.state.httpx_client.aclose()
 
 
 async def _invalid_request(request: Request, exc: Exception) -> JSONResponse:

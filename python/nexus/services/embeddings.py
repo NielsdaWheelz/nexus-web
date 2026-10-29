@@ -13,7 +13,6 @@ import asyncio
 import math
 import re
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 
 from provider_runtime.retry import DEFAULT_RETRY
@@ -53,21 +52,13 @@ def pgvector_literal(vector: Sequence[float]) -> str:
 
 def embed_texts(texts: Sequence[str]) -> list[list[float]]:
     """Synchronous adapter retaining the provider's default background retry policy."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
-    # Existing synchronous consumers may themselves be called on an event-loop thread.
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(
-            lambda: asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
-        ).result()
+    return asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
 
 
 async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list[list[float]]:
     """Native cancellable provider request; the caller owns the retry policy.
 
-    Every vector is complete, finite and ``EMBEDDING_DIMENSIONS`` wide. Credential and
+    Every vector is finite, nonzero and ``EMBEDDING_DIMENSIONS`` wide. Credential and
     expected provider failures propagate; malformed responses remain defects.
     """
     import httpx
@@ -107,7 +98,9 @@ async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list
         response = await runtime.embed(call, credential=credential)
     vectors = [[float(value) for value in vector] for vector in response.embeddings]
     if len(vectors) != len(inputs) or any(
-        len(vector) != EMBEDDING_DIMENSIONS or not all(map(math.isfinite, vector))
+        len(vector) != EMBEDDING_DIMENSIONS
+        or not all(map(math.isfinite, vector))
+        or not any(vector)
         for vector in vectors
     ):
         # justify-defect: the provider response violates the embedding adapter's shape contract.

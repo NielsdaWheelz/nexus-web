@@ -11,6 +11,10 @@
 
 !docker/
 !docker/Dockerfile.backend
+!docker/Dockerfile.postgres
+!docker/codex-requirements.toml
+!docker/pgvector/
+!docker/pgvector/check-runtime.sh
 
 !migrations/
 !migrations/**

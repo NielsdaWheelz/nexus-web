@@ -1,43 +1,53 @@
-# production database connection budgets are implicit
+# database capacity remains unqualified
 
-status: open; separate from the measured jit memory repair
-origin: 2026-10-14 release memory investigation, source58c7ecae6
-area: deployment / database admission
+status: open; finite role quotas are implemented but provisional.
 
-production has no explicit role pool overrides. `config.py:95–98` permits
-10 retained plus20 overflow connections per synchronous engine. api,
-interactive worker, background supervisor and background child have separate
-engines. raw sse listeners (`db/listen.py`, cap64) and async tool sessions
-(`db/engine.py:get_async_engine`, nullpool) bypass those pool limits; readiness also
-connects directly. postgres permits100 clients under a512mib cgroup.
+search source `7173b6a91484c14f6fe3944b9834763c0fb6ac19` bounds physical pools in
+`python/nexus/config.py` and `db/engine.py`, keeps control checkout independent,
+and admits one authored bulk-hydration body before database checkout.
+the bulk permit and normal functional flow are now exercised on 7173. finite
+bounds still do not establish aggregate memory headroom.
 
-the incident census observed16 idle client backends, including4 listeners;
-listener logs reached8. these are connection counts, not proof of concurrent
-queries. the two live memory kills and retained-backend replay show why
-aggregate private memory matters. disabling jit reduces measured memory;
-it does not establish a hard connection budget.
+production postgres exhausted its 512 mib cgroup and recovered. restored profiling
+also exhausted memory while warming retained ordinary connections, before another
+search. query peak versus retained/native allocation remains incompletely
+attributed; neither an unbounded leak nor a particular allocator is proved.
+see [the incident](production-search-postgres-oom.md).
 
-define the production admission budget at runtime composition, counting all
-physical connection owners. preserve interactive lease renewal, streaming
-writes and stop polling. a smaller synchronous pool alone is incomplete and
-can convert memory pressure into pool waits or missed worker leases.
+prior c6 native api/postgres/background coexistence completed useful publication
+and foreground reads within their actual leaves. evidence is private in
+`.nexus-local/native-real-overlap-c6aa98b08-actual.private.tar`. the 7173 e8 case
+completed its functional recheck, including writing and both feed publications,
+but FAILED because backup creation rejected an invalid filename. the next 1b case
+had a valid backup and a parent oom 1/kill 1 under 1280 mib; a strict job remains
+DEAD attempt 1. postgres retained its epoch and sampled conservative peak
+444350464 bytes stayed below 448 mib. backup naturally verified and maintenance
+exited 0, without repairing the failed [overlap](search-backup-overlap-oom.md).
+this larger-host component neither qualifies nor disproves actual 2 gib fit.
+integration `ff83a5318` passed static/head checks for 0329/down 0328 and the
+[canonical/semantic lab composition](../search-reliability-spec.md#evidence-and-uncertainty)
+with fake providers. full native memory qualification remains open; the executed
+0321 fixtures are a different lineage.
+source, frozen cases and operational receipts remain private under
+`.nexus-local/native-capacity-7173b6a91/`; the exact historical issue text is in
+`.nexus-local/search-takeover-20261028.private/docs-before-final/`.
 
-acceptance: explicit role/listener/async/probe budgets fit the fixed database
-memory limit; representative concurrent reads and writes complete within
-their deadlines, worker leases progress, and no postgres recovery/oom occurs.
-keep the existing release workload qualification distinct from a maximum-load
-claim. private evidence: campaign `attempts/58c7ecae6/postgres-memory-diagnosis/`
-and `capacity-2g-reaudit-20261014/`.
-
-2026-10-26 profiling now reproduces a concrete consequence on deployed3d81ef45
-and the verified0317 nightly corpus: ordinary UI reads across retained api
-connections exhaust the512mib database before the next search. a one-backend
-four-cycle control largely plateaus and releases its private memory on close.
-four warmed backends allow the selected keyword statements to complete, with
-limited margin; this neither sets a safe pool size nor budgets async waiters,
-listeners, worker processes or concurrent reader peaks. the exact-image clone
-is amd64-emulated on arm64 and has rebuilt indexes/statistics. evidence and
-remaining attribution limits are in
-[the search incident](production-search-postgres-oom.md). prioritize an explicit
-aggregate physical-backend/private-memory budget and verify all connection
-owners; reducing one pool alone does not establish the full contract.
+resolve with the current candidate on the actual 2 gib topology and unchanged
+service caps: cold then warmed readers/listeners, both worker lanes, authored
+buffers, reachable physical maintenance/autoanalyze and verified backup. all normal
+services count while present, including idle workers and retained connections.
+the user's revised acceptance permits heavy work and backup to queue and serialize,
+including an enforced backup window; useful search and finite queue drain remain
+required. simultaneous peak/backup overlap is not required, and the historical
+failed verdict is unchanged.
+count all processes and operator connections, preserve the 64 mib conservative
+postgres reserve and 128 mib host reserve, and require useful completion, zero new
+oom/recovery/lost claims and confirmed owned cleanup. freeze numeric quotas only
+after that proof. [the spec](../search-reliability-spec.md) owns the full gates.
+the actual host keeps its provisioned swap enabled; no-swap remains a service-leaf
+constraint. include host swap use/pressure and physical ram headroom in that proof,
+without treating swap capacity as the host reserve.
+the [capacity specification](../database-capacity-spec.md) owns the reachable
+topology and accounting, not a separate delivery pr. the detailed main-side
+profiling record is preserved in
+`.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-database-connection-budgets-implicit.md`.

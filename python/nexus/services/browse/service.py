@@ -124,7 +124,7 @@ def _catalogue(
     family = "media" if query.source is BrowseSource.Nexus else "gutenberg"
     kinds = (_NEXUS_KINDS[query.kind],) if family == "media" else ()
     end = offset + query.limit
-    hits = rank(db, Retrieval(viewer_id, query.q, end + 1, content_kinds=kinds), family)
+    hits = rank(db, Retrieval(viewer_id, query.q, end + 1, content_kinds=kinds), families=(family,))
     ids = [hit.id for hit in hits[offset:end]]
     after = end if len(hits) > end and is_offset(end) else None
     if family == "gutenberg":

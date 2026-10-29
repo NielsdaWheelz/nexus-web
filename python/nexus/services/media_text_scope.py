@@ -139,9 +139,11 @@ def apparatus_scope_rows_sql(reading_ids_sql: str) -> str:
     locators are the writer-validated stored grammar; no ancestor/group/return
     traversal or reverse source authority participates.
     """
-    scopes = text_scope_rows_sql(reading_ids_sql)
+    pieces = f"""SELECT requested.media_id FROM ({reading_ids_sql}) requested
+        JOIN media reading ON reading.id=requested.media_id AND reading.kind='text_part'"""
+    scopes = text_scope_rows_sql(pieces)
     return f"""
-        WITH admitted AS (
+        WITH in_body AS (
             SELECT DISTINCT bounded.reading_media_id,item.id,item.kind,item.media_id
             FROM ({scopes}) bounded
             JOIN reader_apparatus_items item ON item.media_id=bounded.source_media_id
@@ -151,19 +153,19 @@ def apparatus_scope_rows_sql(reading_ids_sql: str) -> str:
               AND item.locator->>'fragment_id'=bounded.fragment_id::text
               AND (item.locator->>'start_offset')::integer>=bounded.start_offset
               AND (item.locator->>'end_offset')::integer<=bounded.end_offset
-            UNION
-            SELECT requested.media_id,item.id,item.kind,item.media_id
-            FROM ({reading_ids_sql}) requested
-            JOIN media m ON m.id=requested.media_id AND m.kind!='text_part'
-            JOIN reader_apparatus_items item ON item.media_id=m.id
         )
-        SELECT reading_media_id,id AS apparatus_item_id FROM admitted
+        SELECT requested.media_id AS reading_media_id,item.id AS apparatus_item_id
+        FROM ({reading_ids_sql}) requested
+        JOIN media m ON m.id=requested.media_id AND m.kind!='text_part'
+        JOIN reader_apparatus_items item ON item.media_id=m.id
         UNION
-        SELECT admitted.reading_media_id,target.id
-        FROM admitted JOIN reader_apparatus_edges edge
-          ON edge.from_item_id=admitted.id AND edge.media_id=admitted.media_id
-        JOIN reader_apparatus_items target ON target.id=edge.to_item_id AND target.media_id=admitted.media_id
-        WHERE admitted.kind IN ('footnote_ref','endnote_ref','sidenote_ref','margin_note_ref','bibliography_ref')
+        SELECT reading_media_id,id AS apparatus_item_id FROM in_body
+        UNION
+        SELECT in_body.reading_media_id,target.id
+        FROM in_body JOIN reader_apparatus_edges edge
+          ON edge.from_item_id=in_body.id AND edge.media_id=in_body.media_id
+        JOIN reader_apparatus_items target ON target.id=edge.to_item_id AND target.media_id=in_body.media_id
+        WHERE in_body.kind IN ('footnote_ref','endnote_ref','sidenote_ref','margin_note_ref','bibliography_ref')
           AND ((edge.relation='points_to_note' AND target.kind='footnote')
             OR (edge.relation='points_to_endnote' AND target.kind='endnote')
             OR (edge.relation='points_to_sidenote' AND target.kind='sidenote')

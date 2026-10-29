@@ -7,6 +7,10 @@ owns admission, publication, reads and the queue handler.
 `services/suggestion_changes.py` owns the input revision, the engagement gate and
 feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 `components/collections/SuggestionsSection.tsx`, `QuickReadsSection.tsx`.
+the [suggestion admission spec](../suggestion-admission-spec.md) owns the exact
+retrieval/admission contract; the [reliability spec](../search-reliability-spec.md)
+owns common quality, progress and release acceptance. fixed scheduling intervals
+are not latency guarantees.
 
 ## product contract
 
@@ -59,10 +63,13 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 
 ## durable facts
 
-- `suggestion_inputs` is the migration-seeded singleton revision. source owners
-  call `suggestion_changes.record_input_change` after their last domain operation,
-  immediately before commit. it flushes, increments and notifies; no domain lock
-  may be acquired afterward. broad invalidation deliberately fits one user.
+- `suggestion_inputs` holds durable per-source clocks plus the migration-owned
+  baseline. canonical writers pass their changed namespaced source identities to
+  `suggestion_changes.record_input_change` in the source transaction; each clock
+  advances once per call and a transactional notification wakes observers. sorted
+  keys give multi-owner updates consistent lock order. only readers compute the
+  sum; it includes late commits, and clock rows survive source deletion. unrelated
+  writers do not share a singleton publication mutex.
 - reading and listening advance it only when they move an anchor list or the
   read state. `engagement_gate`, taken before the write, reads the head of each
   anchor list the write can move (the lectern's, and each admin library's that
@@ -79,17 +86,56 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 its normal three-attempt policy and `keep_dead=True`. its payload is `{feed_id}`.
 admission is serializable and joins existing work. a read-only repeatable-read
 snapshot captures the input revision, database time and ranking.
-ranking holds shared search admission through snapshot cleanup and physical backend
-retirement; queue wait consumes the existing database and worker timeout budgets.
-a separate short serializable publication transaction locks the execution claim, verifies the
-feed pointer and destination authority, replaces the publication, clears the
-pointer and finishes the job atomically. a newer input revision remains visibly
-dirty. workers never enqueue successors.
+media anchors use their first chunk's current active vector; a piece uses its
+first eligible admitted chunk. each selected anchor requests independent
+graph-thread and rediscovery windows. sequential postgres queries score original vectors and
+project canonical reading/chunk rows before ordering by distance, reading id and
+chunk id and taking 400 per anchor/family; only then are rows grouped by media.
+vectors and eligibility stay in postgres. there is no shared ann traversal or
+all-anchor cross-product.
+ranking uses the native async search gate with one finite
+absolute allowance for checkout, nonblocking admission and the complete snapshot.
+the [required contract](../search-reliability-spec.md) separates capacity waiting
+from the execution allowance. background contention defers through the existing
+job owner; browser capacity waiting belongs to the current client intent.
+retirement confirms the search pid is absent before any publication transaction;
+a known-unconfirmed backend prevents publication and fails that scope's search
+capacity closed. there is no retained partial ranking across attempts.
+
+only observed admission contention returns a same-job reschedule at database
+`now() + 5 seconds`. normal queue settlement keeps
+the payload and feed pointer and refunds the claimed attempt. each later attempt
+reruns the entire read. setup and admitted computation expiry spend the ordinary
+bounded failure budget. arbitrary `57014`, connection loss and shutdown retain
+their own error or lifecycle handling. the deferral claim check and database-time read use one short ordinary
+transaction after the search scope has closed. this sequential child handler has
+no concurrent frame/provider/ordinary owner; the supervisor heartbeat is separate.
+reschedule logs identify `admission_busy`; owned read expiry retains its error.
+
+once the complete read and retirement succeed, a separate short serializable
+transaction locks the current execution claim, verifies the feed pointer and
+current destination authority, replaces the publication, clears the pointer and
+finishes that same job atomically. lost/superseded claims cannot publish. failed
+or deferred reads leave the prior publication intact. a later input revision
+remains visibly dirty. workers never enqueue successors. the publisher may finish
+its own job, so the outer worker need not emit another settlement event.
 
 source changes record dirtiness even with no registered feed. only an active
 observer requests work, for meaningful changes or the 15-minute age target.
 later builds become available no earlier than the previous snapshot time plus
-30 seconds. no queue completion deadline is promised.
+30 seconds. sustained competing activity may leave suggestions stale; observers
+retain current publication and truthful queued/recovering/suspended state.
+
+qualification freezes the active due-feed cohort and a finite observation window
+before work begins. every due feed must publish the settled input within that
+window after competing work drains. pre-existing suspended failures are identified
+at the start; failures created by the workload are not exempt. there is no
+quiet-period latency target or promise of freshness during sustained activity.
+heavy work may queue behind other work or an enforced backup window, then must
+resume and drain; simultaneous peak execution is not required. idle normal
+services and retained memory remain part of capacity accounting.
+backend retirement, useful publication and the resource envelope remain separate
+obligations under the [reliability spec](../search-reliability-spec.md).
 
 ## ports
 

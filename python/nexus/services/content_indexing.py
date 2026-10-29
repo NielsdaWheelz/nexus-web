@@ -400,10 +400,13 @@ def publish_embeddings(
         count += 1
         vector = array("f")
         vector.frombytes(embedding_f32)
-        db.execute(
+        # justify-service-invariant-check: validate the actual serialized vector before its insert.
+        inserted = db.scalar(
             text(
                 "INSERT INTO content_embeddings (chunk_id, embedding_provider, embedding_model, embedding_dimensions, embedding_vector)"
-                f" VALUES (:chunk, :provider, :model, :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS})))"
+                f" SELECT :chunk, :provider, :model, :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS}))"
+                f" WHERE (CAST(:vector AS vector({EMBEDDING_DIMENSIONS})) <=> CAST(:vector AS vector({EMBEDDING_DIMENSIONS})) BETWEEN 0 AND 2) IS TRUE"
+                " RETURNING chunk_id"
             ),
             {
                 "chunk": chunk_id,
@@ -413,6 +416,8 @@ def publish_embeddings(
                 "vector": pgvector_literal(vector),
             },
         )
+        if inserted is None:
+            raise ValueError("published embedding is not representable for cosine distance")
     # justify-service-invariant-check: a ready publication must cover every current chunk exactly once.
     if not count:
         raise AssertionError("embedding spool does not cover the current publication")
@@ -525,13 +530,13 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
             AND admitted_chunk.owner_id = chunk_reader.media_id
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = admitted_chunk.owner_id
-            AND admitted_state.lexical_revision = admitted_state.revision
+            AND (admitted_state.lexical_revision = admitted_state.revision) IS TRUE
         UNION
         SELECT bounded.reading_media_id, admitted_chunk.id
         FROM ({text_scope_rows_sql(reading_ids_sql)}) bounded
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = bounded.source_media_id
-            AND admitted_state.lexical_revision = admitted_state.revision
+            AND (admitted_state.lexical_revision = admitted_state.revision) IS TRUE
             AND admitted_state.section_bounds_key IS NOT NULL
         JOIN content_chunks admitted_chunk ON admitted_chunk.owner_kind = 'media'
             AND admitted_chunk.owner_id = bounded.source_media_id

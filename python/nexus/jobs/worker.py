@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus.db.session import get_control_session_factory
 from nexus.jobs import queue
 from nexus.jobs.process_executor import (
     ChildExecutor,
@@ -135,7 +136,7 @@ class JobWorker:
     ) -> None:
         while not done.wait(HEARTBEAT_SECONDS):
             try:
-                with self.session_factory() as db, db.begin():
+                with get_control_session_factory()() as db, db.begin():
                     renewed = queue.renew_running_job_claim(db, context=context, heavy=heavy)
                     stored = None if renewed else queue.get_job(db, context.job_id)
             except SQLAlchemyError:

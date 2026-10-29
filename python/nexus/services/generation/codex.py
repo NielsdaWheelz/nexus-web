@@ -64,7 +64,7 @@ from provider_runtime.agent_runtime import (
 )
 from provider_runtime.types import Present as RuntimePresent
 
-from nexus.db.session import open_async_session
+from nexus.db.session import open_control_async_session
 from nexus.jobs.queue import running_job_claim_is_current
 from nexus.services.generation.contract import (
     FailureCode,
@@ -227,7 +227,7 @@ class _Ports:
         from nexus.services.tools.run import ToolRefused
 
         del permit
-        async with open_async_session() as database:
+        async with open_control_async_session() as database:
             live = await database.run_sync(
                 lambda db: running_job_claim_is_current(db, context=self._owner.job)
             )

@@ -13,7 +13,7 @@ import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
@@ -124,7 +124,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     if (handleUnauthenticatedApiError(error)) return;
     try {
       setFeedback(scanErrorMessage(error, operation));
-      setFailureOperation(isApiError(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code) ? operation : null);
+      setFailureOperation((outcomeUnknown(error) || (isApiError(error) && error.code === "E_RATE_LIMITED")) ? operation : null);
     }
     catch (error) { setDefectState({ error }); }
   }, []);

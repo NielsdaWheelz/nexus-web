@@ -19,7 +19,7 @@ results in 779/2911 ms during one committed publication under unchanged deadline
 private trace/verification archives: `operation-trace-client/` and
 `cache-verification-client/` in the same qualification directory.
 
-the current affected operation passes; historical attribution remains uncertain.
+that affected operation passed at its recorded source; historical attribution remains uncertain.
 resolve this historical question only with attributable original evidence. do not
 repeat runs to manufacture that evidence. the observed current background 504 is
-tracked separately in [accepted restoration behaviour](release-search.md).
+tracked separately under [current release qualification](release-search.md).

@@ -5,8 +5,9 @@ prod) every other request must carry it as ``X-Nexus-Internal`` (403 ``E_INTERNA
 Route-authenticated paths (a handoff code, an extension bearer, a share token) stop there;
 every other request needs a verified bearer (401 ``E_UNAUTHENTICATED``, 503
 ``E_AUTH_UNAVAILABLE``) and gets ``request.state.viewer``. The first sight of a user and token
-email in this process mirrors them (``services.bootstrap``); a failure there is 500
-``E_INTERNAL`` and is retried by the next request.
+email in this process mirrors them (``services.bootstrap``); checkout exhaustion
+reaches the edge as 503 ``E_DATABASE_BUSY``. Other unexpected failures are 500
+``E_INTERNAL``. Both are retried by the next request.
 """
 
 import hmac
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import Request
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -99,7 +101,7 @@ class AuthMiddleware:
                 if search_read:
                     logger.info("search.auth.bootstrap.begin", mono_ns=time.monotonic_ns())
                 await run_in_threadpool(_bootstrap, user_id, email)
-            except DatabaseBusyError:
+            except (DatabaseBusyError, PoolTimeout):
                 raise
             # justify-ignore-error: logged once per request; the request answers a generic 500.
             except Exception:

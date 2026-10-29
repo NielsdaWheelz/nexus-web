@@ -1,61 +1,68 @@
-"""Query embeddings and cardinality-routed nearest neighbours over eligible chunks.
+"""Calibrated complete semantic windows inside a caller-owned snapshot.
 
-A bounded current-ready chunk count chooses exact distance through 25,000 vectors,
-otherwise 40-probe ivfflat. The publisher owns one matching nonnull vector per
-current ready chunk; cutover validates that bijection for serving legacy data.
-The count and vector reads share one caller snapshot, active model and visibility.
-Only the small branch fetches its eligible vector ids; a saturated count never
-caps ANN's domain. Actual vector reads retain their provider and nonnull filters.
+Each owner predicate carries its own authority over the ``cc`` chunk alias.
+Original float vectors decide both the threshold and the per-domain ordering.
+The publisher supplies one active vector per current ready chunk.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
 from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
+from provider_runtime.retry import DEFAULT_RETRY
+from provider_runtime.types import TransientExhausted
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import reading_chunks_sql
 from nexus.services.embeddings import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_PROVIDER,
-    embed_texts,
+    embed_texts_async,
     embedding_model,
-    pgvector_literal,
 )
 
 logger = get_logger(__name__)
-_EXACT_MAX = 25_000
 _READY = """JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
                 AND cis.owner_id = cc.owner_id AND cis.status = 'ready'
                 AND (cis.lexical_revision = cis.revision) IS TRUE
                 AND cis.active_embedding_provider = :provider
                 AND cis.active_embedding_model = :model"""
 
-type Embedding = tuple[str, list[float]]  # (model, vector)
+type Embedding = tuple[str, list[float]]
 
 
-def embed_text(q: str) -> Embedding | None:
-    """One provider call that never touches a session; the caller holds no transaction.
+async def embed_text(q: str) -> Embedding:
+    """One required query embedding, outside database admission.
 
-    An expected provider failure degrades to lexical search with one warning; a malformed
-    vector is a provider defect (``embed_texts`` refuses it).
+    Missing configuration and transient exhaustion are modeled unavailability.
+    Other provider failures and malformed vectors remain defects. Callers skip
+    this operation entirely when semantics were not requested.
     """
     try:
-        return embedding_model(), embed_texts([q])[0]
+        vectors = await embed_texts_async([q], retry=replace(DEFAULT_RETRY, max_attempts=1))
+        return embedding_model(), vectors[0]
     except (NonGenerationCallFailed, CredentialMissing) as exc:
+        if isinstance(exc, NonGenerationCallFailed) and not isinstance(
+            exc.failure, TransientExhausted
+        ):
+            raise
         logger.warning(
-            "search_semantic_embedding_unavailable_lexical_fallback",
+            "search_semantic_embedding_unavailable",
             error=type(exc.failure).__name__
             if isinstance(exc, NonGenerationCallFailed)
             else type(exc).__name__,
         )
-        return None
+        raise ApiError(
+            ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE, "Related matches are unavailable."
+        ) from exc
 
 
 def _eligible(owner: str) -> str:
@@ -63,6 +70,7 @@ def _eligible(owner: str) -> str:
             JOIN content_chunks cc ON cc.id = ce.chunk_id
             {_READY}
             WHERE ce.embedding_provider = :provider AND ce.embedding_model = :model
+              AND ce.embedding_dimensions = :dimensions
               AND ce.embedding_vector IS NOT NULL AND ({owner})"""
 
 
@@ -84,6 +92,7 @@ def has_media_vectors(db: Session, model: str, owners: Sequence[UUID], viewer_id
                 {
                     "provider": EMBEDDING_PROVIDER,
                     "model": model,
+                    "dimensions": EMBEDDING_DIMENSIONS,
                     "owners": list(owners),
                     "viewer_id": viewer_id,
                 },
@@ -97,65 +106,44 @@ def nearest_chunks(
     db: Session,
     embedding: Embedding,
     *,
-    owner: str,
+    domains: Sequence[str],
     params: Mapping[str, Any],
     limit: int,
     ctes: str,
-) -> list[tuple[UUID, float]]:
-    """``(chunk_id, cosine)`` nearest first, ties by chunk id, among the embedded chunks of
-    current lexical publications with ready indexes on the query's model.
-
-    ``owner`` is the caller's self-contained predicate over ``cc`` (content_chunks); it is
-    the only visibility. Ready-vector coverage makes the bounded chunk count equal
-    the eligible vector count. The small branch then fetches actual vector ids in
-    the same snapshot. Exact ordering disables ANN; broad ordering keeps its bound
-    distance operand and complete eligibility predicate.
-    """
+    maximum_distance: float,
+) -> list[list[tuple[UUID, float]]]:
+    """Complete independent windows ordered by original cosine and chunk id."""
     logger.info("search.nearest_chunks.begin", mono_ns=time.monotonic_ns())
     try:
         model, vector = embedding
-        query_vector = f"CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))"
-        eligible = _eligible(owner)
+        distance = f"ce.embedding_vector <=> CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))"
         bindings = {
             **params,
-            "embedding": pgvector_literal(vector),
+            # Query-only round trip: publication's serializer and stored vectors stay owned there.
+            "embedding": "[" + ",".join(repr(float(value)) for value in vector) + "]",
             "provider": EMBEDDING_PROVIDER,
             "model": model,
+            "dimensions": EMBEDDING_DIMENSIONS,
             "limit": limit,
+            "maximum_distance": maximum_distance,
         }
-        count = db.execute(
-            text(f"""{ctes} SELECT count(*) FROM (
-            SELECT 1 FROM content_chunks cc {_READY}
-            WHERE ({owner}) LIMIT :count_limit) bounded"""),
-            bindings | {"count_limit": _EXACT_MAX + 1},
-        ).scalar_one()
-        if count == 0:
-            return []
-        distance = f"ce.embedding_vector <=> {query_vector}"
-        if count <= _EXACT_MAX:
-            eligible_ids = list(
-                db.scalars(
-                    text(f"{ctes} SELECT ce.chunk_id {eligible} LIMIT :count_limit"),
-                    bindings | {"count_limit": _EXACT_MAX + 1},
-                )
-            )
+        # justify-service-invariant-check: validate the exact serialized query even for empty domains.
+        valid = db.scalar(
+            text(f"""SELECT (CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))
+                <=> CAST(:embedding AS vector({EMBEDDING_DIMENSIONS})) BETWEEN 0 AND 2) IS TRUE"""),
+            {"embedding": bindings["embedding"]},
+        )
+        if not valid:
+            raise ValueError("query embedding is not representable for cosine distance")
+        windows = []
+        for owner in domains:
             rows = db.execute(
-                text(f"""SELECT ce.chunk_id, 1 - ({distance}) FROM content_embeddings ce
-                WHERE ce.chunk_id = ANY(CAST(:eligible_ids AS uuid[]))
-                  AND ce.embedding_provider = :provider AND ce.embedding_model = :model
-                  AND ce.embedding_vector IS NOT NULL
-                ORDER BY ({distance}) + 0, ce.chunk_id LIMIT :limit"""),
-                bindings | {"eligible_ids": eligible_ids},
-            )
-        else:
-            db.execute(text("SET LOCAL ivfflat.probes = 40"))
-            rows = db.execute(
-                text(
-                    f"{ctes} SELECT ce.chunk_id, 1 - ({distance}) {eligible} ORDER BY {distance} LIMIT :limit"
-                ),
+                text(f"""{ctes} SELECT ce.chunk_id, 1 - ({distance})
+                    {_eligible(owner)} AND ({distance}) <= :maximum_distance
+                    ORDER BY ({distance}) + 0, ce.chunk_id LIMIT :limit"""),
                 bindings,
             )
-        near = [(row[0], float(row[1])) for row in rows]
-        return sorted(near, key=lambda pair: (-pair[1], pair[0]))
+            windows.append([(row[0], float(row[1])) for row in rows])
+        return windows
     finally:
         logger.info("search.nearest_chunks.end", mono_ns=time.monotonic_ns())

@@ -184,16 +184,8 @@ jobs:
           mkdir -p -- "$WORKSPACE/bundle"
           postgres_proof="$WORKSPACE/bundle/postgres-runtime-proof.txt"
           docker run --rm --network none --read-only --cap-drop ALL \
-            --security-opt no-new-privileges --entrypoint sh "$POSTGRES_IMAGE" -ec '
-              postgres --version
-              dpkg-query -W postgresql-15-pg-search
-              test -r /usr/lib/postgresql/15/lib/pg_search.so
-              sha256sum /usr/lib/postgresql/15/lib/pg_search.so /usr/share/postgresql/15/extension/pg_search.control
-              cat /usr/share/postgresql/15/extension/pg_search.control
-            ' >"$postgres_proof"
-          grep -Eq '^postgres \(PostgreSQL\) 15\.' "$postgres_proof"
-          grep -Fqx $'postgresql-15-pg-search\t0.26.2' "$postgres_proof"
-          grep -Fqx "default_version = '0.26.2'" "$postgres_proof"
+            --security-opt no-new-privileges --entrypoint /usr/local/bin/nexus-postgres-check \
+            "$POSTGRES_IMAGE" >"$postgres_proof"
           printf '%s\n' "$POSTGRES_IMAGE" >"$WORKSPACE/bundle/postgres-image.txt"
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python \
             python3 -B -m nexus.release_artifact write-candidate-manifest \

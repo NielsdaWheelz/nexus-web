@@ -2,7 +2,7 @@
 
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isApiError, isSameSystemApiDefect, isStaleBuild, type ApiError, type ApiPath } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, isStaleBuild, outcomeUnknown, type ApiError, type ApiPath } from "@/lib/api/client";
 import { readSharedValue, useServerArrival, type ArrivalClaim } from "@/lib/api/serverState";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useSuggestionEntryRead } from "@/lib/panes/suggestionEntryReads";
@@ -357,8 +357,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           const state = current.current.state;
           const publicationChanged = state?.latest != null && (latestAtAdmission == null || state.latest.id !== latestAtAdmission.id);
           // Observation can confirm admission before its HTTP receipt is lost.
-          if (isApiError(error) &&
-              (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT") &&
+          if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED" &&
               (state?.work != null || publicationChanged)) {
             commit((value) => ({ ...value, admissionError: null }));
             return true;

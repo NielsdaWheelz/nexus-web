@@ -15,7 +15,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.engine import get_async_engine, get_engine
+from nexus.db.engine import (
+    get_async_engine,
+    get_control_async_engine,
+    get_control_engine,
+    get_engine,
+)
 
 
 @lru_cache
@@ -24,8 +29,19 @@ def get_session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
 
 
+@lru_cache
+def get_control_session_factory() -> sessionmaker[Session]:
+    """Short control transactions only; substantial domain work stays ordinary."""
+    return sessionmaker(bind=get_control_engine(), autoflush=False, expire_on_commit=False)
+
+
+def open_control_async_session() -> AsyncSession:
+    """One control session on the current owning loop."""
+    return AsyncSession(get_control_async_engine(), autoflush=False, expire_on_commit=False)
+
+
 def open_async_session() -> AsyncSession:
-    """One async session on its own connection. Sync domain code runs in it through
+    """One ordinary async session on the current owning loop. Sync domain code runs in it through
     `run_sync`, whose greenlet bridge awaits psycopg on the calling loop without threads."""
     return AsyncSession(get_async_engine(), autoflush=False, expire_on_commit=False)
 

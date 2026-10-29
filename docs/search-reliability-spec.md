@@ -1,325 +1,370 @@
-# search reliability
+# search reliability: revised implementation and acceptance spec
 
-prior implementation proposal, 2026-10-26, published as a supporting reference at
-the owner's request. its behavioral budgets remain binding; the newer database
-capacity and suggestion admission specs supersede its prescriptive mechanisms.
-implementation, production activation and proof are separate stages. lasting contracts belong in module docs; proof belongs in the pr.
+contract revised 2026-10-29; implementation status reconciled 2026-10-29.
+historical evidence retains its recorded source and migration identity. the isolated
+integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
+migration 0329/down 0328 and passed the sole static gate. that closes the source/head
+collision. that frozen integration's disposable functional composition passed as
+scoped below. integration of main `e2192e593` preserves its historical x-data
+contracts; earlier static/manual receipts do not qualify this newer tree.
+integrated migration, full native runtime and release qualification remain open.
+the previous spec is preserved at
+`.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
 
-2026-10-28 planning refinement: the owner reiterated single-user simplicity.
-the accepted resource, latency, recall and progress budgets below remain. treat
-the detailed pool/lifecycle/listener and retrieval mechanisms as proposals to
-justify through the smallest decisive experiment, not an implementation checklist.
-current investigation and the two-pr boundary live in
-[database capacity](database-capacity-spec.md) and
-[suggestion admission](suggestion-admission-spec.md). they identify obsolete
-online-first call sites and smaller candidates to measure first. reconcile the
-chosen mechanism here before implementation; do not silently relax a budget.
+## decision
 
-## decisions and scope
+useful retrieval and a surviving database take precedence over speed. preserve
+semantics and writing; bound concurrency and physical resources; let complete
+work finish. a safe timeout is a failure outcome, not a working search.
 
-repair database capacity, expensive-search admission and suggestion retrieval.
-keep the current 2 gib host, postgres 512 mib/no-swap limit and existing service
-limits. qualify desktop and phone with ordinary panes, imports and generation.
-a brief announced release interruption is accepted.
+the user's 2026-10-29 decision permits deliberate serialization of heavy search,
+suggestion ranking, indexing and backup. their simultaneous peaks need not fit.
+normal services must fit while present, including idle workers and retained
+connections. a backup may have an enforced window before queued heavy work
+resumes. useful search must eventually complete; ordinary reading, local writing
+and cancellation remain usable, and finite queued work must drain. serialization
+is a scheduling choice, not permission for starvation, lost work or hidden failure.
+capacity waiting must remain visibly and honestly pending; generic waiting copy
+is sufficient. it never spends the execution allowance, which begins at admitted
+execution. existing request/presentation owners must resume deferred work under
+the current intent, preserve stable completed results and honor cancellation.
+browser requests use nonblocking admission before embedding; their existing
+client intent owns capacity waiting and natural retry. execution and transport
+safeguards remain finite. actual deployment ceilings and capacity remain with
+[release acceptance](issues/release-search.md).
 
-permissions, publication identity, reading boundaries, model identity and committed
-writes remain exact. semantic suggestion candidate recall becomes approximate;
-retain at least 9 of the previous top 10 suggestions on each representative case
-and review every added/removed item. compare canonical refs at the same corpus,
-input revision, anchors, eligibility, calibrated model and ranking instant:
-`overlap >= ceil(0.9 * min(10, old_count))`. freeze a semantic-dominant case with
-at least two similarity-dependent first-page refs, both families, restrictive
-pieces and a genuine empty case; a broken semantic lane must not pass on graph hits.
+retire the former 400 ms background computation, 500 ms hold/retirement and
+60-second quiet-publication acceptance gates, plus the former foreground
+latency/phase-cutoff requirements. **no replacement numeric deadline is approved;
+15 seconds was a suggestion.** finite operational watchdogs are implemented;
+their values are safeguards, not acceptance targets. qualification remains
+required as specified below.
 
-keep the existing 15-minute freshness policy and 30-second build spacing.
-suggestions may remain stale during sustained competing work. each due test feed
-must publish the settled input revision within 60 seconds of a recorded `t0`:
-other admitted jobs have drained and foreground mutations have stopped. keep its
-observer active. pre-existing suspended failures are identified at scenario start;
-the test cannot exempt failures it creates. record full due-to-publication time
-separately, including preceding imports; no promise bounds arbitrary import length.
+this document owns common acceptance. [database capacity](database-capacity-spec.md)
+owns physical topology/accounting; [suggestion admission](suggestion-admission-spec.md)
+owns exact domains, ranking, admission and publication. these are cohesive owner
+boundaries, not prescribed separate prs or duplicated acceptance contracts.
+this target supersedes conflicting timing requirements in
+[search](modules/search.md), [suggestions](modules/suggestions.md),
+[release-search](issues/release-search.md) and linked issue resolution clauses.
+it does not change historical verdicts or turn old failures into passes.
 
-non-goals: a larger machine, new search/queue service, external pooler, new ranking
-explanations, new user controls, offline storage, generic scheduler, exported
-snapshots, persistent partial rankings, a second lab runtime or wholesale lexical
-rewrite. preserve the quiet-publication contract in
-[suggestions module contract](modules/suggestions.md).
+retain the 2 gib ram host, postgres 512 mib/no-swap leaf, api 384 mib and other existing
+service limits. retain the established 64 mib database and 128 mib workload host
+reserves; deployment's separate 256 mib available-memory preflight stays intact.
+where the connector is omitted from a backend qualification, its full 128 mib cap
+is reserved alongside the 128 mib host reserve: 256 mib available physical memory,
+with the 64 mib postgres reserve independent.
+production host swap remains enabled: cloud-init provisions at least 1 gib.
+the no-swap condition applies to service leaves, whose `memswap_limit` equals
+`mem_limit`, not to the host. record host ram headroom, swap use and pressure
+alongside service charges; swap capacity is not physical ram reserve. nonzero
+host swap use is not itself a failed gate or permission to raise leaf limits.
+no larger host, external search service/pooler, new scheduler, persistent partial
+rankings or local corpus replica. no semantic feature is cut by this revision.
 
-## target capability
+## evidence and uncertainty
 
-| boundary | required behavior |
+- **observed:** production postgres oom kills and recovery; warmed ordinary
+  connections could exhaust memory before another search. separately, suggestion
+  work held search admission for minutes. allocator attribution remains incomplete.
+  [oom](issues/production-search-postgres-oom.md),
+  [contention](issues/production-search-admission-contention.md).
+- **observed:** exact retrieval over 39,769 restrictive chunks found required
+  matches in about 1.5 seconds; a server-membership prototype took about 0.9 seconds.
+  a separate complete strict read took about 2 seconds and still used ann. database
+  reserve held; neither proves a full exact suggestion refresh or whole-host fit.
+  [retrieval contract](modules/search.md),
+  [strict read](issues/strict-search-family-ranking-budget.md).
+- **observed:** the historical exhaustive suggestion reference took 204.6 seconds
+  for lectern and 220.4 seconds for a named piece; the b34 candidate took 0.73 and
+  0.89 seconds. receipts are the private `final-suggestion-quality-b34dd44cb-refowner-*.private.json`
+  files under `apps/web/.nexus-lab/cases/native-results/`. these obsolete-plan
+  timings neither qualify nor disqualify the proposed repaired exact queries.
+- **observed:** static checks, the three retained foundations and real-model
+  shortlist/discovery/chat-tool cases passed at their recorded revisions. derived
+  0319 preservation and actual main 0320 migration passed. actual half 0321 built
+  in 59.12 seconds with sampled database charge 335.3 mib, unchanged recorded
+  non-index/authored/source fingerprints and vector count, and confirmed cleanup.
+  vector count alone is not original-vector-byte equality. this is build and
+  preservation evidence, not retrieval or capacity acceptance.
+  remaining [upgrade and pairing](issues/release-search.md) and
+  [capacity](issues/production-database-connection-budgets-implicit.md) gates.
+- **observed:** latest oracle generation/content review passed with three citations;
+  only two had exact navigation targets, with no browser-click proof. provider
+  cleanup is now confirmed; the original lab-exit-125 history remains.
+  [blake locator](issues/oracle-resolved-blake-anchor-has-no-captured-location.md).
+- **observed:** selected stock exact source `c6aa98b08` completed a warm full
+  five-anchor, both-family global refresh and published 32 refs at input 1205.
+  real private browser/bff/api lexical and hybrid requests subsequently completed
+  usefully while queued behind another full global refresh. confirmed retirement,
+  service limits and cleanup passed. private receipts:
+  `.nexus-local/native-selected-global-shortlist-c6aa98b08-actual.private.tar` and
+  `.nexus-local/native-real-overlap-c6aa98b08-actual.private.tar`.
+  this proves feasibility for that warm selected 0321 component, not cold reads
+  or the actual 2 gib topology.
+- **observed current-source composition:** integration `ff83a5318` passed the three
+  canonical lab scenarios plus a temporary semantic extension in
+  `20261029-042930-e7ded121bbd8`, with complete cleanup. normal reindexing succeeded
+  on attempt 1 and produced one current ready vector. an absent-token lexical
+  query returned zero; hybrid returned the intended semantic passage. another
+  library's scope excluded it, all scope included it, and hidden content stayed
+  excluded. this uses fake providers: it proves composition, not live retrieval
+  quality or native capacity. the first extension receipt guard failed after the
+  canonical scenarios passed; that failed attempt remains failed.
+- **observed functional completion:** run `mac-search-7173b6a91-e8dbfac99e3d`
+  reached its final recheck: global/named publications had 32/16 refs at input 1212
+  with cleared job pointers; overlapping lexical/hybrid reads returned 200 with
+  the semantic witness. reading, normal writing/reload and accepted prefix 2,
+  ui stop, indexing and fixed/new-note scans completed. its overall verdict
+  remained FAILED because an invalid auxiliary filename was rejected before
+  backup creation; it is not backup-overlap or full memory acceptance.
+- **resolved setup findings:** the bulk permit is functionally exercised on 7173.
+  the earlier notes failure was instrumentation-only in the two-browser control;
+  no actual failed upload `POST` was captured. normal online writing/reload does
+  not prove injected upload-failure retry. earlier proofs retain their own source.
+- **observed memory failure:** run `mac-search-7173b6a91-1b9ec08d05a6` used a valid
+  backup key but its 1280 mib parent recorded oom 1/kill 1. a strict-scan child failure
+  settled DEAD attempt 1 with `E_RESOURCE_LIMIT`; postgres kept its epoch.
+  backup later completed canonical create/full-byte verification naturally and
+  manual maintenance exited 0. those successes do not repair the failed memory
+  workload. [backup overlap](issues/search-backup-overlap-oom.md) owns the remaining
+  attribution. auxiliary/runtime recovery and preparation-owned cleanup are
+  confirmed; a private full database snapshot preceded removal of the prepared
+  database/volume/network/parent. the protected original database and shared daemon
+  were unchanged. the original failed verdict is unchanged. these historical
+  0321 components do not qualify integrated 0329 or the actual 2 gib topology.
+- **open:** useful progress and queue drain under the chosen serialization policy,
+  cold and actual 2 gib topology,
+  integrated migration/full native runtime and phone acceptance. brave
+  import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
+  no search-repair production deployment has occurred.
+
+## target behavior and invariants
+
+search retains direct, lexical and semantic capabilities, existing scopes and
+filters, strict tools, pickers, connection discovery and oracle retrieval. show
+truthful pending/failure states and retain useful completed phases. no results
+means successful empty completion; semantic failure cannot masquerade as hybrid
+success. slower server work must leave local authored search, reading, writing
+and stop controls usable.
+
+permissions, canonical reading boundaries, publication/model identity, original
+vectors, distance thresholds, anchor attribution, evidence and activation stay
+exact. browser/strict distance remains 0.5, suggestion similarity 0.80; oracle
+retains its full 0–2 cosine domain. preserve lexical ordering, family composition,
+diversity and current result windows. exactness of a neighbour window does not
+promise exhaustive application results or stable pagination across corpus changes.
+
+main's local-first authored owner remains authoritative: locally committed
+immutable changes survive remote failure and retry the same sequence and bytes.
+server-owned writes retain their own identity/version/retry contracts. database
+busy or lost response never proves that a write failed to commit. no old note
+write owner, replay ledger or second recovery mechanism returns.
+
+suggestions retain [stable visits and explicit refresh](modules/suggestions.md):
+an adopted pool keeps its order, eligibility is rechecked, and refresh reads the
+latest completed publication without waiting for a new ranking. retain the
+15-minute age policy and 30-second build spacing as scheduling policy, not a
+completion guarantee. old rankings never grant current permission. after a finite
+competing workload drains, every active due feed must publish the settled input
+revision; old rows, empty substitutes and perpetual rescheduling do not satisfy it.
+freeze that due-feed cohort at scenario start. identify pre-existing suspended
+failures separately; failures or suspensions created by the scenario cannot
+remove feeds from acceptance.
+
+## architecture and operational bounds
+
+keep the current owners; change policy at those owners rather than adding layers.
+
+1. `db/engine.py`, `db/session.py`, `db/listen.py` and deployment composition own
+   finite physical checkout, transaction/loop lifetime and total accounting.
+   the candidate uses role pools with zero overflow, short reserved control
+   transactions and a shared api listener to preserve bounded ownership and
+   progress. those mechanisms are justified by their callers and demonstrated
+   failure modes, not a mandatory pool matrix or listener rewrite. count every
+   process, child, listener, maintenance and backup/operator connection. quotas
+   and retained-backend costs remain provisional until the reachable concurrent
+   topology fits the envelope under the capacity specification.
+2. `search/admission.py` retains one database-wide expensive-read gate and a
+   physical search lease through confirmed backend retirement. browser requests
+   reserve it before embedding; background provider work and unrelated
+   ordinary/control work retain their existing owners. a snapshot covers complete
+   permission/ranking/hydration facts; publication uses a later short transaction.
+   no ordinary transaction waits for a provider or the search gate.
+3. browser intent waits at its existing client owner for admitted work to finish;
+   requests refuse occupied capacity without a server-side queue. do not
+   repeatedly preempt that read to make the foreground appear fast. background
+   refuses observed local physical-capacity or shared-gate contention without
+   waiting. the shared-gate try-lock cannot bypass foreground waiters already
+   queued in postgres; there is no cross-process priority before a request reaches
+   that gate. existing query owners cancel superseded/disconnected requests;
+   cancelled waiters never execute later. no extra durable queue or priority service.
+4. `api/search_operation.run_search_operation` remains the http deadline,
+   disconnect and cancel/join owner. capacity queue waiting must not spend the
+   finite execution allowance; that allowance starts at admitted execution and
+   is not reset during the read/result construction. provider work retains its
+   owned finite guards; tool/oracle owners retain their enclosing cancellation
+   scope. transport ceilings are separate constraints, not execution allowances.
+   api115/bff120/browser125 safeguards remain unchanged. an unadmitted busy
+   response leaves the current client intent pending, with cancellable backoff
+   outside its execution clock. a prefix retains completed pages and its remaining
+   allowance; capacity deferral retries the current page, never the prefix.
+   real/provider/network failures settle rather than reset that allowance.
+5. shortlist/discovery handlers retain a finite attempt read watchdog through
+   `search_session_async` and `read_snapshot`'s remaining statement-timeout
+   backstop. provider work has its existing finite provider/job owner outside
+   admission. `jobs/process_executor.py` retains the existing fresh-child wall
+   watchdog, termination/join and supervisor heartbeat/claim ownership. its
+   general job limit is not the search allowance or a foreground service promise.
+6. cancellation still joins driver work and closes/invalidate-checks the captured
+   backend before capacity reuse or publication. retain the scope's fail-closed
+   behavior for unconfirmed retirement. a cleanup warning alone must not reject
+   an otherwise live completed operation after confirmed retirement; actual
+   request cancellation/expiry still wins. cleanup is never abandoned to meet a
+   stopwatch. preserve original failure classification during rollback.
+
+**useful completion and queue drain are release gates.** lexical and hybrid
+search may wait behind admitted work; simultaneous peak execution is not required.
+the chosen admission policy must let both complete usefully while ordinary
+reading, local writing and cancellation remain usable. the reviewed watchdog
+table must distinguish visible queue waiting from admitted execution and retirement,
+plus provider/transport guards. client/bff/platform ceilings must permit useful
+completion under that policy without spending execution time on capacity waiting.
+no blind timer reset, new protocol, phase telemetry or scheduler is prescribed.
+timed-out requests
+and retained earlier results do not substitute for useful completion.
+
+choose and record finite watchdog values and a finite qualification observation
+window before executing qualification, from measured complete-work costs and
+cleanup margin. they are operational safeguards, not new latency targets. do not
+silently inherit the old phase caps, borrow the general worker wall limit, restart
+clocks, or use infinite waits. if measured background cost cannot coexist with
+successful foreground requests under the chosen serialization policy inside
+actual transport ceilings, this synchronous baseline fails: return the concrete
+conflict for a design decision before adding preemption, incremental snapshots,
+an async search protocol or a feature cut.
+preliminary cost measurements also declare a finite diagnostic watchdog before
+execution. expiry is censored noncompletion, not a successful latency measurement
+or qualification; diagnostic limits do not become product allowances.
+
+only admission refusal may return the existing delayed `RescheduleRequested`
+without spending an attempt. admitted computation expiry spends the existing
+bounded failure budget and eventually exposes suspension/failure. narrow the
+catches in `suggestion_shortlists.py` and `connection_discovery.py`; do not change
+generic queue refund semantics. observed contention for a physical search permit
+or the advisory gate, before reading starts, is admission refusal. a connection
+setup timeout or generic pre-read expiry is not evidence of contention and must
+not be refunded merely because its phase says checkout. lost claims, shutdown and unrelated database
+errors keep their own meanings. successful publication still atomically rechecks
+claim, feed and authority, replaces the complete pool and settles the job. changed
+inputs may leave that captured revision dirty; a later complete build must converge.
+
+## retrieval choice: prove the simpler baseline first
+
+qualify exact original-float retrieval on the representative complete corpus,
+under the same admission and memory envelope. keep eligibility and scoring in
+postgres; return only bounded winning rows. do not raise `_EXACT_MAX` and export
+an entire uuid/vector domain into python. bounded output does not establish
+bounded database memory: inspect the actual joins, sorts and maintenance demand.
+
+- browser/strict/oracle select nearest chunks from the complete authorized,
+  current-ready model domain, using their existing thresholds and deterministic
+  chunk tie order.
+- suggestions select canonical **reading/chunk rows** independently for each
+  original anchor and family, ordered by distance, reading id and chunk id,
+  before the existing 400-row cutoff and media grouping. retain all anchors and
+  both semantic families. use straightforward sequential queries in one snapshot;
+  do not restore the old all-anchor cross-product. an exact chunk cutoff followed
+  by reading projection is not equivalent; this boundary belongs to the
+  [suggestion retrieval contract](modules/suggestions.md).
+- share readiness, calibrated scoring and canonical scope mechanisms where their
+  contracts match. a universal truncated-candidate interface is not required.
+  preserve proven query-shape repairs and remove duplicate work when doing so
+  preserves the proper selection boundary.
+
+the selected exact baseline has completed the warm component described above.
+cold/full-topology feasibility remains unproved. slower queries hold snapshots
+and the gate longer; qualification must measure that cost.
+
+if exact retrieval fails capacity or foreground/background progress, assess the
+existing stock original-float access path before requiring normalized-half ivf.
+select one qualified implementation, not runtime fallbacks or load-dependent
+recall. keep the prior approximation floors if ann is necessary: browser at least
+95% of exact-200 qualifying owners and every semantic first-page reference owner;
+suggestions overlap at least `ceil(0.9 * min(10, reference_count))` per frozen case,
+with every changed item reviewed. preserve semantic-positive restrictive cases,
+including `moderate_tolkien`; graph-only success cannot conceal a broken semantic
+lane. approximation remains an explicit quality cost, never inferred permission
+to shrink anchors, families, thresholds or candidate windows.
+
+## existing work: keep, delete or condition
+
+| disposition | work and reason |
 | --- | --- |
-| foreground search | preserve direct/lexical/hybrid phases and useful earlier results; `keats` and `tolkien` succeed under the qualified mixed load |
-| deadlines | retain api 400/1500/5000 ms and browser/bff 1000/2250/5750 ms; no timer restart at internal boundaries |
-| visible results | retain warm direct/text/related targets 500/2000/4000 ms; a small mandatory case set proves those cases, not a percentile |
-| background occupancy | at most 500 ms uninterrupted expensive-lock ownership, acquisition through confirmed backend retirement, in every qualified case |
-| cancellation | cancelled/waiting search backends disappear within 500 ms of cancellation; never release admission ahead of backend cleanup |
-| capacity | every physical connection has a finite process allowance; aggregate warm demand fits the unchanged host/database limits with measured headroom; zero oom kills or database recovery |
-| progress | reading, acknowledged writes, worker heartbeats, generation stop, import completion and a real new suggestion publication all remain possible |
+| keep | finite pools/control/listeners, async ownership, fresh background children, physical retirement and admission; retained memory and orphaned work remain hazards at any speed |
+| keep | canonical readiness/scope/owner/projection query repairs, meaningful duplicate-work removal, atomic publication, provider failures, busy/write uncertainty and current main's authored/capture/annotation contracts |
+| delete | hard subsecond hold verdicts and computation-expiry refunds; these reject useful work or hide noncompletion |
+| removed from the selected exact path | count-proof routing, multi-domain ann cursor plumbing, half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction. dimension/model and valid finite nonzero-vector checks remain |
+| selected package | pinned stock pgvector with exact original-float retrieval, without the normalized-half index or local cancellation patch. retained lifecycle proofs have their recorded source/package identities; integration still needs its own qualification |
+| migration owner | selected unreleased 0329 follows main 0328; the integrated source has one head and passed static verification. historical selected 0321-after-0320 receipts belong to a different lineage and remain historical. migration/value-preservation and full native runtime proof are still required for 0329 |
 
-these are acceptance requirements, not claims about current performance. failure
-blocks release; it does not permit larger limits, silent recall loss, longer
-foreground waits or permanent background deferral.
+trade-offs are explicit: serialized work lowers throughput and can lengthen
+foreground waits; exact retrieval spends more scan/io time to preserve recall;
+fixed suggestion visits and background contention delay ranking freshness;
+approximate access can lose candidates; a dependency patch incurs ongoing release
+ownership. no trade permits inaccessible evidence, silent semantic loss, lost
+writing, permanent hidden failure or memory-limit increases.
 
-## database ownership
+## implementation responsibilities
 
-`db/engine.py` owns physical checkout. `db/session.py` owns transactions and
-session adapters. deployment composition owns the sum across every process,
-including the background supervisor and its child. ordinary, search and control
-allowances are separate; all pool overflow is zero. readiness probes use bounded
-control checkout. include listeners, migrations and operator headroom explicitly.
-
-retain ordinary `get_session_factory()` and `open_async_session()`. add
-`get_control_session_factory()` and `open_control_async_session()` for heartbeat,
-stop/claim checks and readiness; search admission alone uses its dedicated pool. bound
-physical checkout, not the lifetime of an `AsyncSession`: a session can release
-its transaction and then invoke nested search. do not hold ordinary/control
-transactions while waiting for search, providers or worker completion.
-control sync/async sessions have separate caps and short statement deadlines;
-preserve readiness's existing two-second aggregate bound. control work never
-inherits the worker's 300-second query allowance or runs substantial domain work.
-
-use sqlalchemy's finite pools. one active `async_database_scope()` per process is
-owned by the api lifespan or a sequential worker attempt. create its engines
-lazily and require the owning event loop. join owned tasks, close their sessions,
-then await engine disposal before loop close and clear the scope; disposal alone
-does not close checked-out connections. search checkouts are physically invalidated
-on exit. no cross-loop cached pool, implicit engine creation outside a scope or
-session-wide semaphore.
-
-`db/listen.py` owns one raw autocommit connection per api process and fans out
-existing `(channel, key)` subscriptions. register the stream owner's finite channel
-set (`nexus_writing`, `nexus_suggestions`, `chat_run_events`, `oracle_readings`,
-`media_events`) and await every `LISTEN` acknowledgement before the sole notification
-consumer starts. later subscriptions are local; reconnect repeats registration.
-retain the public listener API and 64-subscriber cap; coalesce pending wakes per
-subscriber. subscribe before initial
-read; preserve initial and idle wakes, committed-state rereads and idempotent
-close. connection failure wakes/terminates all affected subscribers; existing
-stream retry reconnects and rereads. notifications remain hints, never state.
-
-one source-owned typed table in `config.py` declares `ConnectionCapacity` for
-`api | interactive_worker | background_supervisor | background_child | maintenance`.
-its fields are `ordinary_sync`, `ordinary_async`, `search_async`, `control_sync`,
-`control_async`: finite nonnegative integers; zero disables a capability before
-pool construction, never sqlalchemy's unlimited `pool_size=0`. entrypoints bind
-their role before engine creation; children explicitly select their own role.
-retain one finite ordinary checkout wait; search uses its absolute async deadline.
-remove superseded pool-size/overflow settings and unbounded async/raw-readiness paths.
-
-before green, freeze numeric table entries from native warm-load measurements and
-validate the sum for the highest simultaneous topology, listener and external
-probe/backup/operator headroom against the connection ceiling. maintenance callers
-use their bounded role; alembic and existing postgres utilities stay independent
-and counted. no environment matrix or duplicated deployment defaults.
-record allowances, peaks, warm baseline and remaining memory headroom in the pr.
-freeze the required memory reserve before green; include retained backends,
-concurrent query peaks, maintenance and host demand, not just zero oom events.
-capacity tuning changes this table and takes a normal artifact release.
-
-trade-offs: lower concurrency, bounded waiting, extra async lifetime ownership and
-listener fanout; retained async backends cost memory. these costs must fit the
-same measurement. no separate distributed admission controller is required.
-
-## retrieval
-
-first change the positive readiness comparisons owned by
-`content_indexing.reading_chunks_sql` and the suggestion vector joins to
-`(lexical_revision = revision) IS TRUE`. reuse migration 0317's statistic and the
-form already used in `search/semantic.py`. replay the captured exact query and
-compare ordered results before replacing its executor. do not add an index by
-guesswork or cap lexical occurrences before owner grouping.
-
-keep the common `nearest_chunks(db, embedding, *, owner, params, limit, ctes)`
-interface and its caller-owned snapshot. `suggestions._similar` adapts it:
-
-1. capture each original anchor ordinal, first eligible stored chunk and original
-   vector under the existing calibrated provider/model/dimension.
-2. query separately per anchor and eligible `GraphThread`/`Rediscovery` family,
-   with `limit=400`; destination eligibility, self-exclusion and canonical
-   reading-chunk membership are inside candidate selection.
-3. project candidate chunks to every eligible reading identity, including bounded
-   pieces. rescore against the original stored vector, enforce the existing 0.80
-   threshold, order by distance/media-id/chunk-id and take at most 400 reading/chunk
-   rows per anchor/family before grouping by media.
-4. preserve original anchor attribution, evidence precedence, family rotation,
-   diversity and the existing bounded publication of canonical refs.
-
-candidate membership alone is approximate; families may underfill. deterministic
-tie ordering applies within the retained set, not equal-distance ann cutoff
-membership. no exhaustive fallback. the common reader's cardinality routing remains
-one mechanism, not parallel old/new executors. its current threshold and probes
-are starting settings, not proof of bounded cost; any tuning must requalify both
-browser retrieval and suggestions. delete `_media_neighbor_rows_sql` and its
-exhaustive cross-product path after green.
-
-## admission and publication
-
-one native async gate owns every expensive search:
-`search_session_async(*, deadline: float, purpose: Literal["foreground", "background"])`.
-the absolute deadline includes checkout and admission; test an already-short
-remainder, not only full budgets. allocate bounded search checkout before the
-database-wide session advisory lock. foreground waits within its remaining
-deadline; background uses nonblocking admission and yields to contention.
-
-remove synchronous `search_session`. its four callers move at existing async
-boundaries: shortlist job; connection discovery's `_scan` through
-`search_scopes_async` (delete redundant sync `service.search`); oracle `_prepare`
-through its existing async `_run`; picker route made async using shared http
-cancellation ownership. oracle retrieval and picker semantic search use five-second
-deadlines; strict tools retain their caller's deadline. retain sync SQL helpers via
-`AsyncSession.run_sync`. use existing `embed_texts_async` for shared embedding;
-remove thread-wrapped embedding. providers remain outside search admission.
-already-async callers await directly; only sync job entrypoints use `asyncio.run`
-and own a database scope. preserve each caller's existing embedding-failure contract.
-
-the synchronous suggestion handler runs its read phase in one `asyncio.run` scope,
-using the loop-owned database scope, `search_session_async` and
-`AsyncSession.run_sync`. one read-only repeatable-read snapshot owns revision,
-ranking time, anchors, eligibility and the complete result. provider calls never
-run under this lock. apply the remaining database statement timeout after the
-admission transaction rolls back; cancel and join on deadline or retirement.
-
-reserve cleanup inside the 500 ms occupancy requirement: initially target at most
-400 ms admitted computation and 100 ms retirement, then qualify the actual total.
-always join cleanup even if it overruns; never manufacture a successful bound by
-unlocking early or abandoning the backend. five short queries do not prove a
-short complete refresh.
-
-background admission refusal or expiry of this operation's owned computation
-budget retires the backend, then returns existing `RescheduleRequested` for database
-time +5 seconds, refunding the attempt with unchanged job/payload. only the owned
-deadline and its identified statement-timeout backstop qualify; arbitrary timeout,
-shutdown, lost claim and database/invariant errors retain their existing handling.
-real failures retain bounded attempts and suspension. no partial or fabricated-empty
-publication. this rule applies to every background gate caller.
-
-trade-off: a costly query and transient pressure can both exhaust that budget.
-log `admission_busy` versus `computation_budget`, including job age; a missed quiet
-window is a liveness defect, not permission for permanent deferral. require useful
-completion in qualification; add no idle detector, adaptive recall or deferral store.
-after backend retirement, the existing short transaction rechecks authority and the execution
-claim, publishes atomically and settles the job. preserve the prior publication
-until that succeeds.
-
-storage stays unchanged: feed/work identity, shortlist id, ranking timestamp,
-input revision and canonical target refs. previous publications are compatible
-data, not an old execution path. no migration, algorithm-version column, wire
-bump or compatibility parser is needed for retrieval. stop old workers
-at release; only the new executor produces subsequent publications.
-
-## api and content design
-
-the content designer owns the meaning of each feature's existing presentation:
-
-| feature | good content and schema contract |
-| --- | --- |
-| search | truthful phase-specific progress, retained actionable results and scoped retry; “no results” only after successful completion. preserve 504 `E_SEARCH_TIMEOUT`, retired-request 499 and 503 `E_EMBEDDING_PROVIDER_UNAVAILABLE`; never conceal requested semantic failure as successful hybrid. preserve legitimate `semantic_status=not_requested` |
-| capacity | add 503 `E_DATABASE_BUSY`: “nexus is busy. wait a moment, then retry.” a write may already have committed; retain its sealed intent and its owner's uncertainty/retry behavior. never claim nothing changed or discard writing |
-| suggestions | publication id/items remain the interface; current eligibility and stable visit order are visible through correct rows. no invented reasons, confidence scores or exhaustive-recall claims. ordinary refresh reads latest; background 202 acknowledges admission, not a new ranking |
-| operations | existing structured logs identify request or job/execution, process role, phase, backend pid, checkout/admission/hold/cleanup durations, deadline and outcome. distinguish cancellation requested from backend retired; record fingerprints, never private query text, vectors or credentials |
-
-no new public routes or payload fields. ordinary/control checkout exhaustion maps
-to the new 503 code at `api/edge.py`; search translates its expiry to 504 first.
-after stream headers, terminate through the existing stream owner, not a second
-json response. 409/429 are unsuitable for generic capacity failure because callers
-treat modeled 4xx as definite write refusal.
-
-add busy to shared `outcomeUnknown` and `apiTransportFeedback`; consolidate direct
-transport whitelists onto those owners where semantics match. preserve each write
-owner's existing bounded automatic/manual retry contract and request identity;
-add no global replay. cover notes, bootstrap, connections, sharing and suggestion
-admission confirmation. pair clients: this behavioral change rides current main's
-already-bumped wire 17 after deployed 16; verify release identity before activation
-and apply the once-per-release rule. the error envelope is not a generated closed
-schema; run wire freshness checks and regenerate only if its actual input changes.
-
-## exclusive work boundaries
-
-abbreviated backend paths are under `python/nexus`; search, generation, oracle and
-domain services are under its `services/`. abbreviated web paths are under
-`apps/web/src`. the retained driver is `apps/web/scripts/lab/search.ts`.
-
-| slice | owned files and responsibility | depends on |
+| owner | exclusive responsibility | prerequisite |
 | --- | --- | --- |
-| a: database capacity | `python/nexus/db/{engine,session,listen}.py`, `config.py`, `app.py`, `api/routes/stream.py`, `runtime_health.py`, `apps/worker/main.py`, `jobs/{worker,process_executor}.py`, generation `{runtime,run,codex}.py`, `cli.py`, `oracle/corpus.py`; bounded owners/control wiring. retained lab driver's embedded python receives role/scope wiring only | native baseline |
-| b: retrieval | `python/nexus/services/content_indexing.py`, `search/semantic.py`, `suggestions.py`; readiness, native embedding, candidate adapter, exhaustive executor deletion | exact reference; independent of a |
-| c: admission and refresh | search `{admission,service,pickers,discovery,sources}.py`, `api/routes/{search,resource_items}.py`, new `api/search_operation.py` extracted from the existing route's cancel/join owner, `connection_discovery.py`, `oracle/readings.py`, `suggestion_shortlists.py`; gate callers, job async scopes, refusal/reschedule and publication. `sources.py` changes only for a measured strict-query defect | a's lifetime API; b's retrieval API |
-| d: capacity response | `python/nexus/{errors.py,api/edge.py}`; web `lib/api/client.ts`, `lib/notes/writes.ts`, `lib/workspace/bootstrap.server.ts`, `lib/useSuggestions.ts`, `ConnectionsSurface.tsx`, `ShareOverlay.tsx`; uncertainty contract and content | a's exhaustion behavior |
-| e: integration and release | `deploy/hetzner/docker-compose.yml`, `.env.example`, `deploy/env/env-prod-backend.example`, module docs, `docs/issues/release-search.md`; verify existing lab composition, temporary cases and release | a–d |
+| a: database capacity | `config.py`, `db/{engine,session,listen}.py`, runtime/worker lifetime wiring and deployment resource settings; freeze physical quotas and control reserve | current topology inventory |
+| b: retrieval | `search/semantic.py`, relevant `sources/indexed/scope/project` query changes, `suggestions.py`, indexing/owner helpers, selected 0329/down 0328 and postgres package | frozen exact reference and proper ranking identity |
+| c: operation/publication | `search/admission.py`, `api/search_operation.py`, route allowances, `search/service.py`, shortlist/discovery/oracle/tool caller scopes; watchdogs, retry classification and claim-fenced publication | b's measured complete read and a's ownership; agrees timer contract with d |
+| d: client/write outcomes | browser search policy/loaders, bff deadlines, existing pending/error presentation and busy/uncertainty consumers; consume main's authored contract | c's reviewed end-to-end allowance; no authored-owner rewrite |
+| e: integration | reconcile module/release docs, coordinate migration identity, temporary qualification and release evidence; no duplicate edits to a–d | their reviewed interfaces and acceptance below |
 
-one owner edits each listed boundary. a and b may proceed independently after red;
-c consumes their agreed interfaces. e integrates, does not duplicate their code.
-inspect call sites before adding helpers; consolidate repeated connection creation
-inside its existing owner. keep ranking policy out of database infrastructure.
+these are implementation responsibilities, not separate delivery prs or a request
+to redo completed repairs. the implemented change crosses these boundaries and
+must be qualified as one composition.
+assign one editor per file for remaining work. source-only old-policy drafts
+remain historical until deliberately revised; do not execute them as new acceptance.
 
-## red green refactor and release
+## meaningful acceptance and release gates
 
-1. capture the deployed reference and exact nonempty suggestion oracle; inventory
-   connection owners and native topology. adversarial review rejects missing
-   ordinary/control/listener paths or benchmarks without semantic candidates.
-2. write temporary cases through the existing disposable lab/browser helpers and
-   recovery-profile workflow; browser cases live in ignored
-   `apps/web/.nexus-lab/cases/`. induce failure only in isolated disposable systems,
-   never by reproducing oom on production. observe the exact target failure before edits;
-   setup/auth/provider failure is not the intended red. freeze cases and quality
-   thresholds before tuning. before broad wiring, prove the proposed complete
-   five-anchor refresh can meet the native occupancy and quality targets; otherwise
-   revise the retrieval design within these constraints before expanding changes.
-3. implement a–d, reach green, independently review resource lifecycle, retrieval
-   correctness and content, then refactor at the owning modules. rerun affected
-   cases and `./scripts/test`; never weaken an assertion to obtain green. run
-   `./scripts/lab -- bun apps/web/scripts/lab/search.ts` for the three retained
-   foundation checks; do not substitute its unresolved fake-provider variant.
-   unchanged foundation checks need not be manufactured into red.
-4. native restored profile: verified archive, pinned images, isolated disk-backed
-   database, current schema and representative rows, using `deployment.md`'s
-   recovery owner. use an existing native amd64 host with the production limits.
-   mac emulation is diagnostic only. a 512 mib database on a larger machine proves
-   only that database boundary. fresh browser labs own protocol/interaction checks;
-   final native production qualification owns the full 2 gib host/two-client/worker
-   boundary. do not restore over a running browser lab or add another runtime.
-5. qualify desktop search/reader/lectern/library panes plus phone search/reader,
-   their real reads/listeners, and both worker lanes. replay `keats`, `tolkien`,
-   prefixes, supersession and disconnects with cold then warmed connections.
-   measure memory, connections, actual lock release and useful progress together.
-   freeze a finite workload; imports/generation must finish, not merely stop being
-   observed. record counter deltas for oom/oom-kill, recovery, restarts and lost
-   claims, plus maximum hold/cleanup, connections and peak/warmed memory.
-6. verify exact scope/piece/model/threshold/anchor/tie behavior, reviewed first-page
-   recall, withdrawal during refresh, lost claim, contention without spent attempts,
-   listener loss/reconnect, ordinary writes and generation stop during saturation.
-   prove every due feed's new-revision publication within the 60-second quiet
-   interval. saturate ordinary checkout before a write and after a prior commit:
-   both preserve uncertainty and request identity; verify each owner's retry rule.
-   require nonempty connection-discovery completion under the background budget,
-   preserving its strict retrieval semantics; repair its `search/sources.py` plan
-   only if measured necessary. exercise oracle/picker success, failure and retirement
-   after their async conversion. no caller may reschedule forever unnoticed.
-7. independent final review must approve design, green evidence and refactored
-   ownership before the announced release. use the existing stopped-writer,
-   backup and paired-release owner; verify native production/client behavior and
-   artifact identity. retry only identified incident-suspended work through its
-   existing repair owner after the cause is fixed. release-owner recovery remains
-   schema-compatible; the known-broken predecessor is not incident resolution.
-   record the concrete recovery sequence; never run mixed old/new workers.
-8. after final qualification, delete temporary cases, fixtures and executable
-   diagnostic drivers. preserve private outputs and the existing three retained
-   search foundation checks. commit no corpus, evidence dump or new scenario suite.
-   record net authored lines/deletions in the pr; close only proved issue records.
+follow [testing standards](local-rules/testing-standards.md). static verification
+uses only `./scripts/test`; retain exactly the existing three manually invoked
+search foundation checks.
+other cases are temporary in the existing disposable/native workflows, not a new
+suite, benchmark campaign or runtime. freeze cases and comparison references
+before tuning; record actual waits without manufacturing latency percentiles.
 
-release evidence distinguishes static, disposable e2e, native restored and live
-production results. unsupported native profiling or a missed budget is a named
-blocker, not a waiver. exact allocator attribution may remain a separate issue
-after the combined capacity and progress contract is proved.
+| gate | required outcome |
+| --- | --- |
+| retrieval quality | frozen name/body/semantic-only/empty cases, global and restrictive library/source/piece scopes, active-model/readiness changes and exclusions. exact baseline matches reference windows/order; ann meets the retained floors. preserve literal evidence, full reading boundaries and real activation. include 401 equal-distance chunks and overlapping readings for suggestion cutoff ties |
+| useful progress | full five-anchor, both-family refresh, strict discovery and foreground lexical/hybrid search complete through their real owners. heavy work may queue and serialize; reading, local writing, sync and stop controls remain usable. the finite queue drains, and every active due feed publishes the settled revision within the predeclared observation window after competing jobs/mutations drain. timed-out reads, perpetual deferral and old publications fail this gate |
+| lifecycle/failure | supersession/disconnect and owned timeout retire real backends before reuse; subsequent work succeeds. contention alone refunds; compute expiry consumes attempts. failed/lost-claim work preserves the old publication; authority withdrawal removes access; revised inputs converge; listener reconnect rereads truth. unknown retirement never publishes or releases its physical allowance |
+| writing | local authored commits survive busy/disconnect and retry original sequence/bytes. server-owned writes preserve their own identity and uncertainty before dispatch and after a committed write whose response fails; no false refusal or lost intent |
+| actual capacity | current candidate on actual 2 gib ram topology with production host swap enabled, postgres512mib and all service leaves no-swap at their real limits; cold then warmed readers/listeners, two clients, all normal services present even idle, authored buffers, reachable maintenance/autoanalyze and verified backup under the declared serialization policy. count retained memory and host swap use/pressure; preserve physical reserves. zero new oom/kill, database recovery, process crash or lost claims; useful work completes, the finite queue drains and owned resources retire. a larger-host/component pass does not close this gate |
+| integration/release | qualify 0329 after main 0328 plus the real deployed 0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing. historical 0321 receipts do not qualify this 0329 lineage |
 
-## sources and tracked failures
+brave import/metadata remains blocked until entitlement permits real completion;
+no fake-provider pass or unrelated oracle success closes it. review the known
+blake locator and separate verse issue without silently dropping affected citation
+semantics; generation success does not prove navigable citations. personal
+x-capture eligibility/attribution is also
+[unqualified](issues/oracle-personal-search-omits-x-captures.md); a common exact
+vector reader does not establish that oracle lane's coverage. existing explicit
+screen-reader/unrestricted-worker deferrals remain named in
+[release-search](issues/release-search.md), not broadened by this revision.
 
-- [production oom](issues/production-search-postgres-oom.md),
-  [connection budgets](issues/production-database-connection-budgets-implicit.md),
-  [admission contention](issues/production-search-admission-contention.md).
-- [verification owner](local-rules/testing-standards.md),
-  [current release contract](issues/release-search.md).
-- [sqlalchemy loop ownership](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-multiple-asyncio-event-loops),
-  [postgres memory accounting](https://www.postgresql.org/docs/15/runtime-config-resource.html),
-  [pgvector filtering](https://github.com/pgvector/pgvector#filtering).
+release stays with the existing controller and a separate explicit release
+instruction. retain the accepted announced interruption of at most 30 minutes,
+including stopped writers, verified backup, migrations and paired restart; do not
+mix workers or restore the known-broken predecessor as a claimed repair. selected
+image/patch requirements and recovery steps must be reconciled in release-search
+before activation. preserve historical snapshots/outputs; delete temporary cases
+only after final qualification. the pr records proof, limitations, net authored
+lines and deletions; issue files close only on their own proved criteria.

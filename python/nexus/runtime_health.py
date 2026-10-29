@@ -1,16 +1,25 @@
-"""Which build is serving, and whether its database is the one it expects."""
+"""Which build is serving, and whether its database is the one it expects.
 
-import time
+Readiness starts cancellation after 1.9 seconds of checkout, native setup and query
+work. Its nominal two-second allowance reserves 100 ms for cleanup, not a response
+bound. Native startup join, returned-connection close and session cleanup can outlast
+that allowance; capacity is retained until cleanup finishes.
+"""
+
+import asyncio
 from functools import lru_cache
 from pathlib import Path
 
-import psycopg
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import get_settings
+from nexus.db.session import open_control_async_session
 from nexus.release_artifact import RuntimeIdentity, load_runtime_identity
 
 _BAKED_IDENTITY = Path("/app/runtime-identity.json")
 _READINESS_SECONDS = 2.0
+_READINESS_CLEANUP_SECONDS = 0.100
 
 
 @lru_cache(maxsize=1)
@@ -23,20 +32,22 @@ def get_runtime_identity() -> RuntimeIdentity:
     return load_runtime_identity(path)
 
 
-def is_database_ready(*, database_url: str, expected_revision: str) -> bool:
-    """The database answered within 2 s and its schema is exactly ``expected_revision``."""
-    deadline = time.monotonic() + _READINESS_SECONDS
+async def is_database_ready(*, expected_revision: str) -> bool:
+    """Check schema under a 1.9-second work deadline, then join owned cleanup."""
     try:
-        with psycopg.connect(
-            database_url.replace("postgresql+psycopg://", "postgresql://", 1),
-            autocommit=True,
-            connect_timeout=1,
-            options="-c statement_timeout=1000",
-            tcp_user_timeout=1000,
-        ) as connection:
-            if time.monotonic() >= deadline:
-                return False
-            rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
-            return [str(row[0]) for row in rows] == [expected_revision]
-    except psycopg.Error:
+        database = open_control_async_session()
+        try:
+            async with asyncio.timeout(_READINESS_SECONDS - _READINESS_CLEANUP_SECONDS):
+                rows = (
+                    await database.execute(text("SELECT version_num FROM alembic_version"))
+                ).all()
+                return [str(row[0]) for row in rows] == [expected_revision]
+        finally:
+            cleanup = asyncio.create_task(database.close())
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+                raise
+    except (SQLAlchemyError, TimeoutError):
         return False

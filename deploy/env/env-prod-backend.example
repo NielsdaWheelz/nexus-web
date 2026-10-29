@@ -15,9 +15,8 @@ POSTGRES_USER=nexus
 POSTGRES_PASSWORD=<generate-a-long-random-password>
 POSTGRES_DB=nexus
 DATABASE_URL=postgresql+psycopg://nexus:<same-password>@postgres:5432/nexus
-DATABASE_POOL_SIZE=5
-DATABASE_MAX_OVERFLOW=5
-DATABASE_POOL_TIMEOUT_SECONDS=30
+# Ordinary pool queue wait; control remains independently 0.25s.
+DATABASE_POOL_TIMEOUT_SECONDS=5.0
 
 # Cloudflare R2 is the sole production object store.
 R2_ACCESS_KEY_ID=<r2-access-key-id>

@@ -138,15 +138,20 @@ def personal_media_removal_allowed_sql(media_expr: str) -> str:
                    OR {resource_grants.media_grant_path_exists_sql("removable_part.source_media_id")})))"""
 
 
-def visible_podcast_ids_cte_sql() -> str:
-    """Active rules or readable retained episodes expose their canonical show."""
+def visible_podcast_ids_cte_sql(*, visible_media_sql: str | None = None) -> str:
+    """Active rules or readable retained episodes expose their canonical show.
+
+    A supplied media_id relation contains all canonical visible media for this
+    viewer in the same repeatable-read snapshot, never an eligible-target subset.
+    """
+    visible = visible_media_sql if visible_media_sql is not None else visible_media_ids_cte_sql()
     return f"""
         SELECT ps.podcast_id FROM library_podcast_subscriptions ps
         JOIN libraries l ON l.id=ps.library_id AND l.system_key IS NULL
         JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
         UNION
         SELECT pe.podcast_id FROM podcast_episodes pe
-        WHERE pe.media_id IN ({visible_media_ids_cte_sql()})
+        WHERE pe.media_id IN ({visible})
     """
 
 

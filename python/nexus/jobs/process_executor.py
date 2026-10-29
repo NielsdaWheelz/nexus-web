@@ -29,6 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES, Settings
+from nexus.db.engine import bind_database_role
 from nexus.errors import ApiError, ResourceFailureDimension, ResourceLimitError
 from nexus.jobs.queue import JobExecutionContext, JobResult, RescheduleRequested, TerminalJobFailure
 from nexus.jobs.registry import resolve
@@ -251,12 +252,17 @@ def _child(request_fd: int, result_fd: int, alive_fd: int, supervisor_pid: int) 
     score = Path("/proc/self/oom_score_adj")
     score.write_text(str(max(int(score.read_text()), request["oom"])))
     configure_logging()
+    bind_database_role("background_child")
     context = None
     if request["context"] is not None:
         job_id, execution_id, attempt_no = request["context"]
         context = JobExecutionContext(UUID(job_id), UUID(execution_id), attempt_no)
     try:
-        encoded = _encode(resolve(request["handler"])(payload=request["payload"], context=context))
+        from sqlalchemy.orm import configure_mappers
+
+        handler = resolve(request["handler"])
+        configure_mappers()
+        encoded = _encode(handler(payload=request["payload"], context=context))
     except Exception as exc:
         traceback.print_exc()
         encoded = _encode(failure_of(exc))

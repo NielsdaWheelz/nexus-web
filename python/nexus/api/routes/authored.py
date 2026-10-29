@@ -1,6 +1,8 @@
 """Authenticated authored replication; snapshot owns its session through cancellation."""
 
 from collections.abc import Callable, Coroutine, Generator
+from contextlib import contextmanager
+from threading import BoundedSemaphore
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -10,16 +12,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy.orm import Session
 from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import get_settings
 from nexus.db.session import (
     DbSession,
     RepeatableReadDbSession,
     get_repeatable_read_db,
     get_session_factory,
 )
-from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError
+from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.authored import (
     AcceptedChanges,
@@ -131,18 +135,35 @@ def download(
     return Data(data=authored.download(db, viewer.user_id, after))
 
 
+_SCOPE_READ_PERMIT = BoundedSemaphore(1)
+
+
+@contextmanager
+def _scope_read_db() -> Generator[Session, None, None]:
+    """One bulk hydration checkout per process, held through inline session cleanup."""
+    if not _SCOPE_READ_PERMIT.acquire(timeout=get_settings().database_pool_timeout_seconds):
+        raise ApiError(ApiErrorCode.E_DATABASE_BUSY, "Scope preparation is busy; retry shortly.")
+    try:
+        with get_session_factory()() as db:
+            try:
+                get_repeatable_read_db(db)
+                yield db
+            finally:
+                db.rollback()
+    finally:
+        _SCOPE_READ_PERMIT.release()
+
+
 @router.post("/scope-inputs")
-def scope_inputs(
-    request: ScopeInputsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[ScopeInputsPage]:
-    return Data(data=search_scope.inputs(db, viewer.user_id, request))
+def scope_inputs(request: ScopeInputsRequest, viewer: ViewerDep) -> Data[ScopeInputsPage]:
+    with _scope_read_db() as db:
+        return Data(data=search_scope.inputs(db, viewer.user_id, request))
 
 
 @router.post("/scope-text")
-def scope_text(
-    request: ScopeTextRequest, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[ScopeTextPage]:
-    return Data(data=search_scope.source_text(db, viewer.user_id, request))
+def scope_text(request: ScopeTextRequest, viewer: ViewerDep) -> Data[ScopeTextPage]:
+    with _scope_read_db() as db:
+        return Data(data=search_scope.source_text(db, viewer.user_id, request))
 
 
 @router.get("/snapshot")

@@ -26,7 +26,9 @@ from uuid import UUID, uuid4
 context = json.loads(Path(os.environ["NEXUS_LAB_CONTEXT"]).read_text())
 os.environ.update(DATABASE_URL=context["database_url"], NEXUS_ENV="test", DATABASE_STATEMENT_TIMEOUT_MS="8000", PGOPTIONS="-c lock_timeout=5000")
 from sqlalchemy import text
+from nexus.db.engine import bind_database_role, async_database_scope
 from nexus.db.session import get_session_factory, get_repeatable_read_db
+bind_database_role("maintenance")
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_chunking import Chunk, IndexableBlock
 from nexus.services.content_indexing import JOB_KIND, IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
@@ -293,7 +295,10 @@ else:
                 pass
             else:
                 raise AssertionError("part-only grantee can search the source")
-        asyncio.run(scope_check())
+        async def scoped_check():
+            async with async_database_scope():
+                return await scope_check()
+        asyncio.run(scoped_check())
     elif mode == "atomic":
         with factory() as old:
             get_repeatable_read_db(old)
@@ -437,7 +442,10 @@ else:
             assert item["preview"]["source"]["ref"]=="media:"+f["source"], "stored quote lost its readable source"
             assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["stale_term"],kinds=("highlights",)))["results"]==[], "piece admitted a source-only unlocated quote"
             return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"],"piece_passage":bounded,"stale_item":item}
-        proof=asyncio.run(evidence_check())
+        async def scoped_evidence():
+            async with async_database_scope():
+                return await evidence_check()
+        proof=asyncio.run(scoped_evidence())
         descriptor=os.open(evidence_file,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
         with os.fdopen(descriptor,"w") as handle:
             json.dump(proof,handle)

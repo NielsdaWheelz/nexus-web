@@ -10,6 +10,7 @@ import binascii
 import json
 import os
 import ssl
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -27,6 +28,46 @@ TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
 _MIB = 1024 * 1024
 _LOCAL_HANDLE_KEY = b"test-stream-token-signing-key-32bytes"
+
+
+type DatabaseRole = Literal[
+    "api", "interactive_worker", "background_supervisor", "background_child", "maintenance"
+]
+
+
+@dataclass(frozen=True)
+class ConnectionCapacity:
+    """Physical checkout allowances, including no overflow; zero disables a pool."""
+
+    ordinary_sync: int
+    ordinary_async: int
+    search_async: int
+    control_sync: int
+    control_async: int
+
+    def __post_init__(self) -> None:
+        if any(
+            value < 0
+            for value in (
+                self.ordinary_sync,
+                self.ordinary_async,
+                self.search_async,
+                self.control_sync,
+                self.control_async,
+            )
+        ):
+            raise ValueError("database capacities must be nonnegative")
+
+
+# Provisional finite topology; release qualification must freeze measured headroom.
+# Search backends retire after every operation; the API listener is one extra socket.
+CONNECTION_CAPACITIES: dict[DatabaseRole, ConnectionCapacity] = {
+    "api": ConnectionCapacity(2, 1, 5, 1, 1),
+    "interactive_worker": ConnectionCapacity(1, 1, 1, 1, 1),
+    "background_supervisor": ConnectionCapacity(1, 0, 0, 1, 1),
+    "background_child": ConnectionCapacity(2, 1, 1, 0, 1),
+    "maintenance": ConnectionCapacity(2, 1, 1, 0, 1),
+}
 
 
 class Environment(str, Enum):
@@ -78,9 +119,7 @@ class Settings(BaseSettings):
     supabase_audiences: Annotated[tuple[str, ...], NoDecode] = ()
 
     database_url: str
-    database_pool_size: int = Field(10, ge=1)
-    database_max_overflow: int = Field(20, ge=0)
-    database_pool_timeout_seconds: float = Field(30.0, gt=0)
+    database_pool_timeout_seconds: float = Field(5.0, gt=0)
     database_statement_timeout_ms: int = Field(30_000, ge=0)
     # Leaves long transactions room and reaps leaked ones (the pool deadlock idled 180 s+).
     database_idle_in_tx_timeout_ms: int = Field(60_000, ge=0)

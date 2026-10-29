@@ -6,6 +6,7 @@ Reads project the row; only navigation is current (``get_reading``). A pending r
 that history shows started (``started_at``) displays ``streaming``; the job still owns it.
 """
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -18,7 +19,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.db.session import open_async_session
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
 from nexus.schemas.oracle import (
     OracleConcordanceOut,
@@ -45,7 +47,8 @@ from nexus.services.resource_graph.citations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search import projection
-from nexus.services.search.admission import search_session
+from nexus.services.search.admission import search_session_async
+from nexus.services.search.policy import FOREGROUND_SEARCH_SECONDS
 from nexus.services.search.semantic import Embedding, embed_text, nearest_chunks
 from nexus.services.search.service import read_snapshot
 from nexus.services.suggestion_changes import record_input_change
@@ -232,7 +235,7 @@ async def _run(
         db.commit()
         return {"status": status, "noop": True}
     viewer_id, question = reading.user_id, reading.question_text
-    prepared = _prepare(db, viewer_id=viewer_id, question=question)
+    prepared = await _prepare(db, viewer_id=viewer_id, question=question)
     if isinstance(prepared, Failure):
         return _publish(db, reading_id, context, prepared)
     db.commit()
@@ -247,7 +250,7 @@ async def _run(
 
 
 # The personal lane: the viewer's visible media and own notes, the oracle corpus excluded.
-# EXISTS over a union keeps the predicate one semi-join, so ivfflat can drive the scan.
+# EXISTS over a union keeps media and note visibility in one semi-join.
 _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:excluded) AND EXISTS (
     SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
     WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
@@ -256,18 +259,33 @@ _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:exclud
       AND nb.authored_visible)"""
 
 
-def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:
+async def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:
     """Retrieve both lanes and choose the plate; a typed Failure when they cannot."""
     db.commit()  # end the job's reads: no transaction spans the embedding call
-    embedding = embed_text(question)
-    if embedding is None:
-        return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
-    retry_serializable(db, "oracle.refresh_anchors", lambda: corpus.refresh_anchors(db))
-    with search_session() as search_db:
-        return read_snapshot(
-            search_db,
-            lambda db: _retrieve(db, viewer_id=viewer_id, question=question, embedding=embedding),
-        )
+    deadline = asyncio.get_running_loop().time() + FOREGROUND_SEARCH_SECONDS
+    async with asyncio.timeout_at(deadline):
+        try:
+            embedding = await embed_text(question)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
+            return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
+        async with open_async_session() as ordinary:
+            await ordinary.run_sync(
+                lambda session: retry_serializable(
+                    session, "oracle.refresh_anchors", lambda: corpus.refresh_anchors(session)
+                )
+            )
+        async with search_session_async(deadline=deadline, purpose="foreground") as database:
+            return await database.run_sync(
+                lambda search_db: read_snapshot(
+                    search_db,
+                    lambda snapshot: _retrieve(
+                        snapshot, viewer_id=viewer_id, question=question, embedding=embedding
+                    ),
+                    deadline=deadline,
+                )
+            )
 
 
 def _retrieve(
@@ -281,7 +299,15 @@ def _retrieve(
         return _failure("E_ORACLE_CORPUS_NOT_READY", f"{len(public)} rankable corpus passages")
     excluded = list(db.scalars(select(OracleCorpusSource.media_id)))
     params = {"viewer_id": viewer_id, "excluded": excluded}
-    near = nearest_chunks(db, embedding, owner=_PERSONAL_CHUNKS, params=params, limit=200, ctes="")
+    (near,) = nearest_chunks(
+        db,
+        embedding,
+        domains=(_PERSONAL_CHUNKS,),
+        params=params,
+        limit=200,
+        ctes="",
+        maximum_distance=2,  # Full cosine range: oracle ranks without a similarity cutoff.
+    )
     chunks = {
         row.id: row
         for row in db.execute(

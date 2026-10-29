@@ -19,7 +19,7 @@ export function searchProgress(input: {
   if (phase === "hybrid") return { kind: count ? null : "Notice", text: count ? "" : "no results found.", action: null };
   if (phase === "lexical") {
     if (hybrid === "pending") return {
-      kind: "Pending", text: count ? "finding related matches…" : "no text matches found. finding related matches…", action: null,
+      kind: "Pending", text: count ? "waiting for related matches…" : "no text matches found. waiting for related matches…", action: null,
     };
     if (hybrid === "failed") return {
       kind: "Notice", text: count ? "related matches are unavailable. text matches are still shown." : "no text matches found. related matches are unavailable.", action: "related",
@@ -27,11 +27,11 @@ export function searchProgress(input: {
     return { kind: count ? null : "Notice", text: count ? "" : "no results found.", action: null };
   }
   if (lexical === "failed") {
-    if (hybrid === "pending") return { kind: "Notice", text: "text search is unavailable. finding related matches…", action: "search" };
+    if (hybrid === "pending") return { kind: "Notice", text: "text search is unavailable. waiting for related matches…", action: "search" };
     return { kind: "Notice", text: phase === "direct" ? "couldn’t finish searching your content." : "search couldn’t be completed.", action: "search" };
   }
   if (lexical === "pending" || (phase === null && !input.directFailed)) return {
-    kind: hybrid === "failed" ? "Notice" : "Pending", text: hybrid === "failed" ? "searching your content… related matches are unavailable." : "searching your content…", action: null,
+    kind: hybrid === "failed" ? "Notice" : "Pending", text: hybrid === "failed" ? "waiting for search results… related matches are unavailable." : "waiting for search results…", action: null,
   };
   if (input.directFailed) return { kind: "Notice", text: "search couldn’t be completed.", action: "search" };
   return { kind: count ? null : "Notice", text: count ? "" : "no results found.", action: null };

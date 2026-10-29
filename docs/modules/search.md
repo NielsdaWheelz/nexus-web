@@ -35,20 +35,35 @@ rules when changing execution. an early candidate cap that changes winners is
 a ranking decision, not a transparent optimization. hydrate selected results
 without broadening the ranked work or copying full bodies into candidate sets.
 
-the caller's original deadline covers provider transport, admission and database
-work. cancellation stops subsequent local requests and retries and joins cleanup;
+capacity waiting must remain honestly pending and must not spend the execution
+allowance, which starts at admitted execution. provider and transport work retain
+their finite owning guards. frozen `4ceb03555` instead shares one pre-admission
+clock; [clock separation](../issues/search-request-watchdog-coexistence.md) remains
+an implementation gap. cancellation stops subsequent local requests and retries and joins cleanup;
 cleanup may finish after the response deadline. running synchronous provider work
 in a thread does not give it the awaiting task's cancellation lifetime. strict
-retrieval's remaining [embedding gap](../issues/tool-search-embedding-outlives-deadline.md)
-must retain its own declared fallback semantics when repaired.
+retrieval now awaits native async embedding inside its caller's deadline, with
+explicit requested-semantic failure; its
+[delayed-provider cancellation proof](../issues/tool-search-embedding-outlives-deadline.md)
+remains required. background indexing keeps its separate provider policy.
 
 [production composition](../../deployment.md#capacity-contract) owns aggregate
 capacity. query qualification uses representative data and warmed connections;
 fewer simultaneous queries or longer timeouts alone do not establish bounded
 work. current gaps are [aggregate memory qualification](../issues/production-database-connection-budgets-implicit.md)
 and [background admission occupancy](../issues/production-search-admission-contention.md).
-slower background refresh is an explicit cost of foreground progress; useful
-background completion remains required.
+heavy search, refresh, indexing and backup may queue and serialize at their
+existing owners. normal services and retained connections still count when idle;
+useful foreground/background completion and finite queue drain remain required.
+the [reliability spec](../search-reliability-spec.md) owns current qualification
+and release gates; historical timing verdicts retain their recorded scope.
+the [capacity spec](../database-capacity-spec.md) owns physical topology and
+accounting; its current pool/listener allocation remains provisional until the
+complete reachable workload fits. mechanisms are justified by ownership and
+control progress, not by a prescribed pr split.
+production host swap stays enabled while postgres and service leaves disallow
+swap; host ram reserve and swap pressure are accounted separately. no swapless
+host condition follows from the leaf limits.
 
 ## browser discovery
 
@@ -199,22 +214,80 @@ indexed pdf evidence uses its existing page target without requiring geometry.
 
 ## transactions, semantic capability and pages
 
-expensive browser, strict, picker, connection-discovery, oracle and
-suggestion refresh reads share one database-wide advisory session lock. each read
-owns an external physical connection: admission's transaction rolls back while retaining the lock, then a
-fresh read-only repeatable snapshot materializes authorization, ranking and results.
-the connection is retired after snapshot/session cleanup; there is no explicit
-unlock before backend cleanup. this requires a session-affine database connection.
+expensive browser, strict, picker, connection-discovery, oracle and suggestion
+refresh reads use the same native async admission owner and database-wide advisory
+session lock. the dedicated search connection retains the lock while admission's
+transaction rolls back and a fresh read-only repeatable snapshot materializes
+permission, ranking and results. cleanup closes the session, invalidates/closes
+the physical connection and confirms its captured backend pid is absent through
+fresh short control transactions. publication waits for that confirmation; there
+is no explicit unlock that lets another read precede backend cleanup. this needs
+session-affine database connections.
 
-provider waits, direct lookups, primary-only browse and browser branches with no
-retrieval stay outside admission. async admission and reads consume the caller's
-original absolute deadline, including queue time; expired or cancelled waiters do
-not later dispatch retrieval. sync callers retain their database timeout backstop.
-the synchronous picker still has the existing
-[request-cancellation limitation](../issues/api-sync-work-outlives-request-cancellation.md).
+frozen `4ceb03555` checkout, admission and reading consume the caller's original
+finite absolute deadline. this shared-clock implementation does not satisfy the
+required execution allowance beginning at admission, excluding capacity waiting.
+the dedicated search pool has no shorter ordinary checkout timeout;
+its scope-owned capacity lease stays held through actual
+retirement, even if sqlalchemy returns its pool record earlier. expired or
+cancelled waiters never dispatch later. known but unconfirmed retirement fails
+closed for search in that process's owning scope until live repair; it cannot
+return a result or make that capacity available again.
 
-hybrid computes at most one embedding before opening a transaction. `read_snapshot` then
-owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
+ordinary sync and async checkout use the configured five-second default queue
+wait. control checkout keeps an independent 250-millisecond wait. physical role
+quotas and zero overflow retain their bounds. these waits are operational
+safeguards; they neither promise end-to-end latency nor extend a caller's
+transport allowance. exhausted checkout still returns `E_DATABASE_BUSY`.
+native engine connection setup has a separate two-second timeout per resolved
+address. the single local postgres endpoint has no multi-primary failover
+requirement; DNS, pool queueing and SQL remain distinct stages. control SQL is
+bounded at one second. async readiness/search keep their original logical work
+deadlines; cancellation joins native startup and closes any returned connection
+before releasing its pool capacity. readiness's 1.9-second work deadline and a
+shorter caller deadline are not cleanup or response bounds. native setup's two
+seconds apply per resolved address after DNS, not to total checkout.
+
+authored scope-input and scope-text hydration share one api-process permit,
+acquired before their repeatable-read session and held through inline cleanup.
+this family can occupy only one of the api's two ordinary sync connections.
+other ordinary work can use the remaining capacity; it has no exclusive chat
+priority. a competing hydration request may return `E_DATABASE_BUSY`; its client
+retains staged inputs and retries. authorization and revision fences are unchanged.
+
+browser search, preview and target-picker requests try local physical capacity
+and the database gate before embedding. contention returns `E_DATABASE_BUSY`
+without waiting in a request; the keyed client intent remains pending and retries
+that page with cancellable backoff. pool failure after expensive admission
+returns `E_APP_SEARCH_FAILED`, not a capacity deferral; ordinary/pre-execution
+checkout exhaustion retains `E_DATABASE_BUSY`. tool foreground
+reads retain their enclosing bounded scope; background refuses observed
+local physical-permit or database-gate contention without waiting.
+required queue waiting never spends execution allowance; admitted execution owns
+one finite allowance without read-time resets. retirement remains joined.
+arbitrary cancellation and database errors are not
+owned budget expiry. the import-light `search/policy.py` owns the foreground and
+background computation allowances. confirmed retirement does not fail an otherwise
+live result because cleanup was slow; original expiry/cancellation still wins.
+[request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
+native and hosting qualification.
+
+browser provider work runs after admission, before its snapshot; no ordinary
+transaction is retained while waiting for a provider. direct lookups, primary-only
+browse and branches without retrieval stay outside admission. background discovery
+starts its computation allowance after embedding. oracle and tool consumers retain
+their enclosing deadlines through embedding, checkout and reading.
+the client capacity policy retries only database-busy answers, outside each
+attempt's existing timer. list traversal retains the current cursor, completed
+pages and remaining prefix execution allowance. cursor recovery is independent:
+the search pane requires explicit fresh search after cursor refusal; the target
+picker retains its single fresh-prefix recovery and retry action. available local
+picker choices stay selectable while remote work is pending. real/provider/network/timeout
+failures settle; capacity deferral does not restart a prefix. sql executes through `AsyncSession.run_sync`;
+there is no synchronous public search path continuing after an async owner ends.
+
+hybrid computes at most one embedding before opening its search transaction.
+`read_snapshot` then owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
 and presentation, and ends it. entering with an open transaction raises rather
 than discarding a caller's writes. reopening uses its caller's transaction and
 does no network work.
@@ -225,15 +298,13 @@ loads local embedding sdk code before readiness, without creating clients or
 making calls.
 
 the api container, disposable runtime and local commands select uvicorn's stock
-`asyncio` loop explicitly. optional `uvloop` is not required for search; the http
-parser, route deadlines and cancellation, admission and retrieval stay with their
-existing owners. this loop choice is an operational candidate after an unexplained
-native api crash, not a demonstrated repair. complete browser qualification must
-measure its latency and retain the earlier faster baselines.
+`asyncio` loop explicitly. the http owner races each operation against disconnect
+and its original aggregate deadline, then cancels and joins the operation before
+returning an outcome. loop and database-scope teardown follow those joined owners.
 
 browser semantic retrieval has fixed windows of 200 chunks each for media and note
 owners, independent of page size/offset. scope, filters, active model and ready
-index eligibility apply before the budget. enrichment adds no embedding or ann
+index eligibility apply before the window limit. enrichment adds no embedding or semantic
 read. full resource search obtains note neighbours and lexical winners first.
 it omits chunk neighbours only when the known prefix covers the page and its
 continuation, and every selected media already has a lexical child or lacks
@@ -245,27 +316,29 @@ inside slots are filled by lexical winners. its primary and saved slots remain
 independent; note neighbours are obtained first. passage search retains both
 eligible windows. this saves work only
 when semantic chunks cannot change the response; it adds an eligibility read
-when selected media lack lexical evidence. cosine eligibility is unchanged; approximate recall is bounded, not global
-top-k. lexical evidence and semantic-only evidence have separate provenance.
+when selected media lack lexical evidence. lexical and semantic-only evidence
+retain separate provenance. exact neighbour windows do not make later family
+windows, grouping or application pagination exhaustive.
 
-`nearest_chunks` counts at most25,001 current ready chunks in the caller's
-snapshot. publication owns exactly one nonnull vector per current chunk on the
-active provider/model; migration0317 rejects serving rows that violate
-that contract. the capped scalar count therefore chooses exact retrieval through
-25,000 vectors, otherwise ivfflat with40 probes over the original full predicate.
-an empty count returns no neighbours. the exact branch fetches actual eligible
-vector ids before scoring in the same snapshot; at most25,000 uuids transfer.
-authorization, publication and model predicates remain unchanged. broad routing
-avoids per-vector existence lookups; small scopes pay one extra bounded query.
-the count never truncates the searchable domain or caller's window. this cutoff
-extrapolates slightly beyond the measured 20,137-vector exact control; it is not
-a proved crossover. migration0317 owns the current-publication expression
-statistic used by that predicate. strict search and oracle reads share this
-primitive and retain their own limits and cosine policies.
+`nearest_chunks` accepts snapshot-owned predicates over the `cc` chunk alias and
+returns one aligned window per domain. postgres applies complete authority,
+current lexical revision, ready state, provider, model, dimensions and original
+cosine threshold before ordering by distance and chunk id and limiting results.
+domains run sequentially in the same snapshot. no domain count, full uuid/vector
+export, ann cursor or candidate frontier controls membership. publication owns
+one active vector per current ready chunk. query-only `repr(float)` serialization
+does not change publication's serializer or stored vectors.
+
+browser and strict search use distance 0.5; oracle retains its
+[full-range ranking](oracle.md). suggestions use the same calibrated model and
+canonical reading primitives, with their own reading-row selection boundary:
+each anchor/family selects 400 ordered reading/chunk rows before media grouping.
+see [suggestions](suggestions.md). tightening a scope never substitutes broader
+permission or publication facts.
 
 `semantic_status` is `not_requested` or `used`. an eligible hybrid failure or
 missing credential returns `E_EMBEDDING_PROVIDER_UNAVAILABLE` / 503 after scope
-authorization. lexical makes no provider/ann call. the browser retains its last
+authorization. lexical makes no embedding call. the browser retains its last
 successful phase and presents failed capabilities separately; the server never
 downgrades a hybrid response. malformed vectors and unexpected failures are defects.
 local search tools and pickers retain their lexical capability without that
@@ -274,44 +347,37 @@ credential; oracle embedding failure remains typed at its own boundary.
 browser cursors contain `{offset, query_fingerprint, phase}`. the fingerprint
 binds viewer, canonical text, kinds, formats, authors, roles, scope, view and phase,
 excluding page size. old/mismatched cursors are invalid. continuations keep the
-accepted phase; failure retains the loaded prefix and offers manual retry.
+accepted phase; real failure retains the loaded prefix and offers manual retry.
 cursor rejection requires explicit page-one refresh, never an automatic restart.
 
 browser routes own one native async operation/session, raced against disconnect
 and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
-deadline. cancellation joins cleanup. current enforced api caps are
-direct400/lexical1500/hybrid5000 ms; client and bff whole-read caps are
-1000/2250/5750 ms, including body/decode and
-the complete prefix walk. search has no automatic retries. api timeout is
+deadline. cancellation joins cleanup. api and bff allowances cover one request
+through its complete body. the browser list resolves one allowance for the
+requested prefix walk. capacity deferral leaves the current page pending and
+retries it automatically without restarting the prefix. successful and non-busy
+failed fetches spend its remaining execution allowance; busy responses and their
+backoff do not. real failures and rejected-cursor page-one refresh keep explicit
+search-pane recovery. old results and current-intent cancellation remain intact,
+without phase telemetry or a new protocol. later automatic
+picker continuations are separate reads. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
-cancellation; cleanup may outlast it, while the browser cap bounds waiting.
-historical qualification targets are being reconsidered; no replacement numeric
-deadline has been approved. the previous provisional warm release
-p95 budgets were direct500/keyword2000/related4000 ms from
-the last keystroke through paint, including settling and transport. existing stricter
-failure cutoffs remain distinct. keyword delivery uses the earliest validated
-complete lexical or hybrid response reflected in results; record phase failures
-separately. hybrid success proves neither lexical-request latency nor reliability.
-preserve faster regression baselines and historical
-verdicts; extending a timeout is not a speed improvement. the previous provisional
-cold-session first-action bounds were keyword3000/related4000ms from the last
-keystroke through paint, after normal startup and with restoration traffic retained,
-without a cold-percentile or per-query empty-cache promise.
-publication overlap needs its own measured finite bound; recurrent pressure is
-ordinary use.
-
-the previous rollout accepted occasional restored-pane related failure during
-publication when useful results remained visible, failure was explicit and retry
-remained available.
-that historical allowance does not approve a current failure mode or change any
-deadline; revised acceptance requires an explicit owner decision.
+cancellation; cleanup may outlast it. the browser cap bounds one execution
+attempt; client-owned capacity waiting remains outside it.
+release qualification must prove that finite allowances cover admitted work and
+queued foreground work reachable under the chosen serialization policy inside
+actual transport ceilings, with useful lexical and hybrid completion and finite
+queue drain. simultaneous heavy peaks are not required. retained earlier results
+and retry do not replace it. the synthetic held-gate check does not close native,
+job-publication or hosting qualification. operational watchdogs are safeguards,
+not latency acceptance targets.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the
 merge; pages contain at most 50 rows. the offset ceiling is 1,000. fixed-corpus
 lexical pages preserve the merged prefix. every request uses a fresh snapshot;
-corpus/index changes and approximate neighbour membership can change later pages.
+corpus/index changes can change later pages.
 no retained search session or total-result count is promised.
 
 ## launcher
@@ -447,8 +513,9 @@ location guards and final `project.py` checks remain; browser visibility changes
 do not weaken citation eligibility.
 
 strict ranking retains s1: case-insensitive label tier, then lexical rank ahead
-of semantic-only cosine, with label/id ties. its offset cursor and ann policy
-are separate from browser discovery. live offset pages require a fixed ranked
+of semantic-only cosine, with label/id ties. its offset cursor and selection
+window are separate from browser discovery; both retain the 0.5 cosine cutoff.
+live offset pages require a fixed ranked
 candidate set for prefix stability. the picker retains one bounded pass, unique
 quote admission, source/exclusion handling and ten-row pages; it can end early
 when admission rejects most candidates. browse and contributor listing keep

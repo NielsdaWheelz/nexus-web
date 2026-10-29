@@ -9,6 +9,7 @@ The flow is linear and idempotent; after any failure, fix the cause and rerun:
     preflight -> inputs -> images -> stop -> backup -> postgres -> migrate -> up -> limits -> caddy
               -> health -> isolation -> current pointer -> prune
 
+Postgres package capability is checked before writers stop and in final health.
 The whole pass holds the host backup lock, so the nightly backup never meets
 stopped writers or a migration. `--check` runs preflight and the read-only
 proofs against the SHA the host records. There is no attempt/resume state
@@ -50,6 +51,7 @@ SSH_OPTIONS = (
 )  # fmt: skip
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+POSTGRES_CAPABILITY_CHECK = "/usr/local/bin/nexus-postgres-check"
 COMPOSE_FILE = "/etc/nexus/docker-compose.yml"
 CONFIG_FILE = "/etc/nexus/current.env"
 BACKUP_CONFIG_FILE = "/etc/nexus/backup.env"
@@ -650,6 +652,7 @@ def config_value(key: str) -> str:
 
 def health(candidate: CandidateManifest) -> None:
     note("proving backend and public health")
+    inside("postgres", POSTGRES_CAPABILITY_CHECK)
     expected = {
         "source_sha": candidate.source_sha,
         "expected_database_revision": candidate.expected_database_revision,
@@ -742,6 +745,12 @@ def release(source_sha: str, workspace: Path) -> None:
     if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", postgres_image) is None:
         raise Failure("POSTGRES_IMAGE must be an immutable image reference by sha256 digest")
     host(f"docker pull {shlex.quote(postgres_image)}", timeout=900)
+    # Prove the configured upstream package before stopping writers.
+    host(
+        "docker run --rm --network none --read-only --cap-drop ALL"
+        f" --security-opt no-new-privileges --entrypoint {POSTGRES_CAPABILITY_CHECK}"
+        f" {shlex.quote(postgres_image)}"
+    )
     free = int(host("df --output=avail -B1 /").splitlines()[1])
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free after image pulls")

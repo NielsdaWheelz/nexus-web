@@ -1,7 +1,8 @@
 """Link target search: strict passage admission and durable quote identity.
 
-Identity lookups use the caller's snapshot; text searches embed before acquiring
-their owned, database-wide admitted backend and materialize before retiring it.
+Identity lookups use the caller's snapshot; text searches acquire their owned,
+database-wide admitted backend before embedding and materialize before retiring it.
+Unavailable semantics still authorize the source in the snapshot before failing.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.db.session import open_async_session
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.authored import PassageCapture, XCapturePublication
 from nexus.schemas.resource_evidence import CapturedPassageTarget, LocationQuote
 from nexus.schemas.resource_search import (
@@ -37,7 +39,7 @@ from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.resource_items.items import resource_items_out, visible_refs
 from nexus.services.resource_items.locations import current_passages, media_passages
-from nexus.services.search.admission import search_session
+from nexus.services.search.admission import search_session_async
 from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
@@ -71,20 +73,42 @@ def _link(
     return None if edge is None else edge.id
 
 
-def search_targets(
-    db: Session, *, viewer_id: UUID, request: ResourceTargetSearchRequest
+async def search_targets(
+    *, viewer_id: UUID, request: ResourceTargetSearchRequest, deadline: float
 ) -> ResourceTargetSearchResponse:
     """A page of linkable targets. Exclusions and identity dedupe precede paging; one pass
     over a bounded prefix of the merged order, with at most one embedding."""
     q = request.q.strip()
     parsed = parse_resource_ref(q)
     exact = parsed if isinstance(parsed, ResourceRef) else None
-    embedding = embed_text(q) if exact is None and len(q) >= MIN_QUERY_LENGTH else None
-    if exact is not None or len(q) < MIN_QUERY_LENGTH:
-        return read_snapshot(db, lambda s: _targets(s, viewer_id, request, q, exact, embedding))
-    with search_session() as search_db:
-        return read_snapshot(
-            search_db, lambda s: _targets(s, viewer_id, request, q, exact, embedding)
+    async with (
+        open_async_session()
+        if exact is not None or len(q) < MIN_QUERY_LENGTH
+        else search_session_async(deadline=deadline, purpose="request")
+    ) as database:
+        embedding = None
+        embedding_failure = None
+        try:
+            if exact is None and len(q) >= MIN_QUERY_LENGTH:
+                embedding = await embed_text(q)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
+            embedding_failure = exc
+        return await database.run_sync(
+            lambda db: read_snapshot(
+                db,
+                lambda s: _targets(
+                    s,
+                    viewer_id,
+                    request,
+                    q,
+                    exact,
+                    embedding,
+                    embedding_failure=embedding_failure,
+                ),
+                deadline=deadline,
+            )
         )
 
 
@@ -95,6 +119,8 @@ def _targets(
     q: str,
     exact: ResourceRef | None,
     embedding: Embedding | None,
+    *,
+    embedding_failure: ApiError | None = None,
 ) -> ResourceTargetSearchResponse:
     source = require_ref(request.source_ref) if request.source_ref else None
     excluded = {require_ref(raw).uri for raw in request.exclude_refs}
@@ -103,6 +129,8 @@ def _targets(
     if source is not None:
         identity, link_source = source_identity(db, viewer_id, source)
         excluded |= {source.uri, identity}
+    if embedding_failure is not None:
+        raise embedding_failure
     reading_owners: dict[str, UUID | None] = {}
     if exact is not None:
         candidates = [exact]
@@ -112,7 +140,7 @@ def _targets(
     else:
         needed = offset + TARGET_PAGE + 1
         r = Retrieval(viewer_id, q, 2 * needed + len(excluded), embedding=embedding)
-        hits = merge(hit for family in (*_DIRECT, *_PASSAGES) for hit in rank(db, r, family))
+        hits = merge(rank(db, r, families=(*_DIRECT, *_PASSAGES)))
         candidates = _refs(hits[: r.k])
         reading_owners = {_refs([hit])[0].uri: hit.reading_media_id for hit in hits[: r.k]}
     candidates = [ref for ref in candidates if ref.uri not in excluded]

@@ -8,7 +8,8 @@ request it
 - refuses, before routing, a client built for another wire: ``X-Nexus-Wire`` missing or
   other than ``WIRE_REVISION`` answers 426 ``E_WIRE_MISMATCH`` (I10). ``PUBLIC_PATHS``
   (operational, schema, the email webhook) carry no client build and are exempt;
-- returns 409 ``E_RESOURCE_CONFLICT`` for an owned database busy transaction;
+- returns 503 ``E_DATABASE_BUSY`` for exhausted physical checkout capacity and 409
+  ``E_RESOURCE_CONFLICT`` for an owned database busy transaction;
 - renders an exception nothing claimed before the response started as the 500
   ``E_INTERNAL`` envelope with its request id (a client disconnect as 499), and logs one
   access line when the request ends: a stream when it closes or its client leaves.
@@ -19,14 +20,12 @@ import time
 import uuid
 
 from sqlalchemy.exc import TimeoutError as PoolTimeout
-from sqlalchemy.pool import QueuePool
 from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nexus.auth.middleware import PUBLIC_PATHS
-from nexus.db.engine import get_engine
 from nexus.db.retries import DatabaseBusyError
 from nexus.errors import ApiErrorCode
 from nexus.logging import bind_request, get_logger
@@ -98,17 +97,15 @@ class EdgeMiddleware:
             await _envelope(ApiErrorCode.E_RESOURCE_CONFLICT, "Resource is busy; try again")(
                 scope, receive, stamped
             )
-        except Exception as exc:
-            pool = get_engine().pool if isinstance(exc, PoolTimeout) else None
-            if isinstance(pool, QueuePool):
-                logger.error(
-                    "db_pool_exhausted",
-                    pool_checked_out=pool.checkedout(),
-                    pool_overflow=pool.overflow(),
-                    pool_size=pool.size(),
-                )
-            else:
-                logger.exception("http.request.failed")
+        except PoolTimeout:
+            logger.warning("db_pool_exhausted")
+            if status != 0:
+                raise
+            await _envelope(
+                ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+            )(scope, receive, stamped)
+        except Exception:
+            logger.exception("http.request.failed")
             if status != 0:
                 raise
             await _envelope(ApiErrorCode.E_INTERNAL, "Internal server error")(

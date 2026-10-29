@@ -4,7 +4,9 @@ Every expected outcome comes back as a terminal value with one failure code, exc
 a background generation that never reached its model while its job has attempts
 left: that raises ``RouteUnavailable`` so the queue retries the job. Anything else
 is a defect: the row closes ``defect`` and the exception goes on to the queue's
-retry. No transaction is held across model or tool I/O, and the kernel, provider
+retry. Watcher failure cancels and joins provider dispatch through its task group;
+normal dispatch cancels and joins its watcher. No transaction spans model or tool I/O.
+The kernel, provider
 runtime and tool runtime load only when a generation runs.
 """
 
@@ -15,6 +17,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
+from nexus.db.session import open_control_async_session
 from nexus.jobs.queue import get_job, running_job_claim_is_current
 from nexus.logging import get_logger
 from nexus.schemas.llm import GenerationSelection, Ready
@@ -232,61 +235,61 @@ async def _dispatch(
         run = ToolRun(owner, ref.id, ref.seq, plan, tools.scope_refs)
     stopped = asyncio.Event()
     reasons: list[Literal["cancelled", "deadline", "claim_lost"]] = []
-    watcher = asyncio.create_task(
-        _watch(runtime, owner, stop, time.monotonic() + rules.timeout_seconds, stopped, reasons)
-    )
-    try:
-        if isinstance(row.target, CodexTarget):
-            from nexus.services.generation.codex import run_codex
+    async with asyncio.TaskGroup() as supervision:
+        watcher = supervision.create_task(
+            _watch(runtime, owner, stop, time.monotonic() + rules.timeout_seconds, stopped, reasons)
+        )
+        try:
+            if isinstance(row.target, CodexTarget):
+                from nexus.services.generation.codex import run_codex
 
-            result = await run_codex(
-                endpoint=runtime.codex_endpoint,
-                cwd_root=runtime.codex_cwd_root,
-                owner=owner,
-                generation_id=ref.id,
-                target=row.target,
-                reasoning=chosen.reasoning,
-                role=operation,
-                intent=intent,
-                operation=plan,
-                tools=run,
-                deadline_at=datetime.now(UTC) + timedelta(seconds=rules.timeout_seconds),
-                stopped=stopped,
-                on_event=emit,
-            )
-        else:
-            from nexus.services.generation.provider import run_provider
+                result = await run_codex(
+                    endpoint=runtime.codex_endpoint,
+                    cwd_root=runtime.codex_cwd_root,
+                    owner=owner,
+                    generation_id=ref.id,
+                    target=row.target,
+                    reasoning=chosen.reasoning,
+                    role=operation,
+                    intent=intent,
+                    operation=plan,
+                    tools=run,
+                    deadline_at=datetime.now(UTC) + timedelta(seconds=rules.timeout_seconds),
+                    stopped=stopped,
+                    on_event=emit,
+                )
+            else:
+                from nexus.services.generation.provider import run_provider
 
-            if runtime.providers is None or run is None or budgets is None:
-                raise AssertionError("a provider generation needs its runtime and chat tools")
-            result = await run_provider(
-                runtime.providers,
-                target=row.target,
-                reasoning=chosen.reasoning,
-                intent=intent,
-                max_output_tokens=budgets[1],
-                operation=plan,
-                tools=run,
-                stopped=stopped,
-                on_event=emit,
-            )
-    except Exception as error:
-        if isinstance(error, ToolRefused) and not reasons and stop is not None:
-            # The tool fence refuses once a stop commits, possibly before the next poll.
-            with runtime.session_factory() as db:
-                if stop(db):
-                    reasons.append("cancelled")
-        failure = _expected_failure(error)
-        if failure is None and not reasons:
-            raise
-        if failure is None:
-            # A stop or a lost claim tore down state the route was using: the stop wins.
-            logger.warning("generation_error_after_stop", error=repr(error)[:500])
-        code, detail = failure or ("defect", type(error).__name__)
-        result = RouteResult("failed", None, None, code, detail, {})
-    finally:
-        watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
+                if runtime.providers is None or run is None or budgets is None:
+                    raise AssertionError("a provider generation needs its runtime and chat tools")
+                result = await run_provider(
+                    runtime.providers,
+                    target=row.target,
+                    reasoning=chosen.reasoning,
+                    intent=intent,
+                    max_output_tokens=budgets[1],
+                    operation=plan,
+                    tools=run,
+                    stopped=stopped,
+                    on_event=emit,
+                )
+        except Exception as error:
+            if isinstance(error, ToolRefused) and not reasons and stop is not None:
+                # The tool fence refuses once a stop commits, possibly before the next poll.
+                async with open_control_async_session() as db:
+                    if await db.run_sync(stop):
+                        reasons.append("cancelled")
+            failure = _expected_failure(error)
+            if failure is None and not reasons:
+                raise
+            if failure is None:
+                # A stop or a lost claim tore down state the route was using: the stop wins.
+                logger.warning("generation_error_after_stop", error=repr(error)[:500])
+            code, detail = failure or ("defect", type(error).__name__)
+            result = RouteResult("failed", None, None, code, detail, {})
+        finally:
+            watcher.cancel()
     if result.status == "succeeded" or not reasons:
         return result
     if reasons[0] == "cancelled":
@@ -318,10 +321,12 @@ async def _watch(
         if time.monotonic() >= deadline:
             reasons.append("deadline")
         else:
-            with runtime.session_factory() as db:
-                if stop is not None and stop(db):
+            async with open_control_async_session() as db:
+                if stop is not None and await db.run_sync(stop):
                     reasons.append("cancelled")
-                elif not running_job_claim_is_current(db, context=owner.job):
+                elif not await db.run_sync(
+                    lambda session: running_job_claim_is_current(session, context=owner.job)
+                ):
                     reasons.append("claim_lost")
         if reasons:
             stopped.set()

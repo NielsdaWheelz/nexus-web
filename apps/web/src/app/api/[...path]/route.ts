@@ -6,6 +6,7 @@ import { proxySession } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const DENIED = new Set([
   "auth",

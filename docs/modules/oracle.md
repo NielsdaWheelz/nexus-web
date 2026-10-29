@@ -45,6 +45,13 @@ one per work, and offers six. Fewer than three is the reading's typed failure
 question's words and every offered passage, ties broken by key; it is chosen
 before the model sees the passages, so the model can write to it.
 
+both retrieval lanes rank the full cosine-distance range (0–2), without a
+similarity cutoff.
+personal x-capture coverage remains a
+[known eligibility/attribution gap](../issues/oracle-personal-search-omits-x-captures.md);
+existing oracle qualification does not prove that lane. canonical reading
+membership and captured evidence must be composed together before expanding it.
+
 ## Reading — `services/oracle/readings.py`, `synthesis.py`
 
 `oracle_readings` is the reading: `pending` until one transaction makes it

@@ -49,12 +49,12 @@ responses; stock asyncio returned28/30 target200 responses and two owned lexical
 timeouts. both api processes stopped normally. this does not identify the native
 fault or prove that asyncio prevents it. api launch commands now choose stock
 asyncio as a candidate, without changing the http parser or dependencies.
-preserve the original failures and historical faster latency verdicts; release
-still requires the complete browser cohort against provisional500/2000/4000-ms
+preserve the original failures and historical faster latency verdicts. at that
+time release required the complete browser cohort against provisional500/2000/4000-ms
 warm targets, cold and publication checks. this was the historical requirement;
 the owner revised the crash gate below.
 
-current closeout, 2026-10-23: complete browser225 on selected stock asyncio
+historical closeout, 2026-10-23: complete browser225 on selected stock asyncio
 finishes the fixed22 full-search and20 launcher interactions without a native
 crash and passes revised500/2000/4000ms visible warm p95 gates. six independent
 launcher lexical requests return504; complete hybrid responses supply usable
@@ -87,3 +87,7 @@ rebuild inputs; exact current images must be rebuilt for environment-specific
 qualification. current routine verification uses the
 [mac docker desktop lab](../local-rules/testing-standards.md); paired production
 endpoint/client configuration is deployed and preserved by the search release.
+the [current reliability contract](../search-reliability-spec.md) retires the old
+timing gates without changing these verdicts or the accepted residual fault
+uncertainty. it still requires useful independent lexical/hybrid completion and
+the named cold, coexistence and capacity proof.

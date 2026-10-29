@@ -43,17 +43,6 @@ def current_media_contributor_rows_sql() -> str:
     """
 
 
-def visible_author_credit_rows_sql() -> str:
-    """``(contributor_id, display_name, media_id, podcast_id)`` for visible author credits."""
-    return f"""
-        SELECT vcc.contributor_id, c.display_name, vcc.media_id, vcc.podcast_id
-        FROM ({visible_content_credit_rows_sql()}) vcc
-        JOIN contributors c ON c.id = vcc.contributor_id
-        WHERE vcc.role = 'author'
-          AND (vcc.media_id IS NOT NULL OR vcc.podcast_id IS NOT NULL)
-    """
-
-
 def contributor_fts_text_sql() -> str:
     """``(contributor_id, search_text)``: display name, aliases, visible credited names.
 

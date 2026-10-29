@@ -74,6 +74,7 @@ export class Sync {
     this.last_error = status === 401 || status === 403 ? SIGN_IN_SYNC_DETAIL
       : status === 426 ? UPDATE_SYNC_DETAIL
       : status === 0 ? this.facts.ready ? "changes are saved on this device." : "connect to finish preparing your notes."
+      : status === 503 ? this.facts.ready ? "nexus is busy. saved changes remain on this device; syncing will retry." : "nexus is busy. preparing your notes will retry."
       : "your notes could not finish syncing. retry; saved changes remain on this device.";
     if (status === 401 || status === 403) this.facts.admission = "auth";
     else if (status === 426) this.facts.admission = "format";

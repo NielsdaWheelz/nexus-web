@@ -1,4 +1,6 @@
 import type { ApiJson } from "@/lib/api/wire";
 
-// Browser whole-read and BFF headers/body caps; API operations have smaller caps.
-export const SEARCH_READ_TIMEOUT_MS = { direct: 1000, lexical: 2250, hybrid: 5750 } as const satisfies Record<ApiJson<"/search/preview", "get">["phase"], number>;
+// One browser request has room for the bff and the api's complete operation.
+export const SEARCH_READ_TIMEOUT_MS = { direct: 15_000, lexical: 125_000, hybrid: 125_000 } as const satisfies Record<ApiJson<"/search/preview", "get">["phase"], number>;
+export const SEARCH_BFF_TIMEOUT_MS = { direct: 10_000, lexical: 120_000, hybrid: 120_000 } as const satisfies Record<ApiJson<"/search/preview", "get">["phase"], number>;
+export const searchPrefixTimeoutMs = (pages: number | null) => SEARCH_READ_TIMEOUT_MS.lexical * (pages ?? 51);

@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import get_repeatable_read_db
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.db.session import get_repeatable_read_db, open_async_session
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
     CapturedPassageTarget,
@@ -34,18 +35,16 @@ from nexus.services.resource_items.locations import (
 )
 from nexus.services.search.admission import (
     remaining_milliseconds,
-    search_session,
     search_session_async,
 )
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
+from nexus.services.search.policy import BACKGROUND_COMPUTATION_SECONDS
 from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
     FORMAT_STORAGE,
     MAX_LIMIT,
     SearchQuery,
     SearchScope,
-    decode_offset,
-    encode_cursor,
     is_offset,
 )
 from nexus.services.search.scope import authorize_scope
@@ -66,9 +65,21 @@ def read_snapshot[T](
                 text("SELECT set_config('statement_timeout', :timeout, true)"),
                 {"timeout": str(remaining_milliseconds(deadline))},
             )
-        return read(db)
-    finally:
+        result = read(db)
+        if deadline is not None:
+            remaining_milliseconds(deadline)
+    except BaseException as error:
+        try:
+            db.rollback()
+        except BaseException as cleanup_error:
+            # justify-ignore-error: retain rollback failure on the original read/cancellation.
+            error.add_note(
+                f"Search snapshot rollback also failed: {type(cleanup_error).__name__}: {cleanup_error}"
+            )
+        raise
+    else:
         db.rollback()
+        return result
 
 
 def _families(query: SearchQuery) -> list[str] | None:
@@ -88,11 +99,16 @@ def _page(
     embedding: Embedding | None,
     offset: int,
     limit: int,
+    *,
+    embedding_failure: ApiError | None = None,
 ) -> tuple[list[SearchResultOut], bool]:
     """One page of the merged order over the union of ``scopes`` (authorized even when no
-    family serves the query), and whether more follow."""
+    family serves the query), and whether more follow. A requested embedding failure
+    surfaces only after scope authorization."""
     for scope in scopes:
         authorize_scope(db, viewer_id, scope)
+    if embedding_failure is not None:
+        raise embedding_failure
     authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
     r = Retrieval(
         viewer_id=viewer_id,
@@ -105,32 +121,10 @@ def _page(
         roles=query.roles,
         embedding=embedding,
     )
-    hits = merge(hit for family in families for hit in rank(db, r, family))
+    hits = merge(rank(db, r, families=families))
     page = hits[offset : offset + limit + 1]
     more = len(page) > limit and is_offset(offset + limit)
     return project(db, viewer_id, page[:limit], r.terms), more
-
-
-def search(viewer_id: UUID, query: SearchQuery) -> SearchResponse:
-    """One ranked page of everything the viewer may read in ``query.scope``.
-
-    Owns an admitted session. 404 for an unreadable scope once the query has text or a filter.
-    """
-    offset = decode_offset(query.cursor)
-    limit = min(query.limit, MAX_LIMIT)
-    families = _families(query)
-    if families is None:
-        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    embedding = embed_text(query.terms) if query.terms and _SEMANTIC & set(families) else None
-    with search_session() as db:
-        results, more = read_snapshot(
-            db,
-            lambda s: _page(
-                s, viewer_id, query, families, (query.scope,), embedding, offset, limit
-            ),
-        )
-    cursor = encode_cursor({"offset": offset + limit}) if more else None
-    return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=cursor))
 
 
 async def search_scopes_async(
@@ -138,26 +132,57 @@ async def search_scopes_async(
     base: SearchQuery,
     scopes: Sequence[SearchScope],
     *,
-    deadline: float | None = None,
+    deadline: float | None,
+    purpose: Literal["foreground", "background"],
 ) -> SearchResponse:
-    """The first page over the union of ``scopes`` in one pass; ``has_more`` is real."""
+    """One scoped page; foreground retains its caller's absolute deadline.
+
+    Background passes ``deadline=None`` explicitly: its owned computation starts
+    after embedding, immediately before admission, with the shared computation allowance.
+    """
+    assert (deadline is None) == (purpose == "background")
     families = _families(base)
     if families is None:
         return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
-    embedding = (
-        await asyncio.to_thread(embed_text, base.terms)
-        if base.terms and _SEMANTIC & set(families)
-        else None
-    )
-    limit = min(base.limit, MAX_LIMIT)
-    async with search_session_async(deadline=deadline) as database:
-        results, more = await database.run_sync(
-            lambda db: read_snapshot(
-                db,
-                lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit),
-                deadline=deadline,
+    async with asyncio.timeout_at(deadline):
+        embedding = None
+        embedding_failure = None
+        try:
+            if base.terms and _SEMANTIC & set(families):
+                embedding = await embed_text(base.terms)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
+            embedding_failure = exc
+        limit = min(base.limit, MAX_LIMIT)
+        if embedding_failure is not None:
+            # Authorization precedes the provider error, without search admission
+            # or a background computation clock that could refund this failure.
+            session_scope = open_async_session()
+        else:
+            if purpose == "background":
+                assert deadline is None
+                deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
+            assert deadline is not None
+            session_scope = search_session_async(deadline=deadline, purpose=purpose)
+        async with session_scope as database:
+            results, more = await database.run_sync(
+                lambda db: read_snapshot(
+                    db,
+                    lambda s: _page(
+                        s,
+                        viewer_id,
+                        base,
+                        families,
+                        scopes,
+                        embedding,
+                        0,
+                        limit,
+                        embedding_failure=embedding_failure,
+                    ),
+                    deadline=deadline,
+                )
             )
-        )
     return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=None))
 
 

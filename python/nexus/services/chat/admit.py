@@ -8,6 +8,8 @@ existing-chat insertion locks the conversation and checks its observed branch re
 before it reads a parent, as deletion does. A surviving run answers its uuid before
 catalog resolution; retries neither reselect it nor revalidate today's availability.
 Admission freezes everything the worker needs: spec, prompt, attached evidence.
+Stop commits idempotent authorized intent through control before ordinary dead-job
+finalization and response hydration; a later busy response does not revoke that intent.
 """
 
 from __future__ import annotations
@@ -24,7 +26,11 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
-from nexus.db.session import get_repeatable_read_db, get_session_factory
+from nexus.db.session import (
+    get_control_session_factory,
+    get_repeatable_read_db,
+    get_session_factory,
+)
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
@@ -184,26 +190,32 @@ async def repeat(
 
 
 def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
-    """Record stop intent (idempotent); a run whose job already died ends here."""
+    """Commit idempotent stop intent first; domain finalization stays ordinary."""
 
-    with get_session_factory()() as db:
+    with get_control_session_factory()() as db:
 
-        def attempt() -> None:
+        def stop_intent() -> None:
             run = events.lock_run(db, run_id)
             if run is None or run.owner_user_id != viewer_id:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-            if run.status not in events.TERMINAL:
-                if run.cancel_requested_at is None:
-                    run.cancel_requested_at = datetime.now(UTC)
-                    run.updated_at = datetime.now(UTC)
-                match = {"run_id": str(run.id)}
-                if jobs_for_payload(
-                    db, kind="chat_run", match=match, statuses=("dead",), lock=True
-                ):
-                    # Its dead-letter projection skipped this then-locked run.
-                    events.finalize_dead(db, run)
+            if run.status not in events.TERMINAL and run.cancel_requested_at is None:
+                run.cancel_requested_at = datetime.now(UTC)
+                run.updated_at = datetime.now(UTC)
 
-        retry_serializable(db, "cancel_chat_run", attempt)
+        retry_serializable(db, "cancel_chat_run", stop_intent)
+    with get_session_factory()() as db:
+
+        def finalize_dead() -> None:
+            run = events.lock_run(db, run_id)
+            if run is None or run.owner_user_id != viewer_id:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
+            if run.status not in events.TERMINAL and jobs_for_payload(
+                db, kind="chat_run", match={"run_id": str(run.id)}, statuses=("dead",), lock=True
+            ):
+                # Its dead-letter projection skipped this then-locked run.
+                events.finalize_dead(db, run)
+
+        retry_serializable(db, "cancel_chat_run_finalize", finalize_dead)
     with get_session_factory()() as db:
         return reads.run_response(db, viewer_id=viewer_id, run_id=run_id)
 

@@ -161,16 +161,17 @@ def recent_highlight_anchor_facts(
                 SELECT DISTINCT ON (owner.media_id) owner.media_id,h.updated_at AS activity_at
                 FROM highlights h
                 CROSS JOIN LATERAL (
-                    SELECT reading.media_id FROM readable reading
-                    WHERE reading.media_id=h.anchor_media_id
-                       OR {highlight_in_reading_scope_sql("h.id", "reading.media_id")}
-                    ORDER BY (reading.media_id=h.anchor_media_id) DESC,
-                        (SELECT COALESCE(sum(scope.end_offset-scope.start_offset),0)
-                         FROM ({text_scope_rows_sql("SELECT reading.media_id")}) scope),
-                        reading.media_id
-                    LIMIT 1
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM readable direct WHERE direct.media_id=h.anchor_media_id
+                    ) THEN h.anchor_media_id ELSE (
+                        SELECT reading.media_id FROM readable reading
+                        WHERE {highlight_in_reading_scope_sql("h.id", "reading.media_id")}
+                        ORDER BY (SELECT COALESCE(sum(scope.end_offset-scope.start_offset),0)
+                            FROM ({text_scope_rows_sql("SELECT reading.media_id")}) scope),
+                            reading.media_id LIMIT 1
+                    ) END AS media_id
                 ) owner
-                WHERE h.user_id=:viewer_id AND h.authored_visible
+                WHERE owner.media_id IS NOT NULL AND h.user_id=:viewer_id AND h.authored_visible
                   AND h.anchor_kind IN ('fragment_offsets','pdf_page_geometry')
                 ORDER BY owner.media_id,h.updated_at DESC,h.id ASC
             )

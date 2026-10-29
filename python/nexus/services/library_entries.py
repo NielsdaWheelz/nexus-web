@@ -148,12 +148,16 @@ def unfiled_media_ids_sql() -> str:
     """
 
 
-def destination_membership_rows_sql() -> str:
-    """Physical media inputs and active show roots of one authorized destination."""
+def destination_membership_rows_sql(*, visible_media_sql: str | None = None) -> str:
+    """Physical media inputs and active show roots of one authorized destination.
+
+    A supplied media_id relation contains all canonical visible media for this
+    viewer in the same repeatable-read snapshot, never an eligible-target subset.
+    """
     return f"""
         SELECT 'media' AS target_scheme,member.media_id AS target_id,
                member.media_id,NULL::uuid AS podcast_id,member.added_at
-        FROM ({library_media_rows_sql()}) member
+        FROM ({library_media_rows_sql(visible_media_sql=visible_media_sql)}) member
         UNION ALL
         SELECT 'podcast',show.podcast_id,NULL::uuid,show.podcast_id,show.added_at
         FROM ({library_podcast_rows_sql()}) show
@@ -199,6 +203,49 @@ def engagement_anchor_library_ids(
     )
 
 
+def library_anchor_rows_sql() -> str:
+    """Ordered refs and zero-based ordinal before media/vector filtering; binds :anchor_limit.
+
+    Caller CTEs: destination(target_scheme,target_id,media_id,podcast_id,added_at),
+    engagement(media_id,read_state,progress_fraction,progress_resettable,last_engaged_at),
+    episodes(media_id,podcast_id,published_at), visible_media(media_id),
+    visible_podcasts(podcast_id). These are complete canonical owner relations.
+    """
+    return """
+        WITH canonical AS (
+                SELECT target_scheme, target_id, added_at AS created_at FROM destination
+            ),
+            podcast_engagement AS (
+                SELECT e.podcast_id,
+                       MAX(g.last_engaged_at) FILTER (WHERE g.last_engaged_at <= now())
+                           AS last_engaged_at
+                FROM episodes e
+                JOIN visible_media vm ON vm.media_id = e.media_id
+                JOIN engagement g ON g.media_id = e.media_id
+                GROUP BY e.podcast_id
+            ), candidates AS (
+            SELECT c.target_scheme, c.target_id, c.created_at,
+                   CASE WHEN c.target_scheme = 'media'
+                        THEN CASE WHEN me.last_engaged_at <= now() THEN me.last_engaged_at END
+                        ELSE pe.last_engaged_at
+                   END AS last_engaged_at
+            FROM canonical c
+            LEFT JOIN engagement me ON c.target_scheme = 'media' AND me.media_id = c.target_id
+            LEFT JOIN podcast_engagement pe
+              ON c.target_scheme = 'podcast' AND pe.podcast_id = c.target_id
+            WHERE (c.target_scheme = 'media'
+                   AND c.target_id IN (SELECT media_id FROM visible_media))
+               OR (c.target_scheme = 'podcast'
+                   AND c.target_id IN (SELECT podcast_id FROM visible_podcasts))
+            )
+            SELECT target_scheme, target_id,
+                   ROW_NUMBER() OVER (ORDER BY last_engaged_at DESC NULLS LAST,
+                       created_at DESC, target_scheme ASC, target_id ASC) - 1 AS ordinal
+            FROM candidates
+            ORDER BY ordinal LIMIT :anchor_limit
+    """
+
+
 def library_anchor_facts(
     db: Session, *, viewer_id: UUID, library_id: UUID, limit: int
 ) -> tuple[ResourceRef, ...]:
@@ -215,34 +262,8 @@ def library_anchor_facts(
             episodes AS ({episode_publication_rows_sql()}),
             visible_media AS ({visible_media_ids_cte_sql()}),
             visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
-            canonical AS (
-                SELECT target_scheme, target_id, added_at AS created_at FROM destination
-            ),
-            podcast_engagement AS (
-                SELECT e.podcast_id,
-                       MAX(g.last_engaged_at) FILTER (WHERE g.last_engaged_at <= now())
-                           AS last_engaged_at
-                FROM episodes e
-                JOIN visible_media vm ON vm.media_id = e.media_id
-                JOIN engagement g ON g.media_id = e.media_id
-                GROUP BY e.podcast_id
-            )
-            SELECT c.target_scheme, c.target_id,
-                   CASE WHEN c.target_scheme = 'media'
-                        THEN CASE WHEN me.last_engaged_at <= now() THEN me.last_engaged_at END
-                        ELSE pe.last_engaged_at
-                   END AS last_engaged_at
-            FROM canonical c
-            LEFT JOIN engagement me ON c.target_scheme = 'media' AND me.media_id = c.target_id
-            LEFT JOIN podcast_engagement pe
-              ON c.target_scheme = 'podcast' AND pe.podcast_id = c.target_id
-            WHERE (c.target_scheme = 'media'
-                   AND c.target_id IN (SELECT media_id FROM visible_media))
-               OR (c.target_scheme = 'podcast'
-                   AND c.target_id IN (SELECT podcast_id FROM visible_podcasts))
-            ORDER BY last_engaged_at DESC NULLS LAST, c.created_at DESC,
-                     c.target_scheme ASC, c.target_id ASC
-            LIMIT :anchor_limit
+            anchor_rows AS ({library_anchor_rows_sql()})
+            SELECT target_scheme,target_id FROM anchor_rows ORDER BY ordinal
         """),
         {"viewer_id": viewer_id, "library_id": library_id, "anchor_limit": limit},
     ).all()

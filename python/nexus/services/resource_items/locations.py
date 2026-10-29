@@ -120,6 +120,16 @@ class ScopedMediaPassage:
 
 
 @dataclass(frozen=True, slots=True)
+class MediaPassageContext:
+    source_media_id: UUID
+    quote: LocationQuote
+    locator: dict[str, Any] | None
+    reading_media_id: UUID | None = None
+    apparatus_item_id: UUID | None = None
+    capture_generation: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _PassageScopeReads:
     media: Mapping[UUID, tuple[str, UUID, str]]
     candidates: Mapping[UUID, tuple[UUID, ...]]
@@ -181,6 +191,7 @@ def _scope_source_reads(
     contexts: Sequence[tuple[UUID, UUID | None]],
     admitted_reading_media_ids: Sequence[UUID] | None,
     fragment_ids: Sequence[UUID],
+    source_reads: locator_resolver.PassageSourceReads | None = None,
 ) -> _PassageScopeReads:
     """One stage's complete scope inputs, shared by every occurrence in its snapshot.
 
@@ -273,7 +284,11 @@ def _scope_source_reads(
         eligible = [id for id in candidates.get(canonical, []) if reading is None or id == reading]
         if canonical not in eligible:
             pieces.update(eligible)
-    sources = locator_resolver.read_passage_sources(db, [("media", id) for id in pieces])
+    sources = (
+        source_reads
+        if source_reads is not None
+        else locator_resolver.read_passage_sources(db, [("media", id) for id in pieces])
+    )
     partial_tables = _partial_table_reads(db, list(pieces), fragment_ids)
     return _PassageScopeReads(
         media,
@@ -287,6 +302,51 @@ def _scope_source_reads(
     )
 
 
+def scoped_media_passages(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    passages: Sequence[MediaPassageContext],
+    admitted_reading_media_ids: Sequence[UUID] | None = None,
+    source_reads: locator_resolver.PassageSourceReads | None = None,
+) -> list[ScopedMediaPassage | None]:
+    """Place ordered occurrences through one snapshot's canonical scope proofs.
+
+    Duplicate refs and distinct reading contexts retain separate outputs. A supplied
+    source batch must cover the eligible pieces in this snapshot; missing proofs
+    stay missing. It supplies text dependencies, never reading authority.
+    """
+    if not passages:
+        return []
+    if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
+        return [None] * len(passages)
+    reads = _scope_source_reads(
+        db,
+        viewer_id=viewer_id,
+        contexts=[(p.source_media_id, p.reading_media_id) for p in passages],
+        admitted_reading_media_ids=admitted_reading_media_ids,
+        fragment_ids=[
+            UUID(str(p.locator["fragment_id"]))
+            for p in passages
+            if p.locator is not None and p.locator.get("fragment_id") is not None
+        ],
+        source_reads=source_reads,
+    )
+    return [
+        _resolve_scoped_media_passage(
+            reads,
+            source_media_id=p.source_media_id,
+            quote=p.quote,
+            locator=p.locator,
+            reading_media_id=p.reading_media_id,
+            apparatus_item_id=p.apparatus_item_id,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+            capture_generation=p.capture_generation,
+        )
+        for p in passages
+    ]
+
+
 def scoped_media_passage(
     db: Session,
     *,
@@ -297,35 +357,25 @@ def scoped_media_passage(
     reading_media_id: UUID | None = None,
     apparatus_item_id: UUID | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
-    source_reads: _PassageScopeReads | None = None,
+    source_reads: locator_resolver.PassageSourceReads | None = None,
     capture_generation: int | None = None,
 ) -> ScopedMediaPassage | None:
-    """One passage uses the same snapshot inputs and resolver as a batched read.
-
-    Raw words are limited to the requested locator's fragment. Piece quote scope
-    and required-note validation retain their full-scope reads where necessary.
-    """
-    if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
-        return None
-    if source_reads is None:
-        fragment = None if locator is None else locator.get("fragment_id")
-        source_reads = _scope_source_reads(
-            db,
-            viewer_id=viewer_id,
-            contexts=[(source_media_id, reading_media_id)],
-            admitted_reading_media_ids=admitted_reading_media_ids,
-            fragment_ids=[] if fragment is None else [UUID(str(fragment))],
-        )
-    return _resolve_scoped_media_passage(
-        source_reads,
-        source_media_id=source_media_id,
-        quote=quote,
-        locator=locator,
-        reading_media_id=reading_media_id,
-        apparatus_item_id=apparatus_item_id,
+    return scoped_media_passages(
+        db,
+        viewer_id=viewer_id,
+        passages=[
+            MediaPassageContext(
+                source_media_id,
+                quote,
+                locator,
+                reading_media_id,
+                apparatus_item_id,
+                capture_generation,
+            )
+        ],
         admitted_reading_media_ids=admitted_reading_media_ids,
-        capture_generation=capture_generation,
-    )
+        source_reads=source_reads,
+    )[0]
 
 
 def _resolve_scoped_media_passage(
@@ -334,10 +384,10 @@ def _resolve_scoped_media_passage(
     source_media_id: UUID,
     quote: LocationQuote,
     locator: dict[str, Any] | None,
-    reading_media_id: UUID | None,
-    apparatus_item_id: UUID | None,
-    admitted_reading_media_ids: Sequence[UUID] | None,
-    capture_generation: int | None,
+    reading_media_id: UUID | None = None,
+    apparatus_item_id: UUID | None = None,
+    admitted_reading_media_ids: Sequence[UUID] | None = None,
+    capture_generation: int | None = None,
 ) -> ScopedMediaPassage | None:
     """Resolve only from explicit snapshot proofs; no database reads or authority fallback."""
     metadata = reads.media.get(source_media_id)
@@ -736,15 +786,13 @@ def media_passages(
                     "start_offset": raw["start_offset"],
                     "end_offset": raw["end_offset"],
                 }
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
+        scoped = _resolve_scoped_media_passage(
+            highlight_scopes,
             source_media_id=row.media_id,
             quote=quote,
             locator=locator,
             reading_media_id=reading_owners.get(f"highlight:{id}"),
             admitted_reading_media_ids=highlights[id],
-            source_reads=highlight_scopes,
             capture_generation=(
                 captures.get(f"highlight:{id}", {})
                 .get("capture", {})
@@ -824,22 +872,19 @@ def media_passages(
                 "start_offset": 0,
                 "end_offset": len(row.canonical_text),
             }
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
+        scoped = _resolve_scoped_media_passage(
+            scope_sources,
             source_media_id=row.media_id,
             quote=quote,
             locator=locator,
             reading_media_id=reading_owners.get(f"fragment:{row.id}"),
             admitted_reading_media_ids=admitted_reading_media_ids,
-            source_reads=scope_sources,
         )
         if scoped is not None:
             out[f"fragment:{row.id}"] = scoped
     for row in apparatus:
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
+        scoped = _resolve_scoped_media_passage(
+            scope_sources,
             source_media_id=row.media_id,
             quote=LocationQuote(
                 exact=row.body_text or row.label or "", prefix=None, suffix=None, color=None
@@ -848,7 +893,6 @@ def media_passages(
             reading_media_id=reading_owners.get(f"reader_apparatus_item:{row.id}"),
             apparatus_item_id=row.id,
             admitted_reading_media_ids=admitted_reading_media_ids,
-            source_reads=scope_sources,
         )
         if scoped is not None:
             out[f"reader_apparatus_item:{row.id}"] = scoped
@@ -952,9 +996,8 @@ def media_passages(
     for row, quote, requested_reading, located in located_anchors:
         proved: dict[UUID, ScopedMediaPassage] = {}
         for owner, locator in located:
-            scoped = scoped_media_passage(
-                db,
-                viewer_id=viewer_id,
+            scoped = _resolve_scoped_media_passage(
+                anchor_scopes,
                 source_media_id=row.owner_id,
                 quote=quote,
                 locator=locator,
@@ -962,7 +1005,6 @@ def media_passages(
                 if admitted_reading_media_ids is not None
                 else requested_reading,
                 admitted_reading_media_ids=admitted_reading_media_ids,
-                source_reads=anchor_scopes,
                 capture_generation=(
                     captures.get(f"passage_anchor:{row.id}", {})
                     .get("capture", {})
@@ -1644,15 +1686,13 @@ def current_passages(
     for uri, passage in list(out.items()):
         if passage.owner.scheme != "media":
             continue
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
+        scoped = _resolve_scoped_media_passage(
+            scope_sources,
             source_media_id=passage.owner.id,
             quote=passage.quote,
             locator=passage.locator,
             reading_media_id=reading_owners.get(uri),
             admitted_reading_media_ids=admitted_reading_media_ids,
-            source_reads=scope_sources,
         )
         if scoped is None:
             del out[uri]

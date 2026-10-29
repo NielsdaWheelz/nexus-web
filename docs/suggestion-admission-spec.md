@@ -1,165 +1,171 @@
 # suggestion retrieval and search admission
 
-investigated planning draft, 2026-10-28; pr 3 of the release repair scope.
-published for review at the owner's request. specification only. the existing
-[search reliability plan](search-reliability-spec.md) records retrieval, admission,
-quality and liveness decisions. the owner's latest simplicity clarification keeps
-the behavioral budgets and permitted recall trade-off, while reopening detailed
-implementation means. start with the smallest query/admission repair that meets
-the complete contract; an allowed approximate ranking is not a requirement to
-replace a qualifying exact query. reconcile chosen mechanics into that plan
-before implementation.
+this specification owns exact candidate domains, ranking, admission and complete
+publication. [search reliability](search-reliability-spec.md) owns the common
+resource, quality/progress and release acceptance contract;
+[database capacity](database-capacity-spec.md) owns physical topology/accounting.
+there is one integrated repair, not a required database-pr/search-pr split.
 
-source investigation at `96a3b7bdf` establishes the call topology and feasibility
-gate below. no native query replay or timing was run in this pass; the full
-five-anchor occupancy/quality conjunction remains unproved.
+## outcome and evidence
 
-## outcome and known evidence
+background refresh and foreground search must complete useful work inside the
+fixed envelope. heavy work may queue and serialize, including an enforced backup
+window; ordinary reading, local writing and control work remain usable, and
+finite queued work must drain. normal services count even when idle. the selected
+baseline is exact original-float retrieval. no approximate path is required merely because
+an earlier plan permitted it, and no faster graph-only result substitutes for a
+working semantic lane.
 
-background refresh must complete useful work without monopolizing foreground
-search. `suggestion_shortlists.run_suggestion_refresh_job` holds `search_session`
-through ranking/materialization; `suggestions._media_neighbor_rows_sql` computes
-an exhaustive vector cross-product. the database-wide session lock is retained
-until physical backend retirement.
+the october 26 holder and captured-query investigation established minutes of
+admission occupancy, readiness misestimates and spills. its emulated one-anchor
+and censored five-anchor timings remain diagnostic history in
+[the issue](issues/production-search-admission-contention.md), not current timing
+acceptance. later selected 0321 warm component publication/coexistence succeeded;
+later mixed backup-overlap memory work failed. the
+[common evidence record](search-reliability-spec.md#evidence-and-uncertainty)
+preserves each source, package, schema, limitation and failed verdict. integrated
+migration, cold/full-topology progress and release proof remain open.
 
-on october 26 an identified background holder occupied the exact search gate for
-minutes before its 300-second statement timeout. an isolated captured-query
-replay found underestimated readiness joins, large intermediate work and spills;
-one anchor took 5.18 seconds and five exceeded a 15-second diagnostic cap. these
-emulated measurements do not establish native performance. current foreground
-semantic retrieval already has cardinality-routed exact/approximate selection.
+## exact domain and ranking
 
-current `reading_chunks_sql` now includes an x-capture branch as well as whole
-media and bounded-piece branches. the old 0317 captured query is useful incident
-evidence, not the complete candidate query or current eligibility oracle. compare
-the revised source on the current migrated corpus before making release claims.
+`services/suggestions.py` owns relevance/eligibility;
+`content_indexing.py` owns canonical reading/chunk membership and readiness;
+`search/semantic.py` owns common vector scoring; `search/admission.py` owns
+admission/retirement; `suggestion_shortlists.py` owns claims and publication.
+keep policy at those owners rather than adding a ranking or scheduling layer.
 
-## owners, scope and invariants
+one read-only repeatable-read snapshot captures ranking time, input revision,
+all original anchor ordinals, current eligible anchors and destination membership.
+scope, permissions, self-exclusion, readiness and active provider/model/dimension
+apply before selection. preserve original vectors, calibrated similarity 0.80,
+anchor attribution, family composition, evidence precedence, rotation and
+diversity. browser/strict distance 0.5 and oracle's full 0–2 domain remain separate
+consumer contracts; this repair does not tune them.
 
-- `services/suggestions.py` owns candidate semantics;
-  `content_indexing.py` readiness joins; `search/semantic.py` common neighbors;
-  `search/admission.py` admission and cleanup; `suggestion_shortlists.py` claim,
-  refresh and atomic publication. preserve the quiet suggestion presentation.
-- first compare exact outputs/plans after positive readiness predicates match
-  the existing `(lexical_revision = revision) IS TRUE` statistic. that narrow
-  candidate has not yet been qualified for the captured suggestion statement.
-- the existing plan permits approximate semantic candidates, with per-case
-  overlap `>= ceil(0.9 * min(10, old_count))` and review of changed first-page refs.
-  permissions, piece boundaries, publication/model identity, threshold and
-  retained-candidate attribution remain exact. no silent extra recall loss.
-- preserve one coherent ranking snapshot and atomic claimed publication; no
-  partial or fabricated-empty publication. providers stay outside admission.
-  cancellation joins backend retirement before releasing capacity.
+for every original eligible media anchor, choose one first admitted current
+chunk by the canonical order, including source/piece and immutable capture
+membership. a reading with both own text and capture occurrences must not acquire
+two anchor vectors through overlapping branches. preserve original ordinals even
+when other anchors do not enter this semantic path.
 
-## verified callers and interface
+for each anchor and each `GraphThread`/`Rediscovery` family:
 
-| existing synchronous gate caller | natural boundary if async conversion is needed |
-| --- | --- |
-| `suggestion_shortlists.run_suggestion_refresh_job` | one loop/scope for the bounded read phase; retire backend before the existing claimed publication transaction |
-| `search.service.search`, used by `connection_discovery._scan` | `_scan` is already async; use `search_scopes_async`, preserve its strict evidence contract and background completion |
-| `oracle.readings._prepare` | `_run` is already async; preserve the pre-provider commit and caller snapshot, await embedding/retrieval with its reviewed foreground budget |
-| `search.pickers.search_targets` | async route/cancellation owner; direct-id and short-query paths stay ordinary bounded reads; semantic path gets its own original deadline |
+1. admit the complete canonical destination reading/chunk relation, including all
+   eligible bounded pieces and repeated capture occurrences, with current-ready
+   active-model vectors.
+2. score original stored vectors, apply the existing threshold and self-exclusion,
+   and order by distance, reading id and chunk id.
+3. retain at most 400 **reading/chunk rows**, then group by media with the existing
+   minimum distance and anchor/family attribution.
 
-browser `search.discovery` already uses async admission. strict tool retrieval
-already has an async entry but wraps synchronous embedding in a thread. the
-shared embedding change must preserve each caller's failure semantics and join
-cancellation, not merely rename a function. no provider call belongs inside the
-search lock or an ordinary transaction retained while awaiting search.
+a unique-chunk cutoff followed by reading projection is not equivalent, even for
+an exact chunk reader. include the 401-equal-distance/overlapping-reading boundary
+in comparison evidence. a universal truncated-neighbor adapter is not required.
+sequential queries in one snapshot replace the old all-anchor cross-product;
+they must still complete the full refresh, not only a favorable anchor.
 
-pr 2 supplies a finite physical bound, safe loop behavior and ordinary capacity
-responses; no new pool matrix or scope api is assumed. pr 3 owns search
-deadlines/purpose and the
-physical backend's retirement under the session lock. one absolute deadline
-includes checkout and lock waiting; apply the remaining statement timeout after
-the admission transaction rollback. no new ordinary/control pool inside pr 3.
-final acceptance is joint with [pr 2](database-capacity-spec.md#boundary-agreed-with-pr-3).
+keep eligibility and scoring in postgres and return only bounded winners; do not
+export a complete vector domain to python. positive readiness comparisons retain
+`(lexical_revision = revision) IS TRUE` and its existing statistics. use actual
+plans and exact reference outputs when changing query shape; bounded output alone
+does not bound join, sort, temporary or maintenance memory.
 
-publication already checks current job claim, feed job identity and authority in
-a later short transaction. `ranked_revision` records the read snapshot; it is
-not an equality check against the newest input at publication. preserve that
-truthful stale-publication behavior under concurrent changes and prove a fresh
-publication after the quiet interval; do not silently add stricter invalidation
-that can starve every completed refresh.
+approximation is considered only if the exact baseline fails capacity or useful
+coexistence and an owner approves one alternative. the reliability contract's
+unchanged browser/suggestion recall floors and review of every changed first-page
+ref still apply. permissions, reading boundaries, model/publication identity,
+original-vector threshold and retained-candidate attribution stay exact. no
+runtime fallback, adaptive recall, dropped anchors/families or hidden underfill.
 
-## next specification work
+## operation and admission
 
-first measure the readiness-predicate repair and complete existing ranking.
-keep that executor if it satisfies the fixed quality, occupancy and progress
-requirements. if it does not, the existing common-neighbor adapter is the next
-candidate. retain one shared admission owner; change callers only as necessary
-to provide bounded admission, real cancellation and joined backend retirement.
-agree pr 2's physical-checkout contract without prescribing its pool machinery.
-prove a complete five-anchor refresh before broad wiring. splitting anchors
-alone neither proves bounded work nor preserves snapshot semantics automatically.
+all expensive callers use the native async admission owner: browser discovery,
+strict tools, pickers, oracle, connection discovery and shortlist ranking.
+preserve each caller's direct/short-query bypass, embedding failure semantics,
+outer deadline and cancellation ownership. browser requests admit before
+embedding; background/tool provider work keeps its existing owner outside
+admission. no ordinary transaction is held while waiting for search/providers.
 
-existing targets are requirements, not observed passes: 500 ms maximum background
-lock occupancy including retirement; cancelled backends retired within 500 ms;
-unchanged foreground deadlines and visible-result targets. each due feed must
-publish the settled revision within the defined 60-second quiet interval. use the
-full existing plan's workload, clock boundaries and quality oracle; do not weaken
-them or claim a percentile from a few successful cases.
+physical checkout precedes the one database-wide session advisory gate and is
+charged to the capacity owner's finite allowance. browser requests refuse
+occupied capacity instead of waiting inside their request clock; current client
+intent owns waiting and automatic retry outside execution time. background
+admission also refuses contention, using normal durable job deferral.
+the required execution allowance begins at admitted execution and is never spent
+on capacity queue waiting or reset during the read/result construction. waiting
+remains honestly pending and resumes under the current intent; generic copy is
+sufficient. remaining statement timeout must back the admitted read after
+admission-transaction rollback.
+the foreground waits for admitted background work; background refuses observed
+local physical-permit or advisory-gate contention without waiting. the try-lock
+cannot jump foreground waiters already queued in postgres. there is no additional
+priority service, idle detector or persistent deferral store.
 
-the strongest objection to the proposed adapter is repeated work: up to five
-anchors times two families means ten common-neighbor calls. each nonempty call
-currently performs three database statements (bounded count plus exact id/read
-or probe setting/ann read), before shared eligibility, anchor and graph ranking
-costs. the proposed 400 ms computation allowance leaves less than 40 ms per
-pair after shared costs. this is budget arithmetic, not measured latency or
-proof of impossibility. the 25,000-vector exact threshold and 40 probes are
-starting parameters, not a validated suggestion budget.
+retain the physical lease until driver work is joined and the captured backend
+is confirmed absent. unconfirmed retirement fails that scope's search capacity
+closed and prevents publication. slow confirmed cleanup alone does not reject an
+otherwise live successful result; actual cancellation/expiry still wins. never
+unlock early or abandon cleanup to satisfy a stopwatch.
 
-ann filters can underfill even when eligible neighbors exist. inspect exact
-eligibility before selection and retain the plan's reviewed approximate recall
-bound. the adapter must expand selected chunks into all authorized reading
-identities, then apply its reading/chunk occurrence cap and grouping; a unique
-chunk limit is not automatically the old per-reading occurrence limit. include
-shared source/piece and x-capture occurrences in that proof.
+only observed admission refusal returns the existing database-time `+5 seconds`
+same-job `RescheduleRequested` with an attempt refund. setup failures and admitted
+computation expiry spend the ordinary bounded failure budget. generic pre-read
+expiry is not observed contention; arbitrary `57014`, shutdown, lost claims and
+database/invariant errors keep their existing classifications. no retry-to-green,
+new queue or hidden perpetual rescheduling.
 
-## smallest decisive experiment
+finite watchdog values must permit complete work and finite queued foreground
+completion under the chosen serialization policy inside actual browser/bff/platform
+ceilings, as required by the reliability contract. the former 400 ms computation,
+500 ms occupancy/retirement and
+60-second quiet-publication acceptance gates are retired. no replacement numeric
+latency deadline is approved. diagnostic expiry is censored noncompletion.
 
-before wide pool/async rewiring, use one admitted native restored database and
-one coherent repeatable-read snapshot per comparison:
+## publication and observed feeds
 
-1. capture current-source exact ordered output for fixed revision, ranking time,
-   original anchor ordinals/vectors, eligibility and model. include a semantic-
-   dominant nonempty five-anchor case, both families, restrictive pieces,
-   repeated capture occurrences and a genuine empty case.
-2. compare the predicate-only change for exact equality and current query plans.
-   distinguish readiness/eligibility, neighbor selection, occurrence expansion
-   and final ranking costs; use private fingerprints rather than query text in logs.
-3. if the smaller repair cannot meet the contract, prototype the common-neighbor
-   adapter in disposable investigation code. measure the complete refresh and
-   backend retirement, not the best one neighbor query; compare first-page
-   quality and every changed ref. include cold/warmed runs under the fixed limit.
-4. only a candidate meeting both quality and occupancy proceeds to integration
-   with pr 2 and contention/cancellation/quiet-window liveness qualification.
+after complete materialization and confirmed retirement, the existing short
+transaction rechecks the execution claim, feed job identity and authority,
+replaces the complete pool, clears the pointer and settles that same job
+atomically. prior publications survive failed, deferred or lost-claim work.
+never publish a partial or fabricated-empty replacement.
 
-no query prototype or restored experiment was executed in this source-review
-pass. native runtime, current migrated corpus and reference output are required.
-the current-corpus experiment depends on pr 1's conversion being resolved;
-historical 0317 replay alone cannot qualify the newer capture/reading semantics.
-if the whole computation intrinsically exceeds its budget, retrying it every
-five seconds cannot produce progress. revise the query within the accepted
-contract or surface a concrete contract change for review; do not stitch partial
-snapshots, increase limits or call perpetual rescheduling successful isolation.
+`ranked_revision` truthfully records the read snapshot; it need not equal a newer
+input at publication. reject no otherwise complete build merely because inputs
+changed while it ran. instead retain dirtiness and prove later convergence.
+freeze the active due-feed cohort before qualification; after finite competing
+work/mutations drain, every such feed publishes the settled revision within the
+predeclared finite observation window. case-created failures/suspensions cannot
+remove a feed from acceptance. repeated rescheduling and old rows fail progress.
 
-## acceptance, costs and dependencies
+preserve [stable visits and explicit refresh](modules/suggestions.md): an adopted
+pool keeps its order, current eligibility is rechecked, and ordinary refresh
+reads the latest completed publication without waiting for ranking. the
+15-minute age policy and 30-second build spacing are scheduling policy, not
+freshness or completion guarantees.
 
-on native restored data, compare exact predicate results, then explicitly measure
-the permitted approximate candidate change. include semantic-dependent results,
-both families, restricted pieces and an empty case. qualify foreground search,
-contention, cancellation, lost claims, existing publications and eventual new
-publication together with pr 2's warmed capacity workload. all migrated gate
-callers must complete useful work; perpetual rescheduling is failure.
+## qualification and costs
 
-costs: bounded retries and stale suggestions during sustained contention. if the
-approximate adapter is required, add its bounded recall loss and possible family
-underfill explicitly. no new queue service, larger
-limits, longer foreground waits, partial-ranking store or exhaustive fallback.
-use [verification rules](local-rules/testing-standards.md); proof belongs in the pr.
+freeze exact references and cases before tuning: full nonempty five-anchor
+semantic work, both families, global/library/source/piece/capture scopes,
+semantic-positive restrictive cases, genuine empty results, active-model changes
+and deterministic cutoff ties. preserve literal evidence and real activation.
+qualify normal claim/heartbeat/result/publication, contention, cancellation,
+withdrawal, lost claims and failure budgets alongside useful lexical/hybrid
+completion, writing, controls and finite queue drain. simultaneous heavy peaks
+and backup overlap are not required; retained memory and reachable maintenance
+demand remain inside the unchanged envelope.
 
-issue owner: [observed contention](issues/production-search-admission-contention.md).
-paired work: [database capacity](database-capacity-spec.md).
+account for repeated eligibility work, longer snapshots/gate holds and retained
+physical waiters under the same native resource envelope. no larger host or
+memory quota, partial-ranking store, exhaustive fallback or feature cut is
+authorized by a failed qualification. explicit bounded recall loss is a cost
+only of an approved approximate alternative.
 
-primary mechanism reference:
-[pgvector filtering and probe/recall trade-offs](https://github.com/pgvector/pgvector#filtering).
+use the common acceptance/release gates and existing
+[verification owners](local-rules/testing-standards.md). a historical query replay,
+one component, a fake-provider composition pass or static consistency does not
+qualify the current full native corpus. no new suite, runtime or automatic
+production failure reproduction is required.
+
+issue owner: [admission contention](issues/production-search-admission-contention.md).
+mechanism reference: [pgvector filtering](https://github.com/pgvector/pgvector#filtering).
