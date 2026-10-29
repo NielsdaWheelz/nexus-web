@@ -1,8 +1,12 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
+
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
+import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ChoiceField from "@/components/ui/ChoiceField";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -118,14 +122,8 @@ export function SkipSilenceField({
   readonly onChange: (checked: boolean) => void;
   readonly label: string;
 }) {
-  const helpId = useId();
-  return <label className={styles.silenceField}>
-    <span className={styles.switch}>
-      <input type="checkbox" aria-label={label} aria-describedby={helpId} checked={checked} onChange={event => onChange(event.currentTarget.checked)} />
-      <span>{label}</span>
-    </span>
-    <span id={helpId} className={styles.eyebrow}>shorten quiet gaps between speech.</span>
-  </label>;
+  return <ChoiceField label={label} checked={checked} onChange={onChange}
+    description="shorten quiet gaps between speech." />;
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */
@@ -163,6 +161,9 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   const commands = usePlayerCommands();
   const { ctx } = useActionRuntime();
   const [preparation, setPreparation] = useState<PreparationState>(null);
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [opening, setOpening] = useState(false);
+  const occurrence = useFeedbackOccurrence(failure !== null || opening, expectedSubject);
   const resolve = async (signal: AbortSignal): Promise<OpenResult | null> => {
     try {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(`/api/media/${mediaId}/reader`, { signal });
@@ -179,7 +180,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   const report = (error: unknown) => {
     if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
     if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-    ctx.feedback.receipt(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
+    setFailure(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
   };
   const activate = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -191,23 +192,25 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       return;
     }
     const originPaneId = ctx.workspace().state.active_primary_pane_id;
+    setOpening(true);
     void openAsyncResult({ ctx, originPaneId, intent: "new_pane", subject: chapter.title,
       mayOpen: () => subject.current === expectedSubject,
       onOpened,
       create: async () => {
         const result = await resolve(ctx.sessionSignal());
-        if (!result && !ctx.sessionSignal().aborted) ctx.feedback.receipt({ tone: "Warning", title: "no transcript at this time", message: chapter.title });
+        if (!ctx.sessionSignal().aborted) setFailure(result ? null : {tone: "Warning", title: "no transcript at this time", message: chapter.title});
         return result;
       },
-    }).catch(report);
+    }).catch(report).finally(() => setOpening(false));
   };
   return <li className={styles.chapterRow}>
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> : null}
     <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current ? "true" : undefined}
-      disabled={expectedSubject === null} onClick={activate} onKeyDown={activate}>
+      aria-busy={opening} disabled={expectedSubject === null} onClick={activate} onKeyDown={activate}>
       <span>{chapter.title}</span>
       <span className={styles.time}>{formatClock(chapter.start_ms / 1000)}</span>
     </button>
-    <ActionMenu label={`more actions for ${chapter.title}`} triggerDisabled={expectedSubject === null} source={{ kind: "Prepared",
+    <ActionMenu label={`more actions for ${chapter.title}`} triggerDisabled={expectedSubject === null} source={{ kind: "Prepared", initial: { sections: [] },
       subjectKey: `chapter:${mediaId}:${expectedSubject}:${chapter.start_ms}`, title: chapter.title, state: preparation,
       prepare(signal) {
         setPreparation({ kind: "Loading", request: signal });
@@ -215,7 +218,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
           if (signal.aborted) return;
           const href = result?.target.href ?? null;
           setPreparation({ kind: "Ready", request: signal, content: { sections: [{ id: "Open", label: null, options: [{
-            kind: "link", id: "OpenInPane", label: "open in new pane",
+            kind: "link", id: "OpenInPane", label: ACTION_CATALOG.OpenInNewPane.label, icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
             ...(href === null ? { href: null, disabled: true as const } : { href }),
             disabledReason: href === null ? "no transcript at this time" : undefined,
             onActivate(event) {

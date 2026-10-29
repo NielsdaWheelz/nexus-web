@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.media import PlaybackSourceOut
+from nexus.schemas.x_captures import QuoteRetrieval
 from nexus.schemas.x_source import XArticleContent
 
 DocumentEmbedProvider = Literal[
@@ -67,6 +68,7 @@ class DocumentEmbedTargetOut(BaseModel):
         "partial",
     ]
     media_id: UUID | None
+    capture_id: UUID | None
     resource_ref: str | None
     href: str | None
     kind: str | None
@@ -81,7 +83,13 @@ class DocumentEmbedTargetOut(BaseModel):
 
 class DocumentEmbedDisplayActionOut(BaseModel):
     kind: Literal[
-        "open_child_media", "open_original", "view_import", "retry_child", "refresh_parent"
+        "open_child_media",
+        "open_original",
+        "view_import",
+        "retry_child",
+        "refresh_parent",
+        "open_capture",
+        "retry_quote",
     ]
     label: str
     href: str | None
@@ -120,5 +128,6 @@ class DocumentEmbedOut(BaseModel):
     target: DocumentEmbedTargetOut
     error_code: DocumentEmbedTextOut
     display: DocumentEmbedDisplayOut
+    retrieval: QuoteRetrieval | None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)

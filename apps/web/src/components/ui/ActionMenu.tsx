@@ -3,6 +3,7 @@
 import {
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -18,7 +19,9 @@ import {
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useNavigationIdentity } from "@/lib/host/policy";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { STALE_BUILD_FEEDBACK } from "@/lib/api/client";
+import { FeedbackState, FeedbackFailure, FeedbackBusy, FeedbackRecoveryControl, useFeedbackOccurrence, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
   prepareActionSelect,
@@ -27,8 +30,10 @@ import {
   type MenuOption,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import {
+  OverlayContext,
   focusableElements,
   getInteractionOwner,
   getInteractionGeneration,
@@ -42,6 +47,7 @@ import {
   type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import MobileSheet from "./MobileSheet";
@@ -49,6 +55,7 @@ import OverflowMenuButton from "./OverflowMenuButton";
 import RadioGroup from "./RadioGroup";
 import styles from "./ActionMenu.module.css";
 import choiceField from "./ChoiceField.module.css";
+import selection from "./Selection.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
@@ -106,13 +113,15 @@ type Invocation = {
   readonly mobile: boolean;
   readonly pathname: string | null;
   readonly viewport: string;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly touch: boolean;
   readonly attempt: Attempt | null;
   readonly visible: boolean;
   readonly feedback: FeedbackContent | null;
   readonly meaning: string | null;
   readonly geometry: readonly number[] | null;
+  readonly preparedMeaning: string | null;
+  readonly preparedGeometry: readonly number[] | null;
   readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
   readonly side: "above" | "below" | null;
 };
@@ -148,22 +157,23 @@ function viewportGeometry(): string {
 }
 
 /** The trailing region may change after publication; only published rows define geometry. */
-function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, published: boolean): readonly number[] {
+function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, selector: string | null): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
   let panelX = box.x;
   let panelY = box.y;
   if (mobile) {
-    // MobileSheet's fixed, untransformed backdrop is its offset parent. Layout
-    // offsets ignore the sheet's translation without mixing compositor samples.
+    // The available MobileSheet bottom-aligns in its fixed, untransformed
+    // backdrop without bottom spacing. Its fractional height avoids offsetTop
+    // rounding without mixing the sheet's compositor translation samples.
     const parent = panel.offsetParent;
     if (!parent) throw new Error("mobile action sheet requires its layout containing block");
     const origin = parent.getBoundingClientRect();
     panelX = origin.left + parent.clientLeft + panel.offsetLeft - parent.scrollLeft;
-    panelY = origin.top + parent.clientTop + panel.offsetTop - parent.scrollTop;
+    panelY = origin.bottom - box.height - parent.scrollTop;
   }
   const position = anchor.getBoundingClientRect();
-  const rows = [...body.querySelectorAll<HTMLElement>(published ? "[data-menu-published] [data-menu-row]" : "[data-menu-row]")].map((row) => {
+  const rows = [...body.querySelectorAll<HTMLElement>(selector ?? "[data-menu-row]")].map((row) => {
     const rect = row.getBoundingClientRect();
     let x = rect.left - box.left;
     let y = rect.top - box.top;
@@ -172,9 +182,9 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
       y += parent.scrollTop;
       if (parent === panel) break;
     }
-    return published ? [panelX + x, panelY + y, rect.width, rect.height] : [x, y, rect.width, rect.height];
+    return selector !== null ? [panelX + x, panelY + y, rect.width, rect.height] : [x, y, rect.width, rect.height];
   });
-  return published ? [position.x, position.y, position.width, position.height, ...rows.flat()] : [
+  return selector !== null ? [position.x, position.y, position.width, position.height, ...rows.flat()] : [
     position.x, position.y, position.width, position.height,
     panelX, panelY, box.width, box.height,
     ...rows.flat(),
@@ -182,7 +192,7 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
 }
 
 function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
-  const published = scroller.querySelector<HTMLElement>(":scope > [data-menu-published]");
+  const published = scroller.querySelector<HTMLElement>("[data-menu-published]");
   if (!published) throw new Error("a trailing menu requires its published content block");
   const style = getComputedStyle(scroller);
   const used = published.getBoundingClientRect().height
@@ -199,11 +209,22 @@ function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
   return available - (panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height) - used;
 }
 
+/** A withdrawn delayed control returns only its own lost focus to the menu. */
+function DelayedMenuRegion({ children, returnFocus }: {
+  readonly children: ReactNode;
+  readonly returnFocus: () => HTMLElement | null;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  useActionFocusRecovery(root, returnFocus);
+  return <div ref={root} role="none" data-menu-trailing="" className={`${styles.delayedRegion} ${styles.trailing}`}>{children}</div>;
+}
+
 /**
- * One invocation owns preparation, publication and dismissal. Initial preparation
- * has one hidden transient; publication has one desktop transient or mobile frame.
- * A complete measured result must beat its activation-time deadline. Published
- * meaning and geometry are immutable; callbacks and availability remain current.
+ * One invocation owns initial publication, preparation and dismissal. Known initial
+ * controls publish without completing the preparation deadline. The first ready
+ * prepared snapshot freezes separately; its failure or retry retains the initial
+ * controls and frame. Published meaning and geometry stay fixed while callbacks
+ * and availability remain current.
  */
 export interface ActionMenuProps {
   readonly source: MenuSource;
@@ -234,7 +255,7 @@ export interface ActionMenuSession {
   readonly viewport: string;
   readonly startedAt: number;
   readonly touch: boolean;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly dismiss: () => void;
   readonly announce: (message: string) => void;
   readonly present: (presentation: Presentation) => void;
@@ -295,7 +316,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     window.addEventListener("pointercancel", release, true);
     window.addEventListener("keydown", release, true);
   };
-  const begin = (edge: "first" | "last") => {
+  const begin = (edge: "first" | "last" | null) => {
     const dismiss = () => {
       local.session = null;
       setState(value => ({ ...value, session: null, presentation: { visible: false, busy: false, popup: "menu" } }));
@@ -322,7 +343,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     onClick: event => {
       event.stopPropagation();
       if (triggerDisabled) return;
-      if (local.session) local.session.close.current(false); else begin("first");
+      if (local.session) local.session.close.current(false); else begin(null);
     },
     onKeyDown: event => {
       if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -350,14 +371,14 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
           consumeHeldClick(pending.pointer);
         }
         cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onKeyDown: event => {
         local.touchGesture = false;
         if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
         if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
         event.preventDefault(); event.stopPropagation(); cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onPointerDown: event => {
         cancelHold(); local.heldClick = false;
@@ -369,7 +390,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
             const pending = local.hold;
             if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== local.subjectKey || !local.trigger.current?.isConnected) { cancelHold(); return; }
             consumeHeldClick(pointer); cancelHold();
-            if (!local.session) begin("first");
+            if (!local.session) begin(null);
           }, 500),
         };
         window.addEventListener("scroll", cancelHold, true);
@@ -404,6 +425,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   readonly returnFocusTo?: ReturnFocusTarget;
 }) {
   const rowWindow = useIndexRowWindow();
+  const modal = useContext(OverlayContext);
+  const [feedbackBounds, setFeedbackBounds] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     rowWindow?.interact();
     return rowWindow?.pin();
@@ -424,12 +447,16 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   const prepared = source.kind === "Prepared" && invocation?.attempt &&
     !invocation.attempt.controller.signal.aborted &&
     source.state?.request === invocation.attempt.controller.signal ? source.state : null;
-  const trailingRegion = source.kind === "Prepared" && source.trailing !== undefined;
+  const hasInitial = source.kind === "Prepared" && source.initial.sections.some(section => section.options.length > 0);
+  const trailingRegion = source.kind === "Prepared" && (hasInitial || source.trailing !== undefined);
   const trailing = trailingRegion && invocation?.attempt && !invocation.attempt.controller.signal.aborted &&
     source.trailing?.request === invocation.attempt.controller.signal ? source.trailing ?? null : null;
-  const content = invocation && (source.kind === "Immediate" ? source.content :
+  const content = invocation && (source.kind === "Immediate" ? source.content : hasInitial ? source.initial :
     prepared?.kind === "Ready" ? prepared.content : null);
+  const delayedContent = hasInitial && prepared?.kind === "Ready" ? prepared.content : null;
   const feedback = invocation?.feedback ?? null;
+  const feedbackOccurrence = useFeedbackOccurrence(feedback !== null, session);
+  const trailingOccurrence = useFeedbackOccurrence(trailing?.kind === "Failed", session);
   const hasOptions = content?.sections.some((section) => section.options.length > 0) ?? false;
   const requested = invocation !== null;
   const candidate = invocation !== null && (content !== null || feedback !== null);
@@ -442,14 +469,24 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     enabled: candidate && !sheet && container !== null,
     placement: lockedSide ?? placement, align, flip: lockedSide === null, keepAnchorVisible: true,
   });
+  const bindMenu = useCallback((element: HTMLDivElement | null) => { menu.ref.current = element; setFeedbackBounds(element); }, [menu.ref]);
   const surface = () => current.current?.mobile ? sheetBody.current : menu.ref.current;
+  const ownedDisclosure = useCallback((target: EventTarget | null) => target instanceof Element
+    && target.closest<HTMLElement>("[data-feedback-source]")?.dataset.feedbackSource === menuId, [menuId]);
+  const ownsDisclosure = useCallback(() => {
+    const owner = getInteractionOwner();
+    return owner?.options.current.kind === "transient"
+      && owner.options.current.inside?.().some(element => element instanceof HTMLElement && element.dataset.feedbackSource === menuId) === true;
+  }, [menuId]);
   const closeRef = useRef<(returnFocus?: boolean) => void>(() => undefined);
   const { layer } = useOverlay(invocation !== null && !sheet, {
     kind: "transient",
     dismissOnNavigation: true,
     onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab" && reason !== "navigation"),
     inside: () => [menu.ref.current, root.current],
+    returnFocus: true,
     returnFocusTo: () => returnFocusTo?.() ?? trigger.current,
+    skipReturnFocus: () => skipReturn.current,
   });
   const change = (next: Invocation | null) => {
     current.current = next;
@@ -473,11 +510,13 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     if (!active || active.attempt !== attempt) return;
     if (attempt.timer) clearTimeout(attempt.timer);
     attempt.timer = null;
-    change({ ...active, attempt: null, feedback: failure, meaning: null, geometry: null });
+    change({ ...active, attempt: null, feedback: failure, preparedMeaning: null, preparedGeometry: null,
+      ...(hasInitial ? {} : { meaning: null, geometry: null }),
+    });
     attempt.controller.abort();
-    announce("actions couldn’t load");
+    announce(hasInitial ? "" : "actions couldn’t load");
   };
-  const begin = (edge: "first" | "last", retry = false) => {
+  const begin = (edge: "first" | "last" | null, retry = false) => {
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
     if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
@@ -485,18 +524,23 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     const attempt: Attempt | null = source.kind === "Prepared" ? {
       controller: new AbortController(), expires: now + PREPARATION_BUDGET_MS, timer: null,
     } : null;
-    skipReturn.current = false;
-    change({
-      subject: session.subjectKey, title: session.title, mobile: session.mobile, pathname: session.pathname, edge,
-      viewport: retry ? viewportGeometry() : session.viewport,
-      touch: retry ? false : session.touch,
-      attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
-      meaning: null, geometry: null, side: null,
-      admission: mobile ? { phase: "Focus", timer: null } : null,
-    });
+    if (retry && previous && hasInitial) {
+      change({ ...previous, attempt, preparedMeaning: null, preparedGeometry: null });
+      previous.attempt?.controller.abort();
+    } else {
+      skipReturn.current = false;
+      change({
+        subject: session.subjectKey, title: session.title, mobile: session.mobile, pathname: session.pathname, edge,
+        viewport: retry ? viewportGeometry() : session.viewport,
+        touch: retry ? false : session.touch,
+        attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
+        meaning: null, geometry: null, preparedMeaning: null, preparedGeometry: null, side: null,
+        admission: mobile ? { phase: "Focus", timer: null } : null,
+      });
+    }
     if (attempt && source.kind === "Prepared") {
       attempt.timer = setTimeout(() => fail(attempt, FAILED), Math.max(0, attempt.expires - performance.now()));
-      announce("loading actions…");
+      announce("");
       source.prepare(attempt.controller.signal);
     } else announce("");
   };
@@ -534,20 +578,28 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       active.viewport !== viewportGeometry()) return false;
     if (active.meaning === null) return true;
     const value = latest.current;
-    const ready = value.kind === "Immediate" ? value.content :
+    const ready = value.kind === "Immediate" ? value.content : hasInitial ? value.initial :
       value.state?.kind === "Ready" && value.state.request === active.attempt?.controller.signal
         ? value.state.content : null;
     if (ready === null || active.meaning !== meaning(value.title, ready) ||
       node === null || active.geometry === null) return false;
-    const measured = geometry(trigger.current, node, active.mobile, trailingRegion);
+    const measured = geometry(trigger.current, node, active.mobile, trailingRegion ? "[data-menu-published] [data-menu-row]" : null);
     // Compositor/transform serialization noise can cross rounding boundaries.
     // Compare at 1/64 CSS px precision against the fixed publication snapshot.
-    return active.geometry.length === measured.length && active.geometry.every(
+    if (active.geometry.length !== measured.length || !active.geometry.every(
       (coordinate, index) => Math.abs(coordinate - measured[index]) <= 1 / 64,
+    )) return false;
+    if (active.preparedMeaning === null) return true;
+    if (value.kind !== "Prepared" || value.state?.kind !== "Ready" ||
+      value.state.request !== active.attempt?.controller.signal ||
+      active.preparedMeaning !== meaning(value.title, value.state.content) || active.preparedGeometry === null) return false;
+    const delayed = geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]");
+    return active.preparedGeometry.length === delayed.length && active.preparedGeometry.every(
+      (coordinate, index) => Math.abs(coordinate - delayed[index]) <= 1 / 64,
     );
   };
-  // Render-induced changes retire before paint. Readiness alone cannot publish:
-  // the complete host must be measured and still inside this attempt's budget.
+  // Measure each publication before paint. Only prepared readiness completes the
+  // attempt; its snapshot must still beat the preparation deadline.
   const publish = () => {
     const active = current.current;
     // Initial begin schedules the admitted render; its ref alone cannot publish
@@ -557,6 +609,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       closeRef.current(false);
       return;
     }
+    if (ownsDisclosure()) return;
     if (active.admission === null && active.viewport !== viewportGeometry()) {
       if (active.visible) invalidate(); else closeRef.current(false);
       return;
@@ -575,18 +628,29 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       return;
     }
     if (active.admission !== null && active.admission.phase !== "Ready") return;
-    if (active.meaning !== null) {
-      if (!stable()) invalidate();
-      return;
-    }
     if (prepared?.kind === "Failed" && active.attempt) {
       fail(active.attempt, prepared.feedback);
+      return;
+    }
+    if (active.meaning !== null) {
+      if (!stable()) { invalidate(); return; }
+      if (delayedContent && active.preparedMeaning === null && active.attempt) {
+        if (performance.now() >= active.attempt.expires) { fail(active.attempt, FAILED); return; }
+        if (active.attempt.timer) clearTimeout(active.attempt.timer);
+        active.attempt.timer = null;
+        const node = surface();
+        if (!node) return;
+        change({ ...active, feedback: null, preparedMeaning: meaning(source.title, delayedContent),
+          preparedGeometry: geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]"),
+        });
+        announce("");
+      }
       return;
     }
     if (!candidate || (!sheet && !menu.placed)) return;
     const node = surface();
     if (!node || !trigger.current) return;
-    if (content && active.attempt && performance.now() >= active.attempt.expires) {
+    if (prepared?.kind === "Ready" && active.attempt && performance.now() >= active.attempt.expires) {
       fail(active.attempt, FAILED);
       return;
     }
@@ -595,7 +659,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       change({ ...active, side: placed });
       return;
     }
-    if (content && active.attempt?.timer) {
+    if (prepared?.kind === "Ready" && active.attempt?.timer) {
       clearTimeout(active.attempt.timer);
       active.attempt.timer = null;
     }
@@ -606,10 +670,12 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     }
     if (content || !active.visible || active.admission !== null) {
       change({
-        ...active, visible: true, feedback: content ? null : active.feedback,
+        ...active, visible: true, feedback: prepared?.kind === "Ready" || !hasInitial && content ? null : active.feedback,
         viewport: viewportGeometry(), admission: null,
         meaning: content ? meaning(source.title, content) : null,
-        geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion) : null,
+        geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion ? "[data-menu-published] [data-menu-row]" : null) : null,
+        preparedMeaning: delayedContent ? meaning(source.title, delayedContent) : null,
+        preparedGeometry: delayedContent ? geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]") : null,
       });
       if (content && !hasOptions) announce("no actions available");
       else if (content) announce("");
@@ -626,6 +692,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     if (!requested) return;
     const press = (event: PointerEvent) => {
       releasePress.current?.();
+      if (ownedDisclosure(event.target)) return;
       if (!current.current?.visible || current.current.admission !== null || checks.current.stable()) return;
       const { pointerId, button } = event;
       // A moved menu can leave the old coordinate outside its surface. Consume
@@ -675,15 +742,17 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         checks.current.settleMobile();
       }
       const node = checks.current.surface();
-      if (event.target instanceof Node && !root.current?.contains(event.target) && !node?.contains(event.target)
+      if (!ownedDisclosure(event.target) && event.target instanceof Node && !root.current?.contains(event.target) && !node?.contains(event.target)
         && !modalLayer.current?.element?.contains(event.target)) checks.current.close(false);
     };
     const resize = () => {
+      if (ownsDisclosure()) return;
       if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (current.current?.visible) checks.current.invalidate(); else checks.current.close(false);
     };
     const retire = () => checks.current.close(false);
     const scroll = (event: Event) => {
+      if (ownedDisclosure(event.target) || ownsDisclosure()) return;
       const node = checks.current.surface();
       if (event.target instanceof Node && node?.contains(event.target)) return;
       if (current.current?.mobile && event.target instanceof Node && modalLayer.current?.element?.contains(event.target)) return;
@@ -691,6 +760,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       if (!checks.current.stable()) checks.current.invalidate();
     };
     const observer = new ResizeObserver(() => {
+      if (ownsDisclosure()) return;
       if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (!checks.current.stable()) checks.current.invalidate();
     });
@@ -721,7 +791,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       window.removeEventListener("blur", retire);
       window.removeEventListener("scroll", scroll, true);
     };
-  }, [requested, visible, sheet, root, trigger]);
+  }, [requested, visible, sheet, root, trigger, ownedDisclosure, ownsDisclosure]);
   useLayoutEffect(() => () => {
     releasePress.current?.();
     const active = current.current;
@@ -737,16 +807,25 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     return () => report.current?.(false);
   }, [visible]);
   const focusKey = invocation?.admission ?? invocation?.meaning ?? invocation?.feedback;
-  // Ready focus precedes the removed failure notice's deferred return focus.
-  // Initial content stays hidden until its measured publication commits.
+  // The first publication owns focus; delayed readiness and retry retain its key.
+  // Content stays hidden until its measured publication commits.
   useLayoutEffect(() => {
     if (!visible || sheet || !current.current) return;
     const node = menu.ref.current;
     if (!node) return;
     const items = [...node.querySelectorAll<HTMLElement>(ITEMS)];
     const controls = items.length ? items : focusableElements(node);
-    (controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
+    const location = current.current.edge === null ? node.querySelector<HTMLElement>('[aria-current="location"]') : null;
+    (location ?? controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
   }, [visible, sheet, focusKey, menu.ref]);
+
+  // A touch invocation keeps panel focus; reveal its current place only once.
+  const revealed = useRef(false);
+  useLayoutEffect(() => {
+    if (revealed.current || !visible || !sheet || !current.current?.touch || current.current.edge !== null) return;
+    revealed.current = true;
+    sheetBody.current?.querySelector<HTMLElement>('[aria-current="location"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [visible, sheet]);
 
   const onSurfaceKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229 ||
@@ -814,7 +893,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     const ready = value.kind === "Immediate" ? value.content : value.state?.kind === "Ready" ? value.state.content : null;
     const later = value.kind === "Prepared" && value.state?.kind === "Ready" && value.trailing?.kind === "Ready" &&
       value.trailing.request === value.state.request ? value.trailing.options : [];
-    return [...ready?.sections.flatMap((section) => section.options) ?? [], ...later].find((entry) => entry.id === id);
+    return [...(value.kind === "Prepared" ? value.initial.sections.flatMap(section => section.options) : []), ...(ready?.sections.flatMap((section) => section.options) ?? []), ...later].find((entry) => entry.id === id);
   };
   const item = (option: MenuOption, index: number) => {
     if (option.kind === "choice") {
@@ -844,7 +923,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
           <div className={choiceField.segments}>
             {option.choices.map((entry) => <button key={entry.value} type="button" role="menuitemradio"
               aria-checked={entry.value === option.value} tabIndex={-1} data-action-id={`${option.id}.${entry.value}`}
-              className={choiceField.segment} aria-disabled={option.disabled || undefined} aria-describedby={reason}
+              className={cx(choiceField.segment, selection.surface, selection.target, entry.value === option.value && selection.selected)} aria-disabled={option.disabled || undefined} aria-describedby={reason}
               // Click and Space's native click choose and keep the menu open.
               onClick={(event) => {
                 event.stopPropagation();
@@ -856,7 +935,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 choose(entry.value, true);
               }}>
-              {entry.icon}
+              {entry.icon ? <span aria-hidden="true">{entry.icon}</span> : null}
               <span>{entry.label}</span>
             </button>)}
           </div>
@@ -904,6 +983,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       ...attributes,
       tabIndex: sheet ? 0 : -1,
       className: collection.row,
+      "aria-current": option.current,
       "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
@@ -913,14 +993,17 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
-      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">{option.icon}</span>
+      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">
+        {option.icon}
+        {option.current === "location" ? <span className={styles.currentMarker} /> : null}
+      </span>
       <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
         {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
       </span>
     </>;
     return <li role={sheet ? undefined : "none"} key={option.id}>
-      {option.kind === "link" ? <a {...common} href={option.disabled ? undefined : option.href}
+      {option.kind === "link" ? <a {...common} href={option.disabled ? undefined : option.href} target={option.target} rel={option.target === "_blank" ? "noopener noreferrer" : undefined}
         role={sheet ? "link" : "menuitem"} data-workspace-rich-target={option.onActivate ? "true" : undefined}>{body}</a> :
         <button {...common} type="button" role={sheet ? undefined : control.menuRole}
           aria-checked={sheet ? undefined : control.menuChecked} aria-pressed={sheet ? control.barPressed : undefined}
@@ -929,8 +1012,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   };
   let itemIndex = 0;
   const trailingFirst = sheet || (lockedSide ?? menu.side) === "above";
-  const body = content ? hasOptions ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
-    {content.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
+  const contentView = (value: MenuContent) => value.sections.some(section => section.options.length > 0) ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
+    {value.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
       {sectionIndex > 0 ? <div role="separator" className={styles.separator} /> : null}
       {section.label ? <div className={styles.sectionLabel}>{section.label}</div> : null}
       <ul className={styles.sections} role={sheet ? undefined : "group"} aria-label={section.label ?? undefined}>
@@ -940,37 +1023,60 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         </Fragment>)}
       </ul>
     </li>)}
-  </ul> : <p className={styles.menuStatus}>no actions available</p> : feedback ? <FeedbackNotice
-    content={feedback} announcement="None"
-    actions={[{ label: "retry", busy, onClick: () => { if (!busy) begin(current.current?.edge ?? "first", true); } }]}
-  /> : null;
-  const trailingView = trailingRegion && content && hasOptions ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
+  </ul> : <p className={styles.menuStatus}>no actions available</p>;
+  const retry = () => { if (!busy) begin(current.current?.edge ?? null, true); };
+  const retryActions: FeedbackActions | undefined = feedback === STALE_BUILD_FEEDBACK ? undefined : [{ label: "retry", busy, onClick: retry }];
+  const failureView = feedback && !hasInitial ? <FeedbackState content={feedback} announcement="None"
+    actions={retryActions} /> : null;
+  const body = content ? contentView(content) : failureView;
+  const trailingView = trailingRegion && content && hasOptions && (!hasInitial || delayedContent !== null && source.kind === "Prepared" && source.trailing !== undefined) ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
     {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailing?.kind === "Ready" && trailing.options.length > 0
       ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"} aria-label={trailing.label ?? undefined}>
+        {trailing.label ? <li role={sheet ? undefined : "none"} className={styles.sectionLabel}>{trailing.label}</li> : null}
         {trailing.options.map((option, index) => <Fragment key={option.id}>
           {option.separatorBefore && index > 0 ? <li role="separator" className={styles.separator} /> : null}
           {item(option, TRAILING_INDEX + index)}
         </Fragment>)}
       </ul>
-      : trailing?.kind === "Failed" ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"}>
-        <li role={sheet ? undefined : "none"}><button type="button" role={sheet ? undefined : "menuitem"} aria-disabled="true"
-          tabIndex={sheet ? 0 : -1} className={collection.row} data-action-availability="Blocked" onClick={event => event.preventDefault()}>
-          <span className={`${collection.content} ${styles.menuText}`}>{trailing.feedback.title}</span></button></li>
-      </ul>
-      : <p className={`${styles.menuStatus} ${styles.trailing}`}>{trailing?.kind === "Ready" ? "no other actions" : "loading more actions…"}</p>}
+      : trailing?.kind === "Ready" ? <p className={`${styles.menuStatus} ${styles.trailing}`}>no other actions</p> : null}
     {trailingFirst ? <div role="separator" className={styles.separator} /> : null}
   </div> : null;
-  const composed = trailingView ? <>
+  const delayedView = hasInitial ? <DelayedMenuRegion returnFocus={() => current.current?.visible
+    ? current.current.mobile ? modalLayer.current?.element ?? null : menu.ref.current : null}>
+    {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailingFirst ? trailingView : null}
-    <div role="none" data-menu-published="">{body}</div>
+    <div role="none" data-menu-prepared="" className={styles.preparedRegion}>
+      {delayedContent ? contentView(delayedContent) : null}
+    </div>
     {trailingFirst ? null : trailingView}
-  </> : body;
+    {trailingFirst ? <div role="separator" className={styles.separator} /> : null}
+  </DelayedMenuRegion> : trailingView;
+  const composed = <>
+    <FeedbackBusy pending={hasInitial && busy || trailing?.kind === "Loading" || trailing?.kind === "Failed" && trailing.pending} subject={session} />
+    {hasInitial && feedback ? <FeedbackFailure scope="Local" occurrence={feedbackOccurrence} content={feedback} announcement="Polite"
+      announcementOccurrence={feedback}
+      actions={retryActions} /> : null}
+    {trailing?.kind === "Failed" ? <FeedbackFailure scope="Local" occurrence={trailingOccurrence} content={trailing.feedback} announcement="Polite"
+      announcementOccurrence={trailing.feedback}
+      actions={trailing.retry ? [{ label: "retry", busy: trailing.pending, onClick: trailing.retry }] : undefined} /> : null}
+    {delayedView ? <>
+      {trailingFirst ? delayedView : null}
+      <div role="none" data-menu-published="">{body}</div>
+      {trailingFirst ? null : delayedView}
+    </> : body}
+  </>;
   return <>
-    {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
+    {candidate && !sheet && container ? createPortal(<div ref={bindMenu} id={menuId} data-collection-viewport=""
       className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasOptions ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
-      tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{composed}</div>, container) : null}
+      tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>
+      <FeedbackSurface bounds={feedbackBounds} interaction={layer} modal={modal} active={visible}
+        protectedTargets={() => trigger.current ? [trigger.current] : []} returnFocus={() => trigger.current}>
+        <div className={styles.menuContents} role={hasOptions ? "none" : undefined}>{composed}</div>
+        <span className={styles.recoverySlot} role={hasOptions ? "none" : undefined}><FeedbackRecoveryControl menu={hasOptions} /></span>
+      </FeedbackSurface>
+    </div>, container) : null}
     {sheet ? <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
@@ -984,7 +1090,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         if (current.current?.touch) return panel;
         if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...(panel.querySelector<HTMLElement>("[data-menu-published]") ?? panel).querySelectorAll<HTMLElement>("[data-menu-row]")];
-        const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
+        const location = current.current?.edge === null ? panel.querySelector<HTMLElement>('[aria-current="location"]') : null;
+        const edge = location ?? items[current.current?.edge === "last" ? items.length - 1 : 0];
         // A choice edge focuses its checked radio, the group's one native tab stop.
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
           ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;

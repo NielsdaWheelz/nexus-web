@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import { X } from "lucide-react";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
@@ -79,6 +80,7 @@ export default function MobileSheet({
       {(requestDismiss) => (
         <>
           <div
+            data-feedback-controls="true"
             className={handleLabel === undefined ? styles.header : `${styles.header} ${styles.handleHeader}`}
             onPointerDown={(event) => {
               if (!event.isPrimary || event.button !== 0 || dragStart.current) return;
@@ -127,6 +129,7 @@ export default function MobileSheet({
               }
             }}
           >
+            <FeedbackRecoveryControl className={styles.recovery} />
             {handleLabel === undefined ? <div className={styles.grabber} aria-hidden="true" /> : null}
             {handleLabel !== undefined ? (
               <button ref={handle} type="button" className={styles.handle} aria-label={handleLabel} onClick={requestDismiss}>

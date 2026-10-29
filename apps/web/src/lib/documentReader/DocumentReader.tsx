@@ -1,4 +1,6 @@
 "use client";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
+import type { ExcerptBody } from "@nexus/authored/excerpt";
 
 // The reader primitive. A host builds a source (and optionally a progress
 // port), gets a Reader from useDocumentReader, and renders DocumentReaderView
@@ -11,16 +13,17 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type ReactElement,
   type ReactNode,
 } from "react";
 import {
   FeedbackNotice,
+  FeedbackFailure,
+  FeedbackBusy,
+  useFeedbackOccurrence,
   FeedbackState,
   FeedbackStatus,
   type FeedbackAnnouncement,
-  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -40,7 +43,7 @@ import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import type { NavigationFailure } from "./navigator";
+import { navigationFailureContent } from "./navigationFeedback";
 
 export type {
   Reader,
@@ -98,8 +101,8 @@ export interface Inspection {
   readonly precision: "exact" | "approximate" | "page" | "time";
 }
 export type SelectionCandidate =
-  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string }
-  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" };
+  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
 export type SelectionEvent = SelectionCandidate & {
   readonly identity: string;
   readonly input: "pointer" | "keyboard" | "touch";
@@ -202,24 +205,6 @@ export function useReaderState<T>(
   return useSyncExternalStore(reader.subscribe, read, read);
 }
 
-/** Each reader font family's stack: the reader surface's face and its specimen. */
-export const READER_FONT_STACKS: Record<Schema<"ReaderProfileOut">["font_family"], string> = {
-  serif: "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif",
-  sans: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-};
-
-/** Typography as CSS custom properties, from the reader profile. */
-export function readerSurfaceStyle(
-  profile: Schema<"ReaderProfileOut">,
-): CSSProperties {
-  return {
-    "--reader-font-family": READER_FONT_STACKS[profile.font_family],
-    "--reader-font-size-px": `${profile.font_size_px}px`,
-    "--reader-line-height": String(profile.line_height),
-    "--reader-column-width-ch": `${profile.column_width_ch}ch`,
-  } as CSSProperties;
-}
-
 export default function DocumentReaderView(
   props: DocumentReaderViewProps,
 ): ReactElement {
@@ -227,6 +212,7 @@ export default function DocumentReaderView(
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
   const navigationFailure = useReaderState(runtime, (state) => state.navigation.failure);
+  const refreshOccurrence = useFeedbackOccurrence(publication.status === "ready" && publication.refreshFailure !== null, runtime);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
   const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
   const frame = useRef<HTMLDivElement>(null);
@@ -243,7 +229,7 @@ export default function DocumentReaderView(
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
         {props.before}
-        <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
+        <FeedbackBusy pending />
       </div>
     );
   } else if (publication.status === "failed") {
@@ -292,26 +278,26 @@ export default function DocumentReaderView(
       <div ref={feedback} className={styles.statusStack}>
         {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
         {navigationFailure ? (
-          <div className={`${styles.status} ${styles.feedback}`}>
-            <FeedbackNotice
+          <>
+            <FeedbackFailure scope="Local"
               content={navigationFailureContent(navigationFailure)}
               occurrence={navigationFailure}
               onDismiss={() => runtime.dismissNavigationFailure(navigationFailure)}
               announcement={announcement}
               returnFocus={returnFocus}
             />
-          </div>
+          </>
         ) : null}
         {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
-          <div className={`${styles.status} ${styles.feedback}`}>
-            <FeedbackNotice
+          <>
+            <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
               content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
               announcement={announcement}
               actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
               disclosure="Anchored"
               returnFocus={returnFocus}
             />
-          </div>
+          </>
         ) : null}
       </div>
       {body}
@@ -325,24 +311,6 @@ export default function DocumentReaderView(
       </div>
     </div>
   );
-}
-
-const NAVIGATION_TITLES: Record<NavigationFailure["operation"], string> = {
-  Open: "couldn’t open that passage",
-  Restore: "couldn’t restore your reading position",
-  Return: "couldn’t return to your held place",
-  Reflow: "couldn’t keep this passage in view",
-  Continue: "couldn’t set your reading position here",
-};
-
-/** Copy follows the failed intention; capture has its own explanation except on adoption. */
-function navigationFailureContent(failure: NavigationFailure): FeedbackContent {
-  return {
-    tone: "Warning",
-    title: failure.operation !== "Continue" && failure.reason === "CaptureUnavailable"
-      ? "couldn’t hold your current place"
-      : NAVIGATION_TITLES[failure.operation],
-  };
 }
 
 /** Where the held spot is: its section, its page, or how far through. */
@@ -396,9 +364,12 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       returnFocus()?.focus({ preventScroll: true });
   };
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
+  const saveOccurrence = useFeedbackOccurrence(!!ready?.saveFailed || !!ready?.retrying, reader);
+  const loadOccurrence = useFeedbackOccurrence(loadFailed !== null, reader);
+  const unavailableOccurrence = useFeedbackOccurrence(unavailable && !exploring, reader);
   if (!unresolved && !title && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
   return (
-    <div className={`${styles.status} ${styles.feedback}`} role="group" aria-label="reading position">
+    <div className={unresolved || title || handoff ? `${styles.status} ${styles.feedback}` : undefined} role="group" aria-label="reading position">
       {unresolved ? <>
         <FeedbackNotice content={{ tone: "Warning", title: "your saved reading position no longer matches this version." }}
           announcement={announcement} actions={[{ label: "read from here", onClick: reader.continueHere, busy: documentRefreshing || ready?.saving || navigation.positioning }]} />
@@ -433,7 +404,7 @@ function StatusStrip({ reader, announcement, returnFocus }: {
         </div>
       ) : null}
       {ready?.saveFailed ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={saveOccurrence}
           content={{ tone: "Warning", title: "reading position not synced", message: "your place is still held in this tab. retry to sync it." }}
           announcement={announcement}
           actions={[{ label: "retry", onClick: reader.retrySave, busy: ready.saving || ready.retrying }]}
@@ -442,10 +413,10 @@ function StatusStrip({ reader, announcement, returnFocus }: {
         />
       ) : null}
       {unavailable && !exploring ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
+        <FeedbackFailure scope="Local" occurrence={unavailableOccurrence} content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
       ) : null}
       {loadFailed ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={loadOccurrence}
           content={{
             tone: "Warning",
             title: loadFailed.recovery === "RetryPosition" ? "couldn’t load your reading position" : "reading position needs a document reload",

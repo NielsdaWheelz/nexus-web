@@ -23,6 +23,7 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
   browsePreview: () =>
     import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
+  xCapture: () => import("@/app/(authenticated)/x/captures/[id]/CapturePaneBody"),
   conversations: () =>
     import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
@@ -32,6 +33,7 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
+  highlight: () => import("@/app/(authenticated)/highlights/[id]/HighlightPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
@@ -110,7 +112,7 @@ function LazyPaneBody({ id }: { readonly id: LazyPaneRouteId }) {
   // retry's minimum fallback delay. No initial value: SSR must keep its ready body.
   const snapshot = useDeferredValue(current);
   if (current.kind === "Failed") throw current.error;
-  if (snapshot.kind === "Pending") return <PaneLoadingState label="Loading pane…" announcement="None" />;
+  if (snapshot.kind === "Pending") return <PaneLoadingState />;
   if (snapshot.kind === "Failed") throw snapshot.error;
   const Body = snapshot.Body;
   return <><Body /><ServerSeedsSpent /></>;
@@ -120,7 +122,7 @@ export function renderPane(id: PaneRouteId): ReactNode {
   if (id === "pageNew") id = "page";
   return (
     <Suspense
-      fallback={<PaneLoadingState label="Loading pane…" announcement="None" />}
+      fallback={<PaneLoadingState />}
     >
       <PaneBody key={id} id={id} />
     </Suspense>

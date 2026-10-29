@@ -105,22 +105,25 @@ def delete_processing_history_in_current_transaction(db: Session, *, media_id: U
 
 def events_of_import_sql(*, session_id_expr: str, media_id_expr: str) -> str:
     """One import's history as a relation (`event_table, id, storage_id, occurred_at, stage,
-    failure_code, payload, is_failure`): its session's events, its media's events and its
-    media's metadata operations (time = completion, else creation)."""
+    failure_code, payload, is_failure`): its session's events, viewer-owned web recovery
+    session events bound to its media, its media events and metadata operations (time =
+    completion, else creation). The caller binds ``viewer_id``."""
     # Metadata is a read projection; the queue hooks below never import its runtime.
     from nexus.services.metadata_operations import metadata_operations_sql
 
-    recorded = " UNION ALL ".join(
-        f"SELECT '{prefix}' AS event_table, '{prefix}:' || id::text AS id, id AS storage_id,"
-        f" occurred_at, stage, failure_code, payload,"
-        f" payload->>'kind' IN {FAILURE_KINDS!r} AS is_failure"
-        f" FROM {table} WHERE {column} = {expr}"
-        for prefix, table, column, expr in (
-            ("upload", "media_upload_events", "session_id", session_id_expr),
-            ("processing", "media_processing_events", "media_id", media_id_expr),
-        )
-    )
-    return f"""{recorded} UNION ALL
+    return f"""SELECT 'upload' AS event_table, 'upload:' || e.id::text AS id,
+            e.id AS storage_id, e.occurred_at, e.stage, e.failure_code, e.payload,
+            e.payload->>'kind' IN {FAILURE_KINDS!r} AS is_failure
+        FROM media_upload_events e JOIN media_upload_sessions s ON s.id = e.session_id
+        WHERE e.session_id = {session_id_expr} OR (
+            s.created_by_user_id = :viewer_id
+            AND s.input_origin->'capture_binding'->>'kind' = 'WebRecovery'
+            AND s.input_origin->'capture_binding'->'target'->>'media_id' = CAST({media_id_expr} AS text)
+        ) UNION ALL
+        SELECT 'processing', 'processing:' || id::text, id, occurred_at, stage,
+            failure_code, payload, payload->>'kind' IN {FAILURE_KINDS!r}
+        FROM media_processing_events WHERE media_id = {media_id_expr}
+        UNION ALL
         SELECT 'metadata', 'metadata:' || job_id::text, job_id, occurred_at, 'Metadata',
             failure_code, NULL::jsonb, effective_status = 'failed'
         FROM ({metadata_operations_sql()}) metadata_history WHERE media_id = {media_id_expr}"""

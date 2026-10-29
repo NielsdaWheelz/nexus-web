@@ -26,6 +26,7 @@ export type ChangeTopic =
   | "PodcastEpisodes"
   | "Podcasts"
   | "Chats"
+  | "ChatSelection"
   | "Notes"
   | "NoteBodies";
 
@@ -38,6 +39,7 @@ const counts: Record<ChangeTopic, number> = {
   Podcasts: 0,
   PodcastEpisodes: 0,
   Chats: 0,
+  ChatSelection: 0,
   Notes: 0,
   NoteBodies: 0,
 };

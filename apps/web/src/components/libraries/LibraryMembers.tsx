@@ -1,5 +1,7 @@
 "use client";
 
+import { ArrowRightLeft, UserMinus } from "lucide-react";
+
 // The Members tab for an admin of a named library: invite an existing user, the
 // people (role, remove, transfer ownership) and the pending invitations (revoke).
 // Every command is request, then reread: one command at a time, and after any
@@ -9,7 +11,7 @@
 // the tab renders its state wherever the inspector puts it.
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
@@ -56,7 +58,6 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [announcement, setAnnouncement] = useState("");
   const shown = library?.can_manage === true;
   const id = library?.id ?? "";
   const key = shown && open ? id : null;
@@ -79,13 +80,12 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     fetchPage: (cursor, limit, signal) => invitationsPage(id, cursor, limit, signal),
   });
   /** Runs one command; true when it landed. */
-  const run = async (title: string, done: string, command: () => Promise<void>) => {
+  const run = async (title: string, command: () => Promise<void>) => {
     if (busy) return false;
     setBusy(true);
-    setFeedback(null);
     try {
       await command();
-      setAnnouncement(done);
+      setFeedback(null);
       return true;
     } catch (error) {
       setFeedback(libraryErrorFeedback(error, title, fail));
@@ -96,8 +96,9 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
       setBusy(false);
     }
   };
+  const occurrence = useFeedbackOccurrence(feedback !== null, library?.id);
   if (!shown || library === null) return null;
-  return { library, members, invitations, busy, feedback, announcement, run };
+  return { library, members, invitations, busy, feedback, occurrence, run };
 }
 
 export type LibraryMembersState = NonNullable<ReturnType<typeof useLibraryMembers>>;
@@ -144,7 +145,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     };
     const sent = await run(
       "Invitation wasn’t sent",
-      "Invitation sent. They’ll see it when they next open Libraries; no email was sent.",
       () => invite(library.id, body),
     );
     if (sent) {
@@ -183,7 +183,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             if (await q.run()) close(q.key);
           }}
           disabled={busy}
-          aria-busy={busy}
+          reserveIcon aria-busy={busy}
         >
           {q.yes}
         </Button>
@@ -191,11 +191,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     </div>
   );
 
+  const memberOccurrence = useFeedbackOccurrence(members.failure !== null, members.requestedKey);
+  const invitationOccurrence = useFeedbackOccurrence(invitations.failure !== null, invitations.requestedKey);
   const footer = (list: ServerList<unknown>, what: string) => <>
     {list.status === "loading" ? (
-      <FeedbackStatus content={{ tone: "Neutral", title: `loading ${what}…` }} announcement={list.active ? "Polite" : "None"} />
+      <FeedbackBusy pending/>
     ) : list.failure && list.failure.op !== "More" ? (
-      <FeedbackNotice
+      <FeedbackFailure scope="Local" occurrence={list === members ? memberOccurrence : invitationOccurrence}
         content={
           libraryErrorFeedback(list.failure.error, `The ${what} couldn’t be loaded`, throwDefect) ?? {
             tone: "Danger",
@@ -216,7 +218,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         </h3>
         <p>Manage who can open {library.name}.</p>
       </div>
-      {state.feedback ? <FeedbackNotice content={state.feedback} announcement="Assertive" /> : null}
+      {state.feedback ? <FeedbackFailure scope="Local" occurrence={state.occurrence} content={state.feedback} announcement="Assertive" /> : null}
       <div className={styles.invite}>
         <PeopleSearch
           context={library.id}
@@ -277,7 +279,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     disabled={busy}
                     onChange={(event) => {
                       const next = event.target.value as LibraryRole;
-                      void run("Role wasn’t changed", `Role changed to ${next}.`, () =>
+                      void run("Role wasn’t changed", () =>
                         setMemberRole(library.id, member.user_id, next, member.role),
                       );
                     }}
@@ -294,7 +296,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       {
                         kind: "command",
                         id: `LibraryMember.Remove.${member.user_id}`,
-                        label: "Remove member…",
+                        label: "Remove member…", icon: <UserMinus size={16} aria-hidden="true" />,
                         tone: "danger",
                         restoreFocusOnClose: false,
                         onSelect: ask({
@@ -304,7 +306,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                           yesLabel: `Remove ${name}`,
                           cancelLabel: `Cancel removing ${name}`,
                           run: () =>
-                            run("Member wasn’t removed", "Member removed.", () =>
+                            run("Member wasn’t removed", () =>
                               removeMember(library.id, member.user_id),
                             ),
                         }),
@@ -314,7 +316,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                             {
                               kind: "command" as const,
                               id: `LibraryMember.Transfer.${member.user_id}`,
-                              label: "Transfer ownership…",
+                              label: "Transfer ownership…", icon: <ArrowRightLeft size={16} aria-hidden="true" />,
                               tone: "danger" as const,
                               restoreFocusOnClose: false,
                               onSelect: ask({
@@ -324,7 +326,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                                 yesLabel: `Transfer Library ownership to ${name}`,
                                 cancelLabel: `Cancel transferring Library ownership to ${name}`,
                                 run: () =>
-                                  run("Ownership wasn’t transferred", "Ownership transferred.", () =>
+                                  run("Ownership wasn’t transferred", () =>
                                     transferOwnership(library.id, member.user_id),
                                   ),
                               }),
@@ -375,7 +377,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       yesLabel: `Revoke invitation for ${name}`,
                       cancelLabel: `Cancel revoking invitation for ${name}`,
                       run: () =>
-                        run("Invitation wasn’t revoked", "Invitation revoked.", () =>
+                        run("Invitation wasn’t revoked", () =>
                           revokeInvitation(invitation.id),
                         ),
                     })
@@ -396,9 +398,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       </p>
       {memberFeedback.announcement}
       {invitationFeedback.announcement}
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {state.announcement}
-      </div>
     </section>
   );
 }

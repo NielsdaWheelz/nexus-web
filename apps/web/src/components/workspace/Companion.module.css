@@ -26,7 +26,7 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--edge-subtle);
   background: var(--surface-2);
 }
@@ -38,7 +38,10 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
 .body {
@@ -55,7 +58,10 @@
 }
 
 .tabs {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  justify-content: start;
   min-width: 0;
   gap: var(--space-1);
   overflow-x: auto;
@@ -66,44 +72,55 @@
   display: none;
 }
 
-.tab {
-  display: inline-flex;
+.tabs :global([role="tab"]) {
+  text-transform: lowercase;
+}
+
+.fullScreen {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-block-start: var(--viewport-safe-top);
+  padding-inline: var(--viewport-safe-left) var(--viewport-safe-right);
+}
+
+.fullScreenHeader {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-block-end: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.identity {
+  --control-min-size: 48px;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  padding: 4px 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  white-space: nowrap;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
 }
 
-.tabLabel {
+.identityTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: var(--space-2) 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
-  font-weight: 500;
-  letter-spacing: 0.01em;
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
-.tab:hover {
-  color: var(--accent-hover);
+.fullScreenHeader .tabs {
+  padding-inline: var(--space-3);
 }
 
-.tab[aria-selected="true"] {
-  background: var(--accent-muted);
-  color: var(--accent);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-@media (any-pointer: coarse) {
-  .tab,
-  .close {
-    min-width: var(--size-xl);
-    min-height: var(--size-xl);
-  }
+.fullScreenHeader :global([role="tab"]) {
+  min-block-size: 48px;
+  white-space: nowrap;
 }

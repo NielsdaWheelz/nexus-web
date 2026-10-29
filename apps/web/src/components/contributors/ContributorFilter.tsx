@@ -4,7 +4,7 @@
 // handle to `authors=`; applied chips read display names from a label cache.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
@@ -81,6 +81,7 @@ export default function ContributorFilter({
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
   const failure = live && search.failure?.op !== "More" ? search.failure : null;
+  const failureOccurrence = useFeedbackOccurrence(failure !== null, search.requestedKey);
   const emptyTitle = search.complete ? "no other authors match this search." : "no other matching authors found so far.";
   const readFeedback = useCollectionReadFeedback({
     list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null,
@@ -100,12 +101,12 @@ export default function ContributorFilter({
         />
       </label>
       {failure !== null ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load authors", requestId: failure.error.requestId }}
+        <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={{ tone: "Warning", title: "couldn’t load authors", requestId: failure.error.requestId }}
           announcement={search.active ? "Polite" : "None"}
           actions={[{ label: "try again", onClick: search.retry, busy: search.running !== null }]}
           returnFocus={() => inputRef.current} />
       ) : live && !search.current ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: "searching authors…" }} announcement={search.active ? "Polite" : "None"} />
+        <FeedbackBusy subject={q} pending/>
       ) : null}
       {suggestions.length > 0 ? (
         <div className={styles.suggestions}>
@@ -114,6 +115,7 @@ export default function ContributorFilter({
               key={item.handle}
               className={styles.suggestion}
               onClick={() => {
+                inputRef.current?.focus({ preventScroll: true });
                 onAdd(item);
                 setQuery("");
               }}

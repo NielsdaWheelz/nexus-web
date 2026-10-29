@@ -49,6 +49,33 @@ durable data, destructive operations, authorization, and cross-process behavior.
 record what was actually observed and any material limits. a documentation or
 test-deletion change does not require replaying unrelated product journeys.
 
+### quiet browser verification
+
+ordinary nexus browser verification is headless: no visible windows, desktop
+activation or focus changes, native mouse/keyboard input, clipboard access or
+attachment to a personal browser. this applies during startup, interaction,
+failure and teardown. browser-protocol input, rendering, screenshots and private
+failure artifacts remain available; never auto-open viewers.
+
+desktop access requires approval for the specific check unless that scope is
+already explicitly authorized. implementation or verification permission does
+not grant desktop access, nor does a failed headless check authorize a visible
+retry. headed/ui/inspector modes, recorders and viewers are explicit exceptions;
+their launch options grant no permission. reuse existing approval within its
+scope. this rule is nexus-local; change no global agent or browser configuration.
+
+when approval is needed, name the observation, tool, desktop effect, duration and
+specific headless limitation; link this rule and request only that check. continue
+independent work while waiting. distinguish verified behavior, failed checks and
+unrun observations. record unresolved gaps in `docs/issues/`; screenshots,
+extensions or zoom alone do not establish a need for desktop access.
+
+run playwright through `scripts/lab`, which already strips inherited `PWDEBUG`
+and npm aliases. ordinary drivers must not reintroduce inspector mode or use
+`--headed`, `--ui`, recorders or viewers. inspector mode can override explicit
+headless defaults; `DEBUG=pw:browser` is logging. retain the terminal reporter,
+failure screenshots and traces without opening them automatically.
+
 ## disposable verification
 
 `./scripts/lab -- COMMAND [ARG ...]` creates a fresh real local application,
@@ -69,6 +96,14 @@ including `down --rmi local`; current labs create no per-run images. unrelated
 images and other runs' resources neither fail cleanup nor become its targets.
 incomplete owned cleanup turns success into exit 125 and retains recovery inputs.
 
+`--database-backup FILE` restores a supplied postgres custom-format backup into
+the fresh owned database before migrations, api and workers start. restoration
+is transactional and stops on errors; the normal migration/bootstrap/teardown
+path remains authoritative. auth and object storage are separate owners: drivers
+must establish matching authorized accounts and retained source objects when
+their journey requires them. never overwrite a running lab database to simulate
+an upgrade.
+
 the required private `web_tls` context contains `ca_file` and
 `leaf_spki_sha256`. each run owns a fresh root and leaf; chromium trusts only
 that exact leaf through its scoped spki exception. this is separate from the
@@ -82,16 +117,45 @@ persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
 gecko bridge accepts that permission without applying it; the helper verifies the
 grant and real storage persistence before returning. on macos its app-data home
 also stays inside the owned temporary root. no global profile or trust changes.
+its optional profile proxy covers shared-worker traffic with end-to-end tls.
+`restart(offline)` closes the actual browser process and reopens its exact profile;
+callers use the returned context/page. offline mode is supplied at context creation,
+before restored pages or shared workers can reconnect.
+the already verified profile keeps its trust and persistence grant; restart never
+reseeds cookies. normal `close()` retires the profile after process shutdown.
+
+`context.setOffline()` is not a shared-worker transport-isolation guarantee.
+authored offline checks use stock firefox's profile-scoped network controls or
+android's `setWebReachable`. restart isolation must precede browser startup,
+including background catch-up. verify that the actual local source prefix remains
+unuploaded before and after restart, then uploads after reconnection.
+
+native firefox drivers import `open_native_firefox` from
+`python/scripts/lab_firefox.py`, using the checkout's `python` import root. it
+uses installed stock firefox, geckodriver and `certutil`, a caller-owned
+`state_dir` and private profile/app-data. it trusts the current lab ca with normal
+certificate validation, defaults to headless, grants exact-origin persistence and
+returns before application navigation. callers own actions, assertions and state
+lifetime; reopening the same state preserves application data. `command` sends
+session-relative webdriver requests with bounded transport deadlines; script
+timeouts remain separate.
+`process_id` identifies the owned browser. context exit establishes browser and
+geckodriver shutdown before state can be removed; retain recovery inputs if
+shutdown fails. `headless=False` requests visibility, never desktop approval.
 
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and
 returns ownership before `attachPage()` waits for its webview. the caller owns
-real login and input. `close()` disconnects, stops the owned package and removes
-only its created mappings and returns the exact released mappings.
+real login and input. `close()` stops the owned package and releases its transport
+and created mappings before a bounded cdp disconnect; it returns the exact released
+mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
+the old process and devtools forward before disconnecting, and refuses relaunch
+after a retirement error.
 `setWebReachable` gates the owned web reverse through a loopback tcp transport.
-going offline closes its pooled connections and rejects new ones before removing
-the reverse; storage remains independently reachable. tls and http/2 pass through
-unchanged. reconnect refuses occupied ports. `restart` preserves app data and
+going offline closes pooled connections and rejects new ones while retaining the
+reverse; storage remains independently reachable. tls and http/2 pass through
+unchanged. reconnect restores the same transport. cleanup stops the package before
+removing reverses; if stopping fails, it reports and retains those mappings. `restart` preserves app data and
 replaces only its own process/cdp forward.
 no companion driver or device-wide settings change.
 
@@ -297,7 +361,8 @@ lab and `make worker-*` share `python/scripts/worker_checkout_image.py`. the tag
 is `nexus-worker-checkout:<first 16 hex of sha256>` over framed file names and
 contents: `docker/Dockerfile.backend`, `docker/codex-requirements.toml`,
 `python/pyproject.toml`, `python/uv.lock`, `python/README.md`,
-`node/ingest/package.json` and `node/ingest/bun.lock` when present. missing and
+`node/codex/package.json`, `node/codex/bun.lock`, `node/ingest/package.json` and
+`node/ingest/bun.lock` when present. missing and
 empty lock files differ. application edits and the git sha do not change it.
 the `worker-checkout` target installs dependencies only: no application source,
 migrations, installed nexus project, source sha or runtime identity. checkout

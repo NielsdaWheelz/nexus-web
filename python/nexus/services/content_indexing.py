@@ -13,9 +13,9 @@ it, so a revision has at most one job. A job snapshots the source and publishes 
 while its revision is current and it still holds its queue claim (``fence``, taken at
 both ends of the job). Lock order: media row ``FOR NO KEY UPDATE`` (which admits the
 ``KEY SHARE`` a worker's history insert takes), then the state row, then queue rows.
-A note's index is rebuilt by ``note_indexing``. Canonical x posts own their
-passages once; threads own no chunks. A post index publish requests primary
-parents' existing summary jobs after all primary indexes are current.
+A note's index is rebuilt by ``authored_text_indexing``. Immutable x capture fragments own
+passages once; imported posts and threads own no chunks. Fragment publication
+requests the selected parents' existing summary jobs.
 
 A text source (an epub or web article, never an x composition) is indexed once, cut
 at its partition: every detected section start/end and accepted piece endpoint. Its
@@ -95,7 +95,7 @@ from nexus.services.epub_ingest import (
 )
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_parts import part_source_block_reason, require_part_source_creator
-from nexus.services.media_text_scope import text_scope_rows_sql
+from nexus.services.media_text_scope import text_scope_rows_sql, x_capture_scope_rows_sql
 from nexus.services.parser_temp import parser_attempt_directory, stream_storage_object_to_file
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.reader_navigation import read_media_navigation_proof
@@ -126,7 +126,7 @@ _LIVE = ("pending", "failed", "running")
 
 @dataclass(frozen=True)
 class IndexOwner:
-    kind: Literal["media", "note_block"]
+    kind: Literal["media", "note_block", "highlight", "fragment"]
     id: UUID
 
 
@@ -182,6 +182,14 @@ def _clear(db: Session, owner: IndexOwner) -> None:
     if owner.kind == "media":
         # The media unit's claims cite these spans through a non-cascading key.
         media_intelligence_lifecycle.clear_media_claims_for_reindex(db, media_id=owner.id)
+    elif owner.kind == "fragment":
+        db.execute(
+            text("""
+            DELETE FROM media_claims WHERE evidence_span_id IN (
+                SELECT id FROM evidence_spans WHERE owner_kind='fragment' AND owner_id=:id)
+        """),
+            {"id": owner.id},
+        )
     # Chat citations keep rendering from their snapshots; their reopen fails closed.
     db.execute(
         text(
@@ -208,7 +216,7 @@ def _clear(db: Session, owner: IndexOwner) -> None:
     )
     for table in ("content_chunks", "evidence_spans"):
         db.execute(text(f"DELETE FROM {table} WHERE owner_kind = :kind AND owner_id = :id"), params)
-    if owner.kind == "media":
+    if owner.kind in ("media", "fragment"):
         projection.withdraw(
             db, "content_chunk", [ref.id for ref in refs if ref.scheme == "content_chunk"]
         )
@@ -309,8 +317,10 @@ def publish_text_index(
     ).one()
     assert lexical_state.revision == state_revision
     assert lexical_state.lexical_revision == (state_revision if count else None)
-    if owner.kind == "media":
-        projection.publish_content_chunks(db, owner_id=owner.id, revision=state_revision)
+    if owner.kind in ("media", "fragment"):
+        projection.publish_content_chunks(
+            db, owner_id=owner.id, revision=state_revision, owner_kind=owner.kind
+        )
     if not count:
         _complete_media_effects(db, owner, count)
     return ContentIndexResult(owner, status, count)
@@ -318,16 +328,19 @@ def publish_text_index(
 
 def _complete_media_effects(db: Session, owner: IndexOwner, count: int) -> None:
     if owner.kind == "media":
-        if count or db.scalar(
-            text("SELECT 1 FROM x_thread_sources WHERE media_id = :id"), {"id": owner.id}
-        ):
+        if count:
             media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=owner.id)
-        for parent_id in db.scalars(
-            text("""SELECT thread_media_id FROM x_thread_posts
-                WHERE post_media_id = :id ORDER BY thread_media_id"""),
+    elif owner.kind == "fragment":
+        for media_id in db.scalars(
+            text(f"""
+            SELECT DISTINCT x.reading_media_id
+            FROM ({x_capture_scope_rows_sql("SELECT id AS media_id FROM media")}) x
+            WHERE x.fragment_id=:id ORDER BY x.reading_media_id
+        """),
             {"id": owner.id},
         ):
-            media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=parent_id)
+            media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=media_id)
+            db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def completed_content_index(
@@ -508,6 +521,8 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
     never enters; exact partition currency is the reconcile protocol's invariant above.
     Embedding identity (provider/model) stays with vector consumers.
     """
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
     return f"""
         SELECT chunk_reader.media_id AS reading_media_id, admitted_chunk.id AS chunk_id
         FROM ({reading_ids_sql}) chunk_reader
@@ -516,7 +531,7 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = admitted_chunk.owner_id
             AND (admitted_state.lexical_revision = admitted_state.revision) IS TRUE
-        UNION ALL
+        UNION
         SELECT bounded.reading_media_id, admitted_chunk.id
         FROM ({text_scope_rows_sql(reading_ids_sql)}) bounded
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
@@ -531,6 +546,15 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
             AND CAST(admitted_chunk.summary_locator ->> 'end_offset' AS integer)
                 <= bounded.end_offset
         WHERE bounded.reading_media_id <> bounded.source_media_id
+        UNION
+        SELECT x.reading_media_id, admitted_chunk.id
+        FROM ({x_capture_scope_rows_sql(reading_ids_sql)}) x
+        JOIN content_chunks admitted_chunk ON admitted_chunk.owner_kind='fragment'
+          AND admitted_chunk.owner_id=x.fragment_id
+        JOIN content_index_states admitted_state ON admitted_state.owner_kind='fragment'
+          AND admitted_state.owner_id=x.fragment_id
+          AND admitted_state.lexical_revision=admitted_state.revision
+        WHERE x.capture_id IN ({readable_x_capture_ids_sql()})
     """
 
 
@@ -545,31 +569,8 @@ def _media_blocks(
     params = {"media_id": media_id}
     if db.scalar(text("SELECT 1 FROM x_thread_sources WHERE media_id = :media_id"), params):
         return []
-    if db.scalar(text("SELECT 1 FROM x_post_sources WHERE media_id = :media_id"), params):
-        fragment_id, source = db.execute(
-            text("""
-            SELECT id, canonical_text FROM fragments WHERE media_id = :media_id
-        """),
-            params,
-        ).one()
-        return (
-            [
-                IndexableBlock(
-                    source,
-                    0,
-                    {
-                        "type": "web_text_offsets",
-                        "kind": "web_text",
-                        "fragment_id": str(fragment_id),
-                        "fragment_idx": 0,
-                        "start_offset": 0,
-                        "end_offset": len(source),
-                    },
-                )
-            ]
-            if source
-            else []
-        )
+    if db.scalar(text("SELECT 1 FROM x_post_media WHERE media_id = :media_id"), params):
+        return []
     if kind == "pdf":
         return _pdf_blocks(db, media_id, plain_text)
     if kind in _TRANSCRIPT_KINDS:
@@ -697,9 +698,7 @@ def _lock_media_and_summary_parents(db: Session, media_id: UUID) -> bool:
     """Source/index publication and summary publication share the parent media lock."""
     ids = db.scalars(
         text("""
-        SELECT id FROM media WHERE id = :id OR id IN (
-            SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = :id)
-        ORDER BY id FOR NO KEY UPDATE
+        SELECT id FROM media WHERE id = :id FOR NO KEY UPDATE
     """),
         {"id": media_id},
     ).all()

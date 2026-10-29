@@ -11,7 +11,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import {
-  FeedbackNotice,
+  FeedbackNotice, FeedbackFailure, useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -171,6 +171,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const works = useServerValue({ ...descriptors.works, visit: WORKS });
   const loaded = works.status === "ready" ? works.data.items : [];
   const worksFailure = works.status === "loading" ? null : works.error;
+  const worksOccurrence = useFeedbackOccurrence(worksFailure !== null, handle);
+  const detailOccurrence = useFeedbackOccurrence(detail.status === "failed" || detail.status === "ready" && detail.error !== null, handle);
   const detailFailure = detail.status === "ready" ? detail.error : null;
   const worksBusy = indexReading(works);
   const retryWorks = () => { void works.refetch().catch(() => {}); };
@@ -257,7 +259,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       : { kind: "Pending" };
   const queryControls = invalidView ? undefined : {
     kind: "Controls" as const,
-    label: "Filter works",
     focusInput,
     content: <PaneQueryToolbar
       inputRef={inputRef}
@@ -284,17 +285,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
         <ConnectionsSurface
           resourceRef={{ scheme: "contributor", id: contributorId }}
         />
-      ) : (
-        <FeedbackNotice
-          content={
-            detail.status === "failed"
-              ? { tone: "Neutral", title: "Connections unavailable" }
-              : { tone: "Info", title: "Loading connections…" }
-          }
-          announcement="None"
-        />
-      ),
-    [contributorId, detail.status],
+      ) : null,
+    [contributorId],
   );
   useResourceInspector({
     scheme: "contributor",
@@ -350,7 +342,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     return (
       <>
       {readFeedback.announcement}
-      <FeedbackNotice
+      <FeedbackFailure scope="Local" occurrence={detail.status === "failed" ? detailOccurrence : worksOccurrence}
         content={authorError(failure, "couldn’t load author")}
         announcement="Polite"
         actions={
@@ -368,7 +360,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       {readFeedback.announcement}
       <PaneSurface
         state={
-          <PaneLoadingState label="Loading author…" announcement="Polite" />
+          <PaneLoadingState />
         }
       />
       </>
@@ -379,7 +371,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   return (
     <>
       {readFeedback.announcement}
-      <PaneSurface state={detailFailure === null ? undefined : <FeedbackNotice
+      <PaneSurface state={detailFailure === null ? undefined : <FeedbackFailure scope="Local" occurrence={detailOccurrence}
         content={authorError(detailFailure, "couldn’t refresh author")}
         announcement="None" actions={[{ label: "try again", onClick: detail.refetch, busy: indexReading(detail) }]}
         returnFocus={() => inputRef.current} />}>
@@ -409,7 +401,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
               notice={<>
                 {works.status === "ready" &&
                 worksFailure !== null ? (
-                  <FeedbackNotice
+                  <FeedbackFailure scope="Local" occurrence={worksOccurrence}
                     content={authorError(worksFailure, "couldn’t refresh works")}
                     announcement="None"
                     actions={[{ label: "try again", onClick: retryWorks, busy: worksBusy }]}

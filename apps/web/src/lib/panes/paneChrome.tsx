@@ -41,7 +41,6 @@ export function truncatePaneSearchQuery(query: string): string {
 export type PaneQuery =
   | {
       readonly kind: "Controls";
-      readonly label: string;
       readonly content: ReactNode;
       readonly focusInput: () => boolean;
     }
@@ -88,9 +87,22 @@ export type PanePrimaryAction = Extract<
   { readonly kind: "link" | "command" }
 > & { readonly icon: ReactElement };
 
+/** Root writing stays mounted in chrome; feedback remains visible when folded. */
+export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
+  | { readonly kind: "Inline"; readonly content: ReactNode }
+  | {
+      readonly kind: "Expandable";
+      readonly control: ReactNode;
+      readonly content: ReactNode;
+      readonly regionId: string;
+      readonly expanded: boolean;
+    }
+);
+
 export interface PaneChrome {
   /** Display title of the currently shown body; never canonical or writing evidence. */
   readonly displayTitle?: string;
+  readonly editor?: PaneHeaderEditor;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly primaryAction?: PanePrimaryAction;

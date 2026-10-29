@@ -87,7 +87,7 @@ export class Sync {
       this.facts.pending = changes.length > 0;
       this.changed();
       if (!changes.length) return;
-      const { data } = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/changes", { replica_id: replica.replica_id, changes }, this.abort.signal);
+      const { data } = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/changes", { replica_id: replica.replica_id, format_revision: FORMAT_REVISION, changes }, this.abort.signal);
       if (this.retired) return;
       if (BigInt(data.accepted_command_seq) < BigInt(changes.at(-1)!.command_seq)) throw Object.assign(new Error("incomplete authored acknowledgement"), { status: 500 });
       this.facts.head = max(this.facts.head, data.head_cursor);

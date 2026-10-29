@@ -5,7 +5,7 @@
 // departure; this disclosure neither adopts a reading place nor writes progress.
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
 import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
@@ -26,8 +26,12 @@ import { readerDestinationHref } from "../hostedReader";
 import type { EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
-export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged }: {
+export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged, disclosureKey, open, onOpenChange, onLayout }: {
   readonly occurrenceKey: string;
+  readonly disclosureKey: string;
+  readonly open: boolean;
+  readonly onOpenChange: (key: string, open: boolean) => void;
+  readonly onLayout: (key: string, pending: boolean | null) => void;
   readonly reference: Schema<"ReaderEvidenceSourceReferenceOut">;
   readonly mediaId: string;
   readonly identity: string;
@@ -35,27 +39,28 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
   readonly reader: Reader;
   readonly onContentChanged: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const expanded = open || openRequest?.isCurrent() === true;
   const button = useRef<HTMLButtonElement>(null);
   const details = useRef<HTMLDivElement>(null);
   const id = useId();
   // The shell commits before the row acknowledges; retirement leaves it open.
-  useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
+  useLayoutEffect(() => { if (openRequest?.isCurrent() && !open) onOpenChange(disclosureKey, true); }, [disclosureKey, onOpenChange, open, openRequest]);
   const label = reference.location_label;
   return <>
     <Button ref={button} aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       data-resource-primary onClick={() => {
         if (expanded && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
-        setOpen(!expanded);
+        onOpenChange(disclosureKey, !expanded);
       }}>source text{label ? ` · ${label}` : ""}</Button>
     {expanded ? <div ref={details} id={id} className={styles.sourceTargets}>
-      <SourceNoteDetail occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
+      <SourceNoteDetail disclosureKey={disclosureKey} onLayout={onLayout} occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
     </div> : null}
   </>;
 }
 
-function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged }: {
+function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged, disclosureKey, onLayout }: {
+  readonly disclosureKey: string;
+  readonly onLayout: (key: string, pending: boolean | null) => void;
   readonly occurrenceKey: string;
   readonly referenceRef: string;
   readonly mediaId: string;
@@ -82,11 +87,17 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
       }
     },
   });
+  // A failed read is a terminal layout too; the evidence owner must not wait for success.
+  useLayoutEffect(() => {
+    onLayout(disclosureKey, detail.status === "loading");
+    return () => onLayout(disclosureKey, null);
+  }, [detail.status, disclosureKey, onLayout]);
   const announcement = paneActive ? "Polite" : "None";
-  if (detail.status === "loading") return <FeedbackStatus content={{ tone: "Neutral", title: "loading source text…" }} announcement={announcement} />;
-  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackNotice content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}
+  const occurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, identity);
+  if (detail.status === "loading") return <FeedbackBusy pending />;
+  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}
     actions={[{ label: "refresh reader items", onClick: onContentChanged }]} />;
-  if (detail.status === "failed") return <FeedbackNotice content={apiTransportFeedback(detail.error, "couldn’t load source text") ?? { tone: "Danger", title: "couldn’t load source text", requestId: detail.error.requestId }} announcement={announcement}
+  if (detail.status === "failed") return <FeedbackFailure scope="Local" occurrence={occurrence} content={apiTransportFeedback(detail.error, "couldn’t load source text") ?? { tone: "Danger", title: "couldn’t load source text", requestId: detail.error.requestId }} announcement={announcement}
     actions={[{ label: "retry", onClick: detail.refetch, busy: detail.retrying }]} />;
   if (!detail.data.targets.length) return <FeedbackNotice content={{ tone: "Warning", title: "source reference unresolved" }} announcement={announcement} />;
   return <ResourceOutlineList scope={`reader-source:${referenceRef}`} ariaLabel="source targets">{detail.data.targets.map((target) => {
@@ -127,7 +138,7 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
       const canonicalUnit = target.kind === "point" ? target.point.unit : target.unit;
       const current = reader.getState().document;
       const mounted = current.status === "ready" && current.doc.kind === "text" ? current.doc.units.find((candidate) =>
-        candidate.xPost?.owner?.media_id === mediaId && candidate.xPost.owner.fragment_id === canonicalUnit && `g${candidate.xPost.owner.generation}` === identity ||
+        candidate.xPost?.owner?.fragment_id === canonicalUnit && current.doc.identity === identity ||
         candidate.id === canonicalUnit && current.doc.identity === identity) : null;
       const mapped = mounted ? target.kind === "point" ? { ...target, point: { ...target.point, unit: mounted.id } } : { ...target, unit: mounted.id } : null;
       const portable = mapped !== null && current.status === "ready" ? sourceTarget(current.doc,mapped) : null;

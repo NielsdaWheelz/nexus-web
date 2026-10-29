@@ -8,14 +8,21 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.imports import (
+    BrowserCaptureOffer,
+    RepairSearchOffer,
+    RepairSourceOffer,
+    RetrySourceOffer,
+)
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
+from nexus.schemas.reader_excerpts import ExcerptView
+from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 BlockReason = Literal[
@@ -34,6 +41,12 @@ class _Action(_Out):
 class ResourceSourceTargetKey(_Out):
     kind: Literal["resource"] = "resource"
     resource_ref: str
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        validate_resource_field(self.resource_ref, self.field)
+        return self
 
 
 class ReaderQuoteSourceTargetKey(_Out):
@@ -65,6 +78,13 @@ class ResourceActivationOut(_Out):
     """Where opening a ref goes; ``href`` is null exactly when ``kind`` is none."""
 
     resource_ref: str
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        validate_resource_field(self.resource_ref, self.field)
+        return self
+
     kind: Literal["route", "external", "none"]
     href: str | None
     unavailable_reason: LocationUnavailableReason | None = None
@@ -93,9 +113,9 @@ class MediaResourceBodyOut(_Out):
 
 class PassageResourceBodyOut(_Out):
     kind: Literal["passage"] = "passage"
-    prefix: ExcerptOut | None
-    exact: ExcerptOut
-    suffix: ExcerptOut | None
+    excerpt: ExcerptView
+    capture_revision: str | None
+    reading_ref: str | None
     color: HighlightColor | None
 
 
@@ -116,7 +136,13 @@ class ImagesResourceBodyOut(_Out):
 class ReferenceResourceBodyOut(_Out):
     kind: Literal["reference"] = "reference"
     target_ref: str
+    field: ResourceField
     label: ExcerptOut | None
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        validate_resource_field(self.target_ref, self.field)
+        return self
 
 
 ResourceBodyOut = Annotated[
@@ -224,7 +250,7 @@ SimpleActionKind = Literal[
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
-    "HighlightNote",
+    "EditHighlightAnnotation",
     "EditHighlightBounds",
     "DeleteHighlight",
     "EditPageTitle",
@@ -262,7 +288,8 @@ class RecoveryAction(_Action):
 
     kind: Literal["Recovery"] = "Recovery"
     offer: Annotated[
-        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer, Field(discriminator="kind")
+        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer | BrowserCaptureOffer,
+        Field(discriminator="kind"),
     ]
 
 

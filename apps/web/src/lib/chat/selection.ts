@@ -4,16 +4,17 @@ import type { Catalog, Selection } from "./wire";
 // The exact generation a draft will run: chosen from the catalog, never
 // substituted. The browser owns no allowlist; the server rejects stale choices.
 
+export const MISSING_SELECTION = "this model or reasoning option is no longer offered. choose an available option.";
+
 export type Route = Schema<"CodexPersonalRoute"> | Schema<"ProviderApiRoute">;
 type CatalogRoute = Catalog["routes"][number];
 type CatalogModel = CatalogRoute["models"][number];
 export type ReasoningChoice = CatalogModel["reasoning"][number];
-/** The picker's value: only `Selected` is ever stored or sent. */
+/** A draft keeps incomplete intent; only `Selected` can be sent. */
 export type SelectionEditor =
-  | { kind: "Uninitialized" }
-  | { kind: "ModelRequired"; route: Route }
-  | { kind: "EffortRequired"; route: Route; model_key: string; mode: string | null }
-  | { kind: "Selected"; selection: Selection };
+  | { readonly kind: "Uninitialized" }
+  | { readonly kind: "DefaultUnavailable"; readonly route: Route; readonly model_key: string; readonly mode: string | null }
+  | { readonly kind: "Selected"; readonly selection: Selection; readonly route: Route | null };
 export type ModelVariant = {
   key: string;
   model: CatalogModel;
@@ -23,14 +24,6 @@ export type ModelVariant = {
 
 export const modelKeyOf = (selection: Selection) =>
   selection.route === "CodexPersonal" ? selection.model : selection.model_ref;
-
-export function sameSelection(a: Selection, b: Selection): boolean {
-  return (
-    a.route === b.route &&
-    modelKeyOf(a) === modelKeyOf(b) &&
-    a.reasoning === b.reasoning
-  );
-}
 
 export const routeKey = (route: Route) =>
   route.kind === "CodexPersonal"
@@ -44,7 +37,7 @@ export function catalogRoute(
   return catalog.routes.find((row) => routeKey(row.route) === routeKey(route)) ?? null;
 }
 
-export const variantKey = (modelKey: string, mode: string | null) =>
+const variantKey = (modelKey: string, mode: string | null) =>
   JSON.stringify([modelKey, mode]);
 
 /** Only actual model/mode combinations become options, in source order. */
@@ -59,9 +52,9 @@ export function modelVariants(row: CatalogRoute | null): ModelVariant[] {
   );
 }
 
-function lookup(catalog: Catalog, selection: Selection) {
+function lookup(catalog: Catalog, selection: Selection, route: Route | null = null) {
   const model = catalog.routes
-    .filter((row) => row.route.kind === selection.route)
+    .filter((row) => route ? routeKey(row.route) === routeKey(route) : row.route.kind === selection.route)
     .flatMap((row) => row.models.map((model) => ({ row, model })))
     .find(({ model }) => model.key === modelKeyOf(selection)) ?? null;
   const choice = model?.model.reasoning.find(
@@ -72,23 +65,24 @@ function lookup(catalog: Catalog, selection: Selection) {
 
 export function routeOf(catalog: Catalog, selection: Selection): Route | null {
   if (selection.route === "CodexPersonal")
-    return catalog.routes.find((row) => row.route.kind === "CodexPersonal")?.route ?? null;
-  return lookup(catalog, selection).row?.route ?? null;
+    return { kind: "CodexPersonal" };
+  return lookup(catalog, selection).row?.route ?? catalog.routes.find((row) =>
+    row.route.kind === selection.route && row.default_model.model_key === modelKeyOf(selection))?.route ?? null;
 }
 
-export function editorRoute(catalog: Catalog, value: SelectionEditor): Route | null {
-  if (value.kind === "Selected") return routeOf(catalog, value.selection);
+export function editorRoute(value: SelectionEditor): Route | null {
+  if (value.kind === "Selected") return value.route;
   return value.kind === "Uninitialized" ? null : value.route;
 }
 
 export function editorVariant(catalog: Catalog, value: SelectionEditor): ModelVariant | null {
-  const route = editorRoute(catalog, value);
+  const route = editorRoute(value);
   if (!route) return null;
-  if (value.kind === "EffortRequired")
+  if (value.kind === "DefaultUnavailable")
     return modelVariants(catalogRoute(catalog, route)).find((variant) =>
       variant.model.key === value.model_key && variant.mode === value.mode) ?? null;
   if (value.kind !== "Selected") return null;
-  const { choice } = lookup(catalog, value.selection);
+  const { choice } = lookup(catalog, value.selection, value.route);
   if (!choice) return null;
   return modelVariants(catalogRoute(catalog, route)).find((variant) =>
     variant.model.key === modelKeyOf(value.selection) && variant.mode === choice.mode) ?? null;
@@ -98,15 +92,16 @@ export function choiceUnavailable(choice: ReasoningChoice): string | null {
   return choice.chat_state.kind === "Selectable" ? null : choice.chat_state.explanation;
 }
 
-export function isSelectable(catalog: Catalog, selection: Selection): boolean {
-  return lookup(catalog, selection).choice?.chat_state.kind === "Selectable";
+export function isSelectable(catalog: Catalog, selection: Selection, route: Route | null = null): boolean {
+  return lookup(catalog, selection, route).choice?.chat_state.kind === "Selectable";
 }
 
 export function chooseRoute(catalog: Catalog, route: Route, current: SelectionEditor): SelectionEditor {
-  const previous = editorRoute(catalog, current);
-  return previous && routeKey(previous) === routeKey(route)
-    ? current
-    : { kind: "ModelRequired", route };
+  const previous = editorRoute(current);
+  if (current.kind === "Selected" && previous && routeKey(previous) === routeKey(route)) return current;
+  const row = catalogRoute(catalog, route);
+  if (!row) return current;
+  return chooseModel(catalog, route, row.default_model.model_key, row.default_model.mode, current);
 }
 
 export function chooseModel(
@@ -116,27 +111,15 @@ export function chooseModel(
   mode: string | null,
   current: SelectionEditor,
 ): SelectionEditor {
-  const previousRoute = editorRoute(catalog, current);
+  const previousRoute = editorRoute(current);
   const sameRoute = previousRoute !== null && routeKey(previousRoute) === routeKey(route);
   const previousVariant = editorVariant(catalog, current);
-  if (sameRoute && previousVariant?.key === variantKey(modelKey, mode)) return current;
-  const model = catalogRoute(catalog, route)?.models.find(
-    (row) => row.key === modelKey,
-  ) ?? null;
-  const choices = (model?.reasoning ?? []).filter(
-    (c) => c.mode === mode && c.chat_state.kind === "Selectable",
-  );
-  const previousEffort = sameRoute && current.kind === "Selected"
-    ? lookup(catalog, current.selection).choice?.effort ?? null
-    : null;
-  const fallback = model?.source_default_reasoning ?? null;
-  const choice =
-    choices.find((c) => previousEffort !== null && c.effort === previousEffort) ?? choices.find(
-      (c) => fallback != null && c.key === fallback,
-    ) ?? (choices.length === 1 ? choices[0] : null);
+  if (current.kind === "Selected" && sameRoute && previousVariant?.key === variantKey(modelKey, mode)) return current;
+  const choice = catalogRoute(catalog, route)?.models.find((row) => row.key === modelKey)
+    ?.reasoning.find((row) => row.mode === mode && row.chat_default);
   return choice
     ? chooseThinking(route, modelKey, choice.key)
-    : { kind: "EffortRequired", route, model_key: modelKey, mode };
+    : { kind: "DefaultUnavailable", route, model_key: modelKey, mode };
 }
 
 export function chooseThinking(
@@ -146,6 +129,7 @@ export function chooseThinking(
 ): Extract<SelectionEditor, { kind: "Selected" }> {
   return {
     kind: "Selected",
+    route,
     selection:
       route.kind === "CodexPersonal"
         ? { route: "CodexPersonal", model: modelKey, reasoning: reasoningKey }
@@ -162,25 +146,17 @@ export function unavailability(
   catalog: Catalog,
   draft: SelectionEditor,
 ): string | null {
-  const route = editorRoute(catalog, draft);
+  const route = editorRoute(draft);
   const row = route ? catalogRoute(catalog, route) : null;
   if (row && row.readiness.kind !== "Ready") return row.readiness.explanation;
-  if (draft.kind === "EffortRequired") {
+  if (draft.kind === "DefaultUnavailable") {
     if (!catalogRoute(catalog, draft.route)) return "provider unavailable. choose provider.";
     const variant = editorVariant(catalog, draft);
-    if (!variant) return "model unavailable. choose model.";
-    return variant.reasoning.some((choice) => choice.chat_state.kind === "Selectable")
-      ? "choose effort" : choiceUnavailable(variant.reasoning[0]);
+    return variant ? "default effort unavailable" : "default model unavailable";
   }
-  if (draft.kind !== "Selected")
-    return draft.kind !== "Uninitialized" && !catalogRoute(catalog, draft.route)
-      ? "provider unavailable. choose provider." : "choose model";
-  if (!routeOf(catalog, draft.selection)) return "provider unavailable. choose provider.";
-  const { model, choice } = lookup(catalog, draft.selection);
-  if (!model)
-    return "model unavailable. choose model.";
-  if (!choice)
-    return "effort unavailable. choose effort.";
+  if (draft.kind === "Uninitialized") return "loading models…";
+  const { model, choice } = lookup(catalog, draft.selection, route);
+  if (!model || !choice) return MISSING_SELECTION;
   const state = choice.chat_state;
   if (state.kind === "Selectable") return null;
   return state.explanation;

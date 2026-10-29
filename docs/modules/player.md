@@ -1,5 +1,9 @@
 # Player Module
 
+[recent resources](recent-history.md) consumes explicit accepted playback at the
+executing browser/native owner. natural advance and queue restoration do not
+establish use; history failures never become transport failures.
+
 ## Scope
 
 the player composes four independent owners:

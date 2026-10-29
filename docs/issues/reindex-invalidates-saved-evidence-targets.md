@@ -70,3 +70,17 @@ saved citation, retrieval and graph target survives or resolves correctly after
 normal reindex, while snapshot text and unrelated rows remain exact. any
 deliberately unavailable target has an explicit accepted contract and scoped
 evidence. qualify this with ordinary consumers, not only ready-index counts.
+
+2026-10-28 source qualification at `c0acf77c3`: the historical citation-reopen
+diagnosis above is not established for current code. saved citation projection
+now uses captured owner/quote/locator evidence
+(`python/nexus/services/resource_items/evidence.py:488-546` and
+`locations.py:898-905`), independently of the old span's continued existence.
+user passage links materialize durable anchors
+(`resource_graph/links.py:34-73`), subject to the separate
+[captured-context gap](passage-materialization-drops-captured-context.md).
+this was a source inspection, not a reindex rehearsal. `content_indexing.py:178-213`
+and `resource_graph/cleanup.py:77-85` still remove derived spans/chunks and uncited
+non-authored graph edges; generated-connection
+preservation and the final consumer qualification remain unresolved. assess
+those separately from the old claim that every replaced citation loses reopening.

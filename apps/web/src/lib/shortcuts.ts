@@ -77,15 +77,15 @@ export function outlineShortcuts(platform: PlatformKind): readonly {
   id: string; title: string; description: string; meta: string;
 }[] {
   return [
-    {id: "Outline.Select", title: "Select an item", description: "Escape from note text selects its item. Space selects a focused item. On touch screens, hold its bullet and choose select item.", meta: "Esc / Space"},
-    {id: "Outline.Browse", title: "Browse items", description: "From a selected item, arrows follow the visible outline, including expanded children. Shift extends the selection.", meta: "↑ / ↓"},
+    {id: "Outline.Select", title: "Select items", description: "Escape from note text selects its item. Shift-click another item's text selects the range. Space selects a focused item. On touch screens, hold its bullet and choose select item.", meta: "Esc / Space / Shift-click"},
+    {id: "Outline.Browse", title: "Browse items", description: "From selected items, up/down selects the next item in this outline, including expanded children. Shift extends or shrinks the range from its fixed anchor.", meta: "↑ / ↓"},
     {id: "Outline.Edit", title: "Edit the item's text", description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.", meta: "F2"},
-    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits note text at the caret or inserts after a selected item. On an empty nested note it outdents; an empty root note stays put.", meta: "Enter"},
+    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits note text at the caret. On an empty nested note it outdents; an empty root note stays put. Return does nothing while items are selected.", meta: "Enter"},
     {id: "Outline.LineBreak", title: "Insert a line break", description: "Starts another line within the same note. Return inside code also stays in the note.", meta: "Shift+Enter"},
-    {id: "Outline.Indent", title: "Indent or outdent", description: "Nests the item under the one above it, or moves it out a level. An unavailable move leaves the caret in place.", meta: "Tab / Shift+Tab"},
-    {id: "Outline.Move", title: "Move an item up or down", description: "Moves the item past its sibling. Editing keeps the caret at the same text position.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
+    {id: "Outline.Indent", title: "Indent or outdent", description: "Nests selected items under the preceding item, or moves them out one level. An unavailable change keeps the selection in place.", meta: "Tab / Shift+Tab"},
+    {id: "Outline.Move", title: "Move an item up or down", description: "Moves one item past its sibling. Editing keeps the caret at the same text position. Select one item to move.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
     {id: "Outline.History", title: "Undo or redo", description: "Undoes or redoes the last change in this outline, including writing and item changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
-    {id: "Outline.Delete", title: "Join or remove an item", description: "At a note boundary, joins an adjacent note. An empty note or selected item is unlinked; the resource remains. Undo restores the change.", meta: "Backspace / Delete"},
+    {id: "Outline.Delete", title: "Join or remove items", description: "At a note boundary, joins an adjacent note. An empty note or selected branches are removed from this outline; their resources and internal links remain. Undo restores the change.", meta: "Backspace / Delete"},
     {id: "Outline.Clear", title: "Clear item selection", description: "Clears the selection and returns focus to the bullet. Tab then moves on.", meta: "Esc"},
   ];
 }

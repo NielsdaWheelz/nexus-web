@@ -26,16 +26,42 @@ the shared [resource item](resource-references.md). consumers do not reconstruct
 targets from snippets or hrefs. browser responses have no score or second locator
 schema. wire schemas are generated; see [typed wire](../local-rules/typed-wire.md).
 
+## work bounds
+
+ranking, authorization and the amount of work are separate contracts. a response
+limit bounds displayed results, not candidate materialization, database memory
+or elapsed time. preserve the accepted owner grouping, best evidence and tie
+rules when changing execution. an early candidate cap that changes winners is
+a ranking decision, not a transparent optimization. hydrate selected results
+without broadening the ranked work or copying full bodies into candidate sets.
+
+the caller's original deadline covers provider transport, admission and database
+work. cancellation stops subsequent local requests and retries and joins cleanup;
+cleanup may finish after the response deadline. running synchronous provider work
+in a thread does not give it the awaiting task's cancellation lifetime. strict
+retrieval's remaining [embedding gap](../issues/tool-search-embedding-outlives-deadline.md)
+must retain its own declared fallback semantics when repaired.
+
+[production composition](../../deployment.md#capacity-contract) owns aggregate
+capacity. query qualification uses representative data and warmed connections;
+fewer simultaneous queries or longer timeouts alone do not establish bounded
+work. current gaps are [aggregate memory qualification](../issues/production-database-connection-budgets-implicit.md)
+and [background admission occupancy](../issues/production-search-admission-contention.md).
+slower background refresh is an explicit cost of foreground progress; useful
+background completion remains required.
+the [reliability spec](../search-reliability-spec.md) owns current qualification
+and release gates; historical timing verdicts retain their recorded scope.
+
 ## browser discovery
 
 `GET /search/preview` requires `phase=direct|lexical|hybrid`. each returns
-`{phase, resources, saved, passages, semantic_status}`: at most four directly matched
-primary resources, two saved occurrences, and two passages with distinct owners.
+`{phase, resources, saved, passages, semantic_status}`: at most eight directly matched
+primary resources, eight saved occurrences, and eight passages with distinct owners.
 direct searches literal canonical titles/names and contributor aliases across media,
 podcasts, contributors, pages, conversations, libraries and readings.
 it returns only primary resources: saved/passages are empty and children are null.
 unicode casefold matching orders exact, prefix, then substring; canonical display
-label and ref break ties. choose each ref's best witness before the four-result
+label and ref break ties. choose each ref's best witness before the eight-result
 limit; within a ref prefer its canonical name over an equally ranked alias.
 canonical eligibility owns visibility, scope and filters. selected hydration keeps
 canonical bodies and activation; evidence quotes the matched original literal with
@@ -140,8 +166,13 @@ independent source publication. operational qualification remains
 required by [release-search](../issues/release-search.md).
 
 the browser kinds are documents, notes, highlights, conversations, people, web,
-libraries, readings and saved passages. highlights does not implicitly
-add annotation notes. libraries/readings are global-only. web snapshots
+libraries, readings and saved passages. highlights includes quotation and private
+annotation evidence; notes excludes consumed annotations. the internal
+`highlight_annotation` family admits the owner and current liveness before
+matching, scoring or excerpt generation. quotation and annotation witnesses
+coalesce by highlight using the strongest eligible evidence and deterministic
+ties. `matched_field` and activation retain the winning field.
+ libraries/readings are global-only. web snapshots
 are external resources; links and citations are relationships, not extra results.
 
 scopes are all, media, library and conversation, not generic ancestry. each row
@@ -188,12 +219,28 @@ cancelled waiters never dispatch later. known but unconfirmed retirement fails
 closed for search in that process's owning scope until live repair; it cannot
 return a result or make that capacity available again.
 
-foreground waits for admission within its remaining deadline. background uses
-nonblocking admission and one 400 ms checkout/admission/computation deadline.
-qualification requires its complete read and joined retirement to hold the
-backend no longer than 500 ms. cleanup is joined outside the computation timer;
-an overrun fails instead of returning partial results or pretending cleanup
-finished. arbitrary cancellation and database errors are not owned budget expiry.
+ordinary sync and async checkout use the configured five-second default queue
+wait. control checkout keeps an independent 250-millisecond wait. physical role
+quotas and zero overflow retain their bounds. these waits are operational
+safeguards; they neither promise end-to-end latency nor extend a caller's
+transport allowance. exhausted checkout still returns `E_DATABASE_BUSY`.
+
+authored scope-input and scope-text hydration share one api-process permit,
+acquired before their repeatable-read session and held through inline cleanup.
+this family can occupy only one of the api's two ordinary sync connections.
+other ordinary work can use the remaining capacity; it has no exclusive chat
+priority. a competing hydration request may return `E_DATABASE_BUSY`; its client
+retains staged inputs and retries. authorization and revision fences are unchanged.
+
+foreground waits for admission within its remaining deadline. background refuses
+observed local physical-permit or database-gate contention without waiting.
+checkout, admission and the complete read share one finite absolute allowance;
+retirement remains joined. arbitrary cancellation and database errors are not
+owned budget expiry. the import-light `search/policy.py` owns the foreground and
+background computation allowances. confirmed retirement does not fail an otherwise
+live result because cleanup was slow; original expiry/cancellation still wins.
+[request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
+native and hosting qualification.
 
 provider waits, direct lookups, primary-only browse and branches without retrieval
 stay outside admission. embedding still consumes the original foreground operation
@@ -220,7 +267,7 @@ returning an outcome. loop and database-scope teardown follow those joined owner
 
 browser semantic retrieval has fixed windows of 200 chunks each for media and note
 owners, independent of page size/offset. scope, filters, active model and ready
-index eligibility apply before the budget. enrichment adds no embedding or ann
+index eligibility apply before the window limit. enrichment adds no embedding or semantic
 read. full resource search obtains note neighbours and lexical winners first.
 it omits chunk neighbours only when the known prefix covers the page and its
 continuation, and every selected media already has a lexical child or lacks
@@ -232,38 +279,29 @@ inside slots are filled by lexical winners. its primary and saved slots remain
 independent; note neighbours are obtained first. passage search retains both
 eligible windows. this saves work only
 when semantic chunks cannot change the response; it adds an eligibility read
-when selected media lack lexical evidence. cosine eligibility is unchanged; approximate recall is bounded, not global
-top-k. lexical evidence and semantic-only evidence have separate provenance.
+when selected media lack lexical evidence. lexical and semantic-only evidence
+retain separate provenance. exact neighbour windows do not make later family
+windows, grouping or application pagination exhaustive.
 
-`nearest_chunks` counts at most 25,001 current ready chunks in the caller's
-snapshot. publication owns one nonnull active-model vector per current chunk.
-through 25,000 eligible chunks, retrieval enumerates that complete id domain and
-scores original float vectors exactly, applying the caller's cosine distance
-bound before the result limit. an empty count returns no neighbours.
+`nearest_chunks` accepts snapshot-owned predicates over the `cc` chunk alias and
+returns one aligned window per domain. postgres applies complete authority,
+current lexical revision, ready state, provider, model, dimensions and original
+cosine threshold before ordering by distance and chunk id and limiting results.
+domains run sequentially in the same snapshot. no domain count, full uuid/vector
+export, ann cursor or candidate frontier controls membership. publication owns
+one active vector per current ready chunk. query-only `repr(float)` serialization
+does not change publication's serializer or stored vectors.
 
-larger domains use an ivfflat cursor ordered by raw vector distance for the active
-provider/model. each row carries the complete canonical eligibility predicate as
-an admission fact; only eligible rows enter the caller's window. there is no raw
-candidate cap. streaming ends when that window is full, the stream ends, or raw
-distance crosses the caller's radius; the cursor closes inside the same snapshot,
-including on cancellation. current probes are eight for distance bounds at most
-`1 - 0.80`, 128 for broader bounds. returned scores and bounds use the original
-float vectors; ann membership remains approximate. tightening a scope never
-substitutes a broader permission or publication predicate.
-
-`bounded_eligible_count` may be reused only as a proven subset lower bound for a
-superset under the same snapshot, model and audience. only a bound above 25,000
-can skip that superset's count. unknown or unsaturated counts retain ordinary
-routing; a subset count never proves a superset small or truncates its domain.
-strict search, oracle and suggestions use this common reader with their own
-windows and cosine policies. browser/strict use distance 0.5; suggestions retain
-similarity 0.80. the pinned postgres image includes interruptible ivfflat scan
-loops; dependency checks reject an unpatched package before release activation.
-that cancellation capability does not promise useful completion or recall.
+browser and strict search use distance 0.5; oracle retains its
+[full-range ranking](oracle.md). suggestions use the same calibrated model and
+canonical reading primitives, with their own reading-row selection boundary:
+each anchor/family selects 400 ordered reading/chunk rows before media grouping.
+see [suggestions](suggestions.md). tightening a scope never substitutes broader
+permission or publication facts.
 
 `semantic_status` is `not_requested` or `used`. an eligible hybrid failure or
 missing credential returns `E_EMBEDDING_PROVIDER_UNAVAILABLE` / 503 after scope
-authorization. lexical makes no provider/ann call. the browser retains its last
+authorization. lexical makes no embedding call. the browser retains its last
 successful phase and presents failed capabilities separately; the server never
 downgrades a hybrid response. malformed vectors and unexpected failures are defects.
 local search tools and pickers retain their lexical capability without that
@@ -278,33 +316,26 @@ cursor rejection requires explicit page-one refresh, never an automatic restart.
 browser routes own one native async operation/session, raced against disconnect
 and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
-deadline. cancellation joins cleanup. api caps are direct400/lexical1500/hybrid5000
-ms; client and bff whole-read caps are1000/2250/5750 ms, including body/decode and
-the complete prefix walk. search has no automatic retries. api timeout is
+deadline. cancellation joins cleanup. api and bff allowances cover one request
+through its complete body. the browser list resolves one allowance for the
+requested prefix walk. search disables the shared list owner's automatic
+transport retries and cursor repair; retry and rejected-cursor page-one refresh
+require explicit user action and start a new read allowance. later automatic
+picker continuations are separate reads. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
 cancellation; cleanup may outlast it, while the browser cap bounds waiting.
-provisional warm release p95 budgets are direct500/keyword2000/related4000 ms from
-the last keystroke through paint, including settling and transport. existing stricter
-failure cutoffs remain distinct. keyword delivery uses the earliest validated
-complete lexical or hybrid response reflected in results; record phase failures
-separately. hybrid success proves neither lexical-request latency nor reliability.
-preserve faster regression baselines and historical
-verdicts; extending a timeout is not a speed improvement. the provisional
-cold-session first-action bounds are keyword3000/related4000ms from the last
-keystroke through paint, after normal startup and with restoration traffic retained,
-without a cold-percentile or per-query empty-cache promise.
-publication overlap needs its own measured finite bound; recurrent pressure is
-ordinary use.
-
-occasional restored-pane related failure during publication is accepted when
-useful results remain visible, failure is explicit and retry remains available.
-this does not waive active after-input failure or change any deadline.
+release qualification must prove that finite allowances cover complete admitted
+background work and queued foreground work inside actual transport ceilings,
+with useful overlapping lexical and hybrid completion. retained earlier results
+and retry do not replace it. the synthetic held-gate check does not close native,
+job-publication or hosting qualification. operational watchdogs are safeguards,
+not latency acceptance targets.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the
 merge; pages contain at most 50 rows. the offset ceiling is 1,000. fixed-corpus
 lexical pages preserve the merged prefix. every request uses a fresh snapshot;
-corpus/index changes and approximate neighbour membership can change later pages.
+corpus/index changes can change later pages.
 no retained search session or total-result count is promised.
 
 ## launcher
@@ -315,34 +346,54 @@ remain content. canonical refs use the existing resolver instead of text search;
 pending enter waits, and unavailable refs keep their exact disabled target.
 full search treats commands and refs as content.
 
-find shows optional best match, commands & places, resources, saved passages and
-inside sources. home caps are 4/4/2/2; promotion consumes its home slot and unused
-capacity is not reassigned. explicit intent wins promotion, then an exact canonical
-local label, then an exact resource name. aliases admit suggestions but do not
-beat resource names. local fuzzy matching and frecency stay within navigation.
-query actions sit outside these budgets and never become automatic defaults.
+ordinary find composes at most eight principal results, then two continuations:
+`search all results` and `use this text…`. relevance precedes truncation: explicit
+intent, exact name, prefix/token, substring, literal evidence, fuzzy/synonym
+navigation, semantic evidence. each tier interleaves stream ordinals, then fixed
+navigation/local/resources/saved/passages order and key; unrelated scores never
+mix. canonical authority chooses duplicate ownership, not relevance. local
+writing wins over server projections; readable remote resources replace source
+stubs. source/passage deduplication preserves exact matching-passage activation.
 
-local rows appear immediately. independent preview delays are direct80/lexical120/
-hybrid160 ms; one codepoint uses direct immediately. hybrid requires two codepoints
-and an eligible semantic family. canonical refs bypass textual requests. newer
-complete phases replace lower phases until result interaction; afterward they are
-held without changing rows/evidence and expose explicit refresh. closed/hidden
-surfaces abort their reads; composition dispatches only committed input.
+launcher local acquisition uses the nonpaged authored `search_preview` query.
+it inspects bounded literal-name batches before truncation, reuses scoped/evidence
+admission, then fills remaining slots from lexical evidence. one host revision
+covers the compound read. local name matching uses trim and unicode lowercase;
+remote names retain unicode casefold. cross-source unicode equivalence is not
+promised. ordinary full-search/picker `search` retains its existing cursor.
+server preview excludes viewer-authored projections before its limits.
 
-canonical resource refs deduplicate pane and server rows; evidence enriches the
-row without changing its primary whole-resource target. filtered/scoped queries
-require server admission. unfiltered pane placeholders follow server resources.
-pane close actions stay in the merged row's menu. reconcile passages against the
-final surviving resources, including pinned rows, without refill requests.
+local capture candidates resolve their scoped frozen excerpt before consuming an
+admission slot. preview and held-ref admission use the same resolution as ordinary
+search, within the same host revision; unresolved captures consume no result slot.
+an unfiltered preview means the shared discovery-family vocabulary. unsupported
+source-stub families cannot consume its bounded slots and disappear in the renderer.
 
-text, filters, scope and intent form query identity. a new query resets selection.
-late results preserve the active key and primary target. deliberate selection
-freezes the visible prefix and its groups; pinned rows consume home capacity.
-capped omission does not mean deletion. explicit unavailability disables the same
-target; actual removal clears selection without choosing another automatic row.
-desktop enter follows selection, otherwise intent/full search. mobile keyboard
-submit always follows intent/full search; explicit row activation opens the row.
-composition/repeat guards, shift opening and the two-cell keyboard grid remain.
+independent preview delays are direct80/lexical120/hybrid160 ms; one codepoint
+uses direct immediately. hybrid requires two codepoints and an eligible semantic
+family. canonical refs bypass textual requests. retain proven direct names
+omitted by richer phases. duplicate refs choose one whole snapshot: strongest
+name tier, then later phase; explicit unavailability supersedes old evidence.
+never splice activation and evidence from different snapshots. closed/hidden
+surfaces abort reads; composition dispatches only committed input.
+
+account, raw text, filters, scope and intent form query identity. before interaction,
+results and defaults can improve. afterward the whole displayed list holds its
+identity, order, evidence and geometry until explicit refresh/new query/reopen.
+explicit pane operations retain their own committed successor/focus rules.
+capped omission does not mean deletion; the bounded local `search_admission` query distinguishes
+revoked query/scope/evidence admission from preview omission. unavailable/removal never selects a
+replacement action. desktop enter acts on the displayed eligible selection;
+mobile input retains parsed-intent/full-search submission. repeat/composition
+never activate; shift retains its captured opening disposition.
+
+command and lookup views are separate from retrieval. exact slash heads accept
+end-of-input or whitespace; unknown heads retain command lookup, never search.
+lookup shows all six commands without a default; deliberate selection starts an
+empty command. available explicit commands are initial defaults, including creation.
+command/lookup views omit incidental query continuations. the explicit literal-search
+escape retains outer-trimmed text without parsing filters. the full interaction
+and content contract belongs to [app navigation](app-navigation.md#nexus-content-grammar).
 
 ## browser presentation
 
@@ -359,8 +410,10 @@ generation on invalidation. adoption commits rows/phase/view/cursor together;
 interaction freezes phase adoption, while ordinary source invalidation remains
 active. visit restoration preserves accepted phase, generation, latch and prefix.
 explicit refresh replaces page one and resets selection/scroll after success;
-pending/failed refresh retains old rows. visible progress uses one polite atomic
-live region per surface with delayed reveal. source titles open the whole work; child excerpts open
+pending/failed refresh retains old rows. foreground waiting uses fixed controls;
+request failures use the scoped recovery surface described in
+[signals](visual-system.md#signals), without moving results or narrating refresh.
+source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening
 bullet. saved quotes retain source attribution and an independent source link.
 the launcher offers matching-passage activation in the resource's existing menu.
@@ -418,8 +471,9 @@ location guards and final `project.py` checks remain; browser visibility changes
 do not weaken citation eligibility.
 
 strict ranking retains s1: case-insensitive label tier, then lexical rank ahead
-of semantic-only cosine, with label/id ties. its offset cursor and ann policy
-are separate from browser discovery. live offset pages require a fixed ranked
+of semantic-only cosine, with label/id ties. its offset cursor and selection
+window are separate from browser discovery; both retain the 0.5 cosine cutoff.
+live offset pages require a fixed ranked
 candidate set for prefix stability. the picker retains one bounded pass, unique
 quote admission, source/exclusion handling and ten-row pages; it can end early
 when admission rejects most candidates. browse and contributor listing keep

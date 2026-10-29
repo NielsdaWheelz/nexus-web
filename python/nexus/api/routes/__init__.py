@@ -40,6 +40,7 @@ from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
+from nexus.api.routes.x_captures import router as x_captures_router
 
 
 def create_api_router() -> APIRouter:
@@ -64,6 +65,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(media_assets_router)
     api_router.include_router(media_uploads_router)
     api_router.include_router(media_sources_router)
+    api_router.include_router(x_captures_router)
     api_router.include_router(playback_router)
     api_router.include_router(consumption_router)
     api_router.include_router(podcast_transcripts_router)

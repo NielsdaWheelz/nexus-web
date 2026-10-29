@@ -74,12 +74,15 @@ def _eligible(owner: str) -> str:
               AND ce.embedding_vector IS NOT NULL AND ({owner})"""
 
 
-def has_media_vectors(db: Session, model: str, owners: Sequence[UUID]) -> bool:
-    """Same-snapshot superset witness for vector absence; it authorizes no owner."""
+def has_media_vectors(db: Session, model: str, owners: Sequence[UUID], viewer_id: UUID) -> bool:
+    """Current-vector absence is a visibility-independent superset witness only.
+
+    Consume it in the ranking's same caller RR snapshot. This does not authorize owners.
+    """
     logger.info("search.vector_readiness.begin", mono_ns=time.monotonic_ns())
     try:
         eligible = _eligible(
-            "cc.owner_kind = 'media' AND cc.id IN (SELECT chunk_id FROM ("
+            "cc.owner_kind IN ('media','fragment') AND cc.id IN (SELECT chunk_id FROM ("
             + reading_chunks_sql("SELECT unnest(CAST(:owners AS uuid[])) AS media_id")
             + ") reading)"
         )
@@ -91,6 +94,7 @@ def has_media_vectors(db: Session, model: str, owners: Sequence[UUID]) -> bool:
                     "model": model,
                     "dimensions": EMBEDDING_DIMENSIONS,
                     "owners": list(owners),
+                    "viewer_id": viewer_id,
                 },
             )
         )

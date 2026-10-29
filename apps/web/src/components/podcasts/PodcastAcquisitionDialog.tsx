@@ -6,8 +6,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import RadioGroup from "@/components/ui/RadioGroup";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { podcastPendingNotice } from "@/lib/podcasts/commands";
+import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { PodcastCommandFailure } from "@/lib/podcasts/commands";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -75,9 +75,10 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
       return { id, library, facts };
     },
   });
+  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
   if (source.status !== "ready") return <>
-    {source.status === "loading" ? <PaneLoadingState label="checking destination…" announcement="Polite" />
-      : <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load the destination.")} announcement="Polite" actions={[{ label: "retry loading", onClick: source.refetch }]} />}
+    {source.status === "loading" ? <PaneLoadingState />
+      : <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t load the destination.")} announcement="Polite" actions={[{ label: "retry loading", onClick: source.refetch }]} />}
     <div className={styles.actions}>
       <Button onClick={onClose}>cancel</Button>
     </div>
@@ -86,7 +87,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
   const destination = library.is_default ? "all" : libraryDisplayName(library);
   const subject = `admission:${JSON.stringify([id, target.kind, target.kind === "Canonical" ? target.podcast_id : target.target])}`;
   const pending = ctx.podcasts.pending(subject);
-  const notice = pending === null ? null : podcastPendingNotice(pending);
+  const commandFailure = <PodcastCommandFailure subject={subject} />;
   const following = "subscription" in facts && facts.subscription !== null;
   const operation = "import" in facts ? facts.import : null;
   const unfinished = operation !== null && (operation.state === "pending" || operation.state === "running" || operation.state === "failed");
@@ -106,6 +107,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
     if (!accepted && live.current) setRefused(true);
   };
   return <>
+    {commandFailure}
     {createdLibrary && (!dispatched || pending?.phase === "Refused") ? <p>library created; addition not started</p> : null}
     <p>destination: {destination}</p>
     {onModeChange !== null ? <RadioGroup label="add" value={mode} choices={[
@@ -116,12 +118,10 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
     {!facts.can_add_content ? <FeedbackNotice content={{ tone: "Warning", title: following ? "a library admin must change this subscription." : "only a library admin can add this podcast." }} announcement="Polite" /> : null}
     {following ? <FeedbackNotice content={{ tone: "Neutral", title: `already subscribed in ${destination}.` }} announcement="Polite" /> : null}
     {operation !== null ? <PodcastImportProgress operation={operation} title={title} /> : null}
-    {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh the destination.")} announcement="Polite" /> : null}
-    {pending?.phase === "Unknown" && notice !== null ? <FeedbackNotice content={notice} announcement="Polite"
-      actions={[{ label: "check change", onClick: () => { void ctx.podcasts.check(pending.key); } }, { label: "stop tracking", onClick: () => ctx.podcasts.review(pending.key) }]} />
-      : refused || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "review the current destination before choosing again.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review destination", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setRefused(false); } }] : undefined} /> : null}
+    {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t refresh the destination.")} announcement="Polite" /> : null}
+    {refused || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "review the current destination before choosing again.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review destination", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setRefused(false); } }] : undefined} /> : null}
     <div className={styles.actions}>
-      <Button emphasis="strong" aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || refused || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
+      <Button reserveIcon emphasis="strong" aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || refused || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
       {following && onUnsubscribe ? <Button disabled={sending || pending !== null || source.error !== null || source.refreshing || !facts.can_add_content} onClick={onUnsubscribe}>unsubscribe…</Button> : null}
       <Button onClick={onClose}>cancel</Button>
     </div>

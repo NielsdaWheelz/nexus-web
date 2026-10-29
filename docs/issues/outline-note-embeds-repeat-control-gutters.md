@@ -1,20 +1,23 @@
-# note embeds repeat control gutters
+# embedded note control density needs a presentation decision
 
-a note whose sole body is an object embed renders a second outline inside the
-note's already narrowed body cell. both the containing note and the embedded
-resource reserve opening, disclosure and action space.
+a note whose sole body is a resource embed has two semantic identities: the
+containing authored occurrence and the displayed resource. their controls need
+an explicit narrow-layout presentation without conflating graph authority.
 
-evidence: `apps/web/src/components/notes/OutlineEditor.tsx` supplies `RowText`
-inside `ResourceOutlineRow`'s body; `NoteEditor.tsx` owns the noneditable
-`object_embed` nodeview and portals `EmbeddedResource` into it. the note schema
-in `lib/notes/noteBody.ts` permits exactly one body block.
+the old density report named the removed `OutlineEditor`/`RowText` path. the
+merged flat path is `apps/web/src/components/notes/NoteEditor.tsx`:
+`resource_embed` portals `EmbeddedResource` into the containing field, where it
+renders a read-only `ResourceOutlineRow`. its controls remain distinct from the
+containing occurrence's chrome in `OutlineEditorRow.tsx`. the old width diagnosis
+has no separately identified current flat-editor measurement.
 
-impact: narrow embedded resources have less content width than ordinary disclosed
-children. moving the note editor between header and tail would remount it;
-spanning its existing cell beneath the controls adds an empty 24px/44px header.
-both are poor density fixes.
+functional embed ownership, detachment and history are qualified. that does not
+settle whether the remaining control density meets the intended restrained
+presentation. measure the current narrow layout before calling it a reproduced
+regression or changing its owners.
 
-resolved when an explicit single-row presentation combines the containing note's
-occurrence controls with the embedded resource's content/actions while preserving
-their identities, editing/selection, focus, history and native nodeview ownership.
-this requires an interaction decision, not negative margins or an overlay.
+resolve with an explicit presentation decision and a current narrow/touch
+witness preserving both identities, content/actions, selection, focus, history
+and the persistent native host. retain separate semantic owners even if their
+visual controls are consolidated; do not repair density by reparenting the host,
+negative margins or a guessed overlay.

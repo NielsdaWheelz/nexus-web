@@ -19,3 +19,7 @@ the initial-focus and admission order belong to the overlay kernel
 resolved when an immediate tap on "account" (and any other switchboard control)
 after the Nexus button keeps the sheet it opens, in repeated harness runs
 without the focus wait.
+
+2026-10-28: four immediate-account attempts passed on the header-icon candidate
+in run `20261028-172107-ee2d53d2c712`; unchanged-source baseline runs also passed.
+this did not reproduce the old intermittent failure and establishes no repair.

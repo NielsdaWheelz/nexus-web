@@ -1,15 +1,22 @@
 "use client";
 
 import {
+  useCallback,
+  useContext,
   useLayoutEffect,
+  useState,
   useRef,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { Scope, Session } from "@/components/feedback/scope";
 import { cx } from "@/lib/ui/cx";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
-import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
+import { OverlayContext, focusableElements, useOverlay, useOverlayContainer, type Layer } from "@/lib/ui/overlay";
 import { useAnchoredPosition, type AnchorState, type MeasuredAnchor } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
@@ -23,7 +30,9 @@ export default function FloatingActionSurface({
   open,
   id,
   disclosure = false,
+  feedback = false,
   disclosureTrigger,
+  interactionLayer,
   skipReturnFocus,
   placement,
   anchor,
@@ -34,6 +43,7 @@ export default function FloatingActionSurface({
   align = "center",
   flip = false,
   preservePointerSelection = false,
+  containsPoint,
   role,
   label,
   className,
@@ -44,8 +54,11 @@ export default function FloatingActionSurface({
   readonly id?: string;
   /** An explicitly opened details surface, in the anchor's logical tab order. */
   readonly disclosure?: boolean;
+  /** A source-owned feedback disclosure retains that source host. */
+  readonly feedback?: boolean;
   /** The actual control when the positioned anchor includes its whole row. */
   readonly disclosureTrigger?: HTMLElement | null;
+  readonly interactionLayer?: RefObject<Layer | null>;
   readonly skipReturnFocus?: () => boolean;
   readonly placement?: "above" | "below";
   readonly anchor: HTMLElement | DOMRect | MeasuredAnchor | null;
@@ -60,6 +73,8 @@ export default function FloatingActionSurface({
   readonly flip?: boolean;
   /** A press inside does not collapse the live text selection. */
   readonly preservePointerSelection?: boolean;
+  /** Treat a pointer press on a logical part of the surface as inside. */
+  readonly containsPoint?: (event: PointerEvent) => boolean;
   readonly role?: "group" | "toolbar" | "dialog";
   readonly label?: string;
   readonly className?: string;
@@ -69,6 +84,10 @@ export default function FloatingActionSurface({
   readonly children: ReactNode | ((placed: boolean, anchorState: AnchorState) => ReactNode);
 }) {
   const shown = open && anchor !== null;
+  const modal = useContext(OverlayContext);
+  const feedbackScope = useContext(Scope);
+  const session = useContext(Session);
+  const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
   const mobileViewport = useMobileViewport();
   const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
   const position = useAnchoredPosition<HTMLDivElement>(anchor, {
@@ -84,12 +103,14 @@ export default function FloatingActionSurface({
     subscribeContentClearance: mobileViewport.subscribeContentBottomClearance,
     subscribeAnchor,
   });
+  const bindSurface = useCallback((element: HTMLDivElement | null) => { position.ref.current = element; setSurfaceElement(element); }, [position.ref]);
   const container = useOverlayContainer();
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
   const focused = useRef(false);
-  useOverlay(shown, {
+  const { layer } = useOverlay(shown, {
     kind: "transient",
+    containsPoint,
     returnFocus: disclosure,
     skipReturnFocus,
     returnFocusTo: () => trigger ? { element: trigger, preventScroll: true } : null,
@@ -102,6 +123,19 @@ export default function FloatingActionSurface({
       trigger,
     ],
   });
+
+  useLayoutEffect(() => {
+    if (!shown || !feedback || !feedbackScope) return;
+    feedbackScope.disclosures.add(layer);
+    if (surfaceElement) feedbackScope.disclosureTargets.add(surfaceElement);
+    feedbackScope.changed();
+    return () => { feedbackScope.disclosures.delete(layer); if (surfaceElement) feedbackScope.disclosureTargets.delete(surfaceElement); feedbackScope.changed(); };
+  }, [shown, feedback, feedbackScope, layer, surfaceElement]);
+  useLayoutEffect(() => {
+    if (!interactionLayer) return;
+    interactionLayer.current = shown ? layer : null;
+    return () => { if (interactionLayer.current === layer) interactionLayer.current = null; };
+  }, [interactionLayer, layer, shown]);
 
   useLayoutEffect(() => {
     if (!shown) {
@@ -150,12 +184,13 @@ export default function FloatingActionSurface({
       : { "--floating-action-caret-inline-offset": `${position.caretX}px` };
   return createPortal(
     <div
-      ref={position.ref}
+      ref={bindSurface}
       id={id}
       tabIndex={disclosure ? -1 : undefined}
       data-disclosure={disclosure || undefined}
+      data-feedback-source={feedback ? feedbackScope?.host.bounds?.id || undefined : undefined}
       className={cx(styles.surface, className)}
-      style={{ ...position.style, ...caret } as CSSProperties}
+      style={{ ...position.style, ...caret, ...(feedback && !feedbackScope?.eligible() ? { visibility: "hidden" } : {}) } as CSSProperties}
       role={role}
       aria-label={label}
       data-placement={position.side}
@@ -167,7 +202,12 @@ export default function FloatingActionSurface({
         if (preservePointerSelection) event.preventDefault();
       }}
     >
-      {typeof children === "function" ? children(position.placed, position.anchorState) : children}
+      {feedback || session === null ? typeof children === "function" ? children(position.placed, position.anchorState) : children :
+        <FeedbackSurface bounds={surfaceElement} interaction={layer} modal={modal} active={shown}
+          protectedTargets={() => trigger ? [trigger] : []} returnFocus={() => trigger}>
+          {typeof children === "function" ? children(position.placed, position.anchorState) : children}
+          <FeedbackRecoveryControl />
+        </FeedbackSurface>}
     </div>,
     container,
   );

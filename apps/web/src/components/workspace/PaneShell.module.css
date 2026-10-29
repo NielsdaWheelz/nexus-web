@@ -22,6 +22,33 @@
   background: var(--surface-canvas);
 }
 
+.primaryResizeHandle {
+  position: relative;
+  flex: 0 0 var(--resize-handle-width);
+  width: var(--resize-handle-width);
+  background: var(--surface-2);
+}
+
+.primaryResizeHandle::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 50%;
+  width: var(--stroke-hairline);
+  background: var(--edge-subtle);
+  content: "";
+  pointer-events: none;
+}
+
+.primaryResizeHandle:hover::before,
+.primaryResizeHandle:focus-within::before {
+  background: var(--accent);
+}
+
+.primaryResizeHandle:focus-within {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
 .paneShell[data-maximized="true"] {
   width: 100%;
   flex: 1 1 0;
@@ -48,6 +75,10 @@
   min-height: 0;
 }
 
+.controlsFrame {
+  min-inline-size: 0;
+}
+
 .chrome {
   display: flex;
   flex-direction: column;
@@ -57,14 +88,6 @@
 }
 
 .controlRow {
-  --control-min-size: var(--pane-control-size);
-  --control-font-size: var(--pane-control-font-size);
-  --pane-control-size: max(var(--size-md), 2rem);
-  --pane-control-font-size: var(--text-sm);
-  --pane-control-block-size: auto;
-  --pane-control-line-height: 1.25;
-  --pane-control-padding-block: var(--space-1);
-  --pane-control-row-min-height: max(var(--size-lg), 2.5rem);
   flex: 0 0 auto;
   min-inline-size: 0;
   padding-block: var(--space-1);
@@ -80,13 +103,6 @@
 
 .queryControls {
   min-inline-size: 0;
-}
-
-@media (any-pointer: coarse) {
-  .controlRow {
-    --pane-control-size: max(var(--size-xl), 2.75rem);
-    --pane-control-font-size: var(--text-md);
-  }
 }
 
 .body {
@@ -212,13 +228,21 @@
 }
 
 /* The viewport places a stationary frame; only its painted controls retreat. */
-.paneShell[data-mobile="true"] .chromeFrame {
+.paneShell[data-mobile="true"] .controlsFrame {
   position: absolute;
   top: var(--mobile-controls-top);
   left: 0;
   right: 0;
   z-index: 11;
   pointer-events: none;
+}
+
+.paneShell[data-mobile="true"] .primaryPane {
+  container: none;
+}
+
+.paneShell[data-mobile="true"] .primaryContentRow {
+  container: primaryPane / inline-size;
 }
 
 .paneShell[data-mobile="true"] .chrome {

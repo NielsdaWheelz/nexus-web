@@ -25,10 +25,9 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.notes import page_title_sql
-from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.items import visible_refs
-from nexus.services.resource_items.locations import media_passages
+from nexus.services.resource_items.locations import captured_quote, media_passages
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -39,7 +38,7 @@ class ResolvedQuote:
     prefix: str
     suffix: str
     source_label: str | None
-    note: str | None
+    annotation: str | None
 
 
 @dataclass(frozen=True)
@@ -218,26 +217,85 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
             GROUP BY m.id, m.title
             """),
             {
-                "ids": list({passage.owner.id for passage in passages.values()}),
+                "ids": list(
+                    {
+                        passage.owner.id
+                        for passage in passages.values()
+                        if passage.owner.scheme == "media"
+                    }
+                ),
                 "viewer_id": viewer_id,
             },
         )
     }
-    notes = linked_note_blocks_for_highlights(db, viewer_id, ids)
+    fragments = load_resource_batch(
+        db,
+        [passage.owner for passage in passages.values() if passage.owner.scheme == "fragment"],
+        viewer_id=viewer_id,
+    )
+    from nexus.services.highlights import read_highlight_annotations
+
+    annotations = read_highlight_annotations(db, viewer_id=viewer_id, highlight_ids=ids)
+    retained = {
+        row.id: row
+        for row in db.execute(
+            text(
+                "SELECT id,exact,prefix,suffix FROM highlights WHERE id=ANY(:ids) AND user_id=:viewer AND authored_visible"
+            ),
+            {"ids": ids, "viewer": viewer_id},
+        )
+    }
+    from nexus.schemas.reader_excerpts import ExcerptBody
+    from nexus.services.reader_excerpts import text_parts
+
+    quoted = list(passages.items())
+    literal = dict(
+        zip(
+            (ref for ref, _ in quoted),
+            text_parts(
+                [
+                    ExcerptBody.model_validate(
+                        captured_quote(passage).excerpt.model_dump(
+                            exclude={"source_extent", "truncated_before", "truncated_after"}
+                        )
+                    )
+                    for _, passage in quoted
+                ]
+            ),
+            strict=True,
+        )
+    )
     out = []
     for id_ in ids:
         uri = f"highlight:{id_}"
         passage = passages.get(uri)
         if passage is None:
+            row = retained.get(id_)
+            if row is not None:
+                quote = ResolvedQuote(
+                    row.exact,
+                    row.prefix,
+                    row.suffix,
+                    None,
+                    annotations[id_].body_text if id_ in annotations else None,
+                )
+                out.append(ResolvedResource(uri, "Highlight", quote.exact, quote=quote))
             continue
-        owner = owners[passage.owner.id]
-        source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
+        if passage.owner.scheme == "fragment":
+            owner = fragments[passage.owner.uri]
+            if owner.missing:
+                continue
+            source = f"“{owner.title}”"
+        else:
+            owner = owners[passage.owner.id]
+            source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
+        parts = literal[uri]
         quote = ResolvedQuote(
-            exact=passage.quote.exact,
-            prefix=passage.quote.prefix or "",
-            suffix=passage.quote.suffix or "",
+            exact=parts.exact,
+            prefix=parts.prefix,
+            suffix=parts.suffix,
             source_label=source,
-            note="\n\n".join(b.body_text for _, b in notes.get(id_, []) if b.body_text) or None,
+            annotation=annotations[id_].body_text if id_ in annotations else None,
         )
         out.append(
             ResolvedResource(
@@ -254,7 +312,13 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
 def _owned_text(ref: ResourceRef, row: Any) -> ResolvedResource:
     """A span is labelled by its work and what tells it apart: its citation label, else
     its first line that is not the work's title. A chunk by its work and first line."""
-    title = str(row.title) if row.owner_kind == "media" else "Note"
+    title = (
+        str(row.title)
+        if row.owner_kind in {"media", "fragment"}
+        else "Annotation"
+        if row.owner_kind == "highlight"
+        else "Note"
+    )
     passage = row.citation_label
     if ref.scheme == "content_chunk":
         label = f"{title} - chunk: {_first_line(row.body)[:80]}"
@@ -270,8 +334,11 @@ def _owned_text(ref: ResourceRef, row: Any) -> ResolvedResource:
 def _owned_text_sql(table: str, body: str, citation_label: str) -> str:
     return f"""
         SELECT t.id, t.owner_kind, t.{body} AS body,
-            {citation_label} AS citation_label, m.title
+            {citation_label} AS citation_label,
+            COALESCE(m.title,c.payload #>> '{{content,author,name}}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
         FROM {table} t LEFT JOIN media m ON m.id = t.owner_id AND t.owner_kind = 'media'
+        LEFT JOIN fragments f ON f.id=t.owner_id AND t.owner_kind='fragment'
+        LEFT JOIN x_post_captures c ON c.id=f.x_post_capture_id
         WHERE t.id = ANY(:ids)
     """
 
@@ -355,8 +422,10 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _read(ref, _first_line(row.body)[:120] or "Note", row.body),
     ),
     "fragment": (
-        """SELECT t.id, t.idx, t.canonical_text AS body, m.title
-        FROM fragments t JOIN media m ON m.id = t.media_id
+        """SELECT t.id, t.idx, t.canonical_text AS body,
+            COALESCE(m.title,c.payload #>> '{content,author,name}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
+        FROM fragments t LEFT JOIN media m ON m.id = t.media_id
+        LEFT JOIN x_post_captures c ON c.id=t.x_post_capture_id
         WHERE t.id = ANY(:ids)""",
         lambda ref, row: _read(
             ref, f"{row.title} — fragment {row.idx + 1}", row.body, str(row.title)

@@ -46,7 +46,8 @@ export default defineConfig({
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         const cursor = JSON.stringify(["a0", ""]);
-        const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
+        type SingleQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
+        const samples: Record<SingleQuery["kind"], SingleQuery[]> = {
           outline_window: [
             {kind: "outline_window", ref: "", cursor: null, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
             {kind: "outline_window", ref: "", cursor, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
@@ -55,11 +56,11 @@ export default defineConfig({
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],
           resource: [{ kind: "resource", ref: "" }],
+          excerpt: [{kind:"excerpt",ref:"",reading_ref:null}],
           source_alias: [{ kind: "source_alias", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
-          annotation_notes: [{ kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
           adjacency: [null, cursor].map(cursor => ({ kind: "adjacency", ref: "", cursor, limit: 100 })),
@@ -102,6 +103,6 @@ self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key
 self.addEventListener("message",event=>{if(event.data?.op==="ready")event.waitUntil((async()=>{const cache=await caches.open(CACHE);const ready=(await Promise.all(ASSETS.map(asset=>cache.match(asset)))).every(Boolean);event.ports[0]?.postMessage({ready});})());});
 self.addEventListener("fetch",event=>{const request=event.request,url=new URL(request.url);if(request.method!=="GET"||url.origin!==self.location.origin)return;
 if(ASSETS.includes(url.pathname)){event.respondWith((async()=>{const cache=await caches.open(CACHE);return await cache.match(url.pathname)||fetch(request);})());return;}
-if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
+if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|highlights\/[^/]+$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
 event.respondWith((async()=>{const cached=await(await caches.open(CACHE)).match("/_nexus/app/index.html");if(!cached)throw Error("offline workspace shell incomplete");const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));const html=(await cached.text()).replaceAll("__NEXUS_NONCE__",nonce);return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Content-Security-Policy":POLICY.replaceAll("__NEXUS_NONCE__",nonce),"Cache-Control":"no-store"}});})());});`;
 }

@@ -59,6 +59,14 @@ wins. descendants, aliases and captured citation targets create no reader roots.
 current resource presentation is hydrated in batches; primary annotations carry
 their complete canonical rich body and body version.
 
+native evidence retains the current reading's scope. generic graph refs first
+resolve their source target in that reading; only a matching source with a
+located complete passage selects its bounded presentation and destination.
+other refs retain their own authorized current presentation. local placement
+is projected separately from the same source-target result; missing local
+geometry never makes a readable foreign resource unavailable. historical
+connection snapshots do not supply current root bodies.
+
 root placement uses only that resource's own current local extent. whole resources
 and other-source passages have no local extent; rejected local locations remain
 visible as unavailable. placed roots precede `unanchored connections`, whose
@@ -76,6 +84,17 @@ document. native quotes use the body when present, otherwise the label; an empty
 body stays empty. apparatus producers trim canonical text, so the bounded head
 retains this empty/nonempty distinction. source details apply the same quote
 contract; location reasons do not grant or deny insertion.
+
+the reader exposes four quiet native checkbox facets below its follow/all radio
+choice. controls reflow by companion width. counts are exact only when every
+contributing source is complete: highlights require local annotations and remote
+evidence; links require local links and remote evidence; citations and librarian
+links require remote evidence. a ready remote map is complete only at ready/empty,
+not partial. otherwise the count is a dash described as unavailable, incomplete
+or loading, in that precedence. partial totals never masquerade as exact zero or
+a lower bound. available content survives another source loading or failing.
+all types off offers show-all regardless of completeness; resetting focuses the
+first checkbox. incomplete empty inventories cannot claim global absence.
 
 facets/counts cover distinct direct roots only and can overlap. native highlights
 and source references add their own facets; ordinal citations add citations;

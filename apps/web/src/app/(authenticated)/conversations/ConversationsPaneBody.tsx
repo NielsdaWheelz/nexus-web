@@ -5,7 +5,7 @@ import { Plus } from "lucide-react";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogRead } from "@/lib/catalog/provider";
 import { catalogChats } from "@/lib/catalog/selectors";
@@ -61,7 +61,7 @@ const UNIT = { singular: "chat", plural: "chats" };
 const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
-  label: "new chat",
+  label: "New chat",
   icon: <Plus size={20} aria-hidden="true" />,
   href: "/conversations/new",
 };
@@ -89,6 +89,7 @@ export default function ConversationsPaneBody() {
   const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
   const indexItems = list.status === "ready" ? list.data.items : [];
   const failure = list.status === "loading" ? null : list.error;
+  const readOccurrence = useFeedbackOccurrence(failure !== null, "Conversations.Index");
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const nowMs = useChatAgeClock({ initialInstant: environment.currentInstant, items: indexItems, visible: usePaneIsVisible() });
@@ -159,7 +160,6 @@ export default function ConversationsPaneBody() {
   usePaneChrome({
     query: invalid ? undefined : {
       kind: "Controls",
-      label: "Filter chats",
       focusInput,
       content: (
         <PaneQueryToolbar
@@ -204,7 +204,7 @@ export default function ConversationsPaneBody() {
   }
   const failed = failure;
   const failureNotice = failed ? (
-    <FeedbackNotice
+    <FeedbackFailure scope="Local" occurrence={readOccurrence}
       content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
         title: list.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats",

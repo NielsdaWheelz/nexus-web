@@ -1,14 +1,39 @@
 # Workspace Module
 
+[recent resources](recent-history.md) consumes accepted resource navigation and
+the first visible foreground entry. layout, restoration of inactive panes and
+automatic successor focus do not establish use.
+
 ## Scope
 
 The workspace module owns authenticated pane composition. It decides which
 primary panes, desktop pane-strip controls, desktop canvas affordances,
-desktop-attached secondary panes, fixed primary chrome, and mobile secondary
-sheets are mounted.
+desktop-attached secondary panes, fixed primary chrome, and mobile companion
+tasks are mounted.
 
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
+
+## failure containment
+
+the composition owner places each failure boundary around the capability that
+can stop independently. its fallback depends only on infrastructure outside the
+failed subtree. root entry failure must not require a provider inside that
+boundary; an inner pane failure must leave the account's writing owner and
+unrelated panes alive. rendering a fallback never creates replacement domain
+state or clears a stored workspace to conceal its failure.
+
+workspace defects must use the existing bounded, sanitized client report with
+failure scope and build identity. retain the initiating exception; exclude authored
+content and expected stale-build responses. a visible notice alone is neither
+diagnosis nor evidence that reload is safe. [unsaved work](#unsaved-work) owns
+the loss decision.
+
+the current outer fallback obtains its loss guard above the boundary and accepts
+an explicit account identity when account context is unavailable. workspace
+defects still have a [reporting gap](../issues/workspace-defects-have-no-client-report.md).
+separate root and inner compositions cost explicit wiring; they keep failure
+presentation from depending on the capability it is supposed to contain.
 
 ## persisted workspace sessions
 
@@ -71,6 +96,10 @@ invalid paths resume; bare `/daily` resolves in the account zone; another path
 reuses its resource and material view or appends a pane. neither entry seeds
 authored text from the server. the authenticated group has one optional catch-all
 page (`[[...path]]/page.tsx`); unknown paths render unsupported panes.
+when several saved panes match an incoming address, entry prefers the saved
+active matching instance, then the first match. null incoming href resumes
+unchanged. the existing view replacement and visibility rules apply; this does
+not add restore metadata or alter live target activation.
 
 primary note, page and daily authoring code is a workspace prerequisite; its
 bodies still mount only for their actual pane. this increases initial workspace
@@ -143,12 +172,12 @@ Mobile mode:
 - renders no pane strip
 - renders no Companion column and ignores published reader layout
 - renders no pane resize handle
-- presents the Companion only as a sheet (the same `Companion`)
+- presents the companion as a full-screen task (the same `Companion`)
 - presents sequential adjacent pane switching through a primary-touch
   horizontal swipe on the Nexus control
-- presents random pane access, recently closed restoration, and minimized-pane
-  restore through the shell-mounted full-screen Nexus task and its dedicated
-  Manage Panes page
+- presents random pane access, complete-order rearrangement, recently closed
+  restoration and minimized-pane restore through inline disclosures in the
+  shell-mounted full-screen Nexus task
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -191,7 +220,7 @@ for deleted media shows the body's own not-found. editors that open a typed link
 ## workspace titles
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
-account-scoped projection for nexus, all panes, pane chrome and the document title.
+account-scoped projection for nexus, pane chrome and the document title.
 `useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
 status; `name` is the real name the title shows, or null while the title is a
 placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
@@ -296,7 +325,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, resourceActions, query, menuActions,
+`usePaneChrome` (`{ header, displayTitle, editor, navigation, primaryAction, resourceActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -334,7 +363,7 @@ readers keep their own document viewport and collection return anchors stay in
 `.routeContent`. canvas dragging begins only in the identity header's
 noninteractive region. controls and option labels never drag the canvas.
 
-`query` is `Controls {label, content, focusInput}` or `Find {find}`. absent means
+`query` is `Controls {content, focusInput}` or `Find {find}`. absent means
 unsupported; null find means a promised source is not ready. desktop renders
 every supported field, including a disabled resolving find field. mobile keeps
 ordinary collection/page/note controls visible; find starts collapsed, coexists
@@ -342,6 +371,13 @@ with navigation when opened, and closes by clearing text and collapsing. only
 active, visible mobile find holds chrome. navigation/find disclosure and empty
 focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
+
+pane control rows and companion/strip headers consume the shared compact density
+recipe. controls own their appearance; the shell owns layout and available space.
+companion tabs use the controlled `TabList` while retaining their guarded focus,
+column/sheet/full-screen relocation, stable panel ids and active-body lifetime. active-tab
+reveal observes the live header and selected tab across relocation and text zoom. pane chips
+retain intrinsic height, title ellipsis, action slots and drag ownership.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
 submit, followed by operation actions, inline options disclosure, native
@@ -399,7 +435,8 @@ neighbour/input. options escape collapses only options, preserving selections.
 desktop input escape clears nonempty text; mobile find escape clears/collapses.
 only the active capable pane consumes `Pane.Search` (cmd/ctrl+f); existing
 interaction overlays win and unsupported/resolving panes retain native find.
-menu commands focus the permanent desktop field. source identity is
+only mobile find publishes the query menu command, retaining its disclosure
+while open. permanent query fields have no duplicate menu entry. source identity is
 `paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
 
 `usePaneFilterRows` owns source-local text and honest complete/partial/failed
@@ -422,7 +459,7 @@ query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
 by icon-only results, optional return and mobile close. applied-option chips
 remain visible. options uses sliders; the results trigger and companion tab use
-the same text-search glyph. results opens its existing column/sheet and never
+the same text-search glyph. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
@@ -478,7 +515,11 @@ desktop and mobile headers order back/forward, identity, optional primary action
 the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls retain whole targets. at primary-pane widths up to 479px, media shortcuts
+controls retain whole targets. authored roots publish an inline title editor or
+an expandable note disclosure/content pair, with feedback outside hidden content.
+notes own editing and disclosure; chrome owns placement, typography and geometry.
+one semantic heading and pane name retain the untruncated display label. editing
+text never starts canvas dragging. at primary-pane widths up to 479px, media shortcuts
 move into the existing more menu; history, identity, more and inspector stay in
 one line. the fixed mobile header uses the same viewport threshold outside the
 desktop containment boundary. search/return, refresh, route share,
@@ -496,7 +537,11 @@ menu retains its existing commands, composition, refs and focus policy.
 every primary header starts with `--pane-chrome-header-height`; compact media
 commands move into overflow instead of adding an action row. desktop, coarse-pointer
 and mobile controls retain 32px, 44px and 48px shared-control targets. mobile
-headers can grow naturally. the viewport owner measures their stationary frames
+headers can grow naturally. expanded note content is capped at the lesser of
+20rem and half the available pane height, then scrolls internally. that budget
+excludes stationary controls and actual occlusions, not the expanding content;
+android's resized viewport does not subtract its keyboard again. the viewport
+owner measures stationary frames
 and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
 publishes their shown envelope in each content surface. routes reserve no extra
 media action row. hidden reader chrome follows the measured overlay contract,
@@ -625,9 +670,11 @@ the safe insets. accessibility navigation can discover it in either state.
 
 the phone's top bar is the active pane's own header: `PaneShell` renders
 `SurfaceHeader` in its `Mobile` projection (back, forward, identity, More,
-Inspector, after the recovery button) as the pane section's child before
-`.primaryPane`, whose inline-size container would otherwise become the fixed
-bar's containing block. nothing publishes chrome out of a pane, so the bar's
+Inspector, after the recovery button) at the same react tree position as desktop,
+inside `.chromeFrame` before the separate controls surface. on mobile,
+`.primaryContentRow` owns inline-size containment so the header remains fixed to
+the viewport. mobile header and controls retain separate stationary measurements;
+desktop measures the complete chrome frame. nothing publishes chrome out of a pane, so the bar's
 links, defects and focus stay with that pane; its More trigger, when present,
 carries `data-pane-chrome-focus`, and every chrome focus path falls back to the
 pane landmark without it.
@@ -636,18 +683,18 @@ pane landmark without it.
 
 A pane's Companion is its one secondary region: the durable Inspector tabs the
 body publishes (`usePaneCompanion`) plus Find's transient "Search results" tab.
-`Companion.tsx` renders the committed `Column` or `Sheet` presentation and owns
+`Companion.tsx` renders the committed `Column`, `Sheet` or `FullScreen` presentation and owns
 every companion command (`createCompanionController`, exposed to bodies as the runtime's
 `requestSecondarySurface(id | null)`, `closeSecondaryPane` and
-`toggleSecondaryPane`, the inspector action's toggle). the shared `MobileSheet`
-(`scrim="soft"`, `panelId` = the region id, which is also its interaction
-scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
-dismissal and the modal contract of the overlay stack (see
-`docs/modules/overlays.md`); `Companion` owns its header, tab state and bodies.
-the sheet renders that specialized header through `renderHeader`, outside the
-scrolling retained body. its x uses the frame's dismissal request.
+`toggleSecondaryPane`, the inspector action's toggle, and `revealPrimary`).
+the shared `MobileFullScreenTask` on mobile and `MobileSheet` on constrained
+desktop retain the overlay stack's modal, keyboard and back contracts. their
+region id is also their interaction scope. `Companion` owns identity, tabs and
+bodies; its close uses the frame's dismissal request. full-screen identity uses
+the resolved pane title even without a canonical resource ref; only the resource
+menu requires that ref. mobile keeps the direct inspector button at every width.
 
-`PaneShell` commits presentation: mobile uses a sheet; ordinary desktop uses a
+`PaneShell` commits presentation: mobile uses a full-screen task; ordinary desktop uses a
 column; maximized desktop uses a column only when measured content width fits
 320 px of primary content, the reader rail and the 280 px companion minimum.
 an unmeasured maximized width retains presentation. transitions wait while
@@ -655,15 +702,15 @@ another interaction owner is active, with a live ownership check before commit.
 the effective width limit is `max(280, min(720, contentWidth - 320 - railWidth))`
 when maximized, otherwise 720 px. rendering never overwrites the stored preference.
 
-one companion-owned portal host moves between empty column and sheet slots.
+one companion-owned portal host moves between column, sheet and full-screen slots.
 each destination supplies its actual `OverlayContext`, preserving local drafts
 and dom identity while closed child layers bind to their current parent on
 admission. presentation changes retain the active body; close and tab switches
-keep their existing body lifetimes. new sheet admission waits for other owners;
-an admitted sheet stays mounted under covering overlays and retires when closed
+keep their existing body lifetimes. new modal admission waits for other owners;
+an admitted modal stays mounted under covering overlays and retires when closed
 or its pane becomes effectively hidden.
 relocation captures focus before removing the old host/header. the column
-restores it after replacement refs commit; sheet admission prefers a live retained
+restores it after replacement refs commit; modal admission prefers a live retained
 body control before its selected-tab/close default. another owner or deliberate
 focus move takes precedence.
 
@@ -672,7 +719,7 @@ The durable state is the store's `pane.secondary`
 fact `secondaryPane` is that record unchanged. A command acts only on a surface
 the pane publishes now. Restoring a workspace and publishing a Companion never
 change durable visibility or the remembered tab: while the remembered tab is
-unpublished (reader Contents before its read lands) the column shows the
+unpublished (reader contents before its read lands) the companion shows the
 default without rewriting the tab, so a later publication brings it back. Only
 the Inspector toggle, a tab, ✕/Esc and explicit requests (a target's
 `secondaryActivation`, the media `g` keys, the imports selection) open, retarget
@@ -682,9 +729,10 @@ or close it. One width law serves both groups: `companionWidthPx` clamps
 Find's results are this pane's transient tab, never persisted
 (`results: {expanded, widthPx}` in the pane store): FindBar's Results shows
 them over whatever the durable Companion was doing; picking a durable tab ends
-them and selects that tab; ✕, closing Find or leaving the source end them and
-the durable presentation returns as it was. Their width is the durable
-record's when one exists. in sheet presentation a successful preview hides it while
+them and selects that tab. column result close, closing Find or leaving the source
+ends results and restores the durable presentation. explicit covering close/back
+ends results and collapses durable visibility, retaining query and remembered tab.
+their width is the durable record's when one exists. a covering result preview hides it while
 the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
@@ -693,9 +741,13 @@ A command opening the desktop column (the record turning visible or changing
 group, Find's results expanding) scrolls it into the canvas so its ✕ is
 reachable; a restore, a late publication or a breakpoint round trip never moves
 the canvas.
-Close labels are sentence case (`Close contents`, `Close search results`).
+covering close names the task: `close inspector`, or `close search results` when
+there is no durable companion. a fresh media companion prefers connections;
+tab order and remembered/explicit selection remain independent of that default.
+`revealPrimary({focusTarget})` closes a covering companion and transfers focus
+after modality releases; a column stays open and uses guarded source focus.
 column close returns focus to its opener or explicit destination, else pane
-chrome. a sheet initially focuses its selected tab and returns without scrolling
+chrome. a covering frame initially focuses its selected tab and returns without scrolling
 to a live external opener, else the pane landmark. promotion records the live
 external opener; demotion retains inspector focus on the same connected control,
 else its selected tab. a hidden pane and another interaction owner take precedence
@@ -782,11 +834,11 @@ body never publishes that surface, the host shows its publication's default.
 
 there is no pane-count cap or eviction. activation commits directly; close and
 minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
-only its own close/minimize/restore selection into its navigation baseline;
+only its own close selection into its navigation baseline;
 outside navigation or target activation dismisses it, including activation of
 the current target. root pane results expose direct close;
-held enter cannot close surviving rows repeatedly. manage panes remains
-available at every pane count.
+held enter cannot close surviving rows repeatedly. its inline open-pane list
+and recently-closed recovery work at every pane count.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -955,8 +1007,10 @@ restore navigation without discarded authored input.
 
 the same registry conditionally installs `beforeunload` and answers the android
 shell's cancelable `nexus:request-exit` event. false or suppressed confirmation
-refuses loss. browser-owned unload text and controls are intentional. memory can
-still be lost to process death or tab discard; nothing promises local durability.
+refuses loss. browser-owned unload text and controls are intentional. uncommitted
+memory-only input can still be lost to process death or tab discard. locally
+committed writing is durable and pending sync alone never requires a loss warning;
+[notes](notes.md#merge-and-local-commit) owns that acceptance boundary.
 canonical deletion is applied independently: refusal of later pane removal keeps
 unavailable changed input copyable and cannot undo the deletion.
 
@@ -1028,7 +1082,7 @@ adds less than one CSS pixel of safe clearance.
 
 The media reader publishes its geometry with `usePaneLayout`
 (`{intrinsicWidthPx, rail}`): a pdf's own width becomes the pane's minimum once
-known, and the Document Map overview rail (52px) sits beside the body and widens
+known, and the document map overview rail (32px, owned by `MapRail`) sits beside the body and widens
 the pane. Both are desktop-only; mobile ignores the publication. Clamping is
 render-only (`primaryWidth`): the stored `primaryWidthPx` is what the user chose
 (null follows the reader column), and is clamped only at render time to the 320px floor or a pdf
@@ -1042,8 +1096,16 @@ clearance and does not rise above Nexus, Player, or Android navigation; a
 higher-priority surface may cover it. Its range is the reader's visible band
 (`PositionRibbon` in `lib/documentReader/chrome/MapRail.tsx`).
 
-The reader Document Map overview rail is desktop-only. Its markers activate contextual targets; it contains no inspector
-or Document Map opener.
+the hosted document map is desktop-only. its visual lanes show sections and
+located evidence; full-width regions activate one destination or open a named
+chooser. reader destinations and evidence destinations keep their respective
+inspection and connections behaviour.
+
+ordinary desktop primary panes have a separate 8px resize boundary between the
+primary pane and companion. it consumes the existing `--resize-handle-width`
+without overlapping body or map controls. stored primary width and pdf minima
+still describe the body; map and separator are additional extent. maximized and
+mobile panes have no primary separator. the canvas measures the resulting extent.
 
 ## Pane History
 

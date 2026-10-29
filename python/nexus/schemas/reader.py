@@ -194,7 +194,8 @@ class XReaderResumeState(ReaderStateModel):
 
     kind: Literal["x"]
     occurrence_id: NonBlankStr
-    post_media_id: UUID
+    capture_id: UUID
+    fragment_id: UUID
     source_revision_id: NonBlankStr
     locations: ReaderTextLocations
     text: ReaderQuoteContext
@@ -245,7 +246,7 @@ class ReaderUnresolvedPosition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     previous_locator: ReaderResumeState
     from_generation: int = Field(ge=1)
-    post_media_id: UUID | None
+    capture_id: UUID | None
     source_revision_id: str | None
     excerpt: str
     offset_in_excerpt: int = Field(ge=0)

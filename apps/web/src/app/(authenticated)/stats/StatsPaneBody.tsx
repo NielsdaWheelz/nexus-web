@@ -1,5 +1,7 @@
 "use client";
 
+import { CircleMinus } from "lucide-react";
+
 // Personal history (J8): Stats or Year in Reading for a period, anchor and filters held in the
 // pane url (statsPeriod.ts). The figures are one server snapshot per read; sessions page by
 // keyset under their own snapshot. The pane rereads when it becomes active, when the page
@@ -9,12 +11,12 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import Chip from "@/components/ui/Chip";
+import AppliedFilters from "@/components/ui/AppliedFilters";
 import Input from "@/components/ui/Input";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
-import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackState, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
@@ -124,8 +126,6 @@ const shortDate = (instant: string) =>
   new Date(instant).toLocaleString(undefined, SHORT_DATE);
 const movement = (words: number, mediaMs: number) =>
   words > 0 ? `${count(words)} words` : duration(mediaMs);
-const periodName = (view: StatsView) =>
-  view.view === "year" ? (view.year ?? "This year") : PERIOD_LABEL[view.period];
 
 function duration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
@@ -481,12 +481,13 @@ function Sessions(props: {
           {
             kind: "command",
             id: "Consumption.Activity.ExcludeSession",
-            label: "Don’t count this session",
+            label: "Don’t count this session", icon: <CircleMinus size={16} aria-hidden="true" />,
             onSelect: () => props.onExclude(row),
           },
         ] }] } }}
       />
     );
+  const sessionsOccurrence = useFeedbackOccurrence(sessions.failure !== null, sessions.requestedKey);
   return (
     <Section
       title="Sessions"
@@ -509,7 +510,7 @@ function Sessions(props: {
           ])}
         />
         {sessions.failure !== null && sessions.failure.op !== "More" ? (
-          <FeedbackNotice
+          <FeedbackFailure scope="Local" occurrence={sessionsOccurrence}
             content={{ tone: "Warning", title: sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
             announcement="Polite"
             actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
@@ -702,6 +703,7 @@ function Controls(props: {
   chipLabel: (key: "media" | "contributor" | "device", value: string) => string;
 }) {
   const { view, update, onFilter } = props;
+  const modalitySelect = useRef<HTMLSelectElement>(null);
   const today = browserToday();
   const thisYear = Number(today.slice(0, 4));
   const year = view.year ?? thisYear;
@@ -715,11 +717,12 @@ function Controls(props: {
     : periodStart(shift(1), view.period) <= periodStart(today, view.period);
   const chips = (["media", "contributor", "device"] as const).flatMap((key) => {
     const value = view.filters[key];
-    return value ? [[key, value] as const] : [];
+    const category = key === "media" ? "Work" : key === "contributor" ? "Author" : "Device";
+    return value ? [{ id: key, label: `${category}: ${props.chipLabel(key, value)}` }] : [];
   });
   return (
     <div className={styles.controls}>
-      <div role="group" aria-label="Stats view">
+      <div className={styles.viewGroup} role="group" aria-label="Stats view">
         <Button
           aria-pressed={view.view === "stats"}
           onClick={() => update({ view: "stats", period: "day" })}
@@ -779,6 +782,7 @@ function Controls(props: {
       )}
       {yearView || view.period !== "all" ? (
         <div
+          className={styles.dateGroup}
           role="group"
           aria-label={yearView ? "Year navigation" : "Date navigation"}
         >
@@ -803,6 +807,7 @@ function Controls(props: {
           <SelectField
             layout="Stacked"
             label="Modality"
+            ref={modalitySelect}
             size="sm"
             value={view.filters.modality ?? ""}
             onChange={(event) => onFilter("modality", event.target.value)}
@@ -812,16 +817,10 @@ function Controls(props: {
               <option key={modality}>{modality}</option>
             ))}
           </SelectField>
-          {chips.map(([key, value]) => (
-            <Chip
-              key={key}
-              removable
-              removeLabel={`Clear ${key} filter`}
-              onRemove={() => onFilter(key, "")}
-            >
-              {props.chipLabel(key, value)}
-            </Chip>
-          ))}
+          <AppliedFilters chips={chips} returnFocusTo={modalitySelect} onRemove={(id) => {
+            // justify-type-assertion: AppliedFilters returns one of these chips' ids.
+            onFilter(chips.find((chip) => chip.id === id)!.id, "");
+          }} />
         </>
       )}
     </div>
@@ -968,7 +967,7 @@ export default function StatsPaneBody() {
               (row) => row.contributor_handle === value,
             )?.display_name
           : activity?.devices.find((row) => row.device_id === value)?.label;
-    return label ?? `Selected ${key === "media" ? "work" : key}`;
+    return label ?? value;
   };
   const totals = data?.activity.totals;
   const kept = data?.retained_artifacts;
@@ -979,6 +978,7 @@ export default function StatsPaneBody() {
     kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
     data.activity.active_exclusions.length === 0;
   const failure = stats.status === "failed" || stats.status === "ready" ? stats.error : null;
+  const readOccurrence = useFeedbackOccurrence(failure !== null);
   const retryActions = [{
     label: "retry statistics", onClick: stats.refetch,
     busy: stats.status === "failed" ? stats.retrying : stats.status === "ready" && stats.refreshing,
@@ -1002,17 +1002,15 @@ export default function StatsPaneBody() {
           chipLabel={chipLabel}
         />
       </header>
-      {updating && shown.current ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: `updating ${periodName(view)}`, message: `showing the prior ${periodName(shown.current.view)} result until it arrives.` }} announcement="Polite" />
-      ) : null}
+
       {initialLoading ? (
-        <div className={styles.loading} aria-label="Loading statistics" />
+        <FeedbackBusy subject={query} pending/>
       ) : null}
       {failure !== null && data === null ? (
         <FeedbackState content={{ tone: "Warning", title: "statistics couldn’t load", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
       {failure !== null && data !== null ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
+        <FeedbackFailure scope="Local" occurrence={readOccurrence} content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
       {totals?.recorded_active_ms === 0 ? (
         <FeedbackState content={data!.activity.applied_filters.length > 1

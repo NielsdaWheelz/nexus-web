@@ -32,8 +32,15 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,1,0)", account.toString(), UUID.randomUUID().toString())
-        check(replica().getString("account_id") == account.toString())
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,4,0)", account.toString(), UUID.randomUUID().toString())
+        try {
+            transaction {
+                val state = replica()
+                check(state.getString("account_id") == account.toString())
+                val format = state.getInt("format_revision")
+                check(format == 4) { "authored format mismatch; drain the previous client before reprovisioning this device" }
+            }
+        } catch (error: Throwable) { connection.close(); throw error }
     }
     private fun run(sql: String, vararg values: Any?) { rows(sql, *values) }
     private fun rows(sql: String, vararg values: Any?): JSONArray = connection.prepare(sql).use { readRows(it, *values) }
@@ -99,7 +106,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             for (index in 0 until matches.length()) {
                 val match = matches.getJSONObject(index)
                 val state = JSONObject(match.getString("state_json"))
-                if (table == "resources" && state.getString("kind") != "highlight") state.put(if (state.getString("kind") == "note") "body_state" else "title_state", match.getString("merge_bytes"))
+                if (table == "resources") state.put(if (state.getString("kind") == "page") "title_state" else "body_state", match.getString("merge_bytes"))
                 decoded.put(state)
             }
             result.put(table, decoded)
@@ -114,8 +121,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val resource = JSONObject(resources.getJSONObject(index).toString())
             val ref = resource.getString("ref")
             val projection = byRef[ref] ?: error("missing authored projection")
-            val encoded = when (resource.getString("kind")) { "note" -> resource.remove("body_state") as String; "page" -> resource.remove("title_state") as String; else -> null }
-            val bytes = encoded?.let { Base64.decode(it, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) }
+            val encoded = when (resource.getString("kind")) { "note", "highlight" -> resource.remove("body_state") as String; "page" -> resource.remove("title_state") as String; else -> error("unknown authored resource kind") }
+            val bytes = Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
             run("INSERT INTO resources(ref,kind,state_json,merge_bytes,projection_json,visible,body_text,title,local_date,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ref) DO UPDATE SET state_json=excluded.state_json,merge_bytes=excluded.merge_bytes,projection_json=excluded.projection_json,visible=excluded.visible,body_text=excluded.body_text,title=excluded.title,local_date=excluded.local_date,source_ref=excluded.source_ref", ref, resource.getString("kind"), resource.toString(), bytes, projection.toString(), projection.getBoolean("visible"), projection.opt("body_text"), projection.opt("title"), projection.opt("local_date"), projection.opt("source_ref"))
             run("DELETE FROM reference_index WHERE owner_ref=?", ref)
             val refs = projection.getJSONArray("embedded_refs")
@@ -132,7 +139,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until passages.length()) {
             val state = passages.getJSONObject(index)
             val key = JSONArray().put(state.getString("source_ref")).put(state.getString("normalized_exact")).put(state.getString("prefix")).put(state.getString("suffix"))
-            run("INSERT INTO passages VALUES(?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString())
+            val projection = byRef["passage_anchor:${state.getString("anchor_id")}"] ?: error("missing passage projection")
+            run("INSERT INTO passages VALUES(?,?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json,projection_json=excluded.projection_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString(), projection.toString())
         }
         val stubs = states.getJSONArray("source_stubs")
         for (index in 0 until stubs.length()) { val state = stubs.getJSONObject(index); run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", state.getString("source_ref"), state.toString()) }
@@ -299,7 +307,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         run(sql("search_match_create")); run(sql("search_match_clear"))
         return try {
             run(sql("search_match_insert"), text)
-            JSONObject().put("matched", rows(sql("search_match_read"), expression).length() > 0)
+            val found = rows(sql("search_match_read"), expression)
+            JSONObject().put("score", if (found.length() == 0) JSONObject.NULL else found.getJSONObject(0).getDouble("score"))
         } finally { run(sql("search_match_clear")) }
     }
     fun query(query: JSONObject, params: JSONArray, planKey: String): JSONObject {
@@ -326,7 +335,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 val link = JSONObject(record.getString("value_json"))
                 when (part) {
                     "raw" -> {
-                        output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL))
+                        output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
                         rawRefs.add(resource.getString("ref"))
                         children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
                     }
@@ -360,7 +369,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val output = JSONArray()
         for (index in 0 until records.length()) {
             val row = records.getJSONObject(index)
-            output.put(JSONObject().put("resource", JSONObject(row.getString("projection_json"))).put("link", if (row.isNull("link_json")) JSONObject.NULL else JSONObject(row.getString("link_json"))).put("match_text", JSONObject.NULL))
+            output.put(JSONObject().put("resource", JSONObject(row.getString("projection_json"))).put("link", if (row.isNull("link_json")) JSONObject.NULL else JSONObject(row.getString("link_json"))).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
         }
         var cursor: Any = JSONObject.NULL
         if (query.has("limit") && output.length() == minOf(100, query.getInt("limit")) && output.length() > 0) {

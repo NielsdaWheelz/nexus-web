@@ -92,7 +92,7 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options }
                 <AlternativePreview alternative={option} />
                 <span className={styles.faint}>
                   {ran
-                    ? `${[ran.display_at_dispatch.route_label, ran.display_at_dispatch.model_label, ran.selection.reasoning].join(" · ")} · `
+                    ? `${[ran.display_at_dispatch.route_label, ran.display_at_dispatch.model_label, ran.display_at_dispatch.reasoning_label].join(" · ")} · `
                     : ""}
                   {responseState(option.answer)}
                 </span>

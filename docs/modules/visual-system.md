@@ -12,12 +12,32 @@ how nexus says something happened. owners, under `apps/web/src/`:
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
 - `components/feedback/Feedback.tsx`: shared status, notice, surface and field
-  presentation; `workspaceSignals.ts` owns account-scoped workspace presentation.
+  presentation; `scope.ts` composes mounted contributions and `FeedbackLayer.tsx`
+  owns passive placement.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
 - `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
 - `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
+
+## design intent
+
+nexus is a private instrument for attention. the rooms, local typography,
+restrained ornament and editorial lists express that purpose. polish preserves
+the user's place, caret, selection and return path across transient surfaces;
+animation cannot substitute for that continuity. consequential save, failure and
+source-availability facts remain visible where the user can act on them.
+
+phone composition allocates space to prose while preserving distinct usable
+targets. fewer simultaneous commands and deliberate selection are the accepted
+cost of that space. shared controls own appearance and interaction primitives;
+domain owners retain command meaning, state and authority. source text, personal
+writing and generated interpretation keep distinguishable attribution.
+
+new contextual intelligence uses the existing [tool authority](model-tools.md)
+and [source evidence](resource-references.md). the
+[reading proposals](../scriptorium.md#contextual-reading-proposals) are ideas,
+not shipped capabilities or a requirement for another dashboard.
 
 ## rooms
 
@@ -64,51 +84,55 @@ uses the same restrained anatomy in every room.
 
 ## signals
 
-`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` share
-plain-text content and tone tokens. no severity label, coloured card or custom
-feature renderer. the complete fact and first action are visible; detail,
-diagnostics and a second action expand on demand. navigation remains a link.
-inline disclosure pushes layout; the reader opts into the existing anchored
-surface. native menu and player controls retain their widget semantics.
+ordinary selection, autosave, synchronization and successful refresh are silent.
+foreground waiting occupies an existing fixed control slot, with immediate
+`aria-busy` and a spinner after 200 ms. settlement removes the spinner immediately;
+subject changes cancel its timer. root reads use pane chrome, without skeletons or
+status paragraphs. otherwise invisible success uses a 1.2-second checkmark in the
+same slot; copy also announces `copied` once. `useCopyFeedback` owns that timing,
+never the caller's command or clipboard recovery.
 
-workspace feedback has one shared presentation: a passive transient card for one
-discrete action's outcome. it is not a list, inbox, undo inventory or history, and
-it owns no state. `FeedbackProvider` owns it above the document's writing owner and
-workspace failure containment; `transient.ts` holds the visible card and at most one
-pending outcome. durable failure and uncertainty stay with their command owner and
-render on the subject's own surface (its dialog, row, menu action or pane) with
-`FeedbackNotice`/`FeedbackStatus` and their recovery actions; the onset of such a
-failure may also report once through `receipt`. ordinary success is not announced:
-the resulting state speaks. the account's sync status is the account menu's first
-row, never a pane header.
+`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` retain real
+task facts, empty/unavailable content, fatal entry failure and field validation.
+recoverable operational failures use `FeedbackFailure`: content, at most two real
+actions and an owner-supplied incident identity. retry preserves the incident and
+its mounted controls. dismissal acknowledges presentation only; it never discards
+a command, draft, uncertainty or loss guard.
 
-`receipt(content, action?)` takes full content and at most one action. an actionless
-card lasts five visible seconds, one with an action eight. clocks start after
-eligible placement, use monotonic time and pause while hovered, focused, pressed or
-hidden. a newer outcome replaces the visible one and any waiting one. a card larger
-than its area scrolls inside it; only a missing area retires it. a non-success outcome that cannot show yet (hidden tab, open
-menu/picker/modal, phone text entry, held card), or that one of those blockers
-displaces, waits as the single pending outcome and shows when the workspace is
-unblocked; a success that cannot show is skipped. `receipt` returns a retraction:
-an owner withdraws its report, waiting or shown, once that state retries or resolves,
-so a deferred card never shows stale. a returning card does not announce again. activating the
-card's action closes it; the action's owner reports what follows. `commandKey` on
-any action names its exact command, so a held control never silently changes
-meaning.
+`FeedbackScope` composes mounted local contributors, with token-checked cleanup
+and occurrence deduplication. the provider has one authored-account projection;
+domain commands remain in their existing owners. weak acknowledgement and
+last-published speech metadata survive host relocation without retaining command
+payloads or failure history. a deliberate retry outcome may announce once with a
+new speech token. rerenders, background retries and relocation remain silent.
 
-`WorkspaceFeedback.tsx` owns passive placement: desktop upper-right inside the
-active pane content/workspace/visual-viewport intersection; phone below the
-stationary header/control endpoints at `--mobile-feedback-top`. it never registers
-as chrome or an interaction-owning overlay. the card is bounded by that area and
-scrolls within it; with no area it retires. it uses shared surface, edge, shadow, radius and
-control tokens, with no severity ornament or countdown. it sits above chrome and
-below popovers. escape closes only from within the card.
+one passive `FeedbackLayer` belongs to each real pane, modal, picker or standalone
+surface. modal portals inherit the actual overlay context. only the existing
+topmost interaction owner is eligible; without one, the active pane or standalone
+surface is eligible. inactive scopes retain contributions without displaying or
+speaking. source-owned feedback disclosures retain their source's eligibility;
+a newer unrelated interaction wins.
 
-short facts use separate live regions with semantic occurrence identity; identical
-deliberate events announce once each. controls never enter live regions. unrelated
-interaction owners suppress peripheral speech. local `FeedbackScope` continues to
-supply pane focus destinations and inactive-pane silence. all rooms, forced colours,
-reduced motion and coarse targets retain the same contracts.
+cards stack in that single layer, bounded by the host and visual viewport. the
+preferred placement protects whole focused editables, controls and modal control
+regions. inability to fit minimizes to a permanently reserved recovery slot;
+there is no corner search, forced scroll, chrome reveal or caret tracking. explicit
+recovery opens the existing anchored surface. feedback's own controls and
+disclosures do not obstruct themselves; an engaged card stays bounded and
+scrollable as space shrinks. appearance never takes focus. withdrawal may restore
+only removed owned focus, when no surviving control has acquired it and the host
+remains eligible.
+
+`receipt(content, action?)` remains disposable, never the sole recovery path. it
+uses the same host layer. one current outcome and at most one waiting outcome
+retain the existing five/eight visible-second expiry, hold, suppression and
+retraction rules. a returning receipt does not announce again. action
+`commandKey` prevents a held control silently changing its command.
+
+`Signal` shares content, tone, diagnostics and actions across these presentations.
+controls never enter live regions. details and diagnostics open on demand;
+recovery stays outside document and list flow. all rooms, forced colours, reduced
+motion and coarse targets retain the same contracts.
 
 ## ownership
 
@@ -126,9 +150,11 @@ no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. pane query/navigation controls share declared density
-tokens owned by `PaneShell`'s control row: field/button heights grow with
-content, with 32px fine-pointer and 44px coarse-pointer minima. non-pane size
-defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
+tokens owned by `CompactChrome.module.css`, applied to pane control rows,
+companion headers, workspace strips and connections controls. targets grow with
+content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
+13px; coarse text-entry/native-select values use 16px. the two type roles are
+independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
 native intrinsic value width; the whole control wraps before its label stacks.
 `Stacked` forms keep their layout.
 
@@ -216,23 +242,30 @@ columns whose labels wrap; its visible legend takes the form-label type, and a
 `Hidden` legend names the group to assistive technology only. a choice label may
 be a node, such as a font named in its own face, beside a decorative icon.
 
-`ChoiceField.module.css` owns the one segmented recipe for both roots: the
-`.segments` track, the `.segment` option and `.segmentInput`, the transparent
-native radio covering its label. state selectors match `aria-checked` and
-`aria-disabled` on menu buttons and the input's state on native labels.
-every segment reserves a transparent 1px border inside its box. selection is an
-accent fill read in `--accent-ink`; focus is an inward `--ring` outline and hover
-`--surface-hover`, the control tokens; none changes a box. selection is never
-expressed as disabled. disabled removes tone and hover, never the value: a
-disabled checked option keeps a neutral `--surface-active` fill. in forced
-colours segments opt out of adjustment and paint system colours, which hover
-leaves alone: unchecked `CanvasText` on `Canvas`, checked `HighlightText` on
-`Highlight` with a `currentColor` border, disabled `GrayText` on `Canvas`,
-keeping that border when checked. focus there insets two ring widths on every
-checked option, disabled or not, so the border marker survives, as a pressed
-control's ring does; it is `HighlightText` over an enabled checked fill and
-`CanvasText` otherwise. equal columns are an accepted cost: a narrow track may
-break a long word mid-word, but a label never overflows or clips.
+`ChoiceField.module.css` owns native label/input geometry and the public group,
+choices and group-description layouts. names reference label-only spans;
+help and caller descriptions remain separate. refs address the actual inputs.
+inline choices use native checked marks without selected backplates.
+
+`Selection.module.css` owns surface, target and selected appearance for native
+segments, menu radios, companion tabs and pane activation. selected is a neutral
+surface with an inset bottom accent marker; hover preserves it. focus remains
+separate. disabled selected values retain a neutral marker. forced colors use
+system colors and preserve marker/focus contrast, including nested pane
+activators. reduced motion removes transitions. segments have no enclosing track
+border. labels wrap; equal columns remain the group layout.
+
+`Tabs.tsx` exports one controlled `TabList`. supplied ids associate native tab
+buttons with host-owned panels; left/right wrap and home/end select endpoints.
+the callback owns selection commitment and guarded focus. tab refs remain native;
+the primitive owns no panels, persistence or lifecycle. workspace pane controls
+retain their toolbar semantics and management/drag behavior. their left in-view
+tick is independent of the bottom active marker.
+
+`Chip` is one native whole-label removal button with a decorative cross. it uses
+shared action appearance and target minima; labels wrap. `AppliedFilters` owns
+neighbor focus after removal and the caller's surviving-control destination.
+query toolbars return to their input; stats returns to its modality select.
 
 ## action controls
 
@@ -269,6 +302,22 @@ rotation. colors, type and spacing use existing tokens; no geometry animation.
 
 ## overflow buttons
 
+application action labels use sentence case in their owning producer, including
+pending, recovery, inverse and disclosure states. named destinations retain their
+names: Nexus, Lectern, All and Today. source titles, personal names and quoted
+queries retain their literal spelling. shared action copy also names the same
+inline controls; renderers never capitalize it.
+
+command/link descriptors explicitly supply an icon. ordinary actions use their
+semantic owner's glyph; only chapter and map destination lists use `null`.
+the menu retains its 16px decorative slot and text label. custom content owns its
+anatomy: swatches and status prose need no action glyph, while nested actions do.
+empty and domain-state prose retain their own presentation. operational waiting
+uses fixed controls; failures use the host recovery layer. icon-only button
+contracts remain non-null. lucide owns standard
+drawings; use existing semantic presentations or direct named glyph imports,
+without a second registry, inferred glyphs or placeholders.
+
 `OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
 shared controls own its paint and busy glyph. it forwards native attributes,
 handlers and refs without owning interaction state. `ActionMenu` supplies behavior and
@@ -292,8 +341,8 @@ slot across media, artwork and independent controls. rows without artwork or
 controls reserve the same minimum height, and all rows use one narrow-width
 fold threshold. width, font and control-size changes remeasure the actual
 fractional border box; the full extent is count × measured height. a hidden,
-inert canonical row supplies measurement while the existing loading state is
-visible. ready rows are never clipped to enforce an estimated height.
+inert canonical row supplies measurement while waiting remains in chrome.
+ready rows are never clipped to enforce an estimated height.
 
 `measuredIndexWindow.ts` owns the visible band, overscan and bounded interaction
 pins; `collectionWindow.ts` shares pure rank arithmetic with the queue. the
@@ -303,17 +352,25 @@ selection and accessibility traversal reach only mounted content. small lists
 and intrinsic search, details and outline presentations keep their own layout.
 the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
-`ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
-44×44px with any coarse pointer, and 2px gaps. outline indentation and creation
-alignment consume the same geometry. note-pane margins follow containing width,
+outline styles own control minima: 24px with a fine pointer, 44px with any coarse
+pointer. each control basis is the maximum of that minimum and one `--text-md`
+glyph plus two `--space-1` gaps. leading/trailing slots, disclosure and spacers
+share the basis in both dimensions; enlarged type can widen existing columns.
+default geometry and nesting increments are unchanged. note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-ordinary `ResourceRow` leading controls consume that same geometry. its optional
-passive `leadingVisual` slot occupies a separate column across both text rows,
+`ResourceType` renders decorative, unfocusable, current-color lucide glyphs at
+`--text-md` square with stroke 2. outline markers use muted ink at rest and retain
+control hover/focus treatment; disabled opening markers remain readable in muted
+ink. index prefixes use muted ink with a
+`--space-1` gap; the glyph does not shrink, while the existing title fragment
+ellipsizes. notes have no index prefix or gap. type adds no control or text line.
+
+`ResourceRow`'s optional passive `leadingVisual` slot occupies a separate column across both text rows,
 aligned at the top; expanded content starts at the text column. omitted visuals
 reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 `--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment
@@ -337,8 +394,9 @@ in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
 retain selection and focus. controls use shared `Button` paint, tooltips and
 decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
-`lib/workspace/paneControls.ts` owns content shared with manage-panes. mobile keeps
-48px controls and wrapping titles. reorder completion uses one polite position
+`lib/workspace/paneControls.ts` owns desktop strip control content. the inline
+nexus pane list keeps wrapping mobile titles and independent 48px close targets.
+reorder completion uses one polite position
 announcement; layout management emits no success toast.
 
 ## the lint

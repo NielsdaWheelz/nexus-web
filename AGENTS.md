@@ -27,8 +27,7 @@ Binding owner decisions for every new or changed line.
   firefox's account-scoped sqlite shared worker and android's serialized bundled
   sqlite store own durable authored writing, pending changes and catch-up cursors.
   local queries remain authoritative online. server relational authored rows are
-  projections, never independent writers. ordinary notes and attached annotation
-  notes autosave locally; the annotation creation composer saves explicitly.
+  projections, never independent writers. ordinary notes and highlight annotations autosave locally; the annotation creation composer saves explicitly.
   `WorkGuard` protects uncommitted writing, never already committed pending sync.
   `useServerValue`, `useServerList`, `usePagePrefix` and `apiFetch` remain for
   server-owned domains. no memory fifo, persistent corpus fallback, activity or

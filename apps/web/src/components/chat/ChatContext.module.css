@@ -1,3 +1,4 @@
 .tools { display: flex; justify-content: flex-end; gap: var(--space-1); }
 .metadata { color: var(--ink-muted); font-size: var(--text-sm); }
-@media (any-pointer: coarse) { .remove { min-block-size: var(--size-xl); } }
+.note { display: block; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline-offset: -2px; font-weight: normal; }
+.notePrefix { color: var(--ink-muted); }

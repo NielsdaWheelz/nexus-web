@@ -14,7 +14,6 @@ import { installedApp } from "@/lib/native/admission";
 import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { SyncFailureReceipt } from "@/components/appnav/SyncStatus";
 import { FeedbackProvider, useFeedback } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
@@ -25,16 +24,18 @@ import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
+import { RecentProvider } from "@/lib/recent/store";
 import { AuthoredProvider } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
-import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import { ChatSelectionProvider } from "@/lib/chat/selectionMemory";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
@@ -53,16 +54,15 @@ import { getBrowserViewportKind, RenderEnvironmentProvider } from "@/lib/renderE
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
-import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
-import { useWorkspaceStore, WorkspaceSessionNotice, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
-const returnWorkspaceFocus = () => document.getElementById("entry-failure") ?? findActivePaneLandmarkFocusTarget();
 
 export default function AuthenticatedShell(props: {
+  browserLifetime?: string;
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
@@ -73,32 +73,29 @@ export default function AuthenticatedShell(props: {
 }) {
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
-      <AuthoredProvider accountId={props.account.accountId}>
-        <RenderEnvironmentProvider value={props.renderEnvironment}>
-          <UnauthenticatedApiBoundary>
-            <MobileViewportProvider>
-              <FeedbackProvider returnFocus={returnWorkspaceFocus}>
+      <RenderEnvironmentProvider value={props.renderEnvironment}>
+        <MobileViewportProvider>
+          <FeedbackProvider>
+            <AuthoredProvider accountId={props.account.accountId}>
+              <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
+                <UnauthenticatedApiBoundary>
                 <DeviceSettingsProvider>
-                  <SyncFailureReceipt />
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
                     <ServerSeedsProvider seeds={props.seeds}>
                       <ReaderProvider initialProfile={props.readerProfile}>
-                        <Workspace
-                          accountId={props.account.accountId}
-                          initialState={props.initialState}
-                          entryFailure={props.entryFailure}
-                          locationLinkFailure={props.locationLinkFailure}
-                        />
+                        <Workspace accountId={props.account.accountId} initialState={props.initialState}
+                          entryFailure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
                       </ReaderProvider>
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
-              </FeedbackProvider>
-            </MobileViewportProvider>
-          </UnauthenticatedApiBoundary>
-        </RenderEnvironmentProvider>
-      </AuthoredProvider>
+                </UnauthenticatedApiBoundary>
+              </RecentProvider>
+            </AuthoredProvider>
+          </FeedbackProvider>
+        </MobileViewportProvider>
+      </RenderEnvironmentProvider>
     </AuthenticatedAccountProvider>
   );
 }
@@ -159,17 +156,19 @@ function Workspace(props: {
                       <WorkspacePlayer accountId={accountId}>
                         <ResourceActionsProvider>
                           <AuthenticatedWorkspaceErrorBoundary>
-                            <ResourceActionPresentation />
-                            <MediaAdmissionsHost />
-                            <ImportsProvider>
-                              <MediaContinuationHost />
-                              <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
-                                <WorkspaceNavigation>
-                                  <Nexus />
-                                  <WorkspaceCanvas />
-                                </WorkspaceNavigation>
-                              </WorkspacePresentationsProvider>
-                            </ImportsProvider>
+                            <ChatSelectionProvider>
+                              <ResourceActionPresentation />
+                              <MediaAdmissionsHost />
+                              <ImportsProvider>
+                                <MediaContinuationHost />
+                                <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                                  <WorkspaceNavigation>
+                                    <Nexus />
+                                    <WorkspaceCanvas />
+                                  </WorkspaceNavigation>
+                                </WorkspacePresentationsProvider>
+                              </ImportsProvider>
+                            </ChatSelectionProvider>
                           </AuthenticatedWorkspaceErrorBoundary>
                         </ResourceActionsProvider>
                       </WorkspacePlayer>
@@ -209,7 +208,6 @@ function WorkspaceCanvas() {
     <div className={styles.layout}>
       <AppNav />
       <main className={styles.main} data-reader-composition={readerComposition || undefined}>
-        <WorkspaceSessionNotice />
         <WorkspaceHost />
         <GlobalPlayerSurfaces readerComposition={readerComposition} />
       </main>

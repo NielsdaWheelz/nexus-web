@@ -19,7 +19,7 @@ from nexus.schemas.search_types import SearchPageInfo, SearchResultContextRefOut
 
 
 class SearchResultSourceOut(BaseModel):
-    media_id: UUID
+    media_id: UUID | None
     media_kind: str
     title: str
     contributors: list[ContributorCreditOut]
@@ -105,11 +105,10 @@ class SearchResultContributorOut(SearchResultTitledOut):
 class SearchResultNoteBlockOut(SearchResultLocatorBackedOut[Literal["note_block"]]):
     id: UUID
     body_text: str
-    highlight_excerpt: str | None
-    note_origin: Literal["note", "highlight_note"]
 
 
 class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]]):
+    matched_field: Literal["quote", "annotation"]
     id: UUID
     color: str
     exact: str

@@ -47,6 +47,23 @@ type TextQuoteSelector = Annotated[
 ]
 
 
+class XCaptureOffsetsLocator(BaseModel):
+    type: Literal["x_capture_offsets"]
+    capture_id: UUID
+    fragment_id: UUID
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote_selector: TextQuoteSelector | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> XCaptureOffsetsLocator:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("end_offset must be greater than start_offset")
+        return self
+
+
 class WebTextOffsetsLocator(BaseModel):
     type: Literal["web_text_offsets"]
     media_id: UUID | str
@@ -96,6 +113,25 @@ class NoteBlockOffsetsLocator(BaseModel):
 
     @model_validator(mode="after")
     def validate_offsets(self) -> NoteBlockOffsetsLocator:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("end_offset must be greater than start_offset")
+        return self
+
+
+class HighlightAnnotationOffsetsLocator(BaseModel):
+    type: Literal["highlight_annotation_offsets"]
+    highlight_id: UUID
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote_selector: TextQuoteSelector
+    body_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> HighlightAnnotationOffsetsLocator:
+        if not self.text_quote_selector["exact"]:
+            raise ValueError("annotation text evidence requires an exact quote")
         if self.end_offset <= self.start_offset:
             raise ValueError("end_offset must be greater than start_offset")
         return self
@@ -195,7 +231,8 @@ class ExternalUrlLocator(BaseModel):
 
 
 MediaRetrievalLocator = Annotated[
-    WebTextOffsetsLocator
+    XCaptureOffsetsLocator
+    | WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | PdfPageGeometryLocator
     | PdfPageLocator
@@ -206,9 +243,11 @@ MediaRetrievalLocator = Annotated[
 
 
 RetrievalLocator = Annotated[
-    WebTextOffsetsLocator
+    XCaptureOffsetsLocator
+    | WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | NoteBlockOffsetsLocator
+    | HighlightAnnotationOffsetsLocator
     | PdfPageGeometryLocator
     | PdfPageLocator
     | TranscriptTimeRangeLocator
@@ -229,6 +268,7 @@ LocatorBackedResultType = Literal[
     "reader_apparatus_item",
 ]
 RetrievalLocatorType = Literal[
+    "x_capture_offsets",
     "web_text_offsets",
     "epub_fragment_offsets",
     "pdf_page_geometry",
@@ -237,12 +277,14 @@ RetrievalLocatorType = Literal[
     "audio_time_range",
     "video_time_range",
     "note_block_offsets",
+    "highlight_annotation_offsets",
     "message_offsets",
     "external_url",
 ]
 
 _SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
     {
+        "x_capture_offsets",
         "web_text_offsets",
         "epub_fragment_offsets",
         "pdf_page_geometry",
@@ -253,11 +295,14 @@ _SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
     }
 )
 _NOTE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"note_block_offsets"})
+_ANNOTATION_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
+    {"highlight_annotation_offsets"}
+)
 _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[RetrievalLocatorType]] = {
     "content_chunk": _SOURCE_LOCATOR_TYPES,
     "fragment": _SOURCE_LOCATOR_TYPES,
-    "highlight": _SOURCE_LOCATOR_TYPES,
-    "evidence_span": _SOURCE_LOCATOR_TYPES | _NOTE_LOCATOR_TYPES,
+    "highlight": _SOURCE_LOCATOR_TYPES | _ANNOTATION_LOCATOR_TYPES,
+    "evidence_span": _SOURCE_LOCATOR_TYPES | _NOTE_LOCATOR_TYPES | _ANNOTATION_LOCATOR_TYPES,
     "note_block": _NOTE_LOCATOR_TYPES,
     "message": frozenset({"message_offsets"}),
     "web_result": frozenset({"external_url"}),
@@ -279,7 +324,10 @@ def validate_locator_for_result_type(
 def retrieval_locator_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
-    return _LOCATOR_ADAPTER.validate_python(value).model_dump(
+    locator = _LOCATOR_ADAPTER.validate_python(value)
+    if isinstance(locator, (XCaptureOffsetsLocator, HighlightAnnotationOffsetsLocator)):
+        return locator.model_dump(mode="json")
+    return locator.model_dump(
         mode="json",
         exclude_none=True,
         exclude_defaults=True,

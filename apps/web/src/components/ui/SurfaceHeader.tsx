@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler, type RefObject } from "react";
 import { podcastTargetKey } from "@/lib/podcasts/api";
 import ResourceActions from "@/components/resources/ResourceActions";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
@@ -16,6 +16,7 @@ import {
   useMobileChrome,
   useMobileChromeState,
   useMobileChromeSurface,
+  useMobileChromeHold,
 } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { PaneCompanionAction, PanePrimaryAction } from "@/lib/panes/paneChrome";
@@ -30,6 +31,7 @@ import {
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import Button from "./Button";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
@@ -52,7 +54,7 @@ const RECOVERY = {
 /**
  * A pane's chrome bar: back and forward, the identity (which yields width
  * first), resource shortcuts, a primary action, More and Inspector. Narrow
- * phones keep back, forward, More and the workspace action; other commands
+ * phones keep back, forward, More and Inspector; other commands
  * retain their identity in More. Desktop: the pane's top row. Mobile: a stationary frame
  * around the hideable top bar, after its visually hidden recovery toggle.
  */
@@ -69,6 +71,8 @@ export default function SurfaceHeader({
   resourceRef,
   navigation,
   onMouseDown,
+  editor,
+  frameRef,
 }: {
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
@@ -88,6 +92,8 @@ export default function SurfaceHeader({
   resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
   onMouseDown?: MouseEventHandler<HTMLElement>;
+  editor?: PaneChrome["editor"];
+  frameRef: RefObject<HTMLDivElement | null>;
 }) {
   const reasonId = useId();
   const paneId = usePaneRuntime()?.paneId;
@@ -101,7 +107,6 @@ export default function SurfaceHeader({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const frameRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLElement>(null);
   const actionSubjectKey = resourceActions?.kind === "Podcast" ? podcastTargetKey(resourceActions.subject.target)
     : resourceActions?.kind === "Media" ? resourceActions.subject.kind === "Stored" ? `media:${resourceActions.subject.summary.media_id}` : `external:${resourceActions.subject.target}`
@@ -118,15 +123,16 @@ export default function SurfaceHeader({
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
   useMobileChromeSurface(ref, mobile);
+  useMobileChromeHold(mobile && editor?.kind === "Expandable" && editor.expanded);
   useLayoutEffect(() => {
     const frame = frameRef.current;
     const surface = ref.current;
     if (!mobile || !frame || !surface) return;
     return viewport.registerTopSurface("Header", frame, surface);
-  }, [mobile, viewport]);
+  }, [mobile, viewport, frameRef]);
   const recovery = mobile && visibility !== null ? RECOVERY[visibility] : null;
   const actions = [...paneActions, ...menuActions];
-  const displaced = narrow ? [primaryAction?.action, companion].filter((action): action is PanePrimaryAction | PaneCompanionAction => action !== undefined) : [];
+  const displaced = narrow ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
   const seen = new Set(actions.map(action => action.id));
   const projectedPaneActions = [...paneActions, ...displaced.filter(action => {
     if (seen.has(action.id)) return false;
@@ -160,7 +166,10 @@ export default function SurfaceHeader({
         <header
           ref={ref}
           className={mobile ? styles.mobile : styles.header}
-          onMouseDown={onMouseDown}
+          onMouseDown={event => {
+            if (event.target instanceof Element && event.target.closest("[data-pane-header-writing]")) return;
+            onMouseDown?.(event);
+          }}
         >
           <div className={styles.navigation}>
             <Button
@@ -184,14 +193,16 @@ export default function SurfaceHeader({
               aria-label={`Go forward${scope}`}
             />
           </div>
-          <div className={styles.identity}>
+          <div className={styles.identity} data-pane-header-writing={editor ? "true" : undefined}>
             <PaneHeaderIdentity
               id={identityId}
               model={header}
               projection={projection}
+              editor={editor?.kind === "Inline" ? editor.content : editor?.control}
             />
           </div>
           <div className={styles.trailing}>
+            <FeedbackRecoveryControl className={styles.headerButton} />
             {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
               returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
             {!narrow && primaryAction && primary && primaryState ? (
@@ -244,7 +255,7 @@ export default function SurfaceHeader({
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
                 renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
             ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
-              <ContextualActionMenu title={header.title} subjectKey={identityId}
+              <ContextualActionMenu navigation={null} title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}
                 resourceRef={resourceRef} actionFocus={actionFocus} omitResourceActions={narrow ? [...seen] : undefined} triggerRef={setMore}
@@ -254,7 +265,7 @@ export default function SurfaceHeader({
                   {actions.some(action => action.indicator?.kind === "Status") ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
                 </span>} />
             ) : null}
-            {!narrow && companion && companionState ? (
+            {companion && companionState ? (
               <Button
                 iconOnly
                 icon={companion.icon}
@@ -272,6 +283,13 @@ export default function SurfaceHeader({
               />
             ) : null}
           </div>
+          {editor?.kind === "Expandable" ? (
+            <div id={editor.regionId} className={styles.editorRegion} hidden={!editor.expanded}
+              data-pane-header-editor-region="true" data-pane-header-writing="true">
+              {editor.content}
+            </div>
+          ) : null}
+          {editor?.feedback ? <div className={styles.feedback} data-pane-header-writing="true">{editor.feedback}</div> : null}
         </header>
       </div>
     </>
@@ -279,7 +297,7 @@ export default function SurfaceHeader({
 }
 
 /** The narrow menu invokes the same media capabilities as the hidden shortcuts. */
-function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<ComponentProps<typeof ContextualActionMenu>, "actionFocus"> & {
+function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<ComponentProps<typeof ContextualActionMenu>, "actionFocus" | "navigation"> & {
   subject: Extract<ResourceActionSubject, { kind: "Media" }>;
   actionFocus: { trigger: HTMLElement | null; returnFocus: () => HTMLElement | null; afterRemoval: () => HTMLElement | null };
 }) {
@@ -291,7 +309,7 @@ function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<Comp
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ ...actionFocus, trigger: triggerEl }),
   }));
-  return <ContextualActionMenu {...props} actionFocus={actionFocus}
+  return <ContextualActionMenu navigation={null} {...props} actionFocus={actionFocus}
     omitResourceActions={[...present, ...shortcuts.map(action => action.id)]}
     sections={sections.map(section => section.id === "View" ? { ...section, actions: [...section.actions, ...actions] } : section)} />;
 }

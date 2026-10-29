@@ -1,15 +1,10 @@
 "use client";
 
-// The account's one sync status: current state only, closed copy, never a counter
-// or event list. A local save failure is repaired beside the affected writing; here it
-// is only the current state. Failures add the store's current cause; remote failures
-// keep the local fact and announce once.
-import { useEffect, useRef } from "react";
-import { Check, CircleAlert, CloudOff, LoaderCircle } from "lucide-react";
+// The on-demand account row shows current sync state and its verified local fact.
+// The authored account adapter owns persistent recovery and failure announcements.
+import { Check, CircleAlert, CloudOff, LoaderCircle, LogIn } from "lucide-react";
 import type { SyncStatus } from "@nexus/authored/types";
 import Button from "@/components/ui/Button";
-import { useFeedback } from "@/components/feedback/Feedback";
-import { useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
 import { STATUS_COPY } from "@/lib/authored/status";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./AccountMenu.module.css";
@@ -55,28 +50,9 @@ export function syncStatusOption(status: SyncStatus, cause: string | null, auth:
           tabIndex={presentation === "menu" ? -1 : 0}
           disabled={auth.busy}
           onClick={() => { closeMenu(); auth.onSignIn(); }}
-        >sign in</Button> : null}
+          icon={<LogIn size={16} aria-hidden="true" />}
+        >Sign in</Button> : null}
       </span>
     </div>,
   };
-}
-
-/** Mounted once per account: entering a remote failure is reported once, never success.
- * Local saving and local errors outrank it without ending it; leaving it retracts the
- * report if it is still waiting or shown. */
-export function SyncFailureReceipt() {
-  const status = useAuthoredStatus();
-  const cause = useAuthoredSyncDetail();
-  const feedback = useFeedback();
-  const reported = useRef<{ status: SyncStatus; retract: () => void } | null>(null);
-  useEffect(() => {
-    if (status === "saving" || status === "local_error" || reported.current?.status === status) return;
-    reported.current?.retract();
-    reported.current = REMOTE_FAILURES.has(status)
-      ? { status, retract: feedback.receipt({ tone: "Warning", title: STATUS_COPY[status], message: details(status, cause).join(" ") }) }
-      : null;
-    // The cause accompanies an entered failure; a later cause alone is not a new failure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: one report per entered status
-  }, [feedback, status]);
-  return null;
 }

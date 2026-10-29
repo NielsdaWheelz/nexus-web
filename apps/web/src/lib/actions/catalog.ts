@@ -74,24 +74,25 @@ export const ACTION_CATALOG = {
     icon: PanelsTopLeft,
     group: "Navigate",
   },
-  OpenSource: { label: "open source", icon: ExternalLink, group: "Navigate" },
-  OpenPodcastFeed: { label: "open feed", icon: Rss, group: "Navigate" },
-  Metadata: { label: "metadata…", icon: Info, group: "Navigate" },
+  OpenSource: { label: "Open source", icon: ExternalLink, group: "Navigate" },
+  BrowserCapture: { label: "Open source in new tab", icon: ExternalLink, group: "Navigate" },
+  OpenPodcastFeed: { label: "Open feed", icon: Rss, group: "Navigate" },
+  Metadata: { label: "Metadata…", icon: Info, group: "Navigate" },
   Playback: {
     label: "Play",
     icon: Play,
     group: "Consume",
     states: {
-      Idle: { label: "play", icon: Play },
-      Playing: { label: "pause", icon: Pause },
-      Buffering: { label: "pause", icon: Pause },
-      Paused: { label: "resume", icon: Play },
-      Ended: { label: "replay", icon: RotateCcw },
+      Idle: { label: "Play", icon: Play },
+      Playing: { label: "Pause", icon: Pause },
+      Buffering: { label: "Pause", icon: Pause },
+      Paused: { label: "Resume", icon: Play },
+      Ended: { label: "Replay", icon: RotateCcw },
     },
   },
-  PlayFromHere: { label: "play from here", icon: Play, group: "Consume" },
-  AddToQueue: { label: "add to queue", icon: ListPlus, group: "Consume" },
-  PlayNext: { label: "play next", icon: ListStart, group: "Consume" },
+  PlayFromHere: { label: "Play from here", icon: Play, group: "Consume" },
+  AddToQueue: { label: "Add to queue", icon: ListPlus, group: "Consume" },
+  PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
   Consumption: {
     label: "Mark as finished",
     icon: CircleCheck,
@@ -103,8 +104,8 @@ export const ACTION_CATALOG = {
       EpisodePlayed: { label: "Mark as unplayed", icon: Undo2 },
     },
   },
-  MarkCollectionFinished: { label: "mark all finished…", icon: CircleCheck, group: "Consume" },
-  MarkCollectionUnread: { label: "mark all unread…", icon: Undo2, group: "Consume" },
+  MarkCollectionFinished: { label: "Mark all finished…", icon: CircleCheck, group: "Consume" },
+  MarkCollectionUnread: { label: "Mark all unread…", icon: Undo2, group: "Consume" },
   ResetProgress: { label: "Reset progress", icon: RotateCcw, group: "Consume" },
   Transcript: {
     label: "Request transcript…",
@@ -120,7 +121,7 @@ export const ACTION_CATALOG = {
       failed_provider: { label: "Retry transcript", icon: RotateCcw },
     },
   },
-  TranscribePodcastEpisodes: { label: "transcribe all episodes…", icon: Captions, group: "Consume" },
+  TranscribePodcastEpisodes: { label: "Transcribe all episodes…", icon: Captions, group: "Consume" },
   Download: {
     label: "Download for offline",
     icon: Download,
@@ -131,22 +132,22 @@ export const ACTION_CATALOG = {
       Ready: { label: "Remove download", icon: Trash2 },
     },
   },
-  AddEpisodeToAll: { label: "add to all", icon: ListPlus, group: "Organize" },
-  RemoveEpisodeFromAll: { label: "remove from all…", icon: ListMinus, group: "Danger" },
-  LibraryPlacement: { label: "libraries…", icon: Library, group: "Organize" },
+  AddEpisodeToAll: { label: "Add to All", icon: ListPlus, group: "Organize" },
+  RemoveEpisodeFromAll: { label: "Remove from All…", icon: ListMinus, group: "Danger" },
+  LibraryPlacement: { label: "Libraries…", icon: Library, group: "Organize" },
   LecternMembership: {
-    label: "add to lectern",
+    label: "Add to Lectern",
     icon: ListPlus,
     group: "Organize",
     states: {
-      Absent: { label: "add to lectern", icon: ListPlus },
+      Absent: { label: "Add to Lectern", icon: ListPlus },
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
-  AddUnfinishedToLectern: { label: "add unfinished contents to lectern…", icon: ListPlus, group: "Organize" },
-  PodcastLibraries: { label: "add to library…", icon: Library, group: "Organize" },
-  SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
-  UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
+  AddUnfinishedToLectern: { label: "Add unfinished contents to Lectern…", icon: ListPlus, group: "Organize" },
+  PodcastLibraries: { label: "Add to library…", icon: Library, group: "Organize" },
+  SubscribePodcast: { label: "Subscribe", icon: Rss, group: "Organize" },
+  UnsubscribePodcast: { label: "Unsubscribe", icon: Rss, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
@@ -157,8 +158,8 @@ export const ACTION_CATALOG = {
     icon: Highlighter,
     group: "CreateTransform",
   },
-  HighlightNote: {
-    label: "Add note…",
+  EditHighlightAnnotation: {
+    label: "Annotate",
     icon: NotebookPen,
     group: "CreateTransform",
   },
@@ -209,20 +210,20 @@ export const ACTION_CATALOG = {
     icon: Search,
     group: "Manage",
   },
-  RefreshSource: { label: "refresh source", icon: RefreshCw, group: "Manage" },
+  RefreshSource: { label: "Refresh source", icon: RefreshCw, group: "Manage" },
   // Imports runs the two upload commands on this runtime; no resource menu offers them.
   RetryUpload: { label: "Retry upload", icon: Upload, group: "Manage" },
   RetryMetadata: {
-    label: "research metadata",
+    label: "Research metadata",
     icon: Sparkles,
     group: "Manage",
   },
   ReviewMetadataResult: {
-    label: "mark reviewed",
+    label: "Mark reviewed",
     icon: CircleCheck,
     group: "Manage",
   },
-  LeaveLibrary: { label: "leave library…", icon: ListMinus, group: "Manage", confirmation: {
+  LeaveLibrary: { label: "Leave library…", icon: ListMinus, group: "Manage", confirmation: {
     title: "leave library?", body: "leave “{title}”? its contents remain in the library. you may lose access to items held only here.",
   } },
   LibrarySettings: {
@@ -231,19 +232,19 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   PodcastSettings: {
-    label: "playback defaults…",
+    label: "Playback defaults…",
     icon: Settings,
     group: "Manage",
   },
   RefreshPodcast: {
-    label: "check for new episodes",
+    label: "Check for new episodes",
     icon: RefreshCw,
     group: "Manage",
   },
-  RemovePodcastEpisodes: { label: "remove episodes from libraries…", icon: Trash2, group: "Danger" },
+  RemovePodcastEpisodes: { label: "Remove episodes from libraries…", icon: Trash2, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
-    label: "remove from nexus",
+    label: "Remove from Nexus",
     icon: Trash2,
     group: "Danger",
     confirmation: {
@@ -252,7 +253,7 @@ export const ACTION_CATALOG = {
     },
   },
   DeleteLibrary: {
-    label: "Delete Library",
+    label: "Delete library",
     icon: Trash2,
     group: "Danger",
     confirmation: {
@@ -270,7 +271,7 @@ export const ACTION_CATALOG = {
     },
   },
   DeleteMessage: {
-    label: "delete message and replies",
+    label: "Delete message and replies",
     icon: Trash2,
     group: "Danger",
     confirmation: {
@@ -284,7 +285,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight? Its notes are kept. This can’t be undone.",
+      body: "Delete this highlight? Its annotation is deleted too. This can’t be undone.",
     },
   },
   DeletePage: {
@@ -333,7 +334,7 @@ export function actionFailure(
   if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
     return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
   if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
-    return { tone: "Warning", title: `couldn’t ${label}`, message: error.message };
+    return { tone: "Warning", title: `couldn’t complete “${label.replace(/…$/, "")}”`, message: error.message };
   if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
     return { tone: "Warning", title: "playback request not confirmed",
       message: "check the player’s current state before trying again." };
@@ -354,9 +355,7 @@ export function actionFailure(
   const unconfirmed = outcomeUnknown(error);
   const title = unconfirmed
     ? `couldn't confirm: ${label.replace(/…$/, "")}`
-    : id === "LecternMembership" && label === "add to lectern"
-      ? "couldn't add to lectern"
-      : `couldn't ${label.replace(/…$/, "")}`;
+    : `couldn't complete “${label.replace(/…$/, "")}”`;
   const transport = apiTransportFeedback(error, title);
   if (transport !== null) return unconfirmed ? {
     ...transport,

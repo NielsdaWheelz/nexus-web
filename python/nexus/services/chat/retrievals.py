@@ -24,16 +24,18 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import XPostSource
+from nexus.db.models import XPostMedia
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
     CapturedPassageTarget,
     CapturedQuote,
     CapturedSource,
+    ResourceField,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
+from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
@@ -55,8 +57,8 @@ STRICT_LOCATOR = frozenset(
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "content_chunk": ("source_kind", "evidence_span_ids"),
     "contributor": ("contributor_handle",),
-    "note_block": ("body_text", "highlight_excerpt"),
-    "highlight": ("color", "exact"),
+    "note_block": ("body_text",),
+    "highlight": ("color", "exact", "matched_field"),
     "message": ("conversation_id", "seq"),
     "reader_apparatus_item": ("apparatus_kind",),
 }
@@ -84,7 +86,7 @@ def compact(value: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: compact(item) if key == "context_ref" else item
         for key, item in value.items()
-        if key == "passage_target"
+        if key in ("passage_target", "field")
         or (item is not None and item != [] and not (key == "selected" and item is False))
     }
 
@@ -209,6 +211,8 @@ def reopen_search_result(
     result_type: str,
     source_id: str,
     passage_target: CapturedPassageTarget | None = None,
+    field: ResourceField = None,
+    captured_evidence: CapturedEvidence | None = None,
 ) -> SearchResultOut:
     """One search result reopened by identity for a single read or an attached resource.
 
@@ -220,9 +224,18 @@ def reopen_search_result(
     target = passage_target
     if target is None and result_type in _READING_OWNED:
         ref = ResourceRef(cast(ResourceScheme, result_type), UUID(source_id))
-        captured = capture_evidence(db, viewer_id=viewer_id, ref=ref).target
+        captured_evidence = capture_evidence(db, viewer_id=viewer_id, ref=ref, field=field)
+        captured = captured_evidence.target
         target = captured if isinstance(captured, CapturedPassageTarget) else None
-    return get_search_result(db, viewer_id, result_type, source_id, passage_target=target)
+    return get_search_result(
+        db,
+        viewer_id,
+        result_type,
+        source_id,
+        passage_target=target,
+        field=field,
+        captured_evidence=captured_evidence,
+    )
 
 
 def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -> RetrievalCitation:
@@ -239,12 +252,19 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
     )
     return RetrievalCitation(
         captured_evidence=CapturedEvidence(
-            quote=CapturedQuote(exact=hit["snippet"], prefix=None, suffix=None, color=None),
+            quote=CapturedQuote(
+                excerpt=plain_excerpt(hit["snippet"], None, None),
+                exact=hit["snippet"],
+                prefix=None,
+                suffix=None,
+                color=None,
+            ),
             source=CapturedSource(
                 ref=ref, title=hit["title"], media_kind=None, contributors=None, location_label=None
             ),
             target=CapturedPassageTarget.model_validate(
                 {
+                    "field": None,
                     "owner_ref": ref,
                     "locator": locator,
                     "precision": "exact",
@@ -261,7 +281,12 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
         citation_target=ref,
         citation_label=None,
         locator=locator,
-        context_ref={"type": "web_result", "id": str(snapshot_id), "passage_target": None},
+        context_ref={
+            "type": "web_result",
+            "id": str(snapshot_id),
+            "field": None,
+            "passage_target": None,
+        },
         evidence_span_id=None,
         media_id=None,
         media_kind=None,
@@ -294,9 +319,9 @@ def lock_retrieval_media(db: Session, citations: Sequence[RetrievalCitation]) ->
     """Batch admission takes canonical post reference locks in media-id order."""
     ids = sorted({UUID(citation.media_id) for citation in citations if citation.media_id})
     for media_id in db.scalars(
-        select(XPostSource.media_id)
-        .where(XPostSource.media_id.in_(ids))
-        .order_by(XPostSource.media_id)
+        select(XPostMedia.media_id)
+        .where(XPostMedia.media_id.in_(ids))
+        .order_by(XPostMedia.media_id)
     ):
         lock_media_for_reference(db, media_id)
 
@@ -317,7 +342,7 @@ def insert_retrieval(
 
     if (
         citation.media_id is not None
-        and db.scalar(select(XPostSource.id).where(XPostSource.media_id == UUID(citation.media_id)))
+        and db.scalar(select(XPostMedia.id).where(XPostMedia.media_id == UUID(citation.media_id)))
         is not None
     ):
         media_id = UUID(citation.media_id)

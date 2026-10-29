@@ -1,5 +1,6 @@
 /** Runtime validation at the shared semantic boundary. Host schemas close the
  * transport; these checks own identity agreement and content invariants. */
+import { validateExcerpt } from "./excerpt.ts";
 import { isResourceRef, normalizeQuote } from "./identity.ts";
 import { canonicalQuads } from "./geometry.ts";
 import { counter } from "./merge.ts";
@@ -21,6 +22,8 @@ function publication(value: Publication | null): void {
   if (value === null) return;
   if (value.kind === "reader") {
     if (!Number.isSafeInteger(value.generation) || value.generation < 1) throw new TypeError("Invalid reader generation");
+  } else if (value.kind === "x_capture") {
+    uuid(value.capture_id);
   } else if (value.kind !== "note_text" || !/^[0-9a-f]{64}$/u.test(value.sha256)) throw new TypeError("Invalid note publication");
 }
 function integer(value: number, minimum = 0): void {
@@ -41,11 +44,23 @@ function validateLocatorCapture(locator: Locator, source_ref: string): void {
     uuid(locator.media_id);
   }
   switch (locator.type) {
+    case "x_capture_offsets":
+      uuid(locator.capture_id); uuid(locator.fragment_id);
+      if (source_ref !== `fragment:${locator.fragment_id}`) throw new TypeError("Locator fragment disagrees with immutable source");
+      range(locator.start_offset, locator.end_offset);
+      break;
     case "web_text_offsets":
     case "epub_fragment_offsets":
       uuid(locator.fragment_id);
       range(locator.start_offset, locator.end_offset);
       if (locator.type === "epub_fragment_offsets" && locator.section_id !== null) uuid(locator.section_id);
+      break;
+    case "highlight_annotation_offsets":
+      uuid(locator.highlight_id);
+      if (source_ref !== `highlight:${locator.highlight_id}`) throw new TypeError("Annotation locator disagrees with highlight owner");
+      range(locator.start_offset, locator.end_offset);
+      if (!locator.text_quote_selector || !locator.text_quote_selector.exact) throw new TypeError("Annotation text evidence requires its quote selector");
+      if (locator.body_sha256 !== null && !/^[0-9a-f]{64}$/u.test(locator.body_sha256)) throw new TypeError("Invalid annotation body hash");
       break;
     case "note_block_offsets":
       if (source_ref !== `note_block:${locator.block_id}`) throw new TypeError("Locator note disagrees with immutable source");
@@ -82,8 +97,12 @@ export function validateLocator(locator: Locator, source_ref: string): void {
   if ("media_id" in locator && source_ref !== `media:${locator.media_id}`) throw new TypeError("Locator media disagrees with immutable source");
 }
 function selection(value: SelectionCapture, source_ref: string): void {
-  if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
-  if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");
+  if (value.locator.type === "x_capture_offsets") {
+    if (value.publication?.kind !== "x_capture" || value.publication.capture_id !== value.locator.capture_id) throw new TypeError("Capture publication disagrees with locator");
+  } else {
+    if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
+    if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");
+  }
   if (value.locator.type === "pdf_page_geometry") {
     const quads=value.locator.quads;
     const canonical = canonicalQuads(quads);
@@ -91,6 +110,7 @@ function selection(value: SelectionCapture, source_ref: string): void {
     if (canonical.some((quad, index) => keys.some(key => quad[key] !== quads[index]![key]))) throw new TypeError("PDF selection geometry must be canonical before commit");
     if ([...value.quote_exact].length > 2000) throw new TypeError("PDF quote exceeds 2000 codepoints");
   }
+  validateExcerpt(value.excerpt);
   publication(value.publication);
   validateLocator(value.locator, source_ref);
   if (typeof value.quote_exact !== "string") throw new TypeError("Expected literal quote");
@@ -123,11 +143,17 @@ export function validateChange(change: Change): void {
     uuid(passage.anchor_id);
     if (!isResourceRef(passage.source_ref)) throw new TypeError("Invalid passage source");
     for (const text of [passage.normalized_exact, passage.prefix, passage.suffix]) if (typeof text !== "string" || normalizeQuote(text) !== text) throw new TypeError("Passage binding must be normalized");
+    validateExcerpt(passage.capture.value.excerpt);
     register(passage.capture); publication(passage.capture.value.publication);
     if (typeof passage.capture.value.quote_exact !== "string") throw new TypeError("Expected literal passage quote");
     if (normalizeQuote(passage.capture.value.quote_exact) !== passage.normalized_exact) throw new TypeError("Passage quote disagrees with semantic binding");
+    if (passage.capture.value.publication?.kind === "x_capture" && passage.capture.value.locator?.type !== "x_capture_offsets") throw new TypeError("Capture publication requires a capture locator");
     // A media passage keys its reading slice; placement must prove that slice's relation to the locator's physical source.
-    if (passage.capture.value.locator !== null) validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
+    if (passage.capture.value.locator !== null) {
+      validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
+      const locator = passage.capture.value.locator;
+      if (locator.type === "x_capture_offsets" && (passage.capture.value.publication?.kind !== "x_capture" || passage.capture.value.publication.capture_id !== locator.capture_id)) throw new TypeError("Capture publication disagrees with locator");
+    }
   }
   for (const stub of change.source_stubs) {
     if (!isResourceRef(stub.source_ref)) throw new TypeError("Invalid captured source ref");

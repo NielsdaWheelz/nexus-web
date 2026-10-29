@@ -26,7 +26,6 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    highlight_readability_sql,
     highlight_visibility_sql,
     requested_media_ids_cte_sql,
     visible_content_credit_rows_sql,
@@ -44,10 +43,10 @@ from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
     text_scope_rows_sql,
+    x_capture_scope_rows_sql,
 )
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.context import context_facts_sql
-from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.locations import (
     media_passages,
@@ -62,6 +61,7 @@ from nexus.services.search.scope import (
     scope_predicate,
 )
 from nexus.services.search.semantic import Embedding, nearest_chunks
+from nexus.services.x_source import readable_x_capture_ids_sql
 from nexus.text import escape_like
 
 TSQ = "websearch_to_tsquery('english', :q)"
@@ -148,7 +148,11 @@ def _semantic_rows(prefix: str) -> str:
 
 
 def _semantic_params(family: str, neighbours: Sequence[tuple[UUID, float]]) -> dict[str, Any]:
-    prefix = {"content_chunk": "chunk", "note_block": "note"}[family]
+    prefix = {
+        "content_chunk": "chunk",
+        "note_block": "note",
+        "highlight_annotation": "annotation",
+    }[family]
     return {
         f"{prefix}_semantic_ids": [identity for identity, _ in neighbours],
         f"{prefix}_semantic_cos": [cosine for _, cosine in neighbours],
@@ -210,19 +214,33 @@ _CHUNK_EXACT = """(ref.scheme='content_chunk' AND ref.id=cc.id)
 _CHUNK_OWNER = _requested_owner(
     _CHUNK_EXACT,
     lambda candidates: reading_owner_sql(
-        f"SELECT reading_media_id FROM ({reading_chunks_sql(f'SELECT cc.owner_id AS media_id WHERE cc.owner_id IN ({candidates}) UNION ALL SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({candidates})')}) admitted WHERE admitted.chunk_id=cc.id"
+        f"""SELECT reading_media_id FROM ({
+            reading_chunks_sql(f'''
+            SELECT cc.owner_id AS media_id
+            WHERE cc.owner_kind='media' AND cc.owner_id IN ({candidates})
+            UNION ALL
+            SELECT candidate_part.media_id FROM media_parts candidate_part
+            WHERE cc.owner_kind='media' AND candidate_part.source_media_id=cc.owner_id
+              AND candidate_part.media_id IN ({candidates})
+            UNION ALL
+            SELECT candidate.media_id FROM ({candidates}) candidate
+            WHERE cc.owner_kind='fragment'
+        ''')
+        }) admitted WHERE admitted.chunk_id=cc.id"""
     ),
 )
-# Semantic eligibility needs an admitted reading, not its preferred presentation
-# owner. The same published chunk bounds admit both the count and vector reads;
-# the selected window resolves its reading through _CHUNK_OWNER afterward.
-# The semantic reader's _READY already proves cc's current lexical publication.
-# Match a source reading directly; only piece candidates need canonical bounds.
+# Direct media and bounded pieces retain point-driven membership. Immutable capture
+# fragments use their canonical readable occurrence relation in the same snapshot.
 _CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM media m
-    WHERE m.id=cc.owner_id AND m.id IN ({_ADMITTED}) {{where}})
+    WHERE cc.owner_kind='media' AND m.id=cc.owner_id AND m.id IN ({_ADMITTED}) {{where}})
     OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(f"SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({_ADMITTED})")}) member
     JOIN media m ON m.id=member.reading_media_id
-    WHERE member.chunk_id=cc.id {{where}}) OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
+    WHERE cc.owner_kind='media' AND member.chunk_id=cc.id {{where}})
+    OR EXISTS (SELECT 1 FROM ({x_capture_scope_rows_sql(_ADMITTED)}) occurrence
+    JOIN media m ON m.id=occurrence.reading_media_id
+    JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=occurrence.capture_id
+    WHERE cc.owner_kind='fragment' AND occurrence.fragment_id=cc.owner_id {{where}})
+    OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
     JOIN media m ON m.id=member.reading_media_id
     WHERE member.chunk_id=cc.id {{where}}))"""
 _HIGHLIGHT_OWNER = _requested_owner(
@@ -232,7 +250,11 @@ _HIGHLIGHT_OWNER = _requested_owner(
         WHERE candidate.media_id=h.anchor_media_id
             OR (h.anchor_kind='fragment_offsets'
                 AND candidate.media_id IN (SELECT part.media_id FROM media_parts part WHERE part.source_media_id=h.anchor_media_id)
-                AND {highlight_in_reading_scope_sql("h.id", "candidate.media_id")})"""),
+                AND {highlight_in_reading_scope_sql("h.id", "candidate.media_id")})
+            OR (h.anchor_media_id IS NULL AND EXISTS (
+                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT candidate.media_id")}) occurrence
+                JOIN highlight_fragment_anchors anchor ON anchor.fragment_id=occurrence.fragment_id AND anchor.highlight_id=h.id
+                JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=occurrence.capture_id))"""),
 )
 
 _APPARATUS_OWNER = _requested_owner(
@@ -300,27 +322,50 @@ SOURCES: dict[str, str] = {
     "highlight": f"""SELECT 'highlight' AS type,h.id,h.exact AS label,
             to_tsvector('english',concat_ws(' ',h.exact,quote.prefix,quote.suffix)) AS doc,
             h.exact AS text,h.exact,COALESCE(h.color,'yellow') AS color,
-            'highlight ' || left(CAST(h.id AS text),8) AS citation_label,{_SOURCE},
+            'highlight ' || left(CAST(h.id AS text),8) AS citation_label,
+            m.id AS media_id,COALESCE(m.kind,'x') AS media_kind,
+            COALESCE(m.title,c.payload #>> '{{content,author,name}}',c.payload->>'attribution_text',c.payload->>'parent_title','captured post') AS media_title,
+            m.original_published_date,
             m.id AS reading_media_id,source_m.id AS source_media_id,source_m.kind AS source_media_kind,
-            CASE WHEN f.id IS NOT NULL THEN {_offsets("a.start_offset", "a.end_offset", _SCOPED_HQUOTE, "source_m")}
+            CASE WHEN f.x_post_capture_id IS NOT NULL THEN jsonb_build_object('type','x_capture_offsets','capture_id',f.x_post_capture_id,'fragment_id',f.id,'start_offset',a.start_offset,'end_offset',a.end_offset,'text_quote_selector',{_SCOPED_HQUOTE})
+            WHEN f.id IS NOT NULL THEN {_offsets("a.start_offset", "a.end_offset", _SCOPED_HQUOTE, "source_m")}
             ELSE (SELECT jsonb_build_object('type','pdf_page_geometry','media_id',source_m.id,
                 'page_number',pa.page_number,'quads',jsonb_agg(jsonb_build_object('x1',q.x1,
                 'y1',q.y1,'x2',q.x2,'y2',q.y2,'x3',q.x3,'y3',q.y3,'x4',q.x4,'y4',q.y4)
                 ORDER BY q.quad_idx),'exact',h.exact,'prefix',quote.prefix,'suffix',quote.suffix,
                 'text_quote_selector',{_SCOPED_HQUOTE}) FROM highlight_pdf_quads q
                 WHERE q.highlight_id=h.id HAVING count(*)>0) END AS locator
-        FROM highlights h JOIN media source_m ON source_m.id=h.anchor_media_id
+        FROM highlights h LEFT JOIN media source_m ON source_m.id=h.anchor_media_id
         LEFT JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
-        LEFT JOIN fragments f ON f.id=a.fragment_id AND f.media_id=source_m.id
+        LEFT JOIN fragments f ON f.id=a.fragment_id AND (f.media_id=source_m.id OR (h.anchor_media_id IS NULL AND f.x_post_capture_id IS NOT NULL))
+        LEFT JOIN x_post_captures c ON c.id=f.x_post_capture_id
         LEFT JOIN highlight_pdf_anchors pa ON pa.highlight_id=h.id AND pa.media_id=source_m.id
         CROSS JOIN LATERAL (SELECT ({_HIGHLIGHT_OWNER}) AS media_id) reading
-        JOIN media m ON m.id=reading.media_id
+        LEFT JOIN media m ON m.id=reading.media_id
         CROSS JOIN LATERAL (SELECT min(bounded.start_offset) AS lo,max(bounded.end_offset) AS hi
             FROM ({_HIGHLIGHT_INTERVAL}) bounded WHERE bounded.fragment_id=a.fragment_id) bounds
         CROSS JOIN LATERAL (SELECT
-            CASE WHEN m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.prefix,'') ELSE right(COALESCE(h.prefix,''),greatest(a.start_offset-bounds.lo,0)) END AS prefix,
-            CASE WHEN m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
-        WHERE {highlight_visibility_sql("h")} {{where}}""",
+            CASE WHEN m.id IS NULL OR m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.prefix,'') ELSE right(COALESCE(h.prefix,''),greatest(a.start_offset-bounds.lo,0)) END AS prefix,
+            CASE WHEN m.id IS NULL OR m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
+        WHERE {highlight_visibility_sql("h")}
+          AND (m.id IS NOT NULL OR (f.x_post_capture_id IS NOT NULL AND f.x_post_capture_id IN ({readable_x_capture_ids_sql()}))) {{where}}""",
+    "highlight_annotation": f"""SELECT 'highlight' AS type,h.id,h.annotation_body_text AS label,
+            to_tsvector('english',h.annotation_body_text) AS doc,ann.cosine,
+            h.annotation_body_text AS text,h.annotation_body_text AS span_text,h.exact,
+            COALESCE(h.color,'yellow') AS color,'annotation' AS citation_label,
+            h.anchor_media_id AS media_id,COALESCE(m.kind,'highlight') AS media_kind,
+            COALESCE(m.title,'Highlight') AS media_title,m.original_published_date,
+            jsonb_build_object('type','highlight_annotation_offsets','highlight_id',h.id,
+                'start_offset',0,'end_offset',char_length(h.annotation_body_text),
+                'body_sha256',encode(digest(convert_to(h.annotation_body_text,'UTF8'),'sha256'),'hex'),
+                'text_quote_selector',jsonb_build_object('exact',h.annotation_body_text,'prefix',NULL,'suffix',NULL)) AS locator
+        FROM highlights h LEFT JOIN media m ON m.id=h.anchor_media_id
+            AND m.id IN (SELECT media_id FROM visible_media)
+        LEFT JOIN (SELECT cc.owner_id,max(neighbour.cosine) AS cosine FROM {_semantic_rows("annotation")}
+            JOIN content_chunks cc ON cc.id=neighbour.id AND cc.owner_kind='highlight'
+            GROUP BY cc.owner_id) ann ON ann.owner_id=h.id
+        WHERE h.user_id=:viewer_id AND h.authored_visible
+          AND h.annotation_body_pm_json IS NOT NULL AND h.annotation_body_text<>'' {{where}}""",
     "message": """SELECT 'message' AS type, ms.id, NULL AS label, ms.content_tsv AS doc,
             ms.content AS text, ms.conversation_id, ms.seq,
             'Conversation message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
@@ -347,23 +392,31 @@ SOURCES: dict[str, str] = {
         WHERE ras.status IN ('ready','partial') {{where}}""",
     "fragment": f"""SELECT 'fragment' AS type,f.id,NULL AS label,f.canonical_text_tsv AS doc,
             f.canonical_text AS text,'fragment ' || (f.idx+1) AS citation_label,{_SOURCE},
-            m.id AS reading_media_id,m.id AS source_media_id,m.kind AS source_media_kind,
-            {_offsets("0", "char_length(f.canonical_text)", _FQUOTE)} AS locator
-        FROM fragments f JOIN media m ON m.id=f.media_id
-        JOIN LATERAL ({_ADMITTED} UNION {_exact_candidates("ref.scheme='fragment' AND ref.id=f.id")}) admitted ON admitted.media_id=m.id
-        WHERE f.canonical_text<>'' AND CASE WHEN f.t_start_ms IS NOT NULL
-            AND f.t_end_ms IS NOT NULL THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms
-            ELSE m.kind<>'pdf' END {{where}}""",
+            m.id AS reading_media_id,CASE WHEN f.x_post_capture_id IS NULL THEN m.id END AS source_media_id,m.kind AS source_media_kind,
+            CASE WHEN f.x_post_capture_id IS NOT NULL THEN jsonb_build_object('type','x_capture_offsets',
+                'capture_id',f.x_post_capture_id,'fragment_id',f.id,'start_offset',0,
+                'end_offset',char_length(f.canonical_text),'text_quote_selector',{_FQUOTE})
+              ELSE {_offsets("0", "char_length(f.canonical_text)", _FQUOTE)} END AS locator
+        FROM fragments f
+        JOIN LATERAL ({_ADMITTED} UNION {_exact_candidates("ref.scheme='fragment' AND ref.id=f.id")}) admitted ON TRUE
+        JOIN media m ON m.id=admitted.media_id
+        WHERE f.canonical_text<>'' AND (
+            (f.media_id=m.id AND CASE WHEN f.t_start_ms IS NOT NULL AND f.t_end_ms IS NOT NULL
+                THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms ELSE m.kind<>'pdf' END)
+            OR (f.x_post_capture_id IN ({readable_x_capture_ids_sql()}) AND EXISTS (
+                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT m.id AS media_id")}) occurrence
+                WHERE occurrence.fragment_id=f.id))) {{where}}""",
     "content_chunk": f"""SELECT 'content_chunk' AS type,cc.id,NULL AS label,
             cc.chunk_text_tsv AS doc,neighbour.cosine,cc.chunk_text AS text,cc.source_kind,
             es.id AS span_id,es.span_text,es.selector,es.citation_label,es.resolver_kind,
-            {_SOURCE},m.id AS reading_media_id,source_m.id AS source_media_id,source_m.kind AS source_media_kind
+            {_SOURCE},m.id AS reading_media_id,source_m.id AS source_media_id,source_m.kind AS source_media_kind,
+            cc.owner_kind AS chunk_owner_kind,cc.summary_locator AS chunk_locator
         FROM content_chunks cc LEFT JOIN {_semantic_rows("chunk")} ON neighbour.id=cc.id
-        JOIN media source_m ON source_m.id=cc.owner_id
+        LEFT JOIN media source_m ON source_m.id=cc.owner_id AND cc.owner_kind='media'
         CROSS JOIN LATERAL (SELECT ({_CHUNK_OWNER}) AS media_id) reading
         JOIN media m ON m.id=reading.media_id
         JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id
-        WHERE cc.owner_kind='media' {{where}}""",
+        WHERE cc.owner_kind IN ('media','fragment') {{where}}""",
     "web_result": """SELECT 'web_result' AS type, res.id, res.title AS label,
             to_tsvector('english', concat_ws(' ', res.title, res.url, res.snippet)) AS doc,
             res.snippet AS text, res.title, res.url, CAST(res.id AS text) AS source_id,
@@ -395,7 +448,7 @@ SOURCES: dict[str, str] = {
         FROM evidence_spans es LEFT JOIN media source_m ON es.owner_kind='media' AND source_m.id=es.owner_id
         CROSS JOIN LATERAL (SELECT CASE WHEN es.owner_kind='media' THEN ({_SPAN_OWNER}) END AS media_id) reading
         LEFT JOIN media m ON m.id=reading.media_id
-        WHERE (reading.media_id IS NOT NULL OR (es.owner_kind='note_block'
+        WHERE (reading.media_id IS NOT NULL OR (es.owner_kind='highlight' AND es.owner_id IN (SELECT h.id FROM highlights h JOIN content_index_states cis ON cis.owner_kind='highlight' AND cis.owner_id=h.id WHERE h.user_id=:viewer_id AND h.authored_visible AND h.annotation_body_pm_json IS NOT NULL AND cis.lexical_revision=cis.revision)) OR (es.owner_kind='note_block'
             AND es.owner_id IN (SELECT id FROM note_blocks
                 WHERE user_id=:viewer_id AND authored_visible))) {{where}}""",
     "gutenberg": """SELECT 'gutenberg' AS type, pg.ebook_id AS id, pg.title AS label,
@@ -424,6 +477,7 @@ SOURCES: dict[str, str] = {
             pa.selector #>> '{{quote,exact}}' AS label, pa.selector #>> '{{quote,exact}}' AS text,
             to_tsvector('english', COALESCE(pa.selector #>> '{{quote,exact}}', '')) AS doc
         FROM passage_anchors pa
+        LEFT JOIN highlights annotation_h ON pa.owner_scheme='highlight' AND annotation_h.id=pa.owner_id
         LEFT JOIN media_parts anchor_part ON pa.owner_scheme='media' AND anchor_part.media_id=pa.owner_id
         LEFT JOIN LATERAL (
             SELECT candidate.media_id FROM ({_ADMITTED} UNION {_exact_candidates("ref.scheme='passage_anchor' AND ref.id=pa.id")}) candidate
@@ -434,7 +488,12 @@ SOURCES: dict[str, str] = {
         WHERE pa.user_id = :viewer_id
           AND ((pa.owner_scheme = 'media' AND m.id IS NOT NULL)
             OR (pa.owner_scheme = 'note_block' AND pa.owner_id IN (SELECT id FROM note_blocks
-                WHERE user_id = :viewer_id))) {{where}}""",
+                WHERE user_id = :viewer_id))
+            OR (pa.owner_scheme='highlight' AND annotation_h.user_id=:viewer_id AND annotation_h.authored_visible AND annotation_h.annotation_body_pm_json IS NOT NULL)
+            OR (pa.owner_scheme = 'fragment' AND EXISTS (
+                SELECT 1 FROM fragments f JOIN ({readable_x_capture_ids_sql()}) readable
+                  ON readable.capture_id=f.x_post_capture_id
+                WHERE f.id=pa.owner_id))) {{where}}""",
     "oracle_passage_anchor": f"""SELECT 'oracle_passage_anchor' AS type, a.id,
             a.display_label AS label, COALESCE(es.span_text, cc.chunk_text) AS text,
             to_tsvector('english', concat_ws(' ', a.display_label,
@@ -444,18 +503,13 @@ SOURCES: dict[str, str] = {
 }
 CREDITED = {"media": "m.id", "podcast": "p.id", "contributor": "vc", "content_chunk": "m.id"}
 SEMANTIC = {
+    "highlight_annotation": """cc.owner_kind='highlight' AND EXISTS (SELECT 1 FROM highlights h
+        WHERE h.id=cc.owner_id AND h.user_id=:viewer_id
+        AND h.authored_visible AND h.annotation_body_pm_json IS NOT NULL {where})""",
     "note_block": """cc.owner_kind = 'note_block' AND EXISTS (SELECT 1 FROM note_blocks nb
         WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id AND nb.authored_visible {where})""",
-    "content_chunk": f"cc.owner_kind='media' AND {_CHUNK_MEMBER}",
+    "content_chunk": f"cc.owner_kind IN ('media','fragment') AND {_CHUNK_MEMBER}",
 }
-# A note attached to a readable highlight by any live authored link, either direction.
-_HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
-    JOIN highlights h ON (edge.source_scheme = 'highlight' AND h.id = edge.source_id
-            AND edge.target_scheme = 'note_block' AND edge.target_id = nb.id)
-        OR (edge.target_scheme = 'highlight' AND h.id = edge.target_id
-            AND edge.source_scheme = 'note_block' AND edge.source_id = nb.id)
-    WHERE edge.user_id = :viewer_id AND {authored_link_sql("edge")}
-      AND {edge_live_sql("edge")} AND {highlight_readability_sql("h")})"""
 
 
 class Hit(NamedTuple):
@@ -479,7 +533,7 @@ class Retrieval:
     contributor_ids: list[UUID] | None = None
     roles: tuple[str, ...] = ()
     embedding: Embedding | None = None
-    highlight_notes_only: bool = False
+    exclude_viewer_authored: bool = False
 
 
 def _filters(family: str, r: Retrieval) -> str | None:
@@ -652,7 +706,8 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
             "contributor_ids": r.contributor_ids,
         }
     )
-    params |= _semantic_params("content_chunk", ()) | _semantic_params("note_block", ())
+    for family in SEMANTIC:
+        params |= _semantic_params(family, ())
     windows: list[list[Hit]] = [[] for _ in families]
     active: list[tuple[int, str, str]] = []
     semantic_families: list[str] = []
@@ -668,12 +723,7 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
                 for row, owner in _saved_passages(db, r)
             ]
             continue
-        where = (
-            cell[0]
-            + filters
-            + _STRICT_ADMISSION.get(family, "")
-            + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
-        )
+        where = cell[0] + filters + _STRICT_ADMISSION.get(family, "")
         active.append((index, family, where))
         if family in SEMANTIC and r.terms and r.embedding is not None:
             semantic_families.append(family)
@@ -737,13 +787,32 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
         for row in rows:
             index, kind, identity, label, score, reading = row
             id = int(identity) if families[index] == "gutenberg" else UUID(identity)
-            windows[index].append(Hit(kind, id, label, score, reading))
+            windows[index].append(
+                Hit(
+                    "highlight_annotation" if families[index] == "highlight_annotation" else kind,
+                    id,
+                    label,
+                    score,
+                    reading,
+                )
+            )
     return [hit for window in windows for hit in window]
 
 
 def merge(hits: Iterable[Hit]) -> list[Hit]:
     """The one cross-family order: score desc, then label, then id (as ``rank`` orders them)."""
-    return sorted(hits, key=lambda hit: (-hit.score, hit.label, str(hit.id)))
+    selected = []
+    highlights = set()
+    for hit in sorted(
+        hits,
+        key=lambda hit: (-hit.score, hit.type == "highlight_annotation", hit.label, str(hit.id)),
+    ):
+        if hit.type in {"highlight", "highlight_annotation"}:
+            if hit.id in highlights:
+                continue
+            highlights.add(hit.id)
+        selected.append(hit)
+    return sorted(selected, key=lambda hit: (-hit.score, hit.label, str(hit.id)))
 
 
 def hydrate_occurrences(
@@ -833,8 +902,15 @@ class DiscoveryHit:
     reading_media_id: UUID | None = None
 
     @property
-    def order(self) -> tuple[int, int, float, str, str]:
-        return (-self.name_tier, -self.lexical, -self.relevance, self.sort_label, self.ref.uri)
+    def order(self) -> tuple[int, int, float, int, str, str]:
+        return (
+            -self.name_tier,
+            -self.lexical,
+            -self.relevance,
+            int(self.family == "highlight_annotation"),
+            self.sort_label,
+            self.ref.uri,
+        )
 
 
 def _discovery_predicates(
@@ -857,7 +933,18 @@ def _discovery_predicates(
     if family in SEMANTIC:
         params |= _semantic_params(family, ())
     _, scope_params = _ctes(r)
-    return cell[0] + filters, params | scope_params
+    where = cell[0] + filters
+    if r.exclude_viewer_authored:
+        scheme = "highlight" if family == "highlight_annotation" else family
+        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(scheme)
+        if authored is not None:
+            where += f""" AND NOT EXISTS(SELECT 1 FROM authored_resources authored
+                WHERE authored.account_id=:viewer_id
+                  AND authored.ref='{scheme}:' || {authored}.id::text)"""
+        elif family == "passage_anchor":
+            where += """ AND NOT EXISTS(SELECT 1 FROM authored_passages authored
+                WHERE authored.account_id=:viewer_id AND authored.anchor_id=pa.id::text)"""
+    return where, params | scope_params
 
 
 def _semantic_owner(family: str, where: str) -> str:
@@ -870,6 +957,7 @@ def _semantic_owner(family: str, where: str) -> str:
             UNION SELECT p.source_media_id FROM media_parts p
                 WHERE p.media_id IN (SELECT media_id FROM admitted_media
                     UNION SELECT media_id FROM exact_passage_media)
+            UNION SELECT fragment_id FROM ({x_capture_scope_rows_sql("SELECT media_id FROM admitted_media UNION SELECT media_id FROM exact_passage_media")}) captured
         )) AND ({owner})"""
     return owner
 
@@ -962,7 +1050,7 @@ def discovery_eligible(
     ctes, bindings = _ctes(r, scope_sql=scopes)
     branches = []
     params: dict[str, Any] = {"viewer_id": r.viewer_id} | bindings | dict(scopes.bindings)
-    prose = {"note_block", "highlight", "passage_anchor", "message"}
+    prose = {"note_block", "highlight", "highlight_annotation", "passage_anchor", "message"}
     for family in families:
         predicates = _discovery_predicates(r, family, scopes.cell(family))
         if predicates is None:
@@ -985,8 +1073,26 @@ def discovery_eligible(
                 FROM media m JOIN admitted_media admitted ON admitted.media_id=m.id {state}
                 WHERE m.kind<>'text_part' {where}""")
             if family == "fragment":
+                branches.append(f"""SELECT DISTINCT 'fragment'::text AS family,
+                    p.admission_key,p.doc_key,p.ref,'media:' || m.id::text AS owner_ref,
+                    NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,
+                    m.id AS reading_media_id,p.search_id AS native_search_id
+                    FROM ({x_capture_scope_rows_sql(_ADMITTED)}) selected
+                    JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=selected.capture_id
+                    JOIN media m ON m.id=selected.reading_media_id
+                    JOIN keyword_occurrences p ON p.doc_key='fragment:' || selected.fragment_id::text
+                    WHERE TRUE {where}""")
                 continue
             if family == "content_chunk":
+                branches.append(f"""SELECT DISTINCT 'content_chunk'::text AS family,
+                    p.admission_key,p.doc_key,p.ref,'media:' || m.id::text AS owner_ref,
+                    NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,
+                    m.id AS reading_media_id,p.search_id AS native_search_id
+                    FROM ({reading_chunks_sql(_ADMITTED)}) selected
+                    JOIN content_chunks cc ON cc.id=selected.chunk_id AND cc.owner_kind='fragment'
+                    JOIN media m ON m.id=selected.reading_media_id
+                    JOIN keyword_occurrences p ON p.doc_key='content_chunk:' || cc.id::text
+                    WHERE TRUE {where}""")
                 source = f"""content_chunks cc
                     JOIN content_index_states s ON s.owner_kind='media' AND s.owner_id=cc.owner_id
                         AND s.lexical_revision=s.revision
@@ -1008,18 +1114,22 @@ def discovery_eligible(
                 0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id
                 FROM {source} WHERE {condition} {where}""")
             continue
-        scheme = {"web_result": "external_snapshot"}.get(family, family)
+        scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
+            family, family
+        )
         ref = f"'{scheme}:' || s.id::text"
         key = (
             "'contributor:' || CAST(:viewer_id AS text) || ':' || s.id::text"
             if family == "contributor"
             else ref
         )
+        if family == "highlight_annotation":
+            key = "'highlight:annotation:' || s.id::text"
         if family == "highlight":
-            key = "'highlight:' || s.reading_media_id::text || ':' || s.id::text"
+            key = "'highlight:' || COALESCE(s.reading_media_id::text,'source') || ':' || s.id::text"
         owner = "'conversation:' || s.conversation_id::text" if family == "message" else ref
         admission = key
-        if family == "note_block":
+        if family in ("note_block", "highlight_annotation"):
             admission += " || ':' || encode(digest(convert_to(s.text,'UTF8'),'sha256'),'hex')"
         name = "NULL::text" if family in prose else "s.label"
         tier = f"CASE WHEN lower({name})=lower(:q) THEN 3 WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"
@@ -1061,7 +1171,10 @@ def discovery_semantic_hits(
     return [
         DiscoveryHit(
             family,
-            ResourceRef(cast(ResourceScheme, family), row.id),
+            ResourceRef(
+                "highlight" if family == "highlight_annotation" else cast(ResourceScheme, family),
+                row.id,
+            ),
             ResourceRef("media", row.owner_id) if row.owner_id else None,
             0,
             False,
@@ -1137,7 +1250,12 @@ def discovery_browse(db: Session, r: Retrieval, families: Sequence[str]) -> list
         hits.extend(
             DiscoveryHit(
                 family,
-                ResourceRef(cast(ResourceScheme, family), row.id),
+                ResourceRef(
+                    "highlight"
+                    if family == "highlight_annotation"
+                    else cast(ResourceScheme, family),
+                    row.id,
+                ),
                 None,
                 0,
                 False,

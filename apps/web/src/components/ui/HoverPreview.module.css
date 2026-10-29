@@ -41,3 +41,5 @@
   line-height: var(--leading-snug);
   color: var(--ink);
 }
+
+.content { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: start; gap: var(--space-2); }

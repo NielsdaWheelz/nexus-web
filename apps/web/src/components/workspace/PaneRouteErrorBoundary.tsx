@@ -5,6 +5,7 @@ import { FeedbackState } from "@/components/feedback/Feedback";
 import { isApiError, isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import styles from "./WorkspaceHost.module.css";
 
@@ -25,9 +26,10 @@ interface State {
 }
 
 /** Expected read failures stay with their owners. This boundary contains defects; a new visit resets it. */
-export class PaneRouteErrorBoundary extends Component<Props, State> {
+export class PaneRouteErrorBoundary extends Component<Props, State, boolean> {
   state: State = { failure: null, resetKey: this.props.resetKey };
   private region: HTMLElement | null = null;
+  private shell: HTMLDivElement | null = null;
 
   static getDerivedStateFromProps(props: Props, state: State) {
     return props.resetKey === state.resetKey
@@ -53,12 +55,16 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
     });
   }
 
-  componentDidMount(): void {
-    if (this.state.failure && this.props.isActive) this.region?.focus();
+  getSnapshotBeforeUpdate(_props: Props, previous: State): boolean {
+    return !previous.failure && this.state.failure !== null && this.props.isActive
+      && document.activeElement !== document.body && Boolean(this.shell?.contains(document.activeElement));
   }
 
-  componentDidUpdate(_: Props, previous: State): void {
-    if (!previous.failure && this.state.failure && this.props.isActive) this.region?.focus();
+  componentDidUpdate(_props: Props, _previous: State, removedOwnedFocus: boolean): void {
+    if (!removedOwnedFocus || !this.props.isActive || hasActiveInteractionOwner()) return;
+    const current = document.activeElement;
+    if (current !== document.body && current?.isConnected) return;
+    this.region?.focus({ preventScroll: true });
   }
 
   render() {
@@ -74,6 +80,7 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
     const back = this.props.onBack ? { label: "go back", onClick: this.props.onBack } : undefined;
     const reload = { label: "reload app", onClick: () => window.location.reload() };
     return <div
+      ref={element => { this.shell = element; }}
       className={styles.paneErrorBoundaryShell}
       data-pane-error-boundary-shell="true"
       style={{ minWidth: this.props.slotMinWidth }}

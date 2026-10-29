@@ -1,21 +1,14 @@
 "use client";
 
-// Reader annotations over the local authored store. A highlight is an independent
-// authored resource; its attached notes are its linked notes in endpoint order, read
-// for a whole source at once. This
-// module maps them onto one mounted publication and turns reader selections into
-// exact local commands. Every host (workspace, shelf, saved episode) uses it.
-//
-// Placement never rewrites writing: the same publication or an exact quote at the
-// saved offsets places a mark; otherwise a unique literal occurrence places a derived
-// mark; otherwise the annotation stays unlocated beside its literal quote. A host
-// without source text still lists every annotation with editable notes.
-import { createNoteIntent, type Intent } from "@nexus/authored/commands";
-import type { NoteBody } from "@nexus/authored/body";
+// Reader marks retain the captured quotation; the highlight's one optional body
+// is edited through its permanent local writing document. Placement never changes
+// writing: unresolved captures remain beside their literal quotation.
+import { createHighlightIntent, type Intent } from "@nexus/authored/commands";
+import { emptyBody, type NoteBody } from "@nexus/authored/body";
+import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
-import type { AuthoredStore, HighlightColor, LinkState, Locator, PassageState, QueryResult, SelectionCapture } from "@nexus/authored/types";
+import type { AuthoredStore, HighlightColor, Locator, PassageState, QueryResult, SelectionCapture, SelectionLocation, ResourceProjection } from "@nexus/authored/types";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
-import { prepareLink } from "@/lib/resourceGraph/links";
 import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
 import type { DraftAnchor, Inspection, Mark, MarkAnchor } from "./DocumentReader";
 import type { ReaderDocument, ReaderTarget, TextDocument, TextUnit } from "./model";
@@ -24,11 +17,6 @@ const CONTEXT = 64;
 const PAGE = 100;
 const WHITE = /[\p{White_Space}\u001c-\u001f]/u;
 
-export interface AttachedNote {
-  readonly ref: string;
-  readonly linkId: string;
-  readonly position: string;
-}
 export type Placement =
   | { readonly kind: "placed"; readonly anchor: MarkAnchor }
   | { readonly kind: "unlocated" }
@@ -39,9 +27,12 @@ export interface ReaderAnnotation {
   readonly ref: string;
   readonly sourceRef: string;
   readonly color: HighlightColor;
-  readonly selection: SelectionCapture;
+  readonly selection: SelectionLocation;
+  readonly excerpt: ExcerptView;
+  readonly projection: ResourceProjection;
+  readonly readingRef: string;
   readonly placement: Placement;
-  readonly notes: readonly AttachedNote[];
+  readonly body: NoteBody | null;
 }
 export interface AnnotationsState {
   readonly status: "loading" | "ready" | "failed";
@@ -62,10 +53,10 @@ const mediaRef = (id: string) => `media:${id}`;
 const chars = (text: string) => [...text];
 
 /** The canonical owner of a mounted unit's offsets, or null for a public source unit. */
-function ownerOf(doc: TextDocument, mediaId: string, unit: TextUnit): { mediaId: string; generation: number | null; fragment: string } | null {
-  if (unit.xPost) return unit.xPost.owner ? { mediaId: unit.xPost.owner.media_id, generation: unit.xPost.owner.generation, fragment: unit.xPost.owner.fragment_id } : null;
-  if (doc.part) return { mediaId: doc.part.mediaId, generation: doc.part.generation, fragment: unit.id };
-  return { mediaId, generation: doc.generation, fragment: unit.id };
+function ownerOf(doc: TextDocument, mediaId: string, unit: TextUnit): { mediaId: string; generation: number | null; fragment: string; captureId: string | null } | null {
+  if (unit.xPost) return unit.xPost.owner ? { mediaId, generation: null, fragment: unit.xPost.owner.fragment_id, captureId: unit.xPost.owner.capture_id } : null;
+  if (doc.part) return { mediaId: doc.part.mediaId, generation: doc.part.generation, fragment: unit.id, captureId: null };
+  return { mediaId, generation: doc.generation, fragment: unit.id, captureId: null };
 }
 
 /** Every source whose highlights may paint on this publication. */
@@ -74,7 +65,7 @@ export function annotationSources(doc: ReaderDocument | null, mediaId: string): 
   const owners = new Set<string>();
   for (const unit of doc.units) {
     const owner = ownerOf(doc, mediaId, unit);
-    if (owner) owners.add(mediaRef(owner.mediaId));
+    if (owner) owners.add(owner.captureId ? `fragment:${owner.fragment}` : mediaRef(owner.mediaId));
   }
   return owners.size ? [...owners] : [mediaRef(doc.part?.mediaId ?? mediaId)];
 }
@@ -123,7 +114,7 @@ export interface Capture {
 }
 
 /** The exact local capture of one reader selection; null when this source grants no annotation. */
-export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: DraftAnchor): Capture | null {
+export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: DraftAnchor, body: ExcerptBody | null, excerptStart: number | null, excerptEnd: number | null): Capture | null {
   if (anchor.kind === "pdf") {
     // the shared pdf canonicalization admits at most 512 quads and a 2000-code-point quote.
     if (doc.kind !== "pdf" || doc.generation === null || anchor.quads.length > 512 || chars(anchor.exact).length > 2000) return null;
@@ -131,9 +122,9 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
       exact: anchor.exact, prefix: null, suffix: null, text_quote_selector: { exact: anchor.exact, prefix: null, suffix: null }, projection: null };
     // a geometric pdf selection has no textual passage anchor.
     return { sourceRef: mediaRef(mediaId), passage: null, selection: { publication: { kind: "reader", generation: doc.generation }, locator,
-      quote_exact: anchor.exact, prefix: null, suffix: null, passage_ref: null } };
+      quote_exact: anchor.exact, prefix: null, suffix: null, passage_ref: null, excerpt: createPlainExcerpt("", anchor.exact, "", "plain") } };
   }
-  if (doc.kind !== "text") return null;
+  if (doc.kind !== "text" || body === null || excerptStart === null || excerptEnd === null) return null;
   const unit = doc.units.find(candidate => candidate.id === anchor.unit);
   const owner = unit && ownerOf(doc, mediaId, unit);
   if (!unit || !owner) return null;
@@ -142,30 +133,45 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const exact = text.slice(anchor.start, anchor.end).join("");
   const prefix = text.slice(Math.max(0, anchor.start - CONTEXT), anchor.start).join("");
   const suffix = text.slice(anchor.end, anchor.end + CONTEXT).join("");
+  if (excerptCanonicalProof(body).emitted !== text.slice(excerptStart, excerptEnd).join("")) return null;
+  const excerpt = captureExcerpt({ ...body, source_extent: { reading_ref: owner.captureId ? `fragment:${owner.fragment}` : mediaRef(mediaId), document_identity: owner.captureId ? `capture:${owner.captureId}` : doc.identity, fragment_id: owner.fragment, start_offset: unit.sourceStartOffset + excerptStart, end_offset: unit.sourceStartOffset + excerptEnd }, truncated_before: false, truncated_after: false });
+  if (owner.captureId) {
+    const sourceRef = `fragment:${owner.fragment}`;
+    const locator: Locator = { type: "x_capture_offsets", capture_id: owner.captureId, fragment_id: owner.fragment, start_offset: anchor.start, end_offset: anchor.end, text_quote_selector: { exact, prefix, suffix } };
+    const passage = passageOf(unit.text, anchor.start, anchor.end);
+    return { sourceRef, passage: passage && { ...passage, source_ref: sourceRef }, selection: { publication: { kind: "x_capture", capture_id: owner.captureId }, locator, quote_exact: exact, prefix, suffix, passage_ref: null, excerpt } };
+  }
   const offsets = { media_id: owner.mediaId, fragment_id: owner.fragment, start_offset: anchor.start + unit.sourceStartOffset,
     end_offset: anchor.end + unit.sourceStartOffset, media_kind: null, text_quote_selector: { exact, prefix, suffix } };
   const locator: Locator = doc.format === "epub" ? { type: "epub_fragment_offsets", section_id: null, ...offsets } : { type: "web_text_offsets", ...offsets };
   const passage = passageOf(unit.text, anchor.start, anchor.end);
   return { sourceRef: mediaRef(owner.mediaId), passage: passage && { ...passage, source_ref: doc.part ? mediaRef(mediaId) : mediaRef(owner.mediaId) },
     selection: { publication: owner.generation === null ? null : { kind: "reader", generation: owner.generation },
-      locator, quote_exact: exact, prefix, suffix, passage_ref: null } };
+      locator, quote_exact: exact, prefix, suffix, passage_ref: null, excerpt } };
 }
 
 /** Units whose offsets this source owns, keyed by canonical fragment. */
 export function sourceUnits(doc: TextDocument, mediaId: string, source: string): { unit: TextUnit; generation: number | null; fragment: string }[] {
   return doc.units.flatMap(unit => {
     const owner = ownerOf(doc, mediaId, unit);
-    return owner && owner.mediaId === source ? [{ unit, generation: owner.generation, fragment: owner.fragment }] : [];
+    return owner && owner.captureId === null && owner.mediaId === source ? [{ unit, generation: owner.generation, fragment: owner.fragment }] : [];
   });
 }
 
 /** Where a saved selection paints on this publication; null when it belongs elsewhere. */
-export function placeSelection(doc: ReaderDocument, mediaId: string, selection: SelectionCapture): Placement | null {
+export function placeSelection(doc: ReaderDocument, mediaId: string, selection: SelectionLocation): Placement | null {
   const { locator, publication } = selection;
   if (locator.type === "pdf_page_geometry") {
     if (doc.kind !== "pdf" || locator.media_id !== mediaId) return null;
     return publication?.kind === "reader" && doc.generation !== null && publication.generation === doc.generation
       ? { kind: "placed", anchor: { kind: "pdf", page: locator.page_number, quads: locator.quads } } : { kind: "unlocated" };
+  }
+  if (doc.kind === "text" && locator.type === "x_capture_offsets") {
+    const unit = doc.units.find(candidate => candidate.xPost?.owner?.capture_id === locator.capture_id && candidate.xPost.owner.fragment_id === locator.fragment_id);
+    if (!unit) return null;
+    const text = chars(unit.text);
+    return locator.start_offset >= 0 && locator.end_offset <= text.length && locator.start_offset < locator.end_offset && text.slice(locator.start_offset, locator.end_offset).join("") === selection.quote_exact
+      ? { kind: "placed", anchor: { kind: "text", unit: unit.id, start: locator.start_offset, end: locator.end_offset } } : { kind: "unlocated" };
   }
   if (doc.kind !== "text" || !("media_id" in locator)) return null;
   const units = sourceUnits(doc, mediaId, locator.media_id);
@@ -211,10 +217,16 @@ export function locatePassage(doc: ReaderDocument, mediaId: string, passage: Pas
 } | null {
   const ownReading = passage.source_ref === mediaRef(mediaId);
   const { locator, publication, quote_exact } = passage.capture.value;
+  if (locator?.type === "x_capture_offsets") {
+    const placed = placeSelection(doc, mediaId, { locator, publication, quote_exact, prefix: passage.prefix, suffix: passage.suffix, passage_ref: `passage_anchor:${passage.anchor_id}` });
+    if (placed?.kind !== "placed" || placed.anchor.kind !== "text") return null;
+    const anchor = placed.anchor;
+    return { target: { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end }, inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
+  }
   const source = locator && "media_id" in locator ? mediaRef(locator.media_id) : canonicalSourceRef ?? passage.source_ref;
   if (!ownReading && !annotationSources(doc, mediaId).includes(source)) return null;
   const capturedGeneration = locator?.type === "pdf_page_geometry" && doc.kind === "pdf" ? doc.generation
-    : locator && "fragment_id" in locator && doc.kind === "text"
+    : locator && "media_id" in locator && "fragment_id" in locator && doc.kind === "text"
       ? sourceUnits(doc, mediaId, locator.media_id).find(entry => entry.fragment === locator.fragment_id)?.generation ?? null : null;
   if (publication?.kind === "reader" && capturedGeneration !== null && publication.generation === capturedGeneration &&
       locator && (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets" || locator.type === "pdf_page_geometry")) {
@@ -248,13 +260,7 @@ export function locatePassage(doc: ReaderDocument, mediaId: string, passage: Pas
     inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
 }
 
-interface Loaded {
-  readonly ref: string;
-  readonly sourceRef: string;
-  readonly color: HighlightColor;
-  readonly selection: SelectionCapture;
-  readonly notes: readonly AttachedNote[];
-}
+type Loaded = Omit<ReaderAnnotation, "id" | "placement">;
 
 async function readAll(store: AuthoredStore, query: (cursor: string | null) => Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult["rows"]> {
   const rows: QueryResult["rows"] = [];
@@ -265,8 +271,6 @@ async function readAll(store: AuthoredStore, query: (cursor: string | null) => P
     cursor = page.next_cursor;
   }
 }
-
-const endpointPosition = (link: LinkState, ref: string) => (link.endpoint_a === ref ? link.position_a : link.position_b)?.value ?? "";
 
 /** One account's annotations for one reader occurrence; re-reads whenever local state commits. */
 export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
@@ -300,8 +304,16 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
     });
     const size = (anchor: MarkAnchor) => anchor.kind === "text" ? anchor.end - anchor.start
       : anchor.quads.reduce((sum, quad) => sum + Math.abs((quad.x2 - quad.x1) * (quad.y3 - quad.y1)), 0);
-    const marks = annotations.flatMap(annotation => annotation.placement.kind === "placed"
-      ? [{ id: annotation.id, color: annotation.color, anchor: annotation.placement.anchor }] : [])
+    const marks = annotations.flatMap(annotation => {
+      if (annotation.placement.kind !== "placed") return [];
+      const anchor = annotation.placement.anchor;
+      const locator = annotation.selection.locator;
+      if (doc?.kind === "text" && locator.type === "x_capture_offsets" && anchor.kind === "text") {
+        return doc.units.filter(unit => unit.xPost?.owner?.capture_id === locator.capture_id && unit.xPost.owner.fragment_id === locator.fragment_id)
+          .map(unit => ({ id: annotation.id, color: annotation.color, anchor: { ...anchor, unit: unit.id } }));
+      }
+      return [{ id: annotation.id, color: annotation.color, anchor }];
+    })
       .sort((a, b) => size(a.anchor) - size(b.anchor) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     state = { ...state, annotations, marks };
     for (const listener of listeners) listener();
@@ -310,20 +322,11 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
   async function read(current: number) {
     const next: Loaded[] = [];
     for (const source of sources) {
-      const [highlights, attached] = await Promise.all([
-        readAll(store, cursor => ({ kind: "annotations", source_ref: source, cursor, limit: PAGE })),
-        readAll(store, cursor => ({ kind: "annotation_notes", source_ref: source, cursor, limit: PAGE })),
-      ]);
-      // attached notes arrive ordered by highlight, then that highlight's endpoint position.
-      const notes = new Map<string, AttachedNote[]>();
-      for (const { resource: note, link } of attached) {
-        if (!link) continue;
-        const highlight = link.endpoint_a === note.ref ? link.endpoint_b : link.endpoint_a;
-        notes.set(highlight, [...notes.get(highlight) ?? [], { ref: note.ref, linkId: link.link_id, position: endpointPosition(link, highlight) }]);
-      }
+      const highlights = await readAll(store, cursor => ({ kind: "annotations", source_ref: source, cursor, limit: PAGE }));
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, notes: notes.get(resource.ref) ?? [] });
+        if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, excerpt: resource.excerpt, projection: resource, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
       }
     }
     if (current !== generation) return;
@@ -391,18 +394,10 @@ async function boundCapture(store: AuthoredStore, accountId: string, capture: Ca
   const anchor = bound.binding_id ?? passageId(accountId, source_ref, await passageKey(normalized_exact, prefix, suffix));
   const selection = { ...capture.selection, passage_ref: `passage_anchor:${anchor}` };
   return { selection, intents: [{ kind: "capture_passage", anchor_id: anchor, source_ref, normalized_exact, prefix, suffix,
-    capture: { quote_exact: selection.quote_exact, publication: selection.publication, locator: selection.locator } }] };
+    capture: { quote_exact: selection.quote_exact, publication: selection.publication, locator: selection.locator, excerpt: selection.excerpt } }] };
 }
 
-/** An independent note appended after the highlight's notes, with its first link. */
-async function noteIntents(runtime: WritingRuntime, highlight: string, body: NoteBody): Promise<Intent[]> {
-  const ref = `note_block:${crypto.randomUUID()}`;
-  const initializer = createNoteIntent(ref, body);
-  const link = await prepareLink(runtime, { source_ref: highlight, target_ref: ref, source_label: null, target_label: null, after: null });
-  return [initializer, ...link.intents];
-}
-
-/** Commits one new highlight, its passage, its source stub and an optional first note atomically. */
+/** Commits one new highlight, its passage, its source stub and its annotation atomically. */
 export async function createHighlight(runtime: WritingRuntime, input: {
   /** Minted by the caller so a retried local commit keeps the same highlight. */
   readonly id: string;
@@ -410,33 +405,29 @@ export async function createHighlight(runtime: WritingRuntime, input: {
   readonly color: HighlightColor;
   /** The literal label this host knows for the capture's source, if any. */
   readonly source: SourceLabel | null;
-  readonly note: NoteBody | null;
+  readonly annotation: NoteBody | null;
 }): Promise<LocalCommit> {
+  const frozen = structuredClone(input);
+  const initializer = createHighlightIntent(highlightRef(frozen.id), frozen.capture.sourceRef, frozen.capture.selection, frozen.color, frozen.annotation ?? emptyBody());
   const store = await runtime.store;
   const { account_id } = await store.readReplica();
-  const ref = highlightRef(input.id);
-  const { sourceRef } = input.capture;
-  const passage = await boundCapture(store, account_id, input.capture);
+  const ref = highlightRef(frozen.id);
+  const { sourceRef } = frozen.capture;
+  const passage = await boundCapture(store, account_id, frozen.capture);
   const intents: Intent[] = [...passage.intents];
   // a known label refreshes the stub; an unknown source keeps its stub, or gets its ref as a truthful label.
-  const known = input.source !== null || (await store.query({ kind: "resource", ref: sourceRef })).rows.length > 0;
-  if (input.source || !known) intents.push({ kind: "capture_source", source_ref: sourceRef,
-    capture: { kind: input.source?.kind ?? "media", label: input.source?.label ?? sourceRef, publication: passage.selection.publication } });
-  intents.push({ kind: "create_highlight", ref, source_ref: sourceRef, selection: passage.selection, color: input.color });
-  if (input.note) intents.push(...await noteIntents(runtime, ref, input.note));
+  const known = frozen.source !== null || (await store.query({ kind: "resource", ref: sourceRef })).rows.length > 0;
+  if (frozen.source || !known) intents.push({ kind: "capture_source", source_ref: sourceRef,
+    capture: { kind: frozen.source?.kind ?? "media", label: frozen.source?.label ?? sourceRef, publication: passage.selection.publication } });
+  intents.push({ ...initializer, ref, selection: passage.selection });
   return runtime.run({ kind: "batch", intents });
-}
-
-/** A new independent note after the highlight's current notes. */
-export async function attachNote(runtime: WritingRuntime, annotation: ReaderAnnotation, body: NoteBody): Promise<LocalCommit> {
-  return runtime.run({ kind: "batch", intents: await noteIntents(runtime, annotation.ref, body) });
 }
 
 export function recolorHighlight(runtime: WritingRuntime, annotation: ReaderAnnotation, color: HighlightColor): Promise<LocalCommit> {
   return runtime.run({ kind: "update_highlight", ref: annotation.ref, selection: null, color });
 }
 
-/** Publication, extent, quote, context and passage move together; identity, colour and notes stay. */
+/** Publication, extent, quote, context and passage move together; identity, colour and annotation stay. */
 export async function resizeHighlight(runtime: WritingRuntime, annotation: ReaderAnnotation, capture: Capture): Promise<LocalCommit> {
   if (capture.sourceRef !== annotation.sourceRef) throw new Error("a highlight keeps its source");
   const store = await runtime.store;

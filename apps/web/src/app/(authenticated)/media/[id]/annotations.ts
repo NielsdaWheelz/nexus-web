@@ -1,6 +1,7 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
-// The media pane's annotations. Highlights, their attached notes and the media's
+// The media pane's annotations. Highlights, their annotations and the media's
 // whole-document links are local authored state: the account database owns them online
 // too, and they never wait on the network. The server's document map remains a separate,
 // separately failable section of derived evidence: source references, embeds and
@@ -42,7 +43,7 @@ export interface MediaAnnotationsState {
 }
 
 /** Server facts whose authority is now the local authored graph. */
-const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "highlight_note", "note_body"]);
+const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "note_body"]);
 const PAGE = 100;
 
 /** Remote roots keep canonical identity; only proven mounted owner occurrences
@@ -57,7 +58,11 @@ function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId:
     let resolutions: EvidenceRoot["resolution"][] = [original];
     if (original?.kind === "Resolved") {
       const locator = original.anchor.locator;
-      if (wire.media_id !== mediaId) {
+      if (locator.type === "x_capture_offsets") {
+        const mounted = doc?.kind === "text" ? doc.units.filter(unit => unit.xPost?.owner?.capture_id === locator.capture_id && unit.xPost.owner.fragment_id === locator.fragment_id) : [];
+        resolutions = mounted.length ? mounted.map(unit => ({ ...original, anchor: { ...original.anchor, locator: { ...locator, fragment_id: unit.id } } }))
+          : [{ kind: "Unavailable", reason: "Unanchorable" }];
+      } else if (wire.media_id !== mediaId) {
         const mounted = doc?.kind === "text" && "fragment_id" in locator && "start_offset" in locator && "end_offset" in locator
           ? sourceUnits(doc, mediaId, wire.media_id).filter(entry => wire.publication_generation !== null &&
               entry.generation === wire.publication_generation && entry.fragment === locator.fragment_id &&
@@ -124,8 +129,8 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let stops: (() => void)[] = [];
   let linkReads = 0;
 
-  function remoteMediaIds(mounted: ReaderDocument): string[] {
-    return [...new Set([mediaId, ...(mounted.kind === "text" ? mounted.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.media_id] : []) : [])])];
+  function remoteMediaIds(_mounted: ReaderDocument): string[] {
+    return [mediaId];
   }
 
   function project(remoteReadSucceeded = false) {
@@ -146,7 +151,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         : structure.fraction({ kind: "pdf", page: anchor.page, y: 0 });
       for (const annotation of localState.annotations) if (annotation.placement.kind === "placed")
         markers.push({ id: annotation.id, position: at(annotation.placement.anchor, false), end: at(annotation.placement.anchor, true),
-          tone: "Highlight", label: "highlight", preview: annotation.selection.quote_exact });
+          kind: "Highlight", tone: "Highlight", label: "highlight", preview: annotation.excerpt.kind === "content" ? excerptTextParts(annotation.excerpt.body).exact : "table excerpt" });
       for (const root of occurrences) {
         const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
         if (!extent) continue;
@@ -162,16 +167,18 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         if (extent.kind === "pdf") {
           const marker = wire?.identity === doc.identity ? wire.markers.find(item => item.item_id === root.ref) : null;
           if (marker) markers.push({ id: marker.item_id, position: marker.position, end: marker.end_position,
-            tone: marker.tone, label: marker.label, preview: marker.preview });
+            kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview });
           continue;
         }
         const item = rootItem(root), body = item.preview.body, facet = markerFacet(root);
         markers.push({ id: root.ref, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
+          kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
+            : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",
           tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
-          preview: body.kind === "passage" ? body.exact.text : body.kind === "prose" ? body.excerpt.text : null });
+          preview: body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.kind === "prose" ? body.excerpt.text : null });
       }
       if (wire && wire.identity === doc.identity) markers.push(...wire.markers.filter(marker => marker.item_id.startsWith("embed:")).map(marker => ({
-        id: marker.item_id, position: marker.position, end: marker.end_position, tone: marker.tone, label: marker.label, preview: marker.preview })));
+        id: marker.item_id, position: marker.position, end: marker.end_position, kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview })));
       markers.sort((a, b) => a.position - b.position);
     }
     state = { local: localState, links, remote, decorations: { identity: doc?.identity ?? "", marks: [...localState.marks, ...shared], noteRefs }, markers };
@@ -186,10 +193,18 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     if (mounted === null) return;
     if (remote.status === "failed") { remote = { ...remote, retrying: true }; project(); }
     try {
-      const next = await Promise.all(remoteMediaIds(mounted).map(async id => {
-        const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
-        return data;
-      }));
+      const captureIds = mounted.kind === "text" ? [...new Set(mounted.units.flatMap(unit => unit.xPost?.owner && (unit.xPost.relation === "primary" || unit.xPost.relation === "embedded") ? [unit.xPost.owner.capture_id] : []))] : [];
+      const [mediaMaps, captureMaps] = await Promise.all([
+        Promise.all(remoteMediaIds(mounted).map(async id => {
+          const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
+          return data;
+        })),
+        Promise.all(captureIds.map(async id => {
+          const { data } = await apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal });
+          return { ...data, media_id: mediaId, identity: mounted.identity };
+        })),
+      ]);
+      const next = [...mediaMaps, ...captureMaps];
       if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account)) return;
       wires = next;
       project(true);

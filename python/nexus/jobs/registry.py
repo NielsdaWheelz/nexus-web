@@ -110,6 +110,26 @@ def registry() -> dict[str, JobDefinition]:
             on_dead="nexus.services.source_publication:on_dead_letter",
             on_history="nexus.services.import_history:on_source_job_outcome",
         ),
+        "capture_x_quote": JobDefinition(
+            "background",
+            "nexus.tasks.capture_x_quote:run_job",
+            keep_succeeded=True,
+            keep_dead=True,
+            on_history="nexus.services.x_capture_job_hooks:on_history",
+        ),
+        "archive_x_capture_assets": JobDefinition(
+            "background",
+            "nexus.tasks.archive_x_capture_assets:run_job",
+            keep_succeeded=True,
+            keep_dead=True,
+            on_history="nexus.services.x_capture_job_hooks:on_history",
+        ),
+        "x_capture_content_reindex": JobDefinition(
+            "background",
+            "nexus.tasks.x_capture_content_reindex:run_job",
+            keep_dead=True,
+            on_dead="nexus.jobs.dead_letters:x_capture_index",
+        ),
         "media_content_reindex_job": JobDefinition(
             "background",
             "nexus.services.content_indexing:run_media_reindex_job",
@@ -118,10 +138,10 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_history="nexus.services.import_history:on_index_job_outcome",
         ),
-        "note_reindex_job": JobDefinition(
+        "authored_text_reindex_job": JobDefinition(
             "background",
-            "nexus.services.note_indexing:run_note_reindex_job",
-            on_dead="nexus.jobs.dead_letters:note_index",
+            "nexus.services.authored_text_indexing:run_authored_text_reindex_job",
+            on_dead="nexus.jobs.dead_letters:authored_text_index",
         ),
         "media_unit_build": JobDefinition(
             "background",

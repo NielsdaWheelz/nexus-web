@@ -8,7 +8,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackState, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
@@ -122,6 +122,9 @@ export default function ImportsList({
   const stale =
     (rows.status === "ready" && rows.failure !== null && rows.failure.op !== "More") ||
     (summaryFailed && counts !== null);
+  const summaryOccurrence = useFeedbackOccurrence(summaryFailed);
+  const rowsOccurrence = useFeedbackOccurrence(error !== null, query);
+  const staleOccurrence = useFeedbackOccurrence(stale, query);
   const settled = rows.status !== "loading";
   useEffect(() => onSettled(settled), [onSettled, settled]);
 
@@ -272,7 +275,6 @@ export default function ImportsList({
         navigation: { label: "Imports views", content: navigation },
         query: {
           kind: "Controls",
-          label: "Search imports",
           content: toolbar,
           focusInput,
         },
@@ -321,21 +323,21 @@ export default function ImportsList({
         state={
           <>
             {summary.status === "failed" ? (
-              <FeedbackNotice
+              <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
                 content={loadFailure(summary.error)}
                 announcement="Assertive"
                 actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
               />
             ) : null}
             {rows.status === "failed" ? (
-              <FeedbackState
+              <FeedbackFailure scope="Local" occurrence={rowsOccurrence}
                 content={loadFailure(error)}
                 announcement="Assertive"
                 actions={[{ label: "try again", onClick: rows.retry, busy: rows.running !== null }]}
               />
             ) : null}
             {stale ? (
-              <FeedbackNotice
+              <FeedbackFailure scope="Local" occurrence={staleOccurrence}
                 content={STALE_NOTICE}
                 announcement="Polite"
                 actions={[{ label: "try again", onClick: refresh,
@@ -344,7 +346,7 @@ export default function ImportsList({
               />
             ) : null}
             {rows.status === "loading" ? (
-              <PaneLoadingState label="Loading imports" announcement="Polite" />
+              <PaneLoadingState />
             ) : null}
           </>
         }

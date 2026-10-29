@@ -59,7 +59,7 @@ export function useLinkTargets(
     },
   });
   const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
-  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource), existing_link_id: null }));
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref), existing_link_id: null }));
   const current = admitted && raw === settled && local.data !== null;
   const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
   const seen = new Set<string>();
@@ -71,6 +71,9 @@ export function useLinkTargets(
     minimum: query.length < 2,
     loading: admitted && (raw !== settled || local.data === null && local.error === null),
     localError: local.error,
+    localOccurrence: local.occurrence,
+    localPending: local.pending,
+    retryLocal: local.retry,
     localComplete: local.data?.next_cursor === null,
     moreLocal: local.more,
     error: admitted && raw === settled && list.failure?.op !== "More" ? (list.failure?.error ?? null) : null,

@@ -19,6 +19,7 @@ from nexus.schemas.media_summary import (
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.x_captures import QuoteRetrieval
 from nexus.schemas.x_source import XArticleContent
 
 
@@ -73,6 +74,12 @@ class XSourceContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PartSourceEditionOut(BaseModel):
+    published_date: PublicationDate | None
+    isbn: str | None
+    publisher: str | None
+
+
 class MediaOut(BaseModel):
     """One media as this viewer sees it: bibliography, processing, readability and the
     viewer's own consumption; ``player_descriptor`` only for a playable episode."""
@@ -81,6 +88,7 @@ class MediaOut(BaseModel):
     kind: MediaKind
     title: str
     part_source: MediaPartSourceOut | None
+    part_source_edition: PartSourceEditionOut | None
     part_version: int | None
     canonical_source_url: str | None
     provider: str | None
@@ -121,6 +129,11 @@ class MediaOut(BaseModel):
     updated_at: datetime
 
 
+class XQuoteProcessingOut(BaseModel):
+    occurrence_id: UUID
+    retrieval: QuoteRetrieval | None
+
+
 class MediaProcessingSnapshotOut(BaseModel):
     """One processing stream frame: the facts source work, transcripts and indexing change."""
 
@@ -135,3 +148,4 @@ class MediaProcessingSnapshotOut(BaseModel):
     reader_generation: int | None
     transcript_reader_key: str | None
     work_in_flight: bool
+    quote_retrievals: list[XQuoteProcessingOut]

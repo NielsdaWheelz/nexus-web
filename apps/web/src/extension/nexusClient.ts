@@ -12,7 +12,10 @@ import {
   expectBoolean,
   expectCanonicalRfcUuid,
   expectExactRecord,
+  expectOrderRevision,
+  expectInteger,
   expectOneOf,
+  expectRecord,
   expectString,
 } from "@/lib/validation";
 import { CaptureFailureError, failure } from "@/extension/capture";
@@ -23,25 +26,17 @@ export type UploadAnswer = ApiJson<"/extension/captures", "post">["data"];
 export type ExtensionSession = Schema<"ExtensionSessionOut">;
 export type CaptureTarget = Schema<"CaptureTargetOut">;
 
-function revision(raw: unknown): string {
-  const value = expectString(raw, "revision");
-  if (!/^[1-9][0-9]{0,18}$/.test(value) || BigInt(value) > BigInt("9223372036854775807")) {
-    throw new TypeError("revision must be an exact positive bigint decimal string");
-  }
-  return value;
-}
-
 /** This independently installed client accepts only the current guarded wire. */
 function destinations(raw: unknown): Schema<"LibraryDestinationsOut"> {
   const value = expectExactRecord(raw, ["removal_revision", "destinations"], "destinations");
   return {
-    removal_revision: revision(value.removal_revision),
+    removal_revision: expectOrderRevision(value.removal_revision),
     destinations: expectArray(value.destinations, raw => {
       const item = expectExactRecord(raw, ["id", "name", "order_revision"], "destination");
       return {
         id: expectCanonicalRfcUuid(item.id, "destination.id"),
         name: expectString(item.name, "destination.name"),
-        order_revision: revision(item.order_revision),
+        order_revision: expectOrderRevision(item.order_revision),
       };
     }, "destinations"),
   };
@@ -54,10 +49,10 @@ function published(raw: unknown): Schema<"Published"> {
     const snapshot = expectExactRecord(value.current_placements, ["removal_revision", "all_membership", "placements"], "current placements");
     const all = expectExactRecord(snapshot.all_membership, ["library_id", "order_revision", "included", "remove_blocked"], "all membership");
     current = {
-      removal_revision: revision(snapshot.removal_revision),
+      removal_revision: expectOrderRevision(snapshot.removal_revision),
       all_membership: {
         library_id: expectCanonicalRfcUuid(all.library_id, "all_membership.library_id"),
-        order_revision: revision(all.order_revision),
+        order_revision: expectOrderRevision(all.order_revision),
         included: expectBoolean(all.included, "all_membership.included"),
         remove_blocked: all.remove_blocked === null ? null : expectOneOf(all.remove_blocked, ["RequiresAdmin", "PodcastSubscription"], "all_membership.remove_blocked"),
       },
@@ -66,7 +61,7 @@ function published(raw: unknown): Schema<"Published"> {
         return {
           library_id: expectCanonicalRfcUuid(item.library_id, "placement.library_id"),
           name: expectString(item.name, "placement.name"),
-          order_revision: revision(item.order_revision),
+          order_revision: expectOrderRevision(item.order_revision),
           relation: expectOneOf(item.relation, ["Absent", "Direct"], "placement.relation"),
           blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged", "PodcastSubscription"], "placement.blocked"),
         };
@@ -74,15 +69,57 @@ function published(raw: unknown): Schema<"Published"> {
     };
   }
   const sessionId = expectCanonicalRfcUuid(value.session_id, "published.session_id");
-  if (value.import_ref !== `upload:${sessionId}`) throw new TypeError("published import must name its session");
+  const mediaId = expectCanonicalRfcUuid(value.media_id, "published.media_id");
+  if (value.import_ref !== `upload:${sessionId}` && value.import_ref !== `media:${mediaId}`) throw new TypeError("published import must name its session or media");
   return {
     kind: expectOneOf(value.kind, ["Published"], "published.kind"),
-    import_ref: `upload:${sessionId}`,
+    import_ref: value.import_ref,
     session_id: sessionId,
-    media_id: expectCanonicalRfcUuid(value.media_id, "published.media_id"),
+    media_id: mediaId,
     created: expectBoolean(value.created, "published.created"),
     current_placements: current,
   };
+}
+
+function target(raw: unknown): Schema<"CaptureTarget"> {
+  const value = expectExactRecord(raw, ["media_id", "expected_source_attempt_id", "expected_reader_generation"], "capture target");
+  const generation = value.expected_reader_generation === null ? null : expectInteger(value.expected_reader_generation, "reader generation");
+  if (generation !== null && generation < 1) throw new TypeError("invalid reader generation");
+  return { media_id: expectCanonicalRfcUuid(value.media_id, "media id"), expected_source_attempt_id: expectCanonicalRfcUuid(value.expected_source_attempt_id, "source attempt"), expected_reader_generation: generation };
+}
+
+function binding(raw: unknown): NonNullable<Schema<"CreateCaptureRequest">["capture_binding"]> {
+  const kind = expectOneOf(expectRecord(raw, "binding").kind, ["XArticle", "WebRecovery"], "binding kind");
+  if (kind === "XArticle") {
+    const value = expectExactRecord(raw, ["kind", "article_id", "target"], "x binding");
+    const article_id = expectString(value.article_id, "article id");
+    if (!/^[0-9]+$/.test(article_id)) throw new TypeError("invalid article id");
+    return { kind, article_id, target: value.target === null ? null : target(value.target) };
+  }
+  const value = expectExactRecord(raw, ["kind", "target", "source_relation"], "web binding");
+  const parsed = target(value.target);
+  if (parsed.expected_reader_generation !== null) throw new TypeError("web target has a reader generation");
+  return { kind, target: parsed, source_relation: expectOneOf(value.source_relation, ["ExactUrl", "AlternativeCopy"], "source relation") };
+}
+
+function summary(raw: unknown): Schema<"TargetSummary"> {
+  const value = expectExactRecord(raw, ["title", "source_label", "source_url", "accepted_at"], "target summary");
+  return { title: expectString(value.title, "title"), source_label: expectString(value.source_label, "source label"), source_url: expectString(value.source_url, "source url"), accepted_at: expectString(value.accepted_at, "accepted at") };
+}
+
+function captureTarget(raw: unknown): CaptureTarget {
+  const value = expectExactRecord(raw, ["capture_binding", "target_summary", "web_match"], "capture target response");
+  return { capture_binding: value.capture_binding === null ? null : binding(value.capture_binding), target_summary: value.target_summary === null ? null : summary(value.target_summary), web_match: expectOneOf(value.web_match, ["None", "Unique", "Ambiguous"], "web match") };
+}
+
+function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
+  const value = expectExactRecord(raw, ["items", "next_cursor"], "recovery candidates");
+  return { items: expectArray(value.items, raw => {
+    const item = expectExactRecord(raw, ["binding", "summary"], "recovery candidate");
+    const parsed = binding(item.binding);
+    if (parsed.kind !== "WebRecovery") throw new TypeError("candidate is not web recovery");
+    return { binding: parsed, summary: summary(item.summary) };
+  }, "recovery candidates"), next_cursor: value.next_cursor === null ? null : expectString(value.next_cursor, "next cursor") };
 }
 
 async function call<T>(
@@ -153,13 +190,15 @@ export function nexus(token: string) {
     },
     destinations: async (signal?: AbortSignal) =>
       destinations(await call<unknown>(token, "GET", "/library-destinations", undefined, signal)),
-    captureTarget: (sourceUrl: string, signal: AbortSignal) =>
-      call<CaptureTarget>(token, "GET", `/capture-target?source_url=${encodeURIComponent(sourceUrl)}`, undefined, signal),
+    captureTarget: async (sourceUrl: string, signal: AbortSignal) =>
+      captureTarget(await call<unknown>(token, "GET", `/capture-target?source_url=${encodeURIComponent(sourceUrl)}`, undefined, signal)),
+    recoveryTargets: async (sourceUrl: string, q: string, cursor: string | null) =>
+      recoveryPage(await call<unknown>(token, "GET", `/recovery-targets?${new URLSearchParams({ source_url: sourceUrl, q, ...(cursor === null ? {} : { cursor }) })}`)),
     create: async (request: Schema<"CreateCaptureRequest">, signal: AbortSignal) => {
       const answer = await call<UploadAnswer>(token, "POST", "/captures", request, signal);
       return answer.kind === "Published" ? published(answer) : answer;
     },
-    confirm: async (id: string, request: Schema<"ConfirmUploadRequest">, signal: AbortSignal) =>
+    confirm: async (id: string, request: Schema<"AcquireCaptureRequest"> | Schema<"RecoverCaptureRequest">, signal: AbortSignal) =>
       published(await call<unknown>(
         token,
         "POST",

@@ -16,7 +16,7 @@ from nexus.jobs.queue import JobRow
 from nexus.services.generation import ledger
 
 
-def note_index(db: Session, job: JobRow) -> None:
+def authored_text_index(db: Session, job: JobRow) -> None:
     """Note indexing: an index still waiting on this rebuild fails with the job's code.
 
     Only its payload revision in pending/indexing can fail. Published lexical text
@@ -25,10 +25,31 @@ def note_index(db: Session, job: JobRow) -> None:
     db.execute(
         text("""UPDATE content_index_states
             SET status = 'failed', status_reason = left(:reason, 1000), updated_at = now()
-            WHERE owner_kind = 'note_block' AND owner_id = :id AND revision = :revision AND status IN ('pending', 'indexing')"""),
+            WHERE owner_kind = :kind AND owner_id = :id AND revision = :revision AND status IN ('pending', 'indexing')"""),
         {
-            "id": UUID(job.payload["note_block_id"]),
+            "id": UUID(job.payload["owner_id"]),
+            "kind": job.payload["owner_kind"],
             "revision": int(job.payload["revision"]),
+            "reason": f"{job.error_code}: {job.last_error}",
+        },
+    )
+
+
+def x_capture_index(db: Session, job: JobRow) -> None:
+    """Keep lexical capture text; stop reporting work after its last job exhausts."""
+    db.execute(
+        text("""
+        UPDATE content_index_states s SET status='failed',status_reason=left(:reason,1000),updated_at=now()
+        FROM fragments f WHERE s.owner_kind='fragment' AND s.owner_id=f.id
+          AND f.x_post_capture_id=:capture_id AND s.status IN ('pending','indexing')
+          AND NOT EXISTS (SELECT 1 FROM background_jobs other
+              WHERE other.kind='x_capture_content_reindex' AND other.id<>:job_id
+                AND other.payload->>'capture_id'=CAST(:capture_id AS text)
+                AND other.status IN ('pending','failed','running'))
+    """),
+        {
+            "capture_id": UUID(job.payload["capture_id"]),
+            "job_id": job.id,
             "reason": f"{job.error_code}: {job.last_error}",
         },
     )

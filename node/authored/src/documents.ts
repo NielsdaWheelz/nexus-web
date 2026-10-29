@@ -1,4 +1,4 @@
-/** A note has one permanent body element and one permanent inline Y.XmlText.
+/** Each note or highlight has one permanent body and inline Y.XmlText.
  * Text, marks and embedded atoms share UTF-16 positions (atoms occupy one). This
  * avoids tree bindings copying/deleting adjacent text containers during atom edits. */
 import * as Y from "yjs";
@@ -22,7 +22,7 @@ export function decodeBytes(encoded: string): Uint8Array {
 }
 export function bodyElement(doc: Y.Doc): Y.XmlElement {
   const children = doc.getXmlFragment("body").toArray();
-  if (children.length !== 1 || !(children[0] instanceof Y.XmlElement) || children[0].nodeName !== "body") throw new TypeError("A note must retain exactly one permanent body");
+  if (children.length !== 1 || !(children[0] instanceof Y.XmlElement) || children[0].nodeName !== "body") throw new TypeError("An authored body must retain exactly one permanent body element");
   return children[0];
 }
 export function bodyInline(doc: Y.Doc): Y.XmlText {
@@ -46,7 +46,7 @@ function insert(inline: Y.XmlText, position: number, content: readonly InlineNod
   }
 }
 export function readBody(doc: Y.Doc): NoteBody {
-  if ([...doc.share.keys()].some(key => key !== "body")) throw new TypeError("Unknown note root");
+  if ([...doc.share.keys()].some(key => key !== "body")) throw new TypeError("Unknown authored body root");
   const body = bodyElement(doc);
   const attrs = body.getAttributes();
   if (Object.keys(attrs).some(key => key !== "presentation")) throw new TypeError("Unknown body attribute");
@@ -85,7 +85,7 @@ export function hydrateNote(state: string): Y.Doc {
   catch (error) { doc.destroy(); throw error; }
 }
 export function mergeNote(state: string | null, update: string | null): { body_state: string; body: NoteBody } {
-  if (state === null && update === null) throw new TypeError("Unknown note needs a complete initializer");
+  if (state === null && update === null) throw new TypeError("An unknown body needs a complete initializer");
   const doc = new Y.Doc();
   try {
     if (state !== null) Y.applyUpdate(doc, decodeBytes(state));

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { FeedbackNotice, FeedbackState, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
+import { useEffect, useState } from "react";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, FeedbackState, type FeedbackContent } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { PlaybackRateEditor, SkipSilenceField } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
@@ -42,7 +42,7 @@ export default function PodcastSettingsOverlay(props: Props) {
         ? { tone: "Warning", title: "this podcast is no longer available." }
         : podcastErrorMessage(source.error, "couldn’t load playback defaults.")}
         announcement="Polite" actions={source.error.code === "E_NOT_FOUND" ? undefined : [{ label: "retry loading", busy: source.retrying, onClick: source.refetch }]} />
-        : <PaneLoadingState label="loading playback defaults…" announcement="Polite" />}
+        : <PaneLoadingState />}
     </Dialog>
   );
 }
@@ -56,10 +56,12 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const guard = useWorkGuard();
   const { accountId } = useAuthenticatedAccount();
   const missing = readError?.code === "E_NOT_FOUND";
+  const readOccurrence = useFeedbackOccurrence(readError !== null, podcastId);
   const readFeedback = readError === null || missing ? null : podcastErrorMessage(readError, "couldn’t reload playback defaults.");
   const reloadRequired = readFeedback?.reload === true;
   const save = usePodcastSettingsSave(podcastId, `${accountId}:${podcastId}`);
   const operation = save.state;
+  useEffect(() => {if (operation?.kind === "Accepted") onClose();}, [operation, onClose]);
   const reviewed = operation?.kind === "Review" ? operation.current : null;
   const baseline = reviewed ?? opening;
   const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening.id ?? "absent"}:${opening.settings_version}`, () => ({
@@ -96,33 +98,20 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
     });
     if (accepted) onClose();
   };
-  const check = () => { void save.check().then(accepted => { if (accepted) onClose(); }); };
   const defaults = (speed: number | null, mode: PodcastSettings["pause_shortening_mode"]) =>
     `speed ${speed === null ? "not set (1×)" : formatPlaybackRate(speed)} · skip silence on android: ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
   let feedback: FeedbackContent | null = null;
-  let actions: FeedbackActions | undefined;
   if (operation) {
     switch (operation.kind) {
       case "Saving":
-        feedback = { tone: "Neutral", title: "saving…" };
+
         break;
       case "Reading":
-        feedback = { tone: "Neutral", title: "checking saved settings…" };
+
         break;
       case "Rejected":
-        feedback = podcastErrorMessage(operation.error, "couldn’t save playback defaults.");
-        if (default_playback_speed === operation.command.patch.default_playback_speed &&
-          pause_shortening_mode === operation.command.patch.pause_shortening_mode) {
-          actions = [{ label: "try again", commandKey: JSON.stringify(operation.command.patch), onClick: () => { void save.retry().then(accepted => { if (accepted) onClose(); }); } }];
-        }
-        break;
       case "Unknown":
-        feedback = { tone: "Warning", title: "save not confirmed.", message: "the request may have succeeded. check the saved settings before trying again.", requestId: operation.error.requestId };
-        actions = [{ label: "check saved settings", commandKey: JSON.stringify(operation.command.patch), onClick: check }];
-        break;
       case "ReadFailed":
-        feedback = podcastErrorMessage(operation.error, "couldn’t check saved settings.");
-        actions = [{ label: "check saved settings", commandKey: JSON.stringify(operation.command.patch), onClick: check }];
         break;
       case "Review":
         feedback = { tone: "Warning", title: operation.reason === "Conflict" ? "playback defaults changed elsewhere." : "the saved settings do not confirm this request." };
@@ -141,14 +130,11 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   }
   if (replaced) {
     feedback = { tone: "Warning", title: "playback defaults changed. reopen settings before saving." };
-    actions = undefined;
   } else if (absent) {
     feedback = { tone: "Warning", title: "this podcast is no longer available." };
-    actions = undefined;
   }
   if (reloadRequired) {
     feedback = readFeedback;
-    actions = undefined;
   }
   return <Dialog open onClose={onClose} title="playback defaults"
     onDismissRequest={() => requestDismiss() ? "accepted" : "blocked"}
@@ -162,14 +148,15 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         <SkipSilenceField checked={pause_shortening_mode === "Natural"} label="skip silence on android"
           onChange={checked => draft.set(value => ({ ...value, pause_shortening_mode: checked ? "Natural" : "Off" }))} />
       </fieldset>
-      {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
-      {readFeedback && !reloadRequired ? <FeedbackNotice content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
+      {save.feedback}
+      {feedback ? reloadRequired ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={feedback} announcement="Polite" /> : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
+      {readFeedback && !reloadRequired ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
       {reviewed && !replaced && !absent && operation?.kind === "Review" ? <div className={styles.comparison}>
         <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
         <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
       </div> : null}
       <div className={styles.actions}>
-        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-busy={save.busy || undefined} aria-label="save playback defaults" onClick={() => void submit()}>
+        {!absent && !replaced ? <Button reserveIcon emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-busy={save.busy || undefined} aria-label="save playback defaults" onClick={() => void submit()}>
           save
         </Button> : null}
         <Button size="comfortable" aria-label="close playback defaults" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>

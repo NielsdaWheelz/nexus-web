@@ -82,22 +82,28 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 its normal three-attempt policy and `keep_dead=True`. its payload is `{feed_id}`.
 admission is serializable and joins existing work. a read-only repeatable-read
 snapshot captures the input revision, database time and ranking.
-ranking uses the native async search gate with one 400 ms absolute deadline
-for checkout, nonblocking admission and the complete snapshot. qualification
-requires backend hold, including joined physical retirement, no longer than 500 ms.
+media anchors use their first chunk's current active vector; a piece uses its
+first eligible admitted chunk. each selected anchor requests independent
+graph-thread and rediscovery windows. sequential postgres queries score original vectors and
+project canonical reading/chunk rows before ordering by distance, reading id and
+chunk id and taking 400 per anchor/family; only then are rows grouped by media.
+vectors and eligibility stay in postgres. there is no shared ann traversal or
+all-anchor cross-product.
+ranking uses the native async search gate with one finite absolute allowance
+for checkout, nonblocking admission and the complete snapshot.
 retirement confirms the search pid is absent before any publication transaction;
 a known-unconfirmed backend prevents publication and fails that scope's search
 capacity closed. there is no retained partial ranking across attempts.
 
-only admission refusal or this attempt's owned computation deadline returns a
-same-job reschedule at database `now() + 5 seconds`. normal queue settlement keeps
+only observed admission contention returns a same-job reschedule at database
+`now() + 5 seconds`. normal queue settlement keeps
 the payload and feed pointer and refunds the claimed attempt. each later attempt
-reruns the entire read. arbitrary `57014`, connection loss, shutdown and other
-failures retain their own error or lifecycle handling; they are not an owned-budget
-reschedule. the deferral claim check and database-time read use one short ordinary
+reruns the entire read. setup and admitted computation expiry spend the ordinary
+bounded failure budget. arbitrary `57014`, connection loss and shutdown retain
+their own error or lifecycle handling. the deferral claim check and database-time read use one short ordinary
 transaction after the search scope has closed. this sequential child handler has
 no concurrent frame/provider/ordinary owner; the supervisor heartbeat is separate.
-logs distinguish `admission_busy` and `computation_budget` with phase and job age.
+reschedule logs identify `admission_busy`; owned read expiry retains its error.
 
 once the complete read and retirement succeed, a separate short serializable
 transaction locks the current execution claim, verifies the feed pointer and
@@ -113,14 +119,13 @@ later builds become available no earlier than the previous snapshot time plus
 30 seconds. sustained competing activity may leave suggestions stale; observers
 retain current publication and truthful queued/recovering/suspended state.
 
-qualification requires every due test feed to publish the settled input revision
-within 60 seconds of a recorded `t0`, after other admitted jobs drain and
-foreground mutations stop, with its observer active. pre-existing suspended
-failures are identified at scenario start; failures created by the scenario are
-not exempt. full due-to-publication time, including preceding imports, is recorded
-separately. this contract neither bounds arbitrary import duration nor promises
-freshness during sustained competing work. backend-retirement, useful publication
-and normal resource-envelope qualification are separate obligations.
+qualification freezes the active due-feed cohort and a finite observation window
+before work begins. every due feed must publish the settled input within that
+window after competing work drains. pre-existing suspended failures are identified
+at the start; failures created by the workload are not exempt. there is no
+quiet-period latency target or promise of freshness during sustained activity.
+backend retirement, useful publication and the resource envelope remain separate
+obligations under the [reliability spec](../search-reliability-spec.md).
 
 ## ports
 

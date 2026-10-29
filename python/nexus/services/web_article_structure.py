@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
@@ -15,6 +15,7 @@ from lxml.html import HtmlElement, fragment_fromstring
 
 from nexus.errors import ResourceLimitError
 from nexus.logging import get_logger
+from nexus.schemas.capture_limits import WEB_ARTICLE_HTML_MAX_BYTES
 from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.schemas.source_issues import SourceIssue, TooManyNotes
 from nexus.services.canonicalize import (
@@ -33,6 +34,7 @@ from nexus.services.document_embeds import (
     DocumentEmbedTargetAcceptSource,
     DocumentEmbedTargetOutcome,
     DocumentEmbedTargetTerminal,
+    DocumentEmbedTargetXQuote,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec
 from nexus.services.html_apparatus import (
@@ -46,8 +48,6 @@ from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
 logger = get_logger(__name__)
-
-WEB_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,6 @@ class WebArticlePreparedFragment:
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
     document_embeds: list[WebArticleDocumentEmbed]
-    document_embed_extraction_failed: bool
     source_issues: tuple[SourceIssue, ...]
 
     @property
@@ -117,6 +116,7 @@ def prepare_web_article_fragment(
     fragment_idx: int,
     extract_embeds: bool = False,
     embed_source_html: str | None = None,
+    capture_assets: Mapping[str, str] | None = None,
 ) -> WebArticlePreparedFragment:
     """Embeds, then apparatus, then sanitize, anchor, canonicalize and index."""
     document_url = urldefrag(document_url).url
@@ -140,7 +140,6 @@ def prepare_web_article_fragment(
         if embed_source_html is not None:
             embed_source_html = serialize_html(source)
     detected_embeds: list[DetectedDocumentEmbed] = []
-    extraction_failed = False
     if extract_embeds:
         try:
             extracted = extract_document_embeds(html, base_url)
@@ -152,7 +151,6 @@ def prepare_web_article_fragment(
             html = extracted.html
         except Exception:
             logger.warning("document_embed_extraction_failed", exc_info=True)
-            extraction_failed = True
     try:
         targets, _, _, _ = collect_html_apparatus_targets(
             embed_source_html or html,
@@ -219,6 +217,7 @@ def prepare_web_article_fragment(
             document_url=document_url,
             allow_reader_apparatus_attrs=not source_issues,
             allow_document_embed_attrs=extract_embeds,
+            capture_assets=capture_assets,
         ),
         fragment_idx=fragment_idx,
     )
@@ -233,7 +232,6 @@ def prepare_web_article_fragment(
             apparatus_items=[],
             apparatus_edges=[],
             document_embeds=document_embeds,
-            document_embed_extraction_failed=extraction_failed,
             source_issues=source_issues,
         )
     return WebArticlePreparedFragment(
@@ -249,7 +247,6 @@ def prepare_web_article_fragment(
         apparatus_items=apparatus_items,
         apparatus_edges=apparatus_edges,
         document_embeds=document_embeds,
-        document_embed_extraction_failed=extraction_failed,
         source_issues=source_issues,
     )
 
@@ -284,6 +281,11 @@ def document_embed_artifact_occurrences(
 def _document_embed_target(detected: DetectedDocumentEmbed) -> DocumentEmbedTargetOutcome:
     match detected.resolution_status:
         case "pending":
+            if detected.provider == "x" and detected.embed_kind == "post":
+                assert detected.provider_target_ref is not None
+                return DocumentEmbedTargetXQuote(
+                    detected.provider_target_ref, detected.excerpt_html, detected.attribution_text
+                )
             # Pending extraction is the accepted-source branch; the extraction
             # boundary always supplies its canonical URL.
             return DocumentEmbedTargetAcceptSource(detected.canonical_source_url or "")

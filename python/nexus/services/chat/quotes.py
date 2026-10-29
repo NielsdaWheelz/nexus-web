@@ -26,6 +26,7 @@ from nexus.schemas.conversation import (
     ReaderSelectionPreview,
     ReaderSelectionSnapshot,
 )
+from nexus.services.reader_excerpts import quote_parts
 from nexus.services.resource_graph.refs import ResourceRef
 
 
@@ -51,15 +52,25 @@ def build_snapshot(
         )
     except NotFoundError as error:
         raise ApiError(missing, "Highlight is outside the requested reading scope") from error
+    if key.capture_id is not None:
+        from nexus.schemas.resource_evidence import CapturedPassageTarget
+
+        if (
+            not isinstance(evidence.target, CapturedPassageTarget)
+            or evidence.target.locator.type != "x_capture_offsets"
+            or evidence.target.locator.capture_id != key.capture_id
+        ):
+            raise ApiError(missing, "Highlight is outside the requested capture")
     quote = evidence.quote
-    if quote is None or not quote.exact.strip():
+    parts = quote_parts(quote) if quote is not None else None
+    if parts is None or not parts.exact.strip():
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_GEOMETRY_ONLY,
             "A geometry-only highlight cannot be quoted",
         )
     if (
-        len(quote.exact) > MAX_QUOTE_EXACT
-        or max(len(quote.prefix or ""), len(quote.suffix or "")) > MAX_QUOTE_AFFIX
+        len(parts.exact) > MAX_QUOTE_EXACT
+        or max(len(parts.prefix), len(parts.suffix)) > MAX_QUOTE_AFFIX
     ):
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
@@ -94,7 +105,7 @@ def selection_out(
     key = (
         ReaderQuoteSourceTargetKey(message_id=message_id)
         if message_id
-        else ResourceSourceTargetKey(resource_ref=ref.uri)
+        else ResourceSourceTargetKey(field=None, resource_ref=ref.uri)
     )
     item = evidence_items(db, viewer_id=viewer_id, occurrences=[(ref, snapshot.evidence, key)])[0]
     if message_id is None and item.activation.kind != "none":
@@ -123,7 +134,7 @@ def quote_block(
     prefix: str | None = None,
     suffix: str | None = None,
     source: str | None = None,
-    note: str | None = None,
+    annotation: str | None = None,
     offset_status: str | None = None,
 ) -> str:
     """The one XML renderer for quote-shaped prompt blocks."""
@@ -136,8 +147,8 @@ def quote_block(
     lines.append(f"<exact>{escape(exact)}</exact>")
     if suffix:
         lines.append(f"<suffix>{escape(suffix)}</suffix>")
-    if note:
-        lines.append(f"<note>{escape(note)}</note>")
+    if annotation:
+        lines.append(f"<annotation>{escape(annotation)}</annotation>")
     lines.append(f"</{tag}>")
     return "\n".join(lines)
 
@@ -149,10 +160,11 @@ def attribute(value: str) -> str:
 
 
 def snapshot_block(snapshot: ReaderSelectionSnapshot, tag: str) -> str:
+    parts = quote_parts(snapshot.evidence.quote) if snapshot.evidence.quote else None
     return quote_block(
         tag,
-        exact=snapshot.evidence.quote.exact if snapshot.evidence.quote else "",
-        prefix=snapshot.evidence.quote.prefix if snapshot.evidence.quote else None,
-        suffix=snapshot.evidence.quote.suffix if snapshot.evidence.quote else None,
+        exact=parts.exact if parts else "",
+        prefix=parts.prefix if parts else None,
+        suffix=parts.suffix if parts else None,
         source=snapshot.evidence.source.title,
     )

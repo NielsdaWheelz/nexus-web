@@ -4,9 +4,8 @@ Fragments bind ``:viewer_id``. Point checks take a session and answer a bool; "n
 "not visible" are the same False. Two ORM adapters wrap the highlight rules as ``text`` clauses
 correlated to the unaliased ``highlights`` table.
 
-Workspace enumeration: library membership, exact media/highlight grants and retained
-x-post evidence are the roots; actual x containment (thread posts, resolved x embeds)
-and source→piece containment close over them. piece→source storage dependency
+Workspace enumeration: library membership and exact media/highlight grants are
+roots; source→piece containment closes over them. piece→source storage dependency
 never grants access. The viewer's tombstones and every teardown intent exclude each step, roots
 included. ``library_entries.library_media_ids_cte_sql`` layers "My Library" on top.
 Highlights: a consistent typed anchor on readable media whose author is the viewer, shares a
@@ -44,57 +43,14 @@ def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewe
 
 
 def media_containment_edges_sql() -> str:
-    """actual x/source-piece containment, never links or reverse source dependencies."""
-    return """
-        SELECT thread_media_id AS parent_media_id, post_media_id AS child_media_id
-        FROM x_thread_posts
-        UNION
-        SELECT de.media_id, de.target_media_id
-        FROM document_embeds de
-        JOIN x_post_sources xp ON xp.media_id = de.target_media_id
-        WHERE de.provider = 'x' AND de.resolution_status = 'resolved'
-          AND de.canonical_end_offset IS NOT NULL
-        UNION
-        SELECT source_media_id, media_id FROM media_parts
-    """
-
-
-def retained_x_post_roots_sql() -> str:
-    """(media_id, user_id): x posts a user's highlights, anchors, retrievals or citations keep."""
-    return """
-        SELECT h.anchor_media_id AS media_id, h.user_id
-        FROM highlights h JOIN x_post_sources xp ON xp.media_id = h.anchor_media_id
-        WHERE h.authored_visible
-        UNION
-        SELECT pa.owner_id, pa.user_id
-        FROM passage_anchors pa JOIN x_post_sources xp ON xp.media_id = pa.owner_id
-        WHERE pa.owner_scheme = 'media'
-        UNION
-        SELECT mr.media_id, c.owner_user_id
-        FROM message_retrievals mr
-        JOIN x_post_sources xp ON xp.media_id = mr.media_id
-        JOIN messages msg ON msg.id = mr.assistant_message_id
-        JOIN conversations c ON c.id = msg.conversation_id
-        UNION
-        SELECT xp.media_id, c.owner_user_id
-        FROM messages msg
-        JOIN conversations c ON c.id = msg.conversation_id
-        JOIN x_post_sources xp
-          ON msg.reader_selection_snapshot #>> '{evidence,target,owner_ref}'
-             = 'media:' || xp.media_id::text
-        UNION
-        SELECT xp.media_id, re.user_id
-        FROM resource_edges re
-        JOIN x_post_sources xp
-          ON re.snapshot #>> '{evidence,target,owner_ref}' = 'media:' || xp.media_id::text
-        WHERE re.origin = 'citation' AND re.ordinal IS NOT NULL
-    """
+    """Only source-to-piece containment grants media authority."""
+    return "SELECT source_media_id AS parent_media_id, media_id AS child_media_id FROM media_parts"
 
 
 def contained_media_ids_cte_sql(
     roots_sql: str, *, viewer_param: str | None = None, include_tearing_down: bool = False
 ) -> str:
-    """roots and their contained posts/pieces, with viewer tombstones at every step."""
+    """roots and their contained pieces, with viewer tombstones at every step."""
     eligible = "SELECT m.id FROM media m WHERE TRUE"
     if viewer_param is not None:
         eligible += f""" AND NOT EXISTS (
@@ -127,9 +83,6 @@ def visible_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
         UNION
         SELECT m.id FROM media m
         WHERE {resource_grants.media_grant_path_exists_sql("m.id")}
-        UNION
-        SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
-        WHERE retained.user_id = :viewer_id
     """
     return contained_media_ids_cte_sql(
         roots, viewer_param=":viewer_id", include_tearing_down=include_tearing_down
@@ -172,6 +125,17 @@ def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) ->
         OR EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=:media_id
                    AND p.source_media_id IN ({visible_media_ids_cte_sql()}))"""
     return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "media_id": media_id}))
+
+
+def personal_media_removal_allowed_sql(media_expr: str) -> str:
+    """The shared personal-removal policy for commands and action availability."""
+    return f"""({non_system_media_ref_exists_sql(media_expr)}
+        OR {resource_grants.media_grant_path_exists_sql(media_expr)}
+        OR EXISTS (SELECT 1 FROM media_parts removable_part
+            WHERE removable_part.media_id={media_expr}
+              AND removable_part.source_media_id IN ({visible_media_ids_cte_sql()})
+              AND ({non_system_media_ref_exists_sql("removable_part.source_media_id")}
+                   OR {resource_grants.media_grant_path_exists_sql("removable_part.source_media_id")})))"""
 
 
 def visible_podcast_ids_cte_sql(*, visible_media_sql: str | None = None) -> str:
@@ -284,7 +248,10 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
             JOIN libraries shared_l ON shared_l.id = le.library_id AND shared_l.system_key IS NULL
             JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
             JOIN memberships author_m ON author_m.library_id = le.library_id
-            WHERE (le.media_id = {highlight_alias}.anchor_media_id OR EXISTS (
+            WHERE (le.media_id = {highlight_alias}.anchor_media_id
+                OR ({highlight_alias}.anchor_kind='fragment_offsets' AND {highlight_alias}.anchor_media_id IS NULL
+                    AND {highlight_in_reading_scope_sql(f"{highlight_alias}.id", "le.media_id")})
+                OR EXISTS (
                 SELECT 1 FROM media_parts library_part
                 WHERE library_part.media_id=le.media_id
                   AND library_part.source_media_id={highlight_alias}.anchor_media_id
@@ -299,7 +266,10 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
 
 def highlight_readability_sql(highlight_alias: str = "h") -> str:
     """canonical identity remains source-local; a readable piece admits complete anchors."""
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
     readable = requested_media_ids_cte_sql()
+    captures = readable_x_capture_ids_sql()
     return f"""(
         (
             ({highlight_alias}.anchor_kind='fragment_offsets' AND EXISTS (
@@ -311,6 +281,14 @@ def highlight_readability_sql(highlight_alias: str = "h") -> str:
                       WHERE anchor_range.highlight_id={highlight_alias}.id
                         AND anchor_fragment.media_id={highlight_alias}.anchor_media_id)
             ))
+            OR ({highlight_alias}.anchor_kind='fragment_offsets'
+                AND {highlight_alias}.anchor_media_id IS NULL
+                AND EXISTS (SELECT 1 FROM highlight_fragment_anchors xa
+                    JOIN fragments xf ON xf.id=xa.fragment_id
+                    WHERE xa.highlight_id={highlight_alias}.id
+                      AND xf.x_post_capture_id IN ({captures})
+                      AND 0<=xa.start_offset AND xa.start_offset<xa.end_offset
+                      AND xa.end_offset<=char_length(xf.canonical_text)))
             OR ({highlight_alias}.anchor_kind='pdf_page_geometry'
                 AND {highlight_alias}.anchor_media_id IN ({readable})
                 AND EXISTS (SELECT 1 FROM highlight_pdf_anchors hpa

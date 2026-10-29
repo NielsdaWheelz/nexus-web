@@ -5,12 +5,13 @@
  * Every edit captures the displayed manifest's authority; playback owns feedback. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
 import { ArrowDown, ArrowUp, Ellipsis, Pause, Play, Trash2, ListStart } from "lucide-react";
+import { PlayerFailures } from "./GlobalPlayerSurfaces";
 import Button from "@/components/ui/Button";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ActionMenu from "@/components/ui/ActionMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
@@ -63,12 +64,12 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
-    options.push(action("earlier", "move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
+    options.push(action("next", "Play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
+    options.push(action("earlier", "Move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
-  if (future || failed) options.push(action("remove", "remove from queue", <Trash2 />, () => {
+    options.push(action("later", "Move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
+  if (future || failed) options.push(action("remove", "Remove from queue", <Trash2 />, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
     void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors, `removed “${title}” from queue`);
   }));
@@ -137,6 +138,8 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
   const currentEntry = header?.current_entry_id === null || header === null ? null : entries.get(header.current_entry_id)?.entry;
   if (currentEntry !== null && currentEntry !== undefined) mediaIds.push(currentEntry.media_id);
   const summaries = useMediaSummaryIds(online ? mediaIds : []);
+  const summaryOccurrence = useFeedbackOccurrence(summaries.error !== null, manifest?.queue_id);
+  const indexOccurrence = useFeedbackOccurrence(queue.index.kind === "Failed", manifest?.queue_id);
   const menuChanged = useCallback((id: string, open: boolean) => setMenu(current => open ? id : current === id ? null : current), []);
 
   useEffect(() => {
@@ -233,10 +236,10 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
       if (event.relatedTarget !== null && !event.currentTarget.contains(event.relatedTarget)) setFocused(null);
     }}>
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
-    {!empty && manifest === null && queue.index.kind !== "Failed" ? <p>loading queue…</p> : null}
-    {!empty && queue.index.kind === "Failed" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t load queue" }}
+    <PlayerFailures />
+    {!empty && queue.index.kind === "Failed" ? <FeedbackFailure scope="Local" occurrence={indexOccurrence} announcement="None" content={{ tone: "Warning", title: "couldn’t load queue" }}
       actions={[{ label: "retry", onClick: commands.retryQueueIndex }]} /> : null}
-    {online && summaries.error !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "episode details unavailable" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
+    {online && summaries.error !== null ? <FeedbackFailure scope="Local" occurrence={summaryOccurrence} announcement="None" content={{ tone: "Warning", title: "episode details unavailable" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
     {empty ? <p>nothing queued</p> : null}
     {manifest !== null ? <ResourceList key={manifest.queue_id} ariaLabel="queued episodes" busy={!ready || !queueWindow.geometryReady}>
       {queueWindow.rows.map(({ entry, index, gap }) => {

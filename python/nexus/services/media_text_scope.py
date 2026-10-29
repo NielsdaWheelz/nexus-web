@@ -70,6 +70,41 @@ class MediaTextScope:
         )
 
 
+def x_capture_scope_rows_sql(reading_ids_sql: str) -> str:
+    """Structural selected occurrences and one pinned context level; no audience grant.
+
+    Callers own media authorization and intersect account capture authority when
+    exposing context. Repeated placements remain occurrences of one fragment.
+    """
+    return f"""
+        WITH selected AS (
+            SELECT xm.media_id AS reading_media_id, xm.capture_id, xm.id::text AS occurrence_id
+            FROM x_post_media xm JOIN ({reading_ids_sql}) requested ON requested.media_id=xm.media_id
+            UNION ALL
+            SELECT tp.thread_media_id, tp.capture_id, tp.id::text
+            FROM x_thread_posts tp JOIN ({reading_ids_sql}) requested ON requested.media_id=tp.thread_media_id
+            UNION ALL
+            SELECT de.media_id, de.target_x_post_capture_id, de.id::text
+            FROM document_embeds de JOIN ({reading_ids_sql}) requested ON requested.media_id=de.media_id
+            WHERE de.target_x_post_capture_id IS NOT NULL AND de.canonical_end_offset IS NOT NULL
+        ), occurrences AS (
+            SELECT * FROM selected
+            UNION ALL
+            SELECT selected.reading_media_id, context.target_capture_id,
+                   selected.occurrence_id || ':' || context.id::text
+            FROM selected JOIN x_post_capture_contexts context ON context.capture_id=selected.capture_id
+            WHERE context.target_capture_id IS NOT NULL
+              AND NOT (context.relation='replied_to' AND EXISTS (
+                  SELECT 1 FROM x_thread_posts primary_post
+                  WHERE primary_post.thread_media_id=selected.reading_media_id
+                    AND primary_post.capture_id=context.target_capture_id))
+        )
+        SELECT occurrences.reading_media_id, occurrences.capture_id, f.id AS fragment_id,
+               occurrences.occurrence_id
+        FROM occurrences JOIN fragments f ON f.x_post_capture_id=occurrences.capture_id
+    """
+
+
 def text_scope_rows_sql(reading_ids_sql: str) -> str:
     """setwise (reading_media_id,source_media_id,fragment_id,idx,start_offset,end_offset).
 
@@ -88,6 +123,11 @@ def text_scope_rows_sql(reading_ids_sql: str) -> str:
         LEFT JOIN media_parts p ON p.media_id=m.id
         JOIN fragments f ON f.media_id=COALESCE(p.source_media_id,m.id)
         WHERE p.media_id IS NULL OR f.idx BETWEEN p.start_fragment_idx AND p.end_fragment_idx
+        UNION ALL
+        SELECT x.reading_media_id, NULL::uuid AS source_media_id, f.id, f.idx,
+               0, char_length(f.canonical_text)
+        FROM ({x_capture_scope_rows_sql(reading_ids_sql)}) x
+        JOIN fragments f ON f.id=x.fragment_id
     """
 
 

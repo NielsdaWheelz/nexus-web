@@ -51,7 +51,12 @@ async def search(
             raise BrowseProviderFailure(
                 BrowseFailureKind.RateLimited, retry_at=retry_at(exc.retry_after)
             ) from exc
-        if exc.code in (WebSearchErrorCode.TIMEOUT, WebSearchErrorCode.PROVIDER_DOWN):
+        if exc.code in (
+            WebSearchErrorCode.TIMEOUT,
+            WebSearchErrorCode.PROVIDER_DOWN,
+            WebSearchErrorCode.PAYMENT_REQUIRED,
+            WebSearchErrorCode.INVALID_KEY,
+        ):
             raise BrowseProviderFailure(BrowseFailureKind.Unavailable) from exc
         raise RuntimeError(f"Brave Browse provider defect: {exc.code.value}") from exc
     items = []

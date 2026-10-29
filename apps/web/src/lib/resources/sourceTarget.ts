@@ -35,9 +35,9 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   if (query.has("loc")) {
     if (`${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH)
       return { kind: "invalid_destination", reason: "location_too_long" };
-    if (query.getAll("loc").length !== 1 || url.hash || locatedQuery || route.locator === null)
+    if (query.getAll("loc").length !== 1 || url.hash || locatedQuery || route.locator === null && route.id !== "xCapture")
       return { kind: "invalid_destination", reason: "invalid_reader_destination" };
-    if (route.id === "media" && [...query.keys()].every((key) => key === "loc" || key === "view") &&
+    if ((route.id === "media" || route.id === "xCapture") && [...query.keys()].every((key) => key === "loc" || key === "view") &&
         (!query.has("view") || query.getAll("view").length === 1 && (query.get("view") === "downloaded" || query.get("view") === "live"))) {
       const destination = parseReaderDestination(query.get("loc")!);
       if (destination) return { kind: "reader_destination", destination };
@@ -50,6 +50,7 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
     }
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   }
+  if (route.id === "highlight" && url.hash === "#annotation" && route.locator?.kind === "resource_ref") return {kind: "resource", resource_ref: route.locator.ref, field: "annotation"};
   const match = /^#(quote|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
   if (match && isCanonicalUuid(match[2])) {
     const [, kind, id] = match;
@@ -58,17 +59,17 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
     if (kind === "retrieval") return { kind: "retrieval", retrieval_id: id };
     // justify-type-assertion: the regex exhausts these keys after occurrence keys return.
     const scheme = SCHEMES[kind as keyof typeof SCHEMES];
-    return { kind: "resource", resource_ref: `${scheme}:${id}` };
+    return { kind: "resource", field: null, resource_ref: `${scheme}:${id}` };
   }
   const message = url.pathname.startsWith("/conversations/") && query.get("message");
-  if (message && isCanonicalUuid(message)) return { kind: "resource", resource_ref: `message:${message}` };
+  if (message && isCanonicalUuid(message)) return { kind: "resource", field: null, resource_ref: `message:${message}` };
   if (url.pathname.startsWith("/media/")) {
     const apparatus = query.get("apparatus_id");
-    if (apparatus && isCanonicalUuid(apparatus)) return { kind: "resource", resource_ref: `reader_apparatus_item:${apparatus}` };
+    if (apparatus && isCanonicalUuid(apparatus)) return { kind: "resource", field: null, resource_ref: `reader_apparatus_item:${apparatus}` };
     const fragment = query.get("fragment");
-    if (fragment && isCanonicalUuid(fragment)) return { kind: "resource", resource_ref: `fragment:${fragment}` };
+    if (fragment && isCanonicalUuid(fragment)) return { kind: "resource", field: null, resource_ref: `fragment:${fragment}` };
   }
-  if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "conversation") && route.locator?.kind === "resource_ref")
-    return { kind: "resource", resource_ref: route.locator.ref };
+  if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "highlight" || route.id === "conversation") && route.locator?.kind === "resource_ref")
+    return { kind: "resource", field: null, resource_ref: route.locator.ref };
   return null;
 }

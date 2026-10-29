@@ -3,13 +3,13 @@
 A highlight is an independently identified authored annotation whose canonical
 selection lives in ``authored_resources``; these rows are its projection. Readers
 see only ``authored_visible`` highlights through the shared highlight predicates.
-Overlapping highlights stay distinct and each lists its attached notes in its own
-endpoint order. Projected changes invalidate the readable audience's document maps
+Overlapping highlights stay distinct; each owns one private rich annotation. Projected changes invalidate the readable audience's document maps
 through the media ``annotations`` lane that grants and libraries also bump. A missing fragment cache stays locator-less: relocation belongs to
 the client that holds the saved quote, never to a server rewrite of the projection.
 """
 
-from collections.abc import Iterable
+import hashlib
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -23,7 +23,6 @@ from nexus.auth.permissions import (
     highlight_readability_filter,
     highlight_readability_sql,
     highlight_visibility_filter,
-    requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.db.models import Fragment, Highlight, HighlightFragmentAnchor, HighlightPdfAnchor, Media
@@ -31,13 +30,13 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
     FragmentAnchorOut,
+    HighlightAnnotationOut,
     LinkedConversationRef,
-    LinkedNoteBlockRef,
     PdfAnchorOut,
     PdfQuadOut,
     TypedHighlightOut,
+    XCaptureAnchorOut,
 )
-from nexus.services import note_bodies
 from nexus.services.media_text_scope import (
     highlight_in_reading_scope_sql,
     read_media_text_scope,
@@ -45,9 +44,42 @@ from nexus.services.media_text_scope import (
 )
 from nexus.services.resource_grants import invalidate_annotation_visibility
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
-from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 
-AFFIX_CODEPOINTS = 64
+
+def read_highlight_annotations(
+    db: Session, *, viewer_id: UUID, highlight_ids: Sequence[UUID]
+) -> dict[UUID, HighlightAnnotationOut]:
+    """Only ownership admits a private annotation, independently of source access."""
+    if not highlight_ids:
+        return {}
+    rows = db.execute(
+        select(
+            Highlight.id, Highlight.annotation_body_pm_json, Highlight.annotation_body_text
+        ).where(
+            Highlight.id.in_(highlight_ids),
+            Highlight.user_id == viewer_id,
+            Highlight.authored_visible,
+            Highlight.annotation_body_pm_json.is_not(None),
+        )
+    )
+    result = {}
+    for id_, body, words in rows:
+        assert body is not None and words is not None, "annotation projection pair is incomplete"
+        result[id_] = HighlightAnnotationOut(body_pm_json=body, body_text=words)
+    return result
+
+
+def annotation_locator(highlight_id: UUID, body_text: str) -> dict[str, object] | None:
+    if not body_text:
+        return None
+    return {
+        "type": "highlight_annotation_offsets",
+        "highlight_id": str(highlight_id),
+        "start_offset": 0,
+        "end_offset": len(body_text),
+        "text_quote_selector": {"exact": body_text, "prefix": None, "suffix": None},
+        "body_sha256": hashlib.sha256(body_text.encode("utf-8")).hexdigest(),
+    }
 
 
 def _parent_media_id(highlight: Highlight) -> UUID:
@@ -72,7 +104,9 @@ def highlight_action_facts(
         return {}
     rows = db.execute(
         select(Highlight.id, Highlight.user_id, Highlight.anchor_kind).where(
-            Highlight.id.in_(ordered), highlight_readability_filter(viewer_id)
+            Highlight.id.in_(ordered),
+            ((Highlight.user_id == viewer_id) & Highlight.authored_visible)
+            | highlight_readability_filter(viewer_id),
         )
     ).all()
     return {
@@ -154,7 +188,9 @@ def recent_highlight_anchor_facts(
     )
 
 
-def _anchor_out(highlight: Highlight) -> FragmentAnchorOut | PdfAnchorOut:
+def _anchor_out(
+    db: Session, highlight: Highlight
+) -> FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut:
     pdf_anchor = highlight.pdf_anchor
     if highlight.anchor_kind == "pdf_page_geometry" and pdf_anchor is not None:
         return PdfAnchorOut(
@@ -167,6 +203,18 @@ def _anchor_out(highlight: Highlight) -> FragmentAnchorOut | PdfAnchorOut:
         )
     fragment_anchor = highlight.fragment_anchor
     if highlight.anchor_kind == "fragment_offsets" and fragment_anchor is not None:
+        if highlight.anchor_media_id is None:
+            capture_id = db.scalar(
+                select(Fragment.x_post_capture_id).where(Fragment.id == fragment_anchor.fragment_id)
+            )
+            if capture_id is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            return XCaptureAnchorOut(
+                capture_id=capture_id,
+                fragment_id=fragment_anchor.fragment_id,
+                start_offset=fragment_anchor.start_offset,
+                end_offset=fragment_anchor.end_offset,
+            )
         return FragmentAnchorOut(
             media_id=_parent_media_id(highlight),
             fragment_id=fragment_anchor.fragment_id,
@@ -176,14 +224,17 @@ def _anchor_out(highlight: Highlight) -> FragmentAnchorOut | PdfAnchorOut:
     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
-def annotations_changed(db: Session, highlight_ids: Iterable[UUID]) -> None:
+def annotations_changed(
+    db: Session, highlight_ids: Iterable[UUID], *, viewer_id: UUID | None = None
+) -> None:
     """Invalidate the document maps listing these highlights for their readable audience.
 
     The authored projection calls this under the account head for every projected
-    highlight and every highlight endpoint of a projected link. The audience is the
-    author, library peers of the author holding the media family, and the highlight's
+    quote, color and visibility change. The audience is the author, library peers
+    of the author holding the media family, and the highlight's
     grant parties; each bumps every reading of the family they can read now. Only media
     readability is checked, so a deletion still reaches everyone who could read it.
+    An explicit viewer restricts body-only changes to its owner.
     Flush-only; the wake publishes with the caller's commit.
     """
     pairs: set[tuple[UUID, UUID]] = set()
@@ -203,29 +254,30 @@ def annotations_changed(db: Session, highlight_ids: Iterable[UUID]) -> None:
                 {"source": media_id, "highlight": highlight.id},
             )
         )
-        audience = {highlight.user_id}
-        audience.update(
-            db.scalars(
-                text("""
-            SELECT DISTINCT peer.user_id FROM library_entries e
-            JOIN libraries l ON l.id=e.library_id AND l.system_key IS NULL
-            JOIN memberships author ON author.library_id=e.library_id AND author.user_id=:author
-            JOIN memberships peer ON peer.library_id=e.library_id
-            WHERE e.media_id=ANY(:family)
-        """),
-                {"author": highlight.user_id, "family": list(family)},
+        audience = {highlight.user_id} if viewer_id is None else {viewer_id}
+        if viewer_id is None:
+            audience.update(
+                db.scalars(
+                    text("""
+                SELECT DISTINCT peer.user_id FROM library_entries e
+                JOIN libraries l ON l.id=e.library_id AND l.system_key IS NULL
+                JOIN memberships author ON author.library_id=e.library_id AND author.user_id=:author
+                JOIN memberships peer ON peer.library_id=e.library_id
+                WHERE e.media_id=ANY(:family)
+            """),
+                    {"author": highlight.user_id, "family": list(family)},
+                )
             )
-        )
-        for creator, grantee in db.execute(
-            text("""
-            SELECT created_by_user_id,grantee_user_id FROM resource_grants
-            WHERE subject_scheme='highlight' AND subject_id=:id
-        """),
-            {"id": highlight.id},
-        ):
-            audience.add(creator)
-            if grantee is not None:
-                audience.add(grantee)
+            for creator, grantee in db.execute(
+                text("""
+                SELECT created_by_user_id,grantee_user_id FROM resource_grants
+                WHERE subject_scheme='highlight' AND subject_id=:id
+            """),
+                {"id": highlight.id},
+            ):
+                audience.add(creator)
+                if grantee is not None:
+                    audience.add(grantee)
         pairs.update(
             (viewer, reading)
             for viewer in audience
@@ -238,10 +290,17 @@ def annotations_changed(db: Session, highlight_ids: Iterable[UUID]) -> None:
 def _highlight_out(
     highlight: Highlight,
     viewer_id: UUID,
-    anchor: FragmentAnchorOut | PdfAnchorOut,
+    anchor: FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut,
     conversations: list[LinkedConversationRef],
-    note_blocks: list[LinkedNoteBlockRef],
 ) -> TypedHighlightOut:
+    annotation = None
+    if highlight.user_id == viewer_id and highlight.annotation_body_pm_json is not None:
+        assert highlight.annotation_body_text is not None, (
+            "annotation projection pair is incomplete"
+        )
+        annotation = HighlightAnnotationOut(
+            body_pm_json=highlight.annotation_body_pm_json, body_text=highlight.annotation_body_text
+        )
     return TypedHighlightOut(
         id=highlight.id,
         anchor=anchor,
@@ -254,15 +313,16 @@ def _highlight_out(
         author_user_id=highlight.user_id,
         is_owner=highlight.user_id == viewer_id,
         linked_conversations=conversations,
-        linked_note_blocks=note_blocks,
+        annotation=annotation,
     )
 
 
 def _project_anchored(
-    db: Session, viewer_id: UUID, anchored: list[tuple[Highlight, FragmentAnchorOut | PdfAnchorOut]]
+    db: Session,
+    viewer_id: UUID,
+    anchored: list[tuple[Highlight, FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut]],
+    reading_media_id: UUID | None = None,
 ) -> list[TypedHighlightOut]:
-    from nexus.services.resource_items.items import resource_items_out
-
     ids = [highlight.id for highlight, _ in anchored]
     conversations = {
         highlight_id: [LinkedConversationRef(conversation_id=r.id, title=r.title) for r in rows]
@@ -270,92 +330,39 @@ def _project_anchored(
             db, viewer_id=viewer_id, targets=ids, target_scheme="highlight"
         ).items()
     }
-    attached = linked_note_blocks_for_highlights(db, viewer_id, ids)
-    embeds = {
-        note.id: embed
-        for links in attached.values()
-        for _, note in links
-        if (embed := note_bodies.sole_embed(note.body_pm_json)) is not None
-    }
-    items = {
-        item.ref: item
-        for item in resource_items_out(
-            db, viewer_id=viewer_id, refs=list({ref.uri: ref for ref in embeds.values()}.values())
-        )
-    }
-    notes = {
-        highlight_id: [
-            LinkedNoteBlockRef(
-                link_id=link_id,
-                note_block_id=note.id,
-                body_pm_json=note.body_pm_json,
-                body_text=note.body_text,
-                embedded_item=items.get(embeds[note.id].uri) if note.id in embeds else None,
-            )
-            for link_id, note in links
-        ]
-        for highlight_id, links in attached.items()
-    }
-    contexts = {
-        row.highlight_id: row
-        for row in db.execute(
-            text(f"""
-            SELECT hfa.highlight_id,min(scope.start_offset) AS start_offset,
-                   max(scope.end_offset) AS end_offset,f.canonical_text
-            FROM highlight_fragment_anchors hfa
-            JOIN ({text_scope_rows_sql(requested_media_ids_cte_sql())}) scope
-              ON scope.fragment_id=hfa.fragment_id
-             AND scope.start_offset<=hfa.start_offset AND scope.end_offset>=hfa.end_offset
-            JOIN fragments f ON f.id=hfa.fragment_id
-            WHERE hfa.highlight_id=ANY(:ids)
-            GROUP BY hfa.highlight_id,f.canonical_text
-        """),
-            {"ids": ids, "viewer_id": viewer_id},
-        )
-    }
     projected = [
         _highlight_out(
             highlight,
             viewer_id,
             anchor,
             conversations.get(highlight.id, []),
-            notes.get(highlight.id, []),
         )
         for highlight, anchor in anchored
     ]
 
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.locations import media_passages
+
+    passages = media_passages(
+        db,
+        viewer_id=viewer_id,
+        refs=[ResourceRef("highlight", item.id) for item in projected],
+        include_excerpts=False,
+        reading_media_ids={f"highlight:{item.id}": reading_media_id for item in projected}
+        if reading_media_id is not None
+        else None,
+    )
     for item in projected:
-        anchor = item.anchor
-        if (
-            not isinstance(anchor, FragmentAnchorOut)
-            or anchor.start_offset is None
-            or anchor.end_offset is None
-        ):
-            continue
-        context = contexts.get(item.id)
-        item.prefix = (
-            context.canonical_text[
-                max(
-                    context.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
-                ) : anchor.start_offset
-            ]
-            if context is not None
-            else ""
-        )
-        item.suffix = (
-            context.canonical_text[
-                anchor.end_offset : min(context.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
-            ]
-            if context is not None
-            else ""
-        )
+        passage = passages.get(f"highlight:{item.id}")
+        item.prefix = passage.quote.prefix or "" if passage is not None else ""
+        item.suffix = passage.quote.suffix or "" if passage is not None else ""
     return projected
 
 
 def project_highlights_with_links(
     db: Session, viewer_id: UUID, highlights: list[Highlight]
 ) -> list[TypedHighlightOut]:
-    return _project_anchored(db, viewer_id, [(item, _anchor_out(item)) for item in highlights])
+    return _project_anchored(db, viewer_id, [(item, _anchor_out(db, item)) for item in highlights])
 
 
 def list_highlights_for_media(
@@ -424,32 +431,7 @@ def list_highlights_for_media(
     projected = _project_anchored(
         db,
         viewer_id,
-        [(item, unresolved if live is None else _anchor_out(item)) for item, live in rows],
+        [(item, unresolved if live is None else _anchor_out(db, item)) for item, live in rows],
+        media_id,
     )
-    if scope is not None:
-        for item in projected:
-            anchor = item.anchor
-            if (
-                not isinstance(anchor, FragmentAnchorOut)
-                or anchor.fragment_id is None
-                or anchor.start_offset is None
-                or anchor.end_offset is None
-            ):
-                continue
-            interval = next(
-                value
-                for value in scope.fragment_intervals
-                if value.fragment_id == anchor.fragment_id
-            )
-            source = db.execute(
-                select(Fragment.canonical_text).where(Fragment.id == anchor.fragment_id)
-            ).scalar_one()
-            item.prefix = source[
-                max(
-                    interval.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
-                ) : anchor.start_offset
-            ]
-            item.suffix = source[
-                anchor.end_offset : min(interval.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
-            ]
     return projected

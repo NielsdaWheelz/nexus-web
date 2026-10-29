@@ -42,7 +42,9 @@ queue ownership is documented in [jobs.md](jobs.md).
 
 `GET /llm-catalog` is the only product catalog API. It composes the authenticated
 Codex model catalog with `api_model_catalog()` rows for exactly the API providers
-present in `GENERATION_API_PROVIDERS`. Nexus neither reads Codex cache files nor
+present in `GENERATION_API_PROVIDERS`. required upstream `offered` membership is
+filtered before both wire projection and admission lookup. credentials and
+readiness never restore retired models. Nexus neither reads Codex cache files nor
 maintains a second model/reasoning allowlist. A model exposes every reasoning
 value the source catalog reports. the catalog keeps typed readiness for all
 pairs; the picker offers only selectable pairs and retains an unavailable
@@ -66,9 +68,33 @@ keys, `(mode, effort)` and `(mode, effort_order)` are unique within a model,
 and a declared default names an actual row. mode order is source order; effort
 order applies only within that model/mode. the browser groups actual rows and
 never parses execution keys or manufactures model/mode/effort combinations.
-this required catalog contract was introduced with wire revision 4; no database
-migration is needed. the runtime and kernel dependency pins form one reviewed
-cohort.
+each route also names its product `default_model` (model key and mode), even when
+that target is absent. each reasoning row carries `chat_default`, `mode_label`
+and `effort_label`. policy declares exact provider/model/mode efforts; a missing
+declared effort leaves no default. only undeclared tuples use the sole advertised
+row or the higher `effort_order` of exactly two rows; larger sets require choice.
+existing-family effort declarations survive model replacements. new families use
+literal declarations matching their approved native defaults; nondefault modes
+without a declaration still follow the undeclared-tuple rule. source default
+metadata is never a fallback. the first-use seed is codex / `gpt-6.1-sol` / `xhigh`.
+readiness never selects an alternative or erases a default. default policy does
+not grant or withdraw execution eligibility. source defaults choose nothing;
+the old combined reasoning-row label is removed from the wire.
+
+the browser uses these projected labels and default markers. provider/model changes
+are complete when facts permit; `DefaultUnavailable` retains an unresolved target
+and allows explicit effort choice. recovery completes only that same unresolved
+intent. exact selections, account memory and frozen requests never follow later
+defaults. discovery is event-driven and quiet over retained usable data; cold-load
+failure keeps retry. one advertised effort is static only when it is the selected
+identity; other unavailable identities retain explicit recovery choices.
+
+new saved reasoning presentation uses the same mode/effort labels. history reads
+its saved presentation verbatim, including older descriptive labels. the combined
+label bound is 256 characters. controls and selection memory use unreleased wire
+17. catalog publication adds no further wire change or database migration;
+provider, kernel and native host contracts remain compatible through their exact
+dependency pins.
 
 The strict Chat selection is one tagged value:
 
@@ -80,9 +106,9 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection, validated against the current catalog at
 admission, and never submits dispatch strings, credentials, capabilities,
-defaults, or fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
-seed initializes a new composer only; it is not a saved user preference and
-does not override a causal or explicit per-run selection.
+defaults, or fallback order. The developer-owned Codex Personal / GPT-6.1-Sol / xhigh
+seed initializes a composer only when the account has no remembered choice; it
+does not override remembered or explicit per-run selections.
 
 Background operations resolve their exact Codex selection only from the total
 source-controlled policy. Users can inspect the effective selection but cannot
@@ -170,13 +196,13 @@ remains required. the runtime memory-client declaration remains private.
 
 ## Backend composition
 
-codex personal attaches to one dedicated stock 0.160.0 app-server through its
+codex personal attaches to one dedicated stock 0.165.0 app-server through its
 private unix socket. the host retains authentication and owns process startup;
 workers own the shared kernel/native callbacks and portable executor. no shell,
 exec-server, http generation bridge, bearer or worker credential mount remains.
 the provider-owned restricted complete model catalogue loads at HOST STARTUP;
 exact public version/config preflight rejects unsupported hosts before thread
-creation. inherited clock, CodeMode and native user-input are removed. declared
+creation. inherited clock, CodeMode, native patching and native user-input are removed. declared
 callbacks, strict json and read-only/no-network session containment qualify together.
 see [the native host runbook](../runbooks/codex-personal-agent-host.md).
 
@@ -225,9 +251,12 @@ fence catches first is still `Cancelled`. anything unexpected closes the row
 these codes (chat failure, metadata, oracle).
 
 native cumulative usage limits and subscription `CapacityPaused` machinery are
-removed. nexus generation deadlines and per-operation bounds remain; 64,000/8,000
-are admitted context/output reservations, without native hard token enforcement.
-raw provider-api billing/admission keeps its existing contract.
+removed. chat policy reserves 400,000 context / 32,000 output tokens, clamped by
+the model's actual capacities. codex does not enforce these as native hard token
+limits. provider api requests retain the bounded output limit; argon exhaustion,
+including an empty terminal or continuation token, settles `output_limit` without
+automatic continuation or budget growth. other operation bounds remain explicit
+in generation policy.
 
 migration 0269 removes replay: it fails open runs and rows `interrupted`, closes
 unfinished tool positions as timed out, drops the turn and continuation tables,

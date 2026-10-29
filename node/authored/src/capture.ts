@@ -16,8 +16,10 @@ export function captureLocator(value: unknown, source_ref: string): Locator {
   };
   const locator = (() => {
   switch (raw.type) {
+    case "x_capture_offsets": return { type: raw.type, capture_id: raw.capture_id, fragment_id: raw.fragment_id, start_offset: raw.start_offset, end_offset: raw.end_offset, text_quote_selector: selector };
     case "web_text_offsets": return { type: raw.type, media_id: raw.media_id, fragment_id: raw.fragment_id, start_offset: raw.start_offset, end_offset: raw.end_offset, media_kind: raw.media_kind ?? null, text_quote_selector: selector };
     case "epub_fragment_offsets": return { type: raw.type, media_id: raw.media_id, fragment_id: raw.fragment_id, section_id: raw.section_id ?? null, start_offset: raw.start_offset, end_offset: raw.end_offset, media_kind: raw.media_kind ?? null, text_quote_selector: selector };
+    case "highlight_annotation_offsets": return { type: raw.type, highlight_id: raw.highlight_id, start_offset: raw.start_offset, end_offset: raw.end_offset, body_sha256: raw.body_sha256, text_quote_selector: selector };
     case "note_block_offsets": return { type: raw.type, block_id: raw.block_id, start_offset: raw.start_offset, end_offset: raw.end_offset, body_version: raw.body_version ?? null, text_quote_selector: selector };
     case "pdf_page_geometry": return { type: raw.type, media_id: raw.media_id, page_number: raw.page_number, quads: raw.quads, exact: raw.exact, prefix: raw.prefix ?? null, suffix: raw.suffix ?? null, text_quote_selector: selector, projection: raw.projection ?? null };
     case "pdf_page": return { type: raw.type, media_id: raw.media_id, page_number: raw.page_number };

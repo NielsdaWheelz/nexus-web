@@ -3,14 +3,14 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, STALE_BUILD_FEEDBACK, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
 import type { WorkGuard, WorkScope } from "@/lib/unsavedWork";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { readCatalog } from "./catalog";
-import { isSelectable } from "./selection";
+import { isSelectable, type Route } from "./selection";
 import {
   chatFailure,
   failureDetail,
@@ -40,6 +40,7 @@ export type ChatCommand =
   | {
       readonly kind: "Send";
       readonly request: RunCreateRequest;
+      readonly selectionRoute: Route | null;
       readonly runId: string;
       /** The pane whose composer sent it: only that pane shows its recovery. */
       readonly viewId: string;
@@ -50,6 +51,7 @@ export type ChatCommand =
       readonly messageId: string;
       readonly operation: "rerun" | "regenerate";
       readonly selection: Selection;
+      readonly selectionRoute: Route | null;
       readonly expectedRevision: number;
       readonly runId: string;
       readonly implicit: boolean;
@@ -67,13 +69,14 @@ export type CommandOutcome =
   | { readonly kind: "Settled" | "Gone" | "Pending" | "Handled" }
   | { readonly kind: "Accepted"; readonly receipt: AcceptedReceipt }
   | { readonly kind: "Failed"; readonly feedback: FeedbackContent; readonly rejection: RejectionCode | null };
-/** `feedback` is the last one shown for the command; a retry keeps it until it settles. */
+/** The incident survives landing changes; feedback is the last outcome and stays through retry. */
 export type CommandState =
   | { readonly kind: "Idle" }
-  | { readonly kind: "Busy"; readonly command: ChatCommand; readonly feedback: FeedbackContent | null }
+  | { readonly kind: "Busy"; readonly command: ChatCommand; readonly occurrence: object; readonly feedback: FeedbackContent | null }
   | {
       readonly kind: "Unconfirmed" | "RefreshRequired";
       readonly command: ChatCommand;
+      readonly occurrence: object;
       readonly feedback: FeedbackContent;
     };
 export type ConversationCommands = ReturnType<typeof createCommands>;
@@ -181,10 +184,10 @@ export function repeatMessage(
   conversation: Conversation,
   message: Message,
   operation: "rerun" | "regenerate",
-  explicit: Selection | null,
+  explicit: { selection: Selection; route: Route | null } | null,
   openIntent: OpenIntent,
 ): Promise<CommandOutcome> {
-  const selection = explicit ?? message.trust_trail?.run.run_selection.selection;
+  const selection = explicit?.selection ?? message.trust_trail?.run.run_selection.selection;
   if (!selection)
     return Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: "model not recorded" }, rejection: null });
   return getConversationCommands(accountId, conversation.id).execute({
@@ -192,6 +195,7 @@ export function repeatMessage(
     messageId: message.id,
     operation,
     selection,
+    selectionRoute: explicit?.route ?? null,
     expectedRevision: conversation.branch_revision,
     runId: createRandomId(),
     implicit: explicit === null,
@@ -245,6 +249,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   let state: CommandState = IDLE_COMMAND;
   let pending: {
     command: ChatCommand;
+    occurrence: object;
     body: string | null;
     unconfirmed: boolean;
     /**
@@ -268,11 +273,11 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     state = next;
     for (const listener of listeners) listener.changed();
   };
-  const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent): CommandOutcome => {
+  const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent, preserveCopy = false): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
-    const title = kind === "Unconfirmed" && (pending.command.kind === "Send" || pending.command.kind === "Repeat")
-      ? "response status unconfirmed" : kind === "Unconfirmed" ? "change status unconfirmed" : feedback.title;
-    set({ kind, command: pending.command, feedback: { ...feedback, title } });
+    set({ kind, command: pending.command, occurrence: pending.occurrence, feedback: kind === "Unconfirmed" && !preserveCopy && feedback !== STALE_BUILD_FEEDBACK
+      ? { ...feedback, title: "change not confirmed", message: "the request may have succeeded." }
+      : feedback });
     return PENDING;
   };
   const deliver = (tree: ConversationTree | null) => {
@@ -296,7 +301,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   const reconcile = async (): Promise<CommandOutcome> => {
     const attempt = pending;
     if (conversationId === null) return { kind: "Settled" };
-    if (attempt) set({ kind: "Busy", command: attempt.command, feedback: state.kind === "Idle" ? null : state.feedback });
+    if (attempt) set({ kind: "Busy", command: attempt.command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
     try {
       const tree = await readConversationTree(conversationId);
       if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
@@ -362,7 +367,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     const attempt = pending;
     if (!attempt) return { kind: "Settled" };
     const command = attempt.command;
-    set({ kind: "Busy", command, feedback: state.kind === "Idle" ? null : state.feedback });
+    set({ kind: "Busy", command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
     let submitted = false;
     try {
       let deleted = false;
@@ -395,7 +400,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         attempt.accepted = accepted;
         attempt.unconfirmed = false;
         attempt.onAcceptance?.();
-        publishChange("Chats"); // the chat moved to the top of the index
+        publishChange("Chats", "ChatSelection"); // the chat moved to the top of the index
         if (conversationId === null) {
           pending = null; // a new chat settles with its acceptance; its pane routes to it
           set(IDLE_COMMAND);
@@ -436,7 +441,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         throw failure.error;
       }
       if (failure.kind === "Handled") {
-        if (attempt.unconfirmed) hold("Unconfirmed", { tone: "Warning", title: "", message: "sign in to check this change" });
+        if (attempt.unconfirmed) hold("Unconfirmed", { tone: "Warning", title: "", message: "sign in to check this change" }, true);
         else {
           pending = null;
           set(IDLE_COMMAND);
@@ -486,7 +491,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         : null;
       const authored_prefix=accountId!==null && (command.kind==="Send"||command.kind==="Repeat") ? getWritingRuntime(accountId).committedPrefix() : null;
       void authored_prefix?.catch(()=>{});
-      pending = { command, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
+      pending = { command, occurrence: {}, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
       return run(send);
     },
     /** Unconfirmed resends the frozen command; RefreshRequired rereads the tree. */

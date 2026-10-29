@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Copy, Send, Share2 } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Check, Copy, Send, Share2 } from "lucide-react";
+import { Announcement, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
@@ -22,7 +23,7 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { ShareSession } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef, ShareMode } from "@/lib/sharing/types";
-import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./ShareOverlay.module.css";
@@ -62,8 +63,8 @@ function feedbackFor(error: unknown, title: string, mutation: boolean): Feedback
   if (mutation && outcomeUnknown(error)) {
     return {
       tone: "Danger",
-      title: "It’s unclear whether the sharing change completed.",
-      message: "Refresh sharing options before trying again.",
+      title: "change not confirmed",
+      message: "the request may have succeeded.",
       requestId: error.requestId,
     };
   }
@@ -112,8 +113,7 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
 /** What the grant editor borrows from the panel: the live region, errors, copy and share. */
 interface PanelActions {
   announce: (message: string) => void;
-  fail: (error: unknown, title: string) => void;
-  copy: (href: string, label: string) => Promise<void>;
+  fail: (error: unknown, title: string, occurrence: object) => void;
   nativeShare: (url: string, title: string) => Promise<boolean>;
 }
 
@@ -122,9 +122,9 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   // A failed read keeps its recovery control until the replacement read settles.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
-  const [liveMessage, setLiveMessage] = useState("");
-  const [actionError, setActionError] = useState<{ content: FeedbackContent; check: boolean } | null>(null);
+  const [actionError, setActionError] = useState<{ content: FeedbackContent; check: boolean; occurrence: object } | null>(null);
   const [loading, setLoading] = useState(false);
+  const readOccurrence = useFeedbackOccurrence(loadError !== null);
   const reading = useRef<AbortSignal | null>(null);
   const lifetime = useRef<AbortController | null>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -174,27 +174,13 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
 
   if (defect !== null) throw defect.error;
 
-  const showError = (content: FeedbackContent | null, check = false) => {
+  const showError = (content: FeedbackContent | null, check = false, occurrence = {}) => {
     if (!content) return;
-    setLiveMessage("");
-    setActionError({ content, check });
+    setActionError({ content, check, occurrence });
   };
   const actions: PanelActions = {
-    announce: (message) => {
-      setActionError(null);
-      setLiveMessage("");
-      requestAnimationFrame(() => setLiveMessage(message));
-    },
-    fail: (error, title) => showError(explain(error, title, true), outcomeUnknown(error)),
-    copy: async (href, label) => {
-      try {
-        await copyText(href);
-        actions.announce(`${label} copied.`);
-      } catch (error) {
-        if (!(error instanceof ClipboardWriteUnavailableError)) setDefect({ error });
-        else showError({ tone: "Danger", title: "The link could not be copied. Try again." });
-      }
-    },
+    announce: () => setActionError(null),
+    fail: (error, title, occurrence) => showError(explain(error, title, true), outcomeUnknown(error), occurrence),
     nativeShare: async (url, title) => {
       try {
         await navigator.share({ title, url });
@@ -230,7 +216,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   return (
     <div className={styles.panel} ref={panel} tabIndex={-1}>
       {target.kind === "Resource" && !snapshot && !loadError
-        ? <FeedbackStatus content={{ tone: "Neutral", title: "loading sharing options…" }} announcement="Polite" />
+        ? <FeedbackBusy pending />
         : <p className={styles.note}>{MODE_INTRO[mode]}</p>}
       <Section
         id="share-nexus-link"
@@ -238,13 +224,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         note={mode === "LibraryMembership" ? "Only members can open this link." : label}
         aside={
           <span className={styles.actions}>
-            <Button
-              icon={<Copy />}
-              disabled={!href}
-              onClick={() => href && void actions.copy(href, "Nexus link")}
-            >
-              Copy link
-            </Button>
+            <ShareCopyButton href={href} label="Copy link" />
             {typeof navigator.share === "function" ? (
               <Button
                 icon={<Share2 />}
@@ -258,7 +238,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         }
       />
       {loadError ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={loadError}
           announcement="Assertive"
           actions={actionError?.check ? undefined : [{ label: "retry", onClick: () => void load(), busy: loading }]}
@@ -287,13 +267,12 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           aside={members.can_manage ? <ButtonLink href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</ButtonLink> : null}
         />
       ) : null}
-      {actionError ? <FeedbackNotice
+      {actionError ? <FeedbackFailure scope="Local" occurrence={actionError.occurrence} announcementOccurrence={actionError}
         content={actionError.content}
         announcement="Assertive"
         actions={actionError.check ? [{ label: "refresh sharing options", onClick: () => void load(), busy: loading }] : undefined}
         returnFocus={() => panel.current}
       /> : null}
-      {liveMessage ? <FeedbackStatus content={{ tone: "Neutral", title: liveMessage }} announcement="Polite" /> : null}
     </div>
   );
 }
@@ -332,10 +311,10 @@ function GrantEditor(props: {
   const [confirm, setConfirm] = useState<string | null>(null);
   // Keep an uncertain create's id until its receipt or an authoritative snapshot
   // confirms that exact grant. Later creates must never reuse a revoked grant id.
-  const attempts = useRef(new Map<string, string>());
+  const attempts = useRef(new Map<string, {id: string; occurrence: object}>());
   useEffect(() => {
-    for (const [key, id] of attempts.current) {
-      if (snapshot.shares.some(share => share.id === id)) attempts.current.delete(key);
+    for (const [key, attempt] of attempts.current) {
+      if (snapshot.shares.some(share => share.id === attempt.id)) attempts.current.delete(key);
     }
   }, [snapshot.shares]);
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
@@ -350,8 +329,9 @@ function GrantEditor(props: {
     errorTitle: string,
   ) => {
     setBusy(key);
-    const id = attempts.current.get(key) ?? crypto.randomUUID();
-    attempts.current.set(key, id);
+    const attempt = attempts.current.get(key) ?? {id: crypto.randomUUID(), occurrence: {}};
+    attempts.current.set(key, attempt);
+    const {id} = attempt;
     try {
       const { data } = await apiFetch<SharesJson<"post">>(sharesPath(props.subject), {
         method: "POST",
@@ -363,7 +343,7 @@ function GrantEditor(props: {
       actions.announce(data.created ? created : existing);
       return true;
     } catch (error) {
-      actions.fail(error, errorTitle);
+      actions.fail(error, errorTitle, attempt.occurrence);
       return false;
     } finally {
       setBusy(null);
@@ -372,6 +352,8 @@ function GrantEditor(props: {
 
   const revoke = async (id: string, message: string, errorTitle: string) => {
     setBusy(id);
+    const attempt = attempts.current.get(id) ?? {id, occurrence: {}};
+    attempts.current.set(id, attempt);
     try {
       await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });
       onChange({
@@ -380,9 +362,10 @@ function GrantEditor(props: {
         received_access: snapshot.received_access.filter((share) => share.id !== id),
       });
       setConfirm(null);
+      attempts.current.delete(id);
       actions.announce(message);
     } catch (error) {
-      actions.fail(error, errorTitle);
+      actions.fail(error, errorTitle, attempt.occurrence);
     } finally {
       setBusy(null);
     }
@@ -519,12 +502,7 @@ function GrantEditor(props: {
         {link ? (
           <>
             <span className={styles.actions}>
-              <Button
-                icon={<Copy />}
-                onClick={() => void actions.copy(link.public_href, "Public link")}
-              >
-                Copy public link
-              </Button>
+              <ShareCopyButton href={link.public_href} label="Copy public link" />
               {typeof navigator.share === "function"
                 ? guarded(
                     "Native",
@@ -578,6 +556,7 @@ function GrantEditor(props: {
           </>
         ) : linkAvailability.kind === "Available" ? (
           <Button
+            reserveIcon
             aria-busy={busy === "new-link" || undefined}
             disabled={busy !== null}
             onClick={() =>
@@ -598,4 +577,27 @@ function GrantEditor(props: {
       </Section>
     </>
   );
+}
+
+function ShareCopyButton({href, label}: {href: string | null; label: string}) {
+  const copied = useCopyFeedback(href);
+  const [failure, setFailure] = useState<object | null>(null);
+  const [manual, setManual] = useState(false);
+  useEffect(() => {setFailure(null); setManual(false);}, [href]);
+  const [defect, setDefect] = useState<{error: unknown} | null>(null);
+  if (defect) throw defect.error;
+  const copy = async () => {
+    if (href === null) return;
+    try {await copied.copy(href); setFailure(null);}
+    catch (error) {if (error instanceof ClipboardWriteUnavailableError) setFailure({}); else setDefect({error});}
+  };
+  return <>
+    <Button icon={copied.copied ? <Check /> : <Copy />} disabled={href === null} onClick={() => void copy()}>{label}</Button>
+    {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
+    {failure ? <FeedbackFailure scope="Local" occurrence={failure} content={{tone: "Warning", title: "couldn’t copy link"}} announcement="Polite"
+      actions={[{label: "copy manually", onClick: () => setManual(true)}]} /> : null}
+    <Dialog open={manual} title="copy link" onClose={() => setManual(false)} initialFocus={panel => panel.querySelector('textarea')}>
+      <textarea readOnly aria-label="link to copy" value={href ?? ""} onFocus={event => event.currentTarget.select()} />
+    </Dialog>
+  </>;
 }

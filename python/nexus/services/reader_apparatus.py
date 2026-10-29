@@ -540,8 +540,14 @@ def get_reader_apparatus_detail(
     """Read one owner's ordered complete targets in a read-only publication snapshot."""
     state = _read_state(db, viewer_id=viewer_id, media_id=media_id)
     generation = read_publication_generation(db, media_id=media_id)
-    if generation is None or expected_identity != f"g{generation}":
+    if generation is None:
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+    if expected_identity != f"g{generation}":
+        from nexus.services.reader_document import read_reader_document
+
+        document = read_reader_document(db, viewer_id, media_id)
+        if document.identity != expected_identity:
+            raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     if state.id is None or state.status not in ("ready", "partial"):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source reference not found")
     owner_kind = db.scalar(
@@ -636,7 +642,7 @@ def get_reader_apparatus_detail(
         )
     return ReaderApparatusDetailOut(
         media_id=media_id,
-        identity=f"g{generation}",
+        identity=expected_identity,
         reference_ref=f"reader_apparatus_item:{item_id}",
         targets=targets_out,
     )

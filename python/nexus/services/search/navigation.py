@@ -3,7 +3,7 @@
 The caller authorizes scope and owns the read snapshot. Canonical eligibility
 retains filters and visibility; aliases belong only to admitted contributors.
 Each stored name/alias is matched independently using Unicode casefold, without
-compatibility or accent normalization. Distinct refs precede the four-row limit.
+compatibility or accent normalization. Distinct refs precede the eight-row limit.
 Canonical items own body and activation; evidence preserves the matched literal
 and original codepoint ranges, expanded to complete graphemes.
 Blank filtered reads retain canonical listable-family browse order and have no
@@ -80,12 +80,12 @@ def _evidence(literal: str, query: str) -> SearchMatchOut | None:
 
 
 def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[SearchResourceOut]:
-    """At most four literal name matches, hydrated only after selection."""
+    """At most eight literal name matches, hydrated only after selection."""
     families = tuple(family for family in families if family in _FAMILIES)
     if not families:
         return []
     if not r.terms:
-        selected = discovery_browse(db, r, families)[:4]
+        selected = discovery_browse(db, r, families)[:8]
         items = resource_items_out(db, viewer_id=r.viewer_id, refs=[hit.ref for hit in selected])
         if any(item.missing for item in items):
             raise RuntimeError("visible navigation resource missing from canonical item projection")
@@ -97,6 +97,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
                 match=None,
                 match_method=None,
                 matching_passage=None,
+                matched_field=None,
             )
             for item in items
         ]
@@ -135,7 +136,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
         previous = best.get(match.ref.uri)
         if previous is None or match.variant_order < previous.variant_order:
             best[match.ref.uri] = match
-    selected = sorted(best.values(), key=lambda name: name.order)[:4]
+    selected = sorted(best.values(), key=lambda name: name.order)[:8]
     items = resource_items_out(db, viewer_id=r.viewer_id, refs=[name.ref for name in selected])
     out = []
     for name, item in zip(selected, items, strict=True):
@@ -149,6 +150,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
                 match=_evidence(name.literal, r.terms),
                 match_method="lexical",
                 matching_passage=None,
+                matched_field=None,
             )
         )
     return out

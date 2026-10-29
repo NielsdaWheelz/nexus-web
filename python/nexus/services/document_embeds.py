@@ -1,6 +1,6 @@
 """Inline-embed artifact ownership for readable web articles.
 
-One media's embeds are replaced as a set: rows, the aggregate state row, and the
+One media's embeds are replaced as a set: rows and the
 per-viewer `resource_edges` projection that decides who can see each target.
 Authorized native article previews read the saved body's provenance, source
 credits and first prose paragraph. They never enter the parent's canonical text.
@@ -8,28 +8,28 @@ credits and first prose paragraph. They never enter the parent's canonical text.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 from urllib.parse import urlencode
 from uuid import UUID
 
 import regex
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
     ContributorCredit,
     DocumentEmbed,
-    DocumentEmbedArtifactState,
     Fragment,
     Media,
     ProcessingStatus,
     ResourceEdge,
-    XPostSource,
+    XPostCapture,
 )
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import InvalidRequestError
+from nexus.ids import new_uuid7 as new_embed_id
 from nexus.schemas.document_embeds import (
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
@@ -52,7 +52,8 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.items import excerpt
-from nexus.services.x_source import x_article_content_facts
+from nexus.services.x_capture_job_hooks import retrieval
+from nexus.services.x_source import readable_x_capture_ids_sql, x_article_content_facts
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,14 @@ class DocumentEmbedTargetMaterialized:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentEmbedTargetXQuote:
+    revision_id: str
+    excerpt_html: str | None
+    attribution_text: str | None
+    kind: Literal["x_quote"] = field(default="x_quote", init=False)
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentEmbedTargetTerminal:
     status: Literal["unsupported", "failed"]
     error_code: str | None
@@ -76,7 +85,10 @@ class DocumentEmbedTargetTerminal:
 
 
 type DocumentEmbedTargetOutcome = (
-    DocumentEmbedTargetAcceptSource | DocumentEmbedTargetMaterialized | DocumentEmbedTargetTerminal
+    DocumentEmbedTargetAcceptSource
+    | DocumentEmbedTargetMaterialized
+    | DocumentEmbedTargetTerminal
+    | DocumentEmbedTargetXQuote
 )
 
 
@@ -111,9 +123,6 @@ def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_i
     for viewer_id in sorted({*_edge_viewer_ids(db, media_id=media_id), owner_user_id}):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=[])
     db.execute(delete(DocumentEmbed).where(DocumentEmbed.media_id == media_id))
-    db.execute(
-        delete(DocumentEmbedArtifactState).where(DocumentEmbedArtifactState.media_id == media_id)
-    )
     db.flush()
 
 
@@ -139,8 +148,9 @@ def replace_document_embed_artifact(
     owner_user_id: UUID,
     media_id: UUID,
     source_attempt_id: UUID,
+    parent_source_url: str | None,
+    parent_title: str | None,
     occurrences: Sequence[DocumentEmbedArtifactOccurrence],
-    extraction_failed: bool,
     locked_existing_target_media_ids: frozenset[UUID],
 ) -> list[tuple[UUID, UUID]]:
     """Replace one media's embed rows, accepting each pending child source.
@@ -159,12 +169,82 @@ def replace_document_embed_artifact(
     accepted_target_media_ids: set[UUID] = set()
     rows: list[DocumentEmbed] = []
     for occurrence in occurrences:
+        target_capture_id: UUID | None = None
+        capture_job_id: UUID | None = None
         target_media_id: UUID | None = None
         error_code: str | None = None
         error_message: str | None = None
         diagnostics: dict[str, object] = {}
         target = occurrence.target
-        if isinstance(target, DocumentEmbedTargetAcceptSource):
+        if isinstance(target, DocumentEmbedTargetXQuote):
+            from urllib.parse import urljoin
+
+            from nexus.ids import new_uuid7
+            from nexus.jobs.queue import enqueue_job
+            from nexus.schemas.x_source import XArticleExcerptCapture, XExcerptImage
+            from nexus.services.html_tree import serialize_html
+            from nexus.services.resource_grants import media_audience_account_ids
+            from nexus.services.web_article import prepare_article
+            from nexus.services.x_identity import canonical_x_post_url
+            from nexus.services.x_ingest import publish_excerpt_capture
+            from nexus.services.x_source import admit_x_captures_for_accounts
+
+            source_url = canonical_x_post_url(target.revision_id)
+            parent = db.get(Media, media_id)
+            assert parent is not None
+            if target.excerpt_html:
+                document = parse_html_document(target.excerpt_html)
+                images = []
+                for index, image in enumerate(document.iter("img")):
+                    url = image.get("src")
+                    if url:
+                        url = urljoin(parent.canonical_source_url or source_url, url)
+                        images.append(
+                            XExcerptImage(
+                                asset_key=f"image-{index}",
+                                source_url=url,
+                                alt_text=image.get("alt"),
+                            )
+                        )
+                        image.set("src", url)
+                prepared_excerpt = prepare_article(
+                    serialize_html(document),
+                    base_url=parent_source_url or source_url,
+                    document_url=source_url,
+                    extract_embeds=False,
+                )
+                capture = publish_excerpt_capture(
+                    db,
+                    revision_id=target.revision_id,
+                    payload=XArticleExcerptCapture(
+                        kind="article_excerpt",
+                        attribution_text=target.attribution_text,
+                        parent_source_url=parent_source_url,
+                        parent_title=parent_title,
+                        images=tuple(images),
+                    ),
+                    fragment=prepared_excerpt,
+                )
+                target_capture_id = capture.id
+                admit_x_captures_for_accounts(
+                    db,
+                    account_ids=media_audience_account_ids(db, media_ids=[media_id]),
+                    capture_ids=[capture.id],
+                )
+            occurrence_id = new_uuid7()
+            capture_job_id = enqueue_job(
+                db,
+                kind="capture_x_quote",
+                payload={
+                    "media_id": str(media_id),
+                    "occurrence_id": str(occurrence_id),
+                    "parent_source_attempt_id": str(source_attempt_id),
+                    "requested_revision_id": target.revision_id,
+                },
+            ).id
+            diagnostics["occurrence_id"] = str(occurrence_id)
+            resolution_status = "resolved" if target_capture_id is not None else "resolving"
+        elif isinstance(target, DocumentEmbedTargetAcceptSource):
             from nexus.services.media_source_ingest import accept_embedded_source
 
             try:
@@ -209,6 +289,9 @@ def replace_document_embed_artifact(
 
         rows.append(
             DocumentEmbed(
+                id=UUID(str(diagnostics["occurrence_id"]))
+                if "occurrence_id" in diagnostics
+                else new_embed_id(),
                 media_id=media_id,
                 fragment_id=occurrence.fragment_id,
                 source_attempt_id=source_attempt_id,
@@ -226,6 +309,8 @@ def replace_document_embed_artifact(
                     else occurrence.provider_target_ref
                 ),
                 target_media_id=target_media_id,
+                target_x_post_capture_id=target_capture_id,
+                capture_job_id=capture_job_id,
                 title=occurrence.title,
                 authored_text=None if occurrence.provider == "x" else occurrence.authored_text,
                 placeholder_text=occurrence.placeholder_text,
@@ -240,95 +325,18 @@ def replace_document_embed_artifact(
     db.add_all(rows)
     db.flush()
 
-    state = DocumentEmbedArtifactState(
-        media_id=media_id, source_attempt_id=source_attempt_id, status="empty", diagnostics={}
-    )
-    if extraction_failed:
-        state.total_count = 0
-        state.resolved_count = 0
-        state.unsupported_count = 0
-        state.failed_count = 0
-        state.status = "failed"
-    else:
-        _set_state_counts(state, rows)
-    db.add(state)
-    db.flush()
+    from nexus.services.resource_grants import extend_public_media_capture_manifests
 
+    extend_public_media_capture_manifests(
+        db,
+        media_id=media_id,
+        capture_ids=[
+            row.target_x_post_capture_id for row in rows if row.target_x_post_capture_id is not None
+        ],
+    )
     for viewer_id in sorted(edge_viewer_ids):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
     return queued_children
-
-
-def resolve_x_document_embed_aliases(
-    db: Session,
-    *,
-    aliases: Mapping[str, UUID],
-    unavailable_revision_ids: set[str],
-) -> set[UUID]:
-    """Resolve existing reference slots from newly proved exact aliases.
-
-    Caller holds the referenced alias locks and all containing media. A missing
-    target has no synthetic body; explicit unavailable evidence only changes its
-    reference outcome. A retained canonical body always remains the target.
-    """
-    revisions = set(aliases) | unavailable_revision_ids
-    if not revisions:
-        return set()
-    sources = set(
-        db.scalars(
-            select(XPostSource.media_id).where(XPostSource.media_id.in_(set(aliases.values())))
-        )
-    )
-    changed: set[UUID] = set()
-    for row in db.scalars(
-        select(DocumentEmbed).where(
-            DocumentEmbed.provider == "x",
-            DocumentEmbed.provider_target_ref.in_(revisions),
-            DocumentEmbed.canonical_end_offset.is_not(None),
-        )
-    ):
-        target = aliases.get(row.provider_target_ref or "")
-        if target in sources:
-            desired = (target, "resolved", None, None)
-        elif row.provider_target_ref in unavailable_revision_ids:
-            desired = (
-                None,
-                "failed",
-                ApiErrorCode.E_X_POST_UNAVAILABLE.value,
-                "post unavailable on x",
-            )
-        else:
-            continue
-        if (
-            row.target_media_id,
-            row.resolution_status,
-            row.error_code,
-            row.error_message,
-        ) == desired:
-            continue
-        if desired[0] is not None:
-            library_entries.lock_media_for_reference(db, desired[0])
-        from nexus.services.media_parts import require_unpinned_source
-
-        if row.embed_kind == "post" and row.canonical_end_offset is not None:
-            require_unpinned_source(db, media_id=row.media_id)
-        row.target_media_id, row.resolution_status, row.error_code, row.error_message = desired
-        if row.canonical_end_offset is not None:
-            changed.add(row.media_id)
-    db.flush()
-    for media_id in sorted(changed):
-        rows = _embed_rows(db, media_id=media_id)
-        state = db.scalar(
-            select(DocumentEmbedArtifactState).where(
-                DocumentEmbedArtifactState.media_id == media_id
-            )
-        )
-        if state is not None:
-            _set_state_counts(state, rows)
-        for viewer_id in _edge_viewer_ids(db, media_id=media_id):
-            _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
-    db.flush()
-    return changed
 
 
 def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID) -> bool:
@@ -344,7 +352,6 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
         return False
     status, error_code, error_message = _target_resolution(db.get(Media, target_media_id))
 
-    media_ids = {row.media_id for row in rows}
     for row in rows:
         if (
             row.resolution_status != status
@@ -357,15 +364,6 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
         row.resolution_status = status
         row.error_code = error_code
         row.error_message = error_message
-    db.flush()
-    for media_id in media_ids:
-        state = db.execute(
-            select(DocumentEmbedArtifactState).where(
-                DocumentEmbedArtifactState.media_id == media_id
-            )
-        ).scalar_one_or_none()
-        if state is not None:
-            _set_state_counts(state, _embed_rows(db, media_id=media_id))
     db.flush()
     return True
 
@@ -542,26 +540,6 @@ def _child_resolution(
     return "resolving"
 
 
-def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[DocumentEmbed]) -> None:
-    state.total_count = len(rows)
-    state.resolved_count = sum(1 for row in rows if row.resolution_status == "resolved")
-    state.unsupported_count = sum(1 for row in rows if row.resolution_status == "unsupported")
-    state.failed_count = sum(1 for row in rows if row.resolution_status == "failed")
-    terminal = state.resolved_count + state.unsupported_count + state.failed_count
-    if state.total_count == 0:
-        state.status = "empty"
-    elif state.unsupported_count == state.total_count:
-        state.status = "unsupported"
-    elif state.resolved_count + state.unsupported_count == state.total_count:
-        state.status = "ready"
-    elif state.failed_count == state.total_count:
-        state.status = "failed"
-    elif terminal == 0:
-        state.status = "resolving"
-    else:
-        state.status = "partial"
-
-
 # ---------------------------------------------------------------------------
 # Wire projection: the nullable shapes `schemas/media.py` declares
 # ---------------------------------------------------------------------------
@@ -681,6 +659,7 @@ def _embed_out(
             update={"byline": preview.byline, "x_article_content": preview.content}
         )
     return DocumentEmbedOut(
+        retrieval=retrieval(db, row.capture_job_id),
         id=row.id,
         media_id=row.media_id,
         fragment_id=row.fragment_id,
@@ -732,11 +711,40 @@ def _embed_out(
 def _target_out(
     db: Session, *, viewer_id: UUID | None, row: DocumentEmbed
 ) -> DocumentEmbedTargetOut:
+    if row.target_x_post_capture_id is not None:
+        capture = db.get(XPostCapture, row.target_x_post_capture_id)
+        authorized = (
+            viewer_id is not None
+            and db.scalar(
+                select(XPostCapture.id)
+                .where(
+                    XPostCapture.id == row.target_x_post_capture_id,
+                    text(f"x_post_captures.id IN ({readable_x_capture_ids_sql()})"),
+                )
+                .params(viewer_id=viewer_id)
+            )
+            is not None
+        )
+        if capture is not None and authorized:
+            return DocumentEmbedTargetOut(
+                status="exact",
+                media_id=None,
+                capture_id=capture.id,
+                resource_ref=None,
+                href=f"/x/captures/{capture.id}",
+                kind="x_capture",
+                title=row.title,
+                byline=None,
+                x_article_content=None,
+                thumbnail_url=None,
+                playback=None,
+            )
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
             return DocumentEmbedTargetOut(
                 status="unsupported",
                 media_id=None,
+                capture_id=None,
                 resource_ref=None,
                 href=None,
                 kind=None,
@@ -750,6 +758,7 @@ def _target_out(
             return DocumentEmbedTargetOut(
                 status="partial",
                 media_id=None,
+                capture_id=None,
                 resource_ref=None,
                 href=None,
                 kind=None,
@@ -762,6 +771,7 @@ def _target_out(
         return DocumentEmbedTargetOut(
             status="missing",
             media_id=None,
+            capture_id=None,
             resource_ref=None,
             href=None,
             kind=None,
@@ -777,6 +787,7 @@ def _target_out(
         return DocumentEmbedTargetOut(
             status="forbidden",
             media_id=None,
+            capture_id=None,
             resource_ref=None if article else resource_ref,
             href=None,
             kind=None,
@@ -791,6 +802,7 @@ def _target_out(
         return DocumentEmbedTargetOut(
             status="missing",
             media_id=None,
+            capture_id=None,
             resource_ref=None if article else resource_ref,
             href=None,
             kind=None,
@@ -804,6 +816,7 @@ def _target_out(
         return DocumentEmbedTargetOut(
             status="partial",
             media_id=row.target_media_id,
+            capture_id=None,
             resource_ref=resource_ref,
             href=None,
             kind=media.kind,
@@ -816,6 +829,7 @@ def _target_out(
     return DocumentEmbedTargetOut(
         status="exact",
         media_id=row.target_media_id,
+        capture_id=None,
         resource_ref=resource_ref,
         href=f"/media/{row.target_media_id}",
         kind=media.kind,
@@ -869,6 +883,30 @@ def _display(
     error_message: str | None,
     preview: _ArticlePreview | None,
 ) -> DocumentEmbedDisplayOut:
+    if row.provider == "x" and row.embed_kind == "post":
+        actions = []
+        if target.capture_id is not None:
+            actions.append(
+                DocumentEmbedDisplayActionOut(
+                    kind="open_capture", label="open captured post", href=target.href
+                )
+            )
+        if row.canonical_source_url:
+            actions.append(
+                DocumentEmbedDisplayActionOut(
+                    kind="open_original", label="open on x", href=row.canonical_source_url
+                )
+            )
+        if row.capture_job_id is not None:
+            actions.append(
+                DocumentEmbedDisplayActionOut(kind="retry_quote", label="retry", href=None)
+            )
+        return DocumentEmbedDisplayOut(
+            mode="resolved" if target.capture_id is not None else "failed",
+            label="",
+            description=None if target.capture_id is not None else "post not captured",
+            actions=actions,
+        )
     article = row.provider == "x" and row.embed_kind == "link_preview"
     if article and target.status in {"forbidden", "missing"}:
         source_url = row.canonical_source_url or row.source_url

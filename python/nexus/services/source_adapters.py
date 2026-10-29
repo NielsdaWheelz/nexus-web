@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from pydantic import TypeAdapter
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
@@ -28,11 +29,15 @@ from nexus.db.models import (
     MediaKind,
     MediaSourceAttempt,
     XArticleSource,
-    XPostAlias,
 )
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.extension_capture import XArticleBinding, decode_article_packet
+from nexus.schemas.extension_capture import (
+    CaptureBinding,
+    WebRecoveryBinding,
+    XArticleBinding,
+    decode_article_packet,
+)
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.schemas.x_source import XSourceScope
 from nexus.services import source_attempts as sa
@@ -108,6 +113,12 @@ class PreparedNativeArticle:
     capture_binding: XArticleBinding | None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedWebRecovery:
+    article: Article
+    fragment: WebArticlePreparedFragment
+
+
 def acquire(
     session_factory: sessionmaker[Session],
     *,
@@ -115,7 +126,13 @@ def acquire(
     attempt: MediaSourceAttempt,
     request_id: str | None,
     fence: SourcePublicationFence,
-) -> SourceRunOutcome | PreparedFileSource | PreparedXSource | PreparedNativeArticle:
+) -> (
+    SourceRunOutcome
+    | PreparedFileSource
+    | PreparedXSource
+    | PreparedNativeArticle
+    | PreparedWebRecovery
+):
     """Acquire one detached attempt in its source type's own refusal order.
 
     Admission wrote every provider target and url these read (0282 backfilled the
@@ -141,6 +158,7 @@ def acquire(
             )
         case st.X_AUTHOR_THREAD | st.X_POST:
             assert target is not None
+            assert attempt.created_by_user_id is not None
             _begin(session_factory, media_id, fence, _ARTICLE)
             scope: XSourceScope = (
                 "author_thread" if attempt.source_type == st.X_AUTHOR_THREAD else "post"
@@ -148,22 +166,21 @@ def acquire(
             with session_factory() as db:
                 get_repeatable_read_db(db)
                 prior = load_prior_x_source(
-                    db, media_id=media_id, requested_revision_id=target, scope=scope
+                    db,
+                    media_id=media_id,
+                    requested_revision_id=target,
+                    scope=scope,
+                    viewer_id=attempt.created_by_user_id,
                 )
-                requested_owner = db.scalar(
-                    select(XPostAlias.post_media_id).where(XPostAlias.revision_id == target)
+            if scope == "post":
+                return prepare_x_source(
+                    acquired=x_client.fetch_x_post_capture(requested_revision_id=target),
+                    prior=prior,
                 )
-                baseline_ids = {media_id, *(post.media_id for post in prior.posts)}
-                if requested_owner is not None:
-                    baseline_ids.add(requested_owner)
-                baselines = {}
-                for identity in baseline_ids:
-                    latest = sa.latest_attempt(db, identity, lock=False)
-                    baselines[identity] = latest.id if latest else None
             carrier = x_client.lookup_x_carrier(requested_revision_id=target, prior=prior)
             carrier_revision_id = carrier.source_revision_id
             article_id = carrier.article_id
-            if scope == "author_thread" and carrier_revision_id is not None:
+            if carrier_revision_id is not None:
 
                 def lock_article(db: Session) -> None:
                     sa.lock_identity(db, f"x-article-carrier:{carrier_revision_id}")
@@ -195,9 +212,8 @@ def acquire(
                     ),
                 )
             return prepare_x_source(
-                acquired=x_client.fetch_x_source(carrier=carrier, scope=scope),
+                acquired=x_client.fetch_x_source(carrier=carrier, scope="author_thread"),
                 prior=prior,
-                baseline_attempt_ids=baselines,
             )
         case st.X_ARTICLE:
             assert target is not None
@@ -261,13 +277,24 @@ def acquire(
                     published_time=packet.published_time or "",
                 ),
             )
-            binding_payload = attempt.source_payload["x_article_binding"]
+            binding_payload = attempt.source_payload["capture_binding"]
             binding = (
-                XArticleBinding.model_validate(binding_payload)
+                TypeAdapter(CaptureBinding).validate_python(binding_payload)
                 if binding_payload is not None
                 else None
             )
-            if binding is not None and binding.native_target is not None:
+            if isinstance(binding, WebRecoveryBinding):
+                return PreparedWebRecovery(
+                    article=article,
+                    fragment=prepare_article(
+                        article.content_html,
+                        base_url=article.base_url,
+                        document_url=article.document_url,
+                        extract_embeds=article.extract_embeds,
+                        embed_source_html=article.source_html,
+                    ),
+                )
+            if isinstance(binding, XArticleBinding) and binding.target is not None:
                 return _prepare_native_article(
                     article_id=binding.article_id,
                     article=article,
@@ -366,6 +393,60 @@ def _prepare_native_article(
     )
 
 
+def publish_prepared_web_recovery(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    prepared: PreparedWebRecovery,
+    locked_target_ids: frozenset[UUID],
+    request_id: str | None,
+) -> SourceRunOutcome:
+    media = db.get(Media, media_id)
+    owner = attempt.created_by_user_id
+    if (
+        media is None
+        or owner is None
+        or media.created_by_user_id != owner
+        or not can_read_media(db, owner, media_id)
+    ):
+        raise ApiError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "This article is no longer writable.")
+    if media.canonical_url is not None or db.scalar(
+        text("""SELECT EXISTS (
+        SELECT 1 FROM reader_publications WHERE media_id=:id UNION ALL
+        SELECT 1 FROM fragments WHERE media_id=:id UNION ALL
+        SELECT 1 FROM passage_anchors WHERE owner_scheme='media' AND owner_id=:id UNION ALL
+        SELECT 1 FROM media_file WHERE media_id=:id UNION ALL
+        SELECT 1 FROM media_teardown_intents WHERE media_id=:id)"""),
+        {"id": media_id},
+    ):
+        raise ApiError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "This article already has a reader publication."
+        )
+    fragment_id = publish_prepared_article(
+        db,
+        media_id=media_id,
+        attempt=attempt,
+        article=prepared.article,
+        prepared=prepared.fragment,
+        request_id=request_id,
+        locked_target_ids=locked_target_ids,
+        remap_cursors=False,
+    )
+    media.canonical_source_url = normalize_url_for_display(prepared.article.document_url)
+    return SourceRunOutcome(
+        diagnostics=_published(attempt, fragment_id),
+        observations=source_contributor_observations(
+            media_id=media_id,
+            observation=byline_observation(
+                prepared.article.metadata.byline if prepared.article.metadata else ""
+            ),
+            source="web_article_capture",
+        ),
+        metadata_enrichment=True,
+    )
+
+
 def publish_prepared_native_article(
     db: Session,
     *,
@@ -391,7 +472,7 @@ def publish_prepared_native_article(
     ):
         raise ApiError(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "The article identity changed.")
     if prepared.capture_binding is not None:
-        target = prepared.capture_binding.native_target
+        target = prepared.capture_binding.target
         assert target is not None
         if (
             target.media_id != media_id

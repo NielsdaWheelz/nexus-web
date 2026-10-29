@@ -7,6 +7,24 @@ frontend state / docs / debt; ideation by Fable). Third of a set: `horizons.md`
 thesis). It does not compete with the argument sequence — it builds the house
 the argument happens in.
 
+## contextual reading proposals
+
+these are design candidates, not implementation commitments. the historical
+diagnoses below are not a current code inventory; module contracts and open
+issues own present behavior and gaps. [visual design](modules/visual-system.md)
+owns the product's continuity and attribution principles.
+
+| candidate | experience and existing owners | explicit cost |
+| --- | --- | --- |
+| counterpassage | ask for the strongest opposing passage beside a selection; existing scoped retrieval, tool authority and evidence activation | model latency and imperfect opposition; the reader deliberately requests and inspects it |
+| comparison desk | arrange two source passages and a working note with existing panes and exact return locations | workspace composition and attention management; no new document identity or copied source text |
+| authorship in the margin | distinguish source text, personal annotation and generated interpretation at their anchors | visual density controlled by disclosure; attribution remains legible |
+
+these extend the apparatus and correspondence ideas below. generated material
+must retain the initiating question, source evidence and return location; silent
+rearrangement or unsolicited interpretation would spend the attention the product
+is meant to protect.
+
 ## The one-line diagnosis
 
 Dreams answered *what the corpus should say*: it should argue. This answers

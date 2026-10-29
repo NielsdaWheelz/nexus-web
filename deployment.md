@@ -28,6 +28,28 @@ the public website normally. the shared fleet grants policy belongs to
 The release identity is one full lowercase Git `source_sha`. It binds the Vercel
 deployment, the API and worker image digests, and the expected Alembic revision.
 
+## capacity contract
+
+production composition owns the aggregate physical connection and memory budget:
+api pools, both worker lanes and their children, asynchronous sessions, stream
+listeners and probes all count. per-process pool limits do not establish that
+budget. qualification includes warmed retained backends and query peaks together,
+with foreground writes, cancellation and worker lease renewal still progressing.
+exact allocations remain in the deployment configuration and its declared inputs.
+
+query work belongs to the [search owner](docs/modules/search.md#work-bounds).
+serial admission does not bound one query's memory or duration. background units
+must both yield foreground opportunity and complete useful work; repeatedly
+timing out a whole refresh satisfies neither requirement.
+
+search repair retains the current 2 gib host and 512 mib/no-swap database limit.
+reducing query work and admitted concurrency spends implementation effort and
+waiting time; both must preserve useful progress within those limits. no extra
+memory or new numeric deadline is approved by this contract. allocation changes
+within the fixed envelope use the existing release owners. current aggregate
+qualification remains open in the
+[connection-budget issue](docs/issues/production-database-connection-budgets-implicit.md).
+
 ## Non-negotiable rules
 
 - `deploy/hetzner/deploy.sh <source-sha>` is the only application release

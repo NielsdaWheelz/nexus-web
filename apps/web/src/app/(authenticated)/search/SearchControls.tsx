@@ -15,6 +15,7 @@ import ContributorFilter, {
 } from "@/components/contributors/ContributorFilter";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
+import choices from "@/components/ui/ChoiceField.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import {
@@ -46,7 +47,7 @@ export default function SearchControls(props: {
   readonly query: SearchQuery;
   readonly commit: (next: SearchQuery) => void;
   readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly status: { readonly text: string; readonly detail?: string; readonly announce: boolean; readonly action?: { label: string; onClick: () => void; busy: boolean } };
+  readonly status: { readonly text: string; readonly detail?: string; readonly speech: string | null; readonly action?: { label: string; onClick: () => void; busy: boolean } };
 }) {
   const { query, commit, inputRef, status } = props;
   const [draft, setDraft] = useState(query.text);
@@ -188,9 +189,9 @@ export default function SearchControls(props: {
         onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
         content: (
           <>
-            <fieldset className={styles.optionGroup}>
+            <fieldset className={choices.group}>
               <legend>Content types</legend>
-              <div className={styles.choices}>
+              <div className={choices.choices}>
                 {SEARCH_KINDS.map((kind) => (
                   <ChoiceField
                     key={kind}
@@ -203,9 +204,9 @@ export default function SearchControls(props: {
                 ))}
               </div>
             </fieldset>
-            <fieldset className={styles.optionGroup}>
+            <fieldset className={choices.group}>
               <legend>Formats</legend>
-              <div className={styles.choices}>
+              <div className={choices.choices}>
                 {MEDIA_FORMATS.map((format) => {
                   const on = query.formats.includes(format);
                   return (
@@ -257,13 +258,11 @@ export default function SearchControls(props: {
           <>
             <span
               id={statusId}
-              role={status.announce ? "status" : undefined}
-              aria-live={status.announce ? "polite" : undefined}
-              aria-atomic={status.announce ? true : undefined}
             >
               <span>{status.text}</span>{status.detail ? ` ${status.detail}` : null}
+              <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{status.speech}</span>
             </span>
-            {status.action ? <Button onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
+            {status.action ? <Button reserveIcon busyKey={query.text} onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
           </>
         ),
       }}

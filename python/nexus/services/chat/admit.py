@@ -54,7 +54,7 @@ from nexus.schemas.llm import (
     InvalidGenerationSelection,
 )
 from nexus.services import authored
-from nexus.services.chat import citations, context, events, quotes, reads
+from nexus.services.chat import citations, context, events, quotes, reads, selection
 from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
     Catalog,
@@ -403,7 +403,8 @@ def _quote(
 
     key = selection.key
     authored.lock_account(db, viewer_id)
-    lock_media_for_reference(db, key.media_id)
+    if key.media_id is not None:
+        lock_media_for_reference(db, key.media_id)
     snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
     if quotes.revision(snapshot) != selection.revision:
         raise ApiError(
@@ -412,14 +413,15 @@ def _quote(
     chat = ResourceRef("conversation", conversation_id)
     highlight = ResourceRef("highlight", key.highlight_id)
     create_link(db, viewer_id=viewer_id, source=chat, target=highlight)
-    add_context_ref_without_commit(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation_id,
-        target=ResourceRef("media", key.media_id),
-        origin="system",
-        user_edit=True,
-    )
+    if key.media_id is not None:
+        add_context_ref_without_commit(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+            target=ResourceRef("media", key.media_id),
+            origin="system",
+            user_edit=True,
+        )
     return quotes.encode(snapshot)
 
 
@@ -544,12 +546,12 @@ def _start_run(
     projection.refresh(db, "conversation", [conversation_id])
     if db.scalar(
         text("""SELECT EXISTS (
-            SELECT 1 FROM x_post_sources xp WHERE xp.media_id IN (
-                SELECT media_id FROM message_retrievals WHERE assistant_message_id=:assistant)
-            OR EXISTS (SELECT 1 FROM messages msg WHERE msg.id=:user
-                AND msg.reader_selection_snapshot #>> '{evidence,target,owner_ref}'
-                    = 'media:' || xp.media_id::text))"""),
+            SELECT 1 FROM message_retrievals WHERE assistant_message_id=:assistant
+                AND locator->>'type'='x_capture_offsets'
+            UNION ALL SELECT 1 FROM messages msg WHERE msg.id=:user
+                AND msg.reader_selection_snapshot #>> '{evidence,target,locator,type}'='x_capture_offsets' )"""),
         {"assistant": assistant.id, "user": user.id},
     ):
         projection.refresh_viewer_contributors(db, [viewer_id])
+    selection.remember(db, user_id=viewer_id, admitted=row)
     return run

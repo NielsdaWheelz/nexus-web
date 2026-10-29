@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { FeedbackNotice, FeedbackStatus, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
@@ -15,7 +15,6 @@ import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import type { PanePrimaryAction } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -158,7 +157,7 @@ export function useLibraryCreation() {
   const primaryAction: PanePrimaryAction = {
     kind: "command",
     id: "Libraries.Create",
-    label: "new library",
+    label: "New library",
     icon: <Plus size={20} aria-hidden="true" />,
     onSelect: ({ triggerEl, openIntent }) => show(triggerEl, openIntent),
   };
@@ -174,23 +173,13 @@ export function useLibraryCreation() {
       : creation.kind === "Unconfirmed" ? creation.feedback : validation ? null : creation.feedback;
   const text = draft ? creation.text : creation.kind === "Created" ? creation.library.name : creation.attempt.name;
 
+  const failure = creation.kind === "Unconfirmed" || sending && creation.wasUnconfirmed || draft && validation === null ? feedback : null;
+  const failureOccurrence = useFeedbackOccurrence(failure !== null, creation.kind === "Unconfirmed" || creation.kind === "Sending" ? creation.attempt.id : "draft");
   return {
     primaryAction,
     content: <>
-      {!visible && creation.kind === "Draft" && creation.feedback ? (
-        <FeedbackNotice content={creation.feedback} announcement="Polite" />
-      ) : !visible && creation.kind === "Unconfirmed" ? (
-        // This review action leaves the tree on open; closing returns to the pane.
-        <FeedbackNotice content={creation.feedback} announcement="Polite"
-          actions={[{ label: "review creation", onClick: intent => show(null, intent) }]} />
-      ) : !visible && creation.kind === "Created" && feedback ? (
-        <FeedbackNotice content={feedback} announcement="Polite" actions={[{
-          label: "open library", href: `/libraries/${creation.library.id}`,
-          onActivate: event => activateTargetLink({
-            event, runtime, target: { href: `/libraries/${creation.library.id}`, labelHint: creation.library.name },
-          }),
-        }]} />
-      ) : null}
+      {!visible && failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite"
+        actions={[{label: "review creation", onClick: intent => show(null, intent)}]}/> : null}
       <Dialog
         open={visible}
         title="new library"
@@ -232,12 +221,10 @@ export function useLibraryCreation() {
             }}
           />
           {validation ? <div role="alert"><FieldFeedback id={errorId} content={{ tone: "Danger", title: validation }} /></div> : null}
-          {feedback ? (sending && !creation.wasUnconfirmed) || creation.kind === "Created" ? (
-            <FeedbackStatus content={feedback} announcement="Polite" />
-          ) : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
+          {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite"/> : null}
           <div className={styles.creationActions}>
             <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
-            <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
+            <Button reserveIcon ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
               {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>
           </div>

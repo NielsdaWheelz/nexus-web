@@ -76,7 +76,7 @@ function sameLocator(a: Locator, b: Locator): boolean {
     );
   }
   if (a.kind === "x" || b.kind === "x") return a.kind === "x" && b.kind === "x" &&
-    a.occurrence_id === b.occurrence_id && a.post_media_id === b.post_media_id &&
+    a.occurrence_id === b.occurrence_id && a.capture_id === b.capture_id && a.fragment_id === b.fragment_id &&
     a.source_revision_id === b.source_revision_id && JSON.stringify(a.locations) === JSON.stringify(b.locations);
   const anchor = (l: typeof a) => (l.kind === "epub" ? l.target.anchor_id : null);
   return (

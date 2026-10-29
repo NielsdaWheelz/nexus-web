@@ -1,8 +1,9 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Loader2, Lock, Minus, Plus } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
+import { FeedbackFailure, FeedbackBusy, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import {ControlContents} from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
@@ -22,6 +23,7 @@ export interface ChooserRow {
     | { readonly kind: "Blocked"; readonly reason: string };
 }
 export interface ChooserError {
+  readonly occurrence: object;
   readonly content: FeedbackContent;
   readonly retry: (() => void) | null;
   readonly retryLabel?: string;
@@ -61,7 +63,7 @@ function progress(row: ChooserRow): string | null {
 
 /** Search actions retain their query. Checks show confirmed membership or an explicitly chosen draft destination; highlight is the current suggestion. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, status, error, create, empty,
+  context, membershipKind, rows, onToggle, loading, summary, error, create, empty,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
@@ -70,7 +72,6 @@ export default function LibraryChooser({
   readonly onToggle: (change: { id: string; included: boolean }) => boolean;
   readonly loading: boolean;
   readonly summary: string | null;
-  readonly status?: string;
   readonly error: ChooserError | null;
   readonly create: ChooserCreation | null;
   readonly empty: string;
@@ -103,7 +104,7 @@ export default function LibraryChooser({
   const searchContext = JSON.stringify([context, query]);
   const current = reconcileSearchActive({
     context: searchContext, admitted: true, options,
-    firstExistingKey: matching.find(row => row.action.kind === "Set")?.id ?? null, active,
+    initialKey: matching.find(row => row.action.kind === "Set")?.id ?? null, active,
   });
   if (current !== active) setActive(current);
   const navigation = useSearchOptions({
@@ -145,8 +146,8 @@ export default function LibraryChooser({
         />
       </div>
       {summary !== null ? <p className={`${styles.summary} ${collection.detail}`}>{summary}</p> : null}
-      {status ? <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" /> : null}
-      {error ? <FeedbackNotice content={error.content} announcement="Assertive"
+      <FeedbackBusy subject={context} pending={loading && rows.length === 0}/>
+      {error ? <FeedbackFailure scope="Local" occurrence={error.occurrence} content={error.content} announcement="Assertive"
         returnFocus={() => input.current}
         actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
       <div ref={navigation.listRef} {...navigation.listProps}
@@ -159,18 +160,18 @@ export default function LibraryChooser({
           const description = [membership(count, membershipKind), changing, row.note,
             row.action.kind === "Set" ? row.action.label : row.action.reason].filter(Boolean).join(" · ");
           const detail = [count !== null && count.total > 1 ? membership(count, membershipKind) : null,
-            changing, row.note].filter(Boolean).join(" · ");
+            row.note].filter(Boolean).join(" · ");
           return <div key={row.id} {...binding}
             aria-labelledby={`${binding.id}-name`} aria-describedby={`${binding.id}-description`}
-            className={collection.row} data-selected={count !== null && count.total > 0 && count.included === count.total || undefined}>
+            className={collection.row} aria-busy={row.progress === "Pending" || row.progress === "Reconciling"} data-selected={count !== null && count.total > 0 && count.included === count.total || undefined}>
             <span className={collection.content}>
               <span id={`${binding.id}-name`}>{row.name}</span>
               {detail ? <span className={collection.detail} aria-hidden="true">{detail}</span> : null}
               <span id={`${binding.id}-description`} className="sr-only">{description}</span>
             </span>
             <span className={`${collection.adornment} ${styles.marks}`} aria-hidden="true">
-              <span>{row.progress === "Pending" || row.progress === "Reconciling" ? <Loader2 size={16} />
-                : row.progress === "Uncertain" ? <CircleAlert size={16} /> : null}</span>
+              <span><ControlContents reserveIcon busyKey={row.id} busy={row.progress === "Pending" || row.progress === "Reconciling"}
+                icon={row.progress === "Uncertain" ? <CircleAlert size={16}/> : undefined}/></span>
               <span>{blocked ? <Lock size={16} /> : null}</span>
               <span>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Check size={16} />
                 : count.included > 0 ? <Minus size={16} /> : null}</span>
@@ -183,8 +184,7 @@ export default function LibraryChooser({
           <span className={collection.content}>create “{name}”</span>
         </div> : null}
       </div>
-      {loading && rows.length === 0 ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "loading libraries…" }} announcement="None" /></div>
-        : error === null && matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: invalid
+      {!loading && error === null && matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: invalid
           ?? (q === "" ? empty : "no libraries match") }} announcement="None" /></div> : null}
     </div>
   );

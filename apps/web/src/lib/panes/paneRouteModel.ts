@@ -21,7 +21,6 @@ import {
   Settings,
   Sparkles,
   UserCog,
-  UserRound,
   type LucideIcon,
 } from "lucide-react";
 import type { DestinationId } from "@/lib/navigation/destinations";
@@ -33,33 +32,38 @@ import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
 import {
   formatResourceRef,
   parseResourceRef,
+  resourceIconForScheme,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import type { ShareTarget } from "@/lib/sharing/types";
-import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { normalizeWorkspaceHref, parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { isCanonicalUuid } from "@/lib/validation";
+import type { RecentValue } from "@/lib/recent/model";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
   downloads: ["downloads", "Downloads", Download],
   lectern: ["lectern", "Lectern", ListMusic],
   libraries: ["libraries", "Libraries", Library],
-  library: ["libraries/:id", "Library", Library],
+  library: ["libraries/:id", "Library", resourceIconForScheme("library")],
   browse: ["browse", "Browse", Compass],
   browsePreview: ["browse/preview", "Preview", Compass],
-  media: ["media/:id", "Media", FileText],
+  media: ["media/:id", "Media", resourceIconForScheme("media")],
+  xCapture: ["x/captures/:id", "Post", FileText],
   conversations: ["conversations", "Chats", MessageSquare],
   conversationNew: ["conversations/new", "New chat", MessageSquare],
-  conversation: ["conversations/:id", "Chat", MessageSquare],
+  conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
   podcasts: ["podcasts", "Podcasts", Mic],
-  podcastDetail: ["podcasts/:podcastId", "Podcast", Mic],
+  podcastDetail: ["podcasts/:podcastId", "Podcast", resourceIconForScheme("podcast")],
   search: ["search", "Search", Search],
-  author: ["authors/:handle", "Author", UserRound],
+  author: ["authors/:handle", "Author", resourceIconForScheme("contributor")],
   notes: ["notes", "Notes", FileText],
   pageNew: ["pages/new", "New page", FileText],
-  page: ["pages/:pageId", "Page", FileText],
-  dailyDate: ["daily/:localDate", "Daily Page", FileText],
-  note: ["notes/:blockId", "Note", FileText],
+  page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
+  dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
+  highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
+  note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", ListTodo],
   stats: ["stats", "Stats", ChartColumn],
   settings: ["settings", "Settings", Settings],
@@ -70,7 +74,7 @@ const ROUTES = {
   settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],
   atlas: ["atlas", "The Atlas", Map],
   oracle: ["oracle", "Oracle", Sparkles],
-  oracleReading: ["oracle/:readingId", "Reading", Sparkles],
+  oracleReading: ["oracle/:readingId", "Reading", resourceIconForScheme("oracle_reading")],
 } as const satisfies Record<string, readonly [string, string, LucideIcon]>;
 
 export type PaneRouteId = keyof typeof ROUTES;
@@ -85,6 +89,7 @@ const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   author: ["contributor_handle", "handle"],
   page: ["page", "pageId"],
   note: ["note_block", "blockId"],
+  highlight: ["highlight", "id"],
   oracleReading: ["oracle_reading", "readingId"],
 };
 // Query changes keep the mounted body (url-owned filters, sort, selection).
@@ -104,7 +109,7 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate"]);
+const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate", "xCapture"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
@@ -123,6 +128,7 @@ const PENDING_LABEL: Traits<string> = {
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
   media: "Reader",
+  xCapture: "Reader",
   conversationNew: "Chat",
   conversation: "Chat",
   atlas: "NoVerticalScroll",
@@ -189,7 +195,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
-  const section = id === "downloads" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
+  const section = id === "downloads" || id === "xCapture" || id === "highlight" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
   const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
@@ -202,7 +208,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
     section,
     header: pendingLabel
       ? { kind: "Resource", pendingLabel }
-      : pattern.length === 1
+      : pattern.length === 1 || id === "xCapture" || id === "highlight"
         ? { kind: "Section", context: "None" }
         : { kind: "Section", context: "Destination", destinationId: section! },
     returnKind,
@@ -284,8 +290,8 @@ export function paneResourceLocatorKey(
 }
 
 export function panePresentationLocatorKey(locator: PanePresentationLocator): string {
-  return locator.kind === "daily_date"
-    ? `daily_date:${locator.local_date}`
+  return locator.kind === "daily_date" ? `daily_date:${locator.local_date}`
+    : locator.kind === "x_capture" ? `x_capture:${locator.capture_id}`
     : paneResourceLocatorKey(locator)!;
 }
 
@@ -350,7 +356,7 @@ export function getPaneRouteIcon(href: string): LucideIcon {
 export function resolveWorkspaceActivationRouteId(href: string): string {
   const route = resolvePaneRouteModel(href);
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
-  const arrival = route.id === "media"
+  const arrival = route.id === "media" || route.id === "xCapture"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
     : route.id === "conversation" ? ["message", "loc"] : [];
   for (const key of arrival) query.delete(key);
@@ -402,4 +408,44 @@ export function resolvePaneRouteShareIdentity(
   if (!route.shareByRoute) return null;
   const target = routeShareTarget({ href: route.pathname, label });
   return target.kind === "Route" ? target : null;
+}
+
+function isDiscoveryTarget(value: string): boolean {
+  const match = /^ndt1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(value);
+  if (!match) return false;
+  try {
+    const decode = (part: string) => atob(part.replace(/-/gu, "+").replace(/_/gu, "/") + "=".repeat((4 - part.length % 4) % 4));
+    const encode = (part: string) => btoa(part).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    const payload = decode(match[1]!);
+    const tag = decode(match[2]!);
+    return payload.length > 0 && payload.length <= 4096 && tag.length === 32 && encode(payload) === match[1] && encode(tag) === match[2];
+  } catch { return false; }
+}
+
+/** A deliberately opened resource and its stable reopening address. */
+export function recentValueForHref(href: string, titleHint: string | null = null): RecentValue | null {
+  const normalized = normalizeWorkspaceHref(href);
+  if (normalized === null) return null;
+  const url = parseWorkspaceHref(normalized)!;
+  const route = resolvePaneRouteModel(normalized);
+  let target: RecentValue["target"] | null = route.titleLocator;
+  if (route.id === "browsePreview") {
+    const preview = url.searchParams.get("target");
+    if (preview && isDiscoveryTarget(preview)) target = { kind: "preview", target: preview };
+  } else if (route.id === "xCapture" && isCanonicalUuid(route.params.id)) target = { kind: "x_capture", capture_id: route.params.id };
+  if (target === null) return null;
+  const query = new URLSearchParams();
+  if (target.kind === "preview") query.set("target", target.target);
+  if (route.id === "conversation") {
+    const leaf = url.searchParams.get("leaf");
+    if (leaf && conversationEndpoint(url.searchParams).kind === "Endpoint") query.set("leaf", leaf);
+  }
+  const path = target.kind === "resource_ref" ? (() => {
+    const ref = parseResourceRef(target.ref)!;
+    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", conversation: "conversations", podcast: "podcasts", page: "pages", note_block: "notes", highlight: "highlights", oracle_reading: "oracle" };
+    return `/${prefix[ref.scheme]}/${ref.id}`;
+  })() : target.kind === "contributor_handle" ? `/authors/${target.handle}`
+    : target.kind === "daily_date" ? `/daily/${target.local_date}`
+      : target.kind === "x_capture" ? `/x/captures/${target.capture_id}` : "/browse/preview";
+  return { target, href: `${path}${query.size ? `?${query}` : ""}`, title_hint: titleHint, detail_hint: null };
 }

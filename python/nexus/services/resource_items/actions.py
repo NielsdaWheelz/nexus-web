@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
+from nexus.schemas.imports import BrowserCaptureOffer
 from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
 from nexus.schemas.resource_items import (
     BlockReason,
@@ -118,7 +119,7 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
         return []
     kind = media.summary.media_kind.value
     actions: list[ResourceActionOut] = [_simple("Metadata")]
-    if media.canonical_source_url:
+    if media.canonical_source_url and not isinstance(media.source_offer, BrowserCaptureOffer):
         actions.append(OpenSourceAction(blocked=None, href=media.canonical_source_url))
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=[media_id])
     if media_id in descriptors:
@@ -259,8 +260,9 @@ def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[Resourc
     owner = _owner(facts.is_owner)
     actions: list[ResourceActionOut] = [
         _simple("EditHighlight", owner),
-        _simple("HighlightNote"),
     ]
+    if facts.is_owner:
+        actions.append(_simple("EditHighlightAnnotation"))
     if facts.edit_bounds_applicable:
         actions.append(_simple("EditHighlightBounds", owner))
     actions.append(_simple("DeleteHighlight", owner))

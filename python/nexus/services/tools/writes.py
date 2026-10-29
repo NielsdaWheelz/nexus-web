@@ -41,7 +41,6 @@ from nexus.services import (
 )
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.consumption import lectern
-from nexus.services.highlights import AFFIX_CODEPOINTS
 from nexus.services.media_text_scope import read_media_text_scope
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.podcasts import subscriptions
@@ -224,6 +223,7 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     if inserted_entry_id is not None:
         call.created_refs.append(
             {
+                "field": None,
                 "kind": "entry",
                 "id": str(inserted_entry_id),
                 "label": placement.name,
@@ -296,7 +296,9 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
         resource_refs=[owner.uri],
         link_ids=[],
     )
-    call.created_refs.append({"kind": "note_block", "id": str(note.id), "label": label})
+    call.created_refs.append(
+        {"field": None, "kind": "note_block", "id": str(note.id), "label": label}
+    )
     return NoteCreateSuccess(note_uri=note.uri, page_uri=value.page_uri)
 
 
@@ -337,57 +339,93 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
     if fragment is None or reading is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     bounds = (0, len(fragment.canonical_text))
-    if reading.kind == "text_part":
-        scope = read_media_text_scope(db, media.id)
-        if not scope.contains(fragment.id, start, end):
+    if fragment.x_post_capture_id is not None:
+        from nexus.services.x_source import require_readable_x_capture
+
+        require_readable_x_capture(db, viewer_id=viewer, capture_id=fragment.x_post_capture_id)
+        source_ref = f"fragment:{fragment.id}"
+        source_label, source_kind = reading.title, "x_capture"
+        publication = {"kind": "x_capture", "capture_id": str(fragment.x_post_capture_id)}
+        locator: dict[str, Any] = {
+            "type": "x_capture_offsets",
+            "capture_id": str(fragment.x_post_capture_id),
+            "fragment_id": str(fragment.id),
+            "start_offset": start,
+            "end_offset": end,
+        }
+    else:
+        if reading.kind == "text_part":
+            scope = read_media_text_scope(db, media.id)
+            if not scope.contains(fragment.id, start, end):
+                raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            interval = next(i for i in scope.fragment_intervals if i.fragment_id == fragment.id)
+            bounds, generation = (
+                (interval.start_offset, interval.end_offset),
+                scope.source_generation,
+            )
+        elif fragment.media_id != media.id:
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        interval = next(i for i in scope.fragment_intervals if i.fragment_id == fragment.id)
-        bounds, generation = (interval.start_offset, interval.end_offset), scope.source_generation
-    elif fragment.media_id != media.id:
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    source = db.get(Media, fragment.media_id)
-    if source is None:
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    readiness = db.execute(
-        text(
-            "SELECT m.processing_status, t.transcript_state, t.transcript_coverage FROM media m"
-            " LEFT JOIN media_transcript_states t ON t.media_id = m.id WHERE m.id = :id"
-        ),
-        {"id": source.id},
-    ).one()
-    if not is_text_document_ready(
-        source.kind,
-        str(readiness.processing_status),
-        None if readiness.transcript_state is None else str(readiness.transcript_state),
-        None if readiness.transcript_coverage is None else str(readiness.transcript_coverage),
-    ):
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
+        source = db.get(Media, fragment.media_id)
+        if source is None:
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        readiness = db.execute(
+            text(
+                "SELECT m.processing_status, t.transcript_state, t.transcript_coverage FROM media m"
+                " LEFT JOIN media_transcript_states t ON t.media_id = m.id WHERE m.id = :id"
+            ),
+            {"id": source.id},
+        ).one()
+        if not is_text_document_ready(
+            source.kind,
+            str(readiness.processing_status),
+            None if readiness.transcript_state is None else str(readiness.transcript_state),
+            None if readiness.transcript_coverage is None else str(readiness.transcript_coverage),
+        ):
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
+        source_ref = f"media:{source.id}"
+        source_label, source_kind = source.title, "media"
+        publication = None if generation is None else {"kind": "reader", "generation": generation}
+        locator = {
+            "type": "epub_fragment_offsets" if source.kind == "epub" else "web_text_offsets",
+            "media_id": str(source.id),
+            "fragment_id": str(fragment.id),
+            "start_offset": start,
+            "end_offset": end,
+            "media_kind": source.kind,
+        }
+        if source.kind == "epub":
+            locator["section_id"] = None
     words = fragment.canonical_text[start:end]
-    prefix = fragment.canonical_text[max(bounds[0], start - AFFIX_CODEPOINTS) : start]
-    suffix = fragment.canonical_text[end : min(bounds[1], end + AFFIX_CODEPOINTS)]
-    publication = None if generation is None else {"kind": "reader", "generation": generation}
-    locator: dict[str, Any] = {
-        "type": "epub_fragment_offsets" if source.kind == "epub" else "web_text_offsets",
-        "media_id": str(source.id),
-        "fragment_id": str(fragment.id),
-        "start_offset": start,
-        "end_offset": end,
-        "media_kind": source.kind,
-        "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix},
-    }
-    if source.kind == "epub":
-        locator["section_id"] = None
+    prefix = fragment.canonical_text[
+        max(bounds[0], start - text_quote.PREFIX_SUFFIX_WINDOW) : start
+    ]
+    suffix = fragment.canonical_text[end : min(bounds[1], end + text_quote.PREFIX_SUFFIX_WINDOW)]
+    locator["text_quote_selector"] = {"exact": words, "prefix": prefix, "suffix": suffix}
+    from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+
+    frozen = source_excerpts(
+        db,
+        [
+            SourceExcerptRequest(
+                reading_id=fragment.id if fragment.x_post_capture_id is not None else media.id,
+                fragment_id=fragment.id,
+                start=start,
+                end=end,
+                bounds=bounds,
+            )
+        ],
+    )[0]
     highlight = ResourceRef("highlight", uuid5(call.id, "nexus.highlight.create:highlight"))
     intents: list[dict[str, Any]] = [
         {
             "kind": "capture_source",
-            "source_ref": f"media:{source.id}",
-            "capture": {"kind": "media", "label": source.title, "publication": publication},
+            "source_ref": source_ref,
+            "capture": {"kind": source_kind, "label": source_label, "publication": publication},
         },
         {
             "kind": "create_highlight",
             "ref": highlight.uri,
-            "source_ref": f"media:{source.id}",
+            "source_ref": source_ref,
             "selection": {
                 "publication": publication,
                 "locator": locator,
@@ -395,25 +433,29 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
                 "prefix": prefix,
                 "suffix": suffix,
                 "passage_ref": None,
+                "excerpt": frozen.model_dump(mode="json"),
             },
             "color": value.color or "yellow",
+            "body_pm_json": note_bodies.markdown_body(value.annotation or ""),
         },
     ]
-    note = None
-    if value.note and value.note.strip():
-        note = ResourceRef("note_block", uuid5(call.id, "nexus.highlight.create:note_block"))
-        intents += _note_and_link(note.uri, note_bodies.markdown_body(value.note), highlight.uri)
-    authored.server_command(
+    merged = authored.server_command(
         db, viewer, command={"kind": "batch", "intents": intents}, resource_refs=[], link_ids=[]
     )
-    call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
-    if note is not None:
-        call.created_refs.append(
-            {"kind": "note_block", "id": str(note.id), "label": "highlight note"}
-        )
-    return HighlightCreateSuccess(
-        exact=exact, highlight_uri=highlight.uri, note_uri=None if note is None else note.uri
+    call.created_refs.append(
+        {"kind": "highlight", "id": str(highlight.id), "label": words, "field": None}
     )
+    annotation = next(item for item in merged.projections if item.ref == highlight.uri)
+    if annotation.body_pm_json is not None:
+        call.created_refs.append(
+            {
+                "kind": "highlight",
+                "id": str(highlight.id),
+                "label": "annotation",
+                "field": "annotation",
+            }
+        )
+    return HighlightCreateSuccess(exact=words, highlight_uri=highlight.uri)
 
 
 def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
@@ -431,7 +473,9 @@ def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
             snapshot=CitationSnapshot(rationale=rationale),
         ),
     )
-    call.created_refs.append({"kind": "edge", "id": str(edge.id), "label": rationale})
+    call.created_refs.append(
+        {"field": None, "kind": "edge", "id": str(edge.id), "label": rationale}
+    )
     return EdgeCreateSuccess(
         edge_id=edge.id,
         kind=kind,
@@ -452,7 +496,9 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     item_id, title = found
     if inserted:
-        call.created_refs.append({"kind": "queue", "id": str(item_id), "label": title})
+        call.created_refs.append(
+            {"field": None, "kind": "queue", "id": str(item_id), "label": title}
+        )
     return QueueAddSuccess(
         already_present=not inserted, media_uri=media.uri, queue_entry_id=item_id, title=title
     )
@@ -467,6 +513,25 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     kind, target = ref["kind"], UUID(ref["id"])
     if kind == "entry":
         _unfile(db, viewer_id, ref)
+        return
+    if ref["field"] == "annotation":
+        assert kind == "highlight"
+        authored.lock_account(db, viewer_id)
+        row = db.get(Highlight, target)
+        if (
+            row is None
+            or row.user_id != viewer_id
+            or not row.authored_visible
+            or row.annotation_body_pm_json is None
+        ):
+            return
+        authored.server_command(
+            db,
+            viewer_id,
+            command={"kind": "clear_annotation", "ref": f"highlight:{target}"},
+            resource_refs=[f"highlight:{target}"],
+            link_ids=[],
+        )
         return
     if kind in ("note_block", "highlight"):
         uri = f"{kind}:{target}"

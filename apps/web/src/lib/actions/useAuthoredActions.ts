@@ -14,7 +14,7 @@ import { LocalCommitError } from "@/lib/notes/runtime";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { localResourceHref } from "@/lib/resources/localResource";
+import {highlightSourceHref, localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import type { ActionDescriptor, ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import type { WorkspacePaneEntry } from "@/lib/workspace/targetActivation";
 import { ACTION_CATALOG, BLOCKED_COPY, type ActionId, type Confirmation } from "./catalog";
@@ -24,10 +24,10 @@ import { settleDeletedResourcePanes } from "./settleDeletedResource";
 
 /** Server verbs an owned authored resource's local verbs replace; menus drop the remote copies. */
 export const AUTHORED_ACTION_IDS: ReadonlySet<string> = new Set<ActionId>([
-  "EditNoteBody", "EditPageTitle", "EditHighlight", "EditHighlightBounds", "HighlightNote",
+  "EditNoteBody", "EditPageTitle", "EditHighlight", "EditHighlightBounds", "EditHighlightAnnotation",
   "DeleteNote", "DeletePage", "DeleteHighlight",
 ]);
-const IDLE = { saving: false, error: null, error_refs: [] as string[], revision: 0 };
+const IDLE = { saving: false, error: null, error_occurrence: null, error_refs: [] as string[], revision: 0 };
 const idle = () => IDLE;
 const noSubscription = () => () => {};
 
@@ -35,9 +35,9 @@ const noSubscription = () => () => {};
  * `prepare` reads the local projection once per menu request; nothing stays subscribed.
  * `read.actions` is empty unless `ref` is an owned authored resource (a source stub never is).
  */
-export function useAuthoredActions(ref: string | null, title: string): {
+export function useAuthoredActions(ref: string | null): {
   readonly prepare: (signal: AbortSignal) => void;
-  readonly read: { readonly request: AbortSignal; readonly actions: readonly ActionDescriptor[] } | null;
+  readonly read: { readonly request: AbortSignal; readonly label: string | null; readonly actions: readonly ActionDescriptor[] } | null;
 } {
   const store = useAuthoredStore();
   const writing = useWritingRuntime();
@@ -53,8 +53,8 @@ export function useAuthoredActions(ref: string | null, title: string): {
       (result) => { if (!signal.aborted) setSettled({ request: signal, ref, resource: result.rows[0]?.resource ?? null }); },
       () => { if (!signal.aborted) setSettled({ request: signal, ref, resource: null }); });
   }, [ref, store]);
-  const verbs = (resource: ResourceProjection | null): ActionDescriptor[] => {
-    if (ref === null || writing === null || resource === null || resource.kind === "source") return [];
+  const verbs = (resource: ResourceProjection | null, title: string | null): ActionDescriptor[] => {
+    if (ref === null || writing === null || resource === null || resource.kind === "source" || title === null) return [];
     const owned = ref;
     const href = localResourceHref(resource);
     const id = parseResourceRef(owned)!.id;
@@ -75,10 +75,10 @@ export function useAuthoredActions(ref: string | null, title: string): {
       };
     };
     // An edit whose state lives in the resource's pane: go there and hand it the entry.
-    const edit = (actionId: ActionId, entry: WorkspacePaneEntry) => command(actionId, ({ openIntent }) => {
-      if (href === null || !ctx.isActive()) return;
+    const edit = (actionId: ActionId, entry: WorkspacePaneEntry, destination = href) => command(actionId, ({ openIntent }) => {
+      if (destination === null || !ctx.isActive()) return;
       const workspace = ctx.workspace();
-      workspace.activateWorkspaceTarget({ target: { href }, entry,
+      workspace.activateWorkspaceTarget({ target: { href: destination }, entry,
         disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" },
         originPaneId: pane?.paneId ?? workspace.state.active_primary_pane_id });
     }, { tracked: false, confirmation: null });
@@ -106,16 +106,13 @@ export function useAuthoredActions(ref: string | null, title: string): {
       case "note": return [edit("EditNoteBody", { kind: "EditNoteBody", noteBlockId: id }), remove("DeleteNote")];
       case "page": return [edit("EditPageTitle", { kind: "EditPageTitle", pageId: id }), remove("DeletePage")];
       case "highlight": return [
-        // a highlight's pane entries address its media reader, which places text and pdf bounds alike.
-        ...href?.startsWith("/media/") ? [
-          edit("EditHighlight", { kind: "EditHighlight", highlightId: id }),
-          edit("HighlightNote", { kind: "EditHighlightNote", highlightId: id, noteBlockId: null }),
-          edit("EditHighlightBounds", { kind: "EditHighlightBounds", highlightId: id }),
-        ] : [],
+        {...edit("EditHighlightAnnotation", { kind: "EditHighlightAnnotation", highlightId: id }), label: resource.body_pm_json === null ? "annotate" : "edit annotation"},
+        ...(highlightSourceHref(resource)?.startsWith("/media/") ? [edit("EditHighlight", {kind: "EditHighlight", highlightId: id}, highlightSourceHref(resource)), edit("EditHighlightBounds", {kind: "EditHighlightBounds", highlightId: id}, highlightSourceHref(resource))] : []),
         remove("DeleteHighlight"),
       ];
     }
   };
   if (settled === null || settled.ref !== ref) return { prepare, read: null };
-  return { prepare, read: { request: settled.request, actions: verbs(settled.resource) } };
+  const label = settled.resource !== null && settled.resource.kind !== "source" ? localResourceLabel(settled.resource) : null;
+  return { prepare, read: { request: settled.request, label, actions: verbs(settled.resource, label) } };
 }

@@ -3,7 +3,7 @@
 // port keeps the position on the device through the bridge, which syncs it.
 // Annotations are the account's local authored state, not part of the copy.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_HEADER } from "@/lib/api/client";
@@ -15,6 +15,7 @@ import {
 import { MapRail } from "@/lib/documentReader/chrome/MapRail";
 import { CompactAnnotationLayer, type ReaderAnnotationProps } from "@/lib/documentReader/chrome/CompactAnnotations";
 import { AuthoredProvider } from "@/lib/authored/provider";
+import { ReaderProfileProvider } from "@/lib/reader/ReaderProfileContext";
 import { ReaderNoteEditorHost } from "@/lib/notes/editorHost";
 import DocumentReaderView, {
   useDocumentReader,
@@ -61,7 +62,7 @@ function shelfSource(mediaId: string, generation: number): ReaderSource {
       const assets = `/api/media/${mediaId}/assets/`;
       const units = doc.units.map((unit) => ({
         ...unit,
-        html: unit.html.replaceAll(assets, copyUrl(mediaId, "assets/")),
+        html: unit.html.replaceAll(assets, copyUrl(mediaId, "assets/")).replaceAll("/nexus-copy/", copyUrl(mediaId, "")),
       }));
       return { ...doc, units };
     },
@@ -157,8 +158,8 @@ export default function ShelfReader({
     <ReaderNoteEditorHost identity={`shelf:${item.media_id}:${item.saved_at}`}>
       <CompactAnnotationLayer reader={reader} mediaId={item.media_id} source={{ kind: item.kind, label: item.title }} available report={setAnnotations} />
     </ReaderNoteEditorHost>
-  </AuthoredProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
-    actions={[{ label: "retry", onClick: account.retry }]} /> : null;
+  </AuthoredProvider> : account.kind === "Unavailable" ? <FeedbackFailure scope="Local" occurrence={account.occurrence} content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
+    actions={[{ label: "retry", onClick: account.retry, busy: account.retrying }]} /> : null;
 
   const text =
     document.status === "ready" && document.doc.kind === "text"
@@ -167,7 +168,7 @@ export default function ShelfReader({
   const notice = progress && NOTICE[progress];
   // one tree for both states: the annotation layer keeps its place across a retried load.
   return (
-    <div className={styles.documentReader} ref={frame} tabIndex={-1}>
+    <ReaderProfileProvider profile={SHELF_PROFILE}><div className={styles.documentReader} ref={frame} tabIndex={-1}>
       {document.status === "failed" ? (
         <FeedbackState
           content={{ tone: "Warning", title: "downloaded copy couldn’t open", message: "retry opening it. you can also remove this copy and download it again from nexus." }}
@@ -225,10 +226,10 @@ export default function ShelfReader({
         </div>
       </>}
       {layer}
-    </div>
+    </div></ReaderProfileProvider>
   );
 }
 
 /** The native session's account for this shelf document; the shelf never chooses one. */
-export type ShelfAccountState = { readonly kind: "Loading" } | { readonly kind: "Ready"; readonly id: string } | { readonly kind: "Unavailable"; readonly retry: () => void };
+export type ShelfAccountState = { readonly kind: "Loading" } | { readonly kind: "Ready"; readonly id: string } | { readonly kind: "Unavailable"; readonly occurrence: object; readonly retrying: boolean; readonly retry: () => void };
 export const ShelfAccount = createContext<ShelfAccountState>({ kind: "Loading" });

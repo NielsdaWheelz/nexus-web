@@ -45,9 +45,13 @@ from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
+    read_media_text_scope,
+    read_scope_fragment,
     text_scope_rows_sql,
+    x_capture_scope_rows_sql,
 )
 from nexus.services.reader_publication import ready_publication_rows_sql
+from nexus.services.reader_text_slice import incomplete_table_intervals
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.search.scope import reading_media_ids_sql
 
@@ -85,7 +89,7 @@ def _ctes() -> str:
         UNION SELECT state->>'endpoint_b' FROM authored_links WHERE account_id=:viewer_id
         UNION SELECT e.target_scheme||':'||e.target_id::text FROM resource_edges e
             WHERE e.user_id=:viewer_id AND e.origin='note_body'
-                AND e.source_scheme='note_block'
+                AND e.source_scheme IN ('note_block','highlight')
         UNION SELECT 'media:'||e.target_id::text FROM resource_edges e
             JOIN conversations c ON c.id=e.source_id AND c.owner_user_id=:viewer_id
             WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'
@@ -96,6 +100,9 @@ def _ctes() -> str:
     library = reading_media_ids_sql(library_media_ids_cte_sql(library_param="library.id"))
     intervals = text_scope_rows_sql("SELECT media_id FROM readings")
     apparatus = apparatus_scope_rows_sql("SELECT media_id FROM readings WHERE is_part")
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    captures = readable_x_capture_ids_sql()
     return f"""WITH
         authorized AS MATERIALIZED ({requested_media_ids_cte_sql()}),
         retained_refs AS MATERIALIZED ({retained}),
@@ -132,12 +139,23 @@ def _ctes() -> str:
             FROM scope_libraries library CROSS JOIN LATERAL ({library}) expanded
             JOIN readings reading ON reading.media_id=expanded.media_id
         ),
-        conversations AS MATERIALIZED ({visible_conversation_ids_cte_sql()}),
+        scope_conversations AS MATERIALIZED ({visible_conversation_ids_cte_sql()}),
+        capture_readings AS MATERIALIZED (
+            SELECT f.id AS fragment_id,f.x_post_capture_id AS capture_id,f.idx,char_length(f.canonical_text) AS size
+            FROM fragments f JOIN ({captures}) readable ON readable.capture_id=f.x_post_capture_id
+        ),
+        capture_members AS MATERIALIZED (
+            SELECT DISTINCT scoped.reading_media_id AS media_id,scoped.capture_id
+            FROM ({x_capture_scope_rows_sql("SELECT media_id FROM readings")}) scoped
+            JOIN capture_readings admitted ON admitted.fragment_id=scoped.fragment_id
+        ),
         body_intervals AS MATERIALIZED (
             SELECT bounded.reading_media_id,bounded.fragment_id,bounded.fragment_idx,
                 bounded.start_offset,bounded.end_offset,'body'::text AS purpose
             FROM ({intervals}) bounded JOIN readings r ON r.media_id=bounded.reading_media_id
-            WHERE r.text_ready AND r.source_kind IN ('epub','web_article')
+            JOIN fragments body_fragment ON body_fragment.id=bounded.fragment_id
+            WHERE body_fragment.x_post_capture_id IS NULL
+                AND r.text_ready AND r.source_kind IN ('epub','web_article')
                 AND bounded.start_offset<bounded.end_offset
         ),
         note_intervals AS MATERIALIZED (
@@ -165,6 +183,23 @@ def _ctes() -> str:
         )"""
 
 
+def _incomplete_tables(db: Session, reading_id: UUID) -> list[tuple[str, dict[str, Any]]]:
+    """Negative structural facts from the same trusted slice the reader receives."""
+    scope = read_media_text_scope(db, reading_id)
+    records = {}
+    for interval in scope.fragment_intervals:
+        for start, end in incomplete_table_intervals(read_scope_fragment(db, scope, interval)):
+            key = f"reading:{reading_id}:incomplete_table:{interval.fragment_id}:{start}:{end}"
+            records[key] = {
+                "kind": "incomplete_table",
+                "reading_ref": f"media:{reading_id}",
+                "fragment_id": str(interval.fragment_id),
+                "start_offset": start,
+                "end_offset": end,
+            }
+    return sorted(records.items())
+
+
 def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]]]:
     """Stream canonical metadata; no source text enters the digest or page buffer."""
     relation = f"""
@@ -173,7 +208,7 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         UNION ALL SELECT 'scope:library:'||id::text,
             jsonb_build_object('kind','scope','scope_ref','library:'||id::text) FROM scope_libraries
         UNION ALL SELECT 'scope:conversation:'||conversation_id::text,
-            jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM conversations
+            jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM scope_conversations
         UNION ALL SELECT 'workspace:'||workspace.media_id::text,
             jsonb_build_object('kind','workspace_member','reading_ref','media:'||workspace.media_id::text)
             FROM workspace JOIN readings reading ON reading.media_id=workspace.media_id
@@ -183,9 +218,26 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
             jsonb_build_object('kind','library_member','library_ref','library:'||library_id::text,'reading_ref','media:'||media_id::text) FROM library_members
         UNION ALL SELECT DISTINCT 'context:'||e.source_id::text||':'||e.target_scheme||':'||e.target_id::text,
             jsonb_build_object('kind','conversation_fact','conversation_ref','conversation:'||e.source_id::text,'target_ref',e.target_scheme||':'||e.target_id::text)
-            FROM resource_edges e JOIN conversations c ON c.conversation_id=e.source_id
+            FROM resource_edges e JOIN scope_conversations c ON c.conversation_id=e.source_id
             WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'
                 AND e.origin IN ('citation','system') AND e.ordinal IS NULL AND e.authored_visible
+        UNION ALL SELECT 'capture-reading:'||fragment_id::text,
+            jsonb_build_object('kind','reading','reading_ref','fragment:'||fragment_id::text,'source_ref','fragment:'||fragment_id::text,'source_kind','x_capture','body_generation',NULL,'source_generation',NULL) FROM capture_readings
+        UNION ALL SELECT 'capture-scope:'||fragment_id::text,
+            jsonb_build_object('kind','scope','scope_ref','fragment:'||fragment_id::text) FROM capture_readings
+        UNION ALL SELECT DISTINCT 'capture-member:'||m.media_id::text||':'||c.fragment_id::text,
+            jsonb_build_object('kind','media_member','root_ref','media:'||m.media_id::text,'reading_ref','fragment:'||c.fragment_id::text)
+            FROM capture_members m JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-workspace:'||c.fragment_id::text,
+            jsonb_build_object('kind','workspace_member','reading_ref','fragment:'||c.fragment_id::text)
+            FROM workspace w JOIN capture_members m ON m.media_id=w.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-library:'||library.library_id::text||':'||c.fragment_id::text,
+            jsonb_build_object('kind','library_member','library_ref','library:'||library.library_id::text,'reading_ref','fragment:'||c.fragment_id::text)
+            FROM library_members library JOIN capture_members m ON m.media_id=library.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT 'capture-interval:'||fragment_id::text,
+            jsonb_build_object('kind','interval','interval_key','capture:'||fragment_id::text,'reading_ref','fragment:'||fragment_id::text,'fragment_id',fragment_id,'fragment_idx',idx,'start_offset',0,'end_offset',size,'purpose','body','start_cut',false,'end_cut',false) FROM capture_readings WHERE size>0
         UNION ALL SELECT 'reading:'||media_id::text,
             jsonb_build_object('kind','reading','reading_ref','media:'||media_id::text,'source_ref','media:'||source_id::text,'source_kind',source_kind,'body_generation',body_generation,'source_generation',source_generation) FROM readings
         UNION ALL SELECT DISTINCT 'alias:'||part.media_id::text,
@@ -205,13 +257,25 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
             jsonb_build_object('kind','interval','interval_key',interval_key,'reading_ref','media:'||reading_media_id::text,'fragment_id',fragment_id,'fragment_idx',fragment_idx,'start_offset',start_offset,'end_offset',end_offset,'purpose',purpose,'start_cut',start_cut,'end_cut',end_cut) FROM intervals
     """
     rows = db.execute(
-        text(_ctes() + f' SELECT key,state FROM ({relation}) facts ORDER BY key COLLATE "C"'),
+        text(
+            _ctes()
+            + f''' SELECT key,state,EXISTS (
+                SELECT 1 FROM readings r WHERE 'reading:'||r.media_id::text=facts.key
+                    AND r.is_part AND r.text_ready
+            ) AS clipped_ready FROM ({relation}) facts ORDER BY key COLLATE "C"'''
+        ),
         {"viewer_id": viewer_id},
         execution_options={"yield_per": 256},
     )
     try:
         for row in rows:
             yield row.key, row.state
+            if row.clipped_ready:
+                # These keys extend their reading key, preserving the stream's
+                # byte ordering and the existing digest/page continuation fence.
+                yield from _incomplete_tables(
+                    db, UUID(row.state["reading_ref"].removeprefix("media:"))
+                )
     finally:
         rows.close()
 
@@ -228,6 +292,17 @@ def _authorized(db: Session, viewer_id: UUID, ref: str) -> bool:
     value = require_ref(ref)
     if value.scheme == "media":
         return can_read_media(db, viewer_id, value.id)
+    if value.scheme == "fragment":
+        from nexus.services.x_source import readable_x_capture_ids_sql
+
+        return bool(
+            db.scalar(
+                text(
+                    f"SELECT EXISTS (SELECT 1 FROM fragments f JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=f.x_post_capture_id WHERE f.id=:fragment)"
+                ),
+                {"viewer_id": viewer_id, "fragment": value.id},
+            )
+        )
     if value.scheme == "library":
         return is_library_member(db, viewer_id, value.id)
     if value.scheme == "conversation":
@@ -290,8 +365,8 @@ def source_text(db: Session, viewer_id: UUID, request: ScopeTextRequest) -> Scop
             next_cursor=None,
         )
     reading = require_ref(request.reading_ref)
-    if reading.scheme != "media":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Text requires a media reading")
+    if reading.scheme not in {"media", "fragment"}:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Text requires a reading")
     after = None if request.cursor is None else _decode(request.cursor)
     if after is not None and (
         not isinstance(after, list)
@@ -310,12 +385,16 @@ def source_text(db: Session, viewer_id: UUID, request: ScopeTextRequest) -> Scop
         text(
             _ctes()
             + """
-            SELECT owned.interval_key,owned.fragment_id,owned.fragment_idx,owned.start_offset,owned.end_offset
-            FROM intervals owned WHERE owned.reading_media_id=:reading
-            ORDER BY owned.interval_key COLLATE "C"
+            SELECT * FROM (
+                SELECT owned.interval_key,owned.fragment_id,owned.fragment_idx,owned.start_offset,owned.end_offset
+                FROM intervals owned WHERE :scheme='media' AND owned.reading_media_id=:reading
+                UNION ALL
+                SELECT 'capture:'||fragment_id::text,fragment_id,idx,0,size
+                FROM capture_readings WHERE :scheme='fragment' AND fragment_id=:reading AND size>0
+            ) selected ORDER BY interval_key COLLATE "C"
         """
         ),
-        {"viewer_id": viewer_id, "reading": reading.id},
+        {"viewer_id": viewer_id, "reading": reading.id, "scheme": reading.scheme},
     )
     for interval_key, fragment_id, fragment_idx, lo, hi in rows:
         if after is not None and interval_key < after[0]:

@@ -37,13 +37,17 @@ from nexus.services.contributor_writes import MediaTarget, create_contributor
 from nexus.services.contributors import replace_observed_role_slices_batch
 from nexus.services.search import discovery, projection
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import advance_reader_publications
+from nexus.services.reader_publication import advance_reader_publications, replace_reader_publication
 from nexus.services.reader_document import read_reader_document
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
 from nexus.services import authored, highlights, library_entries, library_members, libraries
 from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.reader_excerpts import text_parts
+from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+from nexus.services.web_article import replace_article_fragments
 from nexus.services.web_article_structure import prepare_web_article_fragment
+from nexus.schemas.reader_excerpts import ExcerptBody
 from nexus.services.media_parts import create_part
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.library_members import CreateInvitationRequest
@@ -114,13 +118,16 @@ def await_current_text(owner, *, witness, preparation):
     raise failure
 
 def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, end, words, prefix, suffix, publication):
-    """One canonical authored highlight; its projection owns rows and search publication."""
-    selection = {"publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
+    """One canonical authored highlight. The source capture owner freezes its excerpt from
+    the current fragment; its projection owns rows and search publication."""
+    [excerpt] = source_excerpts(db, [SourceExcerptRequest(reading_id=media_id, fragment_id=fragment_id, start=start, end=end)])
+    selection = {"excerpt": excerpt.model_dump(mode="json"), "publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
                  "locator": {"type": "web_text_offsets", "media_id": str(media_id), "fragment_id": str(fragment_id),
                              "start_offset": start, "end_offset": end, "media_kind": "web_article",
                              "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix}}}
     authored.server_command(db, viewer, command={"kind": "create_highlight", "ref": "highlight:" + str(highlight_id),
-                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow"},
+                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow",
+                            "body_pm_json": {"type": "body", "attrs": {"presentation": "prose"}, "content": []}},
                             resource_refs=[], link_ids=[])
 
 if mode == "seed":
@@ -134,6 +141,11 @@ if mode == "seed":
     source_html = "<section><h2>chosen passage</h2><p>" + inside + " belongs to this small section.</p></section><section><h2>neighbour passage</h2><p>" + neighbour + " stays outside the piece.</p></section>"
     prepared = prepare_web_article_fragment(html=source_html, base_url="https://example.invalid/lab-piece", document_url="https://example.invalid/lab-piece", fragment_idx=0)
     source_body = prepared.canonical_text
+    # The source first publishes a margin section; a later replacement removes its words.
+    # Its leading prose keeps both needles outside the quote's 64-character context.
+    margin = "<section><h2>margin passage</h2><p>this ordinary margin prose is published once and later withdrawn. " + stale_quote + "</p></section>"
+    earlier = prepare_web_article_fragment(html=source_html + margin, base_url="https://example.invalid/lab-piece", document_url="https://example.invalid/lab-piece", fragment_idx=0)
+    earlier_body = earlier.canonical_text
     bodies = ["labneedle " + " ".join(["filler"] * 200),
               "labneedle labneedle strongest literal evidence", "labneedle labneedle strongest literal evidence"]
     with factory() as db:
@@ -155,15 +167,20 @@ if mode == "seed":
             if media==a:
                 fragment_id=str(document.units[0].id)
             publish(db,media,bodies if media==a else [body])
-        db.execute(text("INSERT INTO media(id,kind,title,processing_status,created_by_user_id,plain_text) VALUES (:id,'web_article','fixture source','ready_for_reading',:owner,:body)"), {"id":source,"owner":viewer,"body":source_body})
-        db.execute(text("INSERT INTO fragments(media_id,idx,canonical_text,html_sanitized) VALUES (:id,0,:body,:html)"), {"id":source,"body":source_body,"html":prepared.html_sanitized})
+        db.execute(text("INSERT INTO media(id,kind,title,processing_status,created_by_user_id,plain_text) VALUES (:id,'web_article','fixture source','ready_for_reading',:owner,:body)"), {"id":source,"owner":viewer,"body":earlier_body})
+        db.execute(text("INSERT INTO fragments(media_id,idx,canonical_text,html_sanitized) VALUES (:id,0,:body,:html)"), {"id":source,"body":earlier_body,"html":earlier.html_sanitized})
         assert library_entries.ensure_entry(db,left,library_entries.media_target(source))
         replace_media_apparatus(db,media_id=source,note_groups=[])
         advance_reader_publications(db,media_ids=[source])
-        assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body
-        # A persisted quote can outlive its locator: its captured fragment no longer exists.
-        create_highlight(db, viewer, highlight_id=stale, media_id=source, fragment_id=uuid4(), start=0, end=len(stale_quote),
-                         words=stale_quote, prefix="", suffix="", publication=None)
+        assert read_reader_document(db,viewer,source).units[0].canonical_text==earlier_body
+        # A persisted quote can outlive its location: capture it from the earlier publication.
+        earlier_fragment=db.scalar(text("SELECT id FROM fragments WHERE media_id=:id"),{"id":source})
+        earlier_generation=db.scalar(text("SELECT generation FROM reader_publications WHERE media_id=:id"),{"id":source})
+        stale_start=earlier_body.index(stale_quote); stale_end=stale_start+len(stale_quote)
+        stale_prefix, stale_suffix = earlier_body[max(0,stale_start-64):stale_start], earlier_body[stale_end:stale_end+64]
+        assert all(needle not in stale_prefix+stale_suffix for needle in (inside,neighbour)), "stale quote context is not isolated"
+        create_highlight(db, viewer, highlight_id=stale, media_id=source, fragment_id=earlier_fragment, start=stale_start, end=stale_end,
+                         words=stale_quote, prefix=stale_prefix, suffix=stale_suffix, publication={"kind":"reader","generation":earlier_generation})
         person = create_contributor(db, display_name="fixture writer")
         for media in (a,b):
             db.execute(text("INSERT INTO contributor_credits(contributor_id,media_id,credited_name,role,ordinal,source) VALUES (:person,:media,'fixture writer','author',0,'user')"), {"person":person.contributor_id,"media":media})
@@ -171,6 +188,14 @@ if mode == "seed":
         projection.refresh(db,"media",[a,b,hidden,source])
         projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden,source]}).all())
         db.commit()
+    print("seed_stage=source_replacement", file=sys.stderr, flush=True)
+    with factory() as db:
+        # The source owner replaces its publication; the saved quote no longer locates.
+        replace_reader_publication(db,media_id=source,expected_kind="web_article",issues=prepared.source_issues,
+                                   replace_projection=lambda media: replace_article_fragments(db,media_id=media.id,fragments=[(prepared,source_html)]))
+        db.commit()
+    with factory() as db:
+        assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body and stale_quote not in source_body
     print("seed_stage=section_choice", file=sys.stderr, flush=True)
     with factory() as db:
         generation=db.scalar(text("SELECT generation FROM reader_publications WHERE media_id=:id"), {"id":source})
@@ -204,7 +229,7 @@ if mode == "seed":
     await_current_text(source,witness=True,preparation=preparation)
     print("seed_stage=create_part", file=sys.stderr, flush=True)
     with factory() as db:
-        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece",form=None))
+        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece"))
         assert receipt.media_id==part
     print("seed_stage=await_partition_text", file=sys.stderr, flush=True)
     await_current_text(source,witness=True,preparation=preparation)
@@ -409,8 +434,11 @@ else:
             stale=(await read(UUID(f["viewer"]),"media:"+f["source"],f["stale_term"],kinds=("highlights",)))["results"]
             assert len(stale)==1 and stale[0]["item"]["ref"]=="highlight:"+f["stale"], "stored unlocated quote is not searchable from its source"
             item=stale[0]["item"]
-            assert not item["missing"] and item["preview"]["body"]["kind"]=="passage" and item["preview"]["body"]["exact"]["text"]==f["stale_quote"]
-            assert item["activation"]["kind"]=="none" and item["activation"]["href"] is None and item["activation"]["unavailable_reason"]=="location_unavailable", "unlocated quote invented a destination"
+            body=item["preview"]["body"]
+            assert not item["missing"] and body["kind"]=="passage" and body["excerpt"]["kind"]=="content"
+            assert not body["excerpt"]["selected_truncated_before"] and not body["excerpt"]["selected_truncated_after"]
+            assert text_parts([ExcerptBody.model_validate(body["excerpt"]["body"])])[0].exact==f["stale_quote"], "stored quote lost its frozen literal"
+            assert item["activation"]["kind"]=="route" and item["activation"]["resource_ref"]=="highlight:"+f["stale"] and item["activation"]["field"] is None and item["activation"]["href"]=="/highlights/"+f["stale"], "unlocated quote lost its durable capture destination"
             assert item["preview"]["source"]["ref"]=="media:"+f["source"], "stored quote lost its readable source"
             assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["stale_term"],kinds=("highlights",)))["results"]==[], "piece admitted a source-only unlocated quote"
             return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"],"piece_passage":bounded,"stale_item":item}
@@ -455,7 +483,7 @@ async function run(mode: string): Promise<void> {
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 await run("seed");
-const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale_term: string; stale_quote: string };
+const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale: string; stale_term: string; stale_quote: string };
 const browser = await openLabBrowser({ web_origin: context.web_origin, web_tls: context.web_tls,
   storage_state: context.browser_state_file });
 let diagnosticPage: Page | null = null;
@@ -569,7 +597,30 @@ try {
   assert.deepEqual((await search(`media:${fixture.part}`, fixture.stale_term, "highlights")).results, [], "browser piece admitted a source-only unlocated quote");
   await page.goto(`${context.web_origin}/search?${new URLSearchParams({ q: fixture.stale_term, kinds: "highlights", scope: `media:${fixture.source}` })}`, { waitUntil: "domcontentloaded" });
   await page.getByText(fixture.stale_quote, { exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
-  facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true };
+  const staleTarget = proof.stale_item.activation;
+  assert.equal(staleTarget.resource_ref, `highlight:${fixture.stale}`, "unlocated quote invented a reading owner");
+  assert.equal(staleTarget.field, null, "quote activation became annotation activation");
+  assert.equal(staleTarget.href, `/highlights/${fixture.stale}`, "unlocated quote invented a source route");
+  const sourceResolution = await browserRequest(page, { web_origin: context.web_origin,
+    path: "/api/resource-items/source-targets/resolve", method: "POST", headers: {},
+    body: { target: { kind: "resource", resource_ref: proof.stale_item.ref, field: null }, reading_media_id: null } });
+  assert.equal(sourceResolution.status, 200, "retained quote location read failed");
+  // justify-type-assertion: the source-target route returns its generated data envelope.
+  const sourceTarget = (JSON.parse(sourceResolution.body) as { data: components["schemas"]["SourceTargetOut"] }).data;
+  assert.deepEqual(sourceTarget.location, { kind: "unavailable", reason: "location_unavailable" }, "unlocated quote invented source geometry");
+  assert.equal(sourceTarget.source_activation?.resource_ref, `media:${fixture.source}`, "unlocated quote invented another source owner");
+  assert.equal(sourceTarget.source_activation?.href, `/media/${fixture.source}`, "unlocated quote invented a source position");
+  assert.equal(sourceTarget.source_activation?.field, null);
+  const staleLink = page.locator(`a[href="${staleTarget.href}"]`).first();
+  await staleLink.waitFor({ state: "visible", timeout: 15_000 });
+  await staleLink.click();
+  await page.waitForURL(url => url.pathname === staleTarget.href && url.hash === "", { timeout: 15_000 });
+  const highlightPane = page.locator('[data-pane-shell="true"][data-active="true"]');
+  await highlightPane.locator("article [data-resource-primary] mark").filter({ hasText: fixture.stale_quote }).waitFor({ state: "visible", timeout: 15_000 });
+  assert.equal(await highlightPane.locator("article [data-resource-primary] mark").first().textContent(), fixture.stale_quote, "durable pane changed the retained literal quote");
+  assert.equal(await highlightPane.locator("[data-reader-text]").count(), 0, "durable capture invented a source reading");
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true,
+    durable_capture_opened: true, source_location_unavailable: true };
   await saveFacts();
   const piecePassage = proof.piece_passage;
   assert.ok(piecePassage.match, "piece passage has no literal match");

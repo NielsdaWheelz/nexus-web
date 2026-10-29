@@ -48,7 +48,7 @@ const PaneContent = memo(function PaneContent(props: {
   const admission = useRemoteAdmission();
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneContent");
   const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings",
-    "notes", "pageNew", "page", "dailyDate", "note", "search"].includes(props.routeId);
+    "notes", "pageNew", "page", "dailyDate", "note", "highlight", "search"].includes(props.routeId);
   // Covered bodies own saved-data and coverage states; mounting grants no remote
   // capability. Other cold server panes still require credential admission.
   const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
@@ -117,6 +117,13 @@ export default function WorkspaceHost() {
       return;
     }
     if (interactionOwner) return;
+    const workspace = latestWorkspace();
+    const delivery = workspace.pendingPaneEntryDeliveryByPaneId.get(requestedFocus.paneId);
+    const entry = delivery?.visitId === requestedFocus.visitId ? delivery.entry.kind : null;
+    if (entry === "EditPageTitle" || entry === "EditNoteBody" || entry === "AppendNote" || entry === "FocusNote") {
+      workspace.claimPaneFocus(requestedFocus);
+      return;
+    }
     const frame = requestAnimationFrame(() => {
       const workspace = latestWorkspace();
       if (workspace.pendingPaneFocus !== requestedFocus || hasActiveInteractionOwner()) return;
@@ -170,11 +177,10 @@ export default function WorkspaceHost() {
       return;
     }
     const delivery = workspace.pendingPaneEntryDeliveryByPaneId.get(activeId);
-    // a note entry on mobile keeps its editor's focus.
+    // Authored entries own their focus while the actual editor becomes ready.
     const entry = delivery?.entry.kind;
     if (
-      isMobile &&
-      (entry === "AppendNote" || entry === "FocusNote") &&
+      (entry === "AppendNote" || entry === "FocusNote" || entry === "EditPageTitle" || entry === "EditNoteBody") &&
       delivery?.visitId === workspace.state.panes.find((pane) => pane.id === activeId)?.current_visit.id
     ) {
       pendingFocus.current = null;

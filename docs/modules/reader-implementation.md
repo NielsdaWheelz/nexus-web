@@ -67,6 +67,22 @@ lib/find               useFind, FindBar contract, highlightPainter (shared by ev
 `lib/panes` or `lib/workspace` (eslint `no-restricted-imports`): hosts adapt the
 workspace to the ports, the primitive never reaches for it.
 
+`MapRail` owns its 32px width; hosts consume its exported width. passive ticks
+retain exact positions and semantic structure/evidence lanes. unrounded track
+height defines full-width 24px hit regions, with the terminal remainder merged;
+tracks shorter than 24px have no interactive regions. singletons use `ReaderLink`,
+clusters use the existing action menu with individually named destinations.
+semantic marker kind supplies names independently of paint tone. descriptions
+normalize whitespace and bound evidence to 120 graphemes without changing source
+content. identical displayed names remain distinct choices.
+
+source destinations inspect and focus the reading surface; evidence retains its
+host-owned connections action. menu meaning includes the canonical destination
+and track height; changed meaning retires an invocation instead of retargeting
+it. opening/dismissing a chooser never adopts progress. controls removed during
+regrouping return focus to the surviving map without scrolling. the shelf uses
+the same map and local commands without workspace navigation.
+
 the runtime is a plain object; react reads it through `subscribe`/`getState`
 (`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`identity`, `capture`,
 `captureSelection`, `position`, `find`, pdf `setZoom`) and report viewports and input.
@@ -103,6 +119,36 @@ the old highlight write routes are absent. server tools use that same authored
 owner. the highlight module owns the capture and merge contract.
 
 ### source-backed pieces
+
+piece commands choose a title and proved source sections. discovery supplies an
+independence verdict, source-grounded title, contributors, evidence and uncertainty;
+literary examples guide that judgment without becoming stored classifications.
+the private title basis distinguishes printed titles from incipits and is removed
+when findings are normalized. definition edits retain the existing absolute-value,
+expected-version retry contract.
+
+the source contents query returns one complete navigation/work snapshot under a
+repeatable read. current work bounds determine placement; original candidate
+bindings remain creation reservations and never stand in for current geometry.
+source navigation and independent-work activation remain separate destinations.
+the contents list uses the snapshot's section index, not another read's tree.
+candidate summaries omit quotations; creator-only detail supplies review evidence
+and the currently proved selector. removed works restore their existing identity.
+
+preview supplies the exact bounded document and any creation conflict. first
+candidate acceptance carries the reviewed navigation key as well as candidate
+version; this fences rich cuts even when text endpoints have not changed.
+already-desired same-part retries retain their original bytes and identity.
+manual editing freezes its baseline version and selection until explicit conflict
+review. review adopts the saved version while preserving the chosen range; a
+confirmed save advances the baseline before refreshing the surrounding view.
+preparation is an extraction prerequisite; retry-wait remains observed work.
+its index obligation is visible independently of import-history membership.
+structural readiness ends preparation feedback even if search indexing continues.
+section choices describe structural eligibility; only the complete previewed
+range determines a creation conflict, so existing works do not truncate larger
+overlapping selections. active contents refresh on foreground through the shared
+refresh owner.
 
 `media_text_scope.py` resolves the reading identity separately from the canonical
 source. a piece freezes one contiguous source range and its proved element-edge
@@ -287,6 +333,19 @@ new explicit navigation and publication replacement retire old feedback; ordinar
 input cancels active positioning without acknowledging a settled failure. rollback
 and visit snapshots contain only mode, origin and origin availability. they cannot
 restore feedback or positioning. a failed rollback makes no preservation promise.
+
+hosted contents owns its ordinary navigation request while mounted. it uses the
+existing destination admission and awaits `inspect`; only `Arrived`/`Unchanged`
+reveal primary content through the companion controller. another request, source,
+visit or interaction owner defeats late dismissal/focus. successful inspection
+paint survives contents unmount. covering contents presents only its own exact
+failure occurrence; a column leaves feedback in the source. generic contents
+keeps host-independent navigation and native alternate-opening intent.
+
+the quick section picker remains mounted-document navigation. current location
+uses `aria-current="location"`, not selection state. ordinary opening reveals it
+once; explicit first/last keyboard opening wins. live location updates neither
+retire the menu nor reclaim focus/scroll.
 
 `inspect` accepts a target or an abort-aware asynchronous target resolver. admission
 captures the departure before resolution; stale completion cannot position or
@@ -653,7 +712,15 @@ zero never disables a filter. while inline reference linking holds a reference,
 both the view and the filters disable natively and one visible reason, "finish
 linking or return to prose first", describes each of them.
 
-connections view is remembered in the pane-visit memento. on desktop a segmented
+reader connections view is remembered in the pane-visit memento. filter and follow
+preferences survive independently of publication. active row, normal-flow anchor
+and source-text disclosure belong to the body/generation/part publication key;
+source-text keys also identify source media and occurrence. native scroll writes
+visit data without requiring a react render. initial layout, including failed
+detail reads, restores the same visible anchor until user input or an explicit
+arrival wins. publication replacement retires browsing geometry; a missing
+anchor starts the list naturally. writing and outline folds keep their owners.
+on desktop a segmented
 `RadioGroup` with a hidden legend shows `follow` and `all`, named natively
 `follow reading position` and `all items`, with no routine help; mobile derives a normal-flow list without
 changing that preference on scroll or layout changes. exact item navigation
@@ -680,7 +747,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |

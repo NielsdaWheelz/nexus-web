@@ -1,10 +1,11 @@
 # search reliability: revised implementation and acceptance spec
 
-2026-10-28. requested documentation-only revision.
-inspected `codex/search-reliability` at `113b9ef259908e161c8c35ae00a253d2b336eb09`.
-the main search owner confirmed that head, handed over this file, and reported no
-active runtime or resource lease. this review changes no code or operational
-state. the previous spec is preserved at
+contract revised 2026-10-28; implementation status reconciled 2026-10-29.
+historical evidence retains its recorded source and migration identity. the isolated
+integration of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
+migration 0329/down 0328 and passed the sole static gate. that closes the source/head
+collision; integrated migration, runtime and release qualification remain open.
+the previous spec is preserved at
 `.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
 
 ## decision
@@ -16,8 +17,9 @@ work finish. a safe timeout is a failure outcome, not a working search.
 retire the former 400 ms background computation, 500 ms hold/retirement and
 60-second quiet-publication acceptance gates, plus the former foreground
 latency/phase-cutoff requirements. **no replacement numeric deadline is approved;
-15 seconds was a suggestion.** current source timers remain unchanged until
-implementation. finite operational watchdogs remain required, as specified below.
+15 seconds was a suggestion.** finite operational watchdogs are implemented;
+their values are safeguards, not acceptance targets. qualification remains
+required as specified below.
 
 this target supersedes conflicting timing requirements in
 [search](modules/search.md), [suggestions](modules/suggestions.md),
@@ -41,7 +43,7 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   matches in about 1.5 seconds; a server-membership prototype took about 0.9 seconds.
   a separate complete strict read took about 2 seconds and still used ann. database
   reserve held; neither proves a full exact suggestion refresh or whole-host fit.
-  [recall](issues/search-ivf-retraining-recall.md),
+  [retrieval contract](modules/search.md),
   [strict read](issues/strict-search-family-ranking-budget.md).
 - **observed:** the historical exhaustive suggestion reference took 204.6 seconds
   for lectern and 220.4 seconds for a named piece; the b34 candidate took 0.73 and
@@ -50,19 +52,37 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   timings neither qualify nor disqualify the proposed repaired exact queries.
 - **observed:** static checks, the three retained foundations and real-model
   shortlist/discovery/chat-tool cases passed at their recorded revisions. derived
-  0319 preservation and actual main0320 migration passed. actual half0321 built
+  0319 preservation and actual main 0320 migration passed. actual half 0321 built
   in 59.12 seconds with sampled database charge 335.3 mib, unchanged recorded
   non-index/authored/source fingerprints and vector count, and confirmed cleanup.
   vector count alone is not original-vector-byte equality. this is build and
   preservation evidence, not retrieval or capacity acceptance.
-  [integration](issues/search-local-first-integration.md),
-  [0321](issues/search-normalized-half-ivf-qualification.md).
+  remaining [upgrade and pairing](issues/release-search.md) and
+  [capacity](issues/production-database-connection-budgets-implicit.md) gates.
 - **observed:** latest oracle generation/content review passed with three citations;
   only two had exact navigation targets, with no browser-click proof. provider
   cleanup is now confirmed; the original lab-exit-125 history remains.
   [blake locator](issues/oracle-resolved-blake-anchor-has-no-captured-location.md).
-- **open:** full exact-baseline feasibility, current candidate recall/composition,
-  useful mixed-load progress, actual 2 gib topology and phone acceptance. brave
+- **observed:** selected stock exact source `c6aa98b08` completed a warm full
+  five-anchor, both-family global refresh and published 32 refs at input 1205.
+  real private browser/bff/api lexical and hybrid requests subsequently completed
+  usefully while queued behind another full global refresh. confirmed retirement,
+  service limits and cleanup passed. private receipts:
+  `.nexus-local/native-selected-global-shortlist-c6aa98b08-actual.private.tar` and
+  `.nexus-local/native-real-overlap-c6aa98b08-actual.private.tar`.
+  this proves feasibility for that warm selected 0321 component, not cold reads
+  or the actual 2 gib topology.
+- **observed failure:** mixed run `mac-search-7173b6a91-7d7ce9565a2f` failed because
+  notes exposed no new-page input; no authored writing committed. short generation,
+  sustained generation with active cancellation and the fixed strict-scan job
+  succeeded on normal first attempts. cleanup was confirmed. backup was interrupted
+  by cleanup, so its exit 1 is not verified backup-overlap proof; manual maintenance
+  exited 0. this 1280 mib docker component on a larger host is not an actual 2 gib pass.
+  [bulk hydration/notes](issues/authored-scope-starves-ordinary-pool.md) retains the
+  remaining diagnosis and writing gate. historical 0321 receipts do not qualify
+  integrated 0329.
+- **open:** full mixed-workload progress, cold and actual 2 gib topology,
+  integrated migration/runtime and phone acceptance. brave
   import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
   no search-repair production deployment has occurred.
 
@@ -88,7 +108,7 @@ server-owned writes retain their own identity/version/retry contracts. database
 busy or lost response never proves that a write failed to commit. no old note
 write owner, replay ledger or second recovery mechanism returns.
 
-suggestions retain [stable visits and explicit refresh](suggestions-refresh-spec.md):
+suggestions retain [stable visits and explicit refresh](modules/suggestions.md):
 an adopted pool keeps its order, eligibility is rechecked, and refresh reads the
 latest completed publication without waiting for a new ranking. retain the
 15-minute age policy and 30-second build spacing as scheduling policy, not a
@@ -186,17 +206,16 @@ bounded database memory: inspect the actual joins, sorts and maintenance demand.
   before the existing 400-row cutoff and media grouping. retain all anchors and
   both semantic families. use straightforward sequential queries in one snapshot;
   do not restore the old all-anchor cross-product. an exact chunk cutoff followed
-  by reading projection is not equivalent; see the
-  [cutoff hazard](issues/search-exact-reading-window.md).
+  by reading projection is not equivalent; this boundary belongs to the
+  [suggestion retrieval contract](modules/suggestions.md).
 - share readiness, calibrated scoring and canonical scope mechanisms where their
   contracts match. a universal truncated-candidate interface is not required.
   preserve proven query-shape repairs and remove duplicate work when doing so
   preserves the proper selection boundary.
 
-**hypothesis:** these repaired exact queries can finish useful work with less
-machinery within the retained capacity envelope. no existing measurement proves
-that hypothesis for a complete five-anchor/global refresh. slower queries also
-hold snapshots and the gate longer; qualification must measure that cost.
+the selected exact baseline has completed the warm component described above.
+cold/full-topology feasibility remains unproved. slower queries hold snapshots
+and the gate longer; qualification must measure that cost.
 
 if exact retrieval fails capacity or foreground/background progress, assess the
 existing stock original-float access path before requiring normalized-half ivf.
@@ -214,11 +233,11 @@ to shrink anchors, families, thresholds or candidate windows.
 | disposition | work and reason |
 | --- | --- |
 | keep | finite pools/control/listeners, async ownership, fresh background children, physical retirement and admission; retained memory and orphaned work remain hazards at any speed |
-| keep | canonical readiness/scope/owner/projection query repairs, meaningful duplicate-work removal, atomic publication, provider failures, busy/write uncertainty and main0320 integration |
+| keep | canonical readiness/scope/owner/projection query repairs, meaningful duplicate-work removal, atomic publication, provider failures, busy/write uncertainty and current main's authored/capture/annotation contracts |
 | delete | hard subsecond hold verdicts and computation-expiry refunds; these reject useful work or hide noncompletion |
-| remove when unused by the selected access path | count-proof routing and multi-domain ann cursor plumbing; half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction also disappear if stock original-float ann wins. retain dimension/model and valid finite nonzero-vector checks |
-| conditional | normalized-half index0321 and pinned cancellation patch. a subsecond miss alone no longer justifies them. stock selected access paths must still prove safe retirement; if a patch is needed, retain exact source/package provenance and its maintenance cost |
-| migration owner | main owns0320; the selected derived-index change remains one unreleased0321 after it. if exact wins, review removal of the unused ann index and associated constraint/build machinery. preserve original data; never relabel an already migrated qualification fixture as a different0321 |
+| removed from the selected exact path | count-proof routing, multi-domain ann cursor plumbing, half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction. dimension/model and valid finite nonzero-vector checks remain |
+| selected package | pinned stock pgvector with exact original-float retrieval, without the normalized-half index or local cancellation patch. retained lifecycle proofs have their recorded source/package identities; integration still needs its own qualification |
+| migration owner | selected unreleased 0329 follows main 0328; the integrated source has one head and passed static verification. historical selected 0321-after-0320 receipts belong to a different lineage and remain historical. migration/value-preservation and runtime proof are still required for 0329 |
 
 trade-offs are explicit: serialized work lowers throughput and can lengthen
 foreground waits; exact retrieval spends more scan/io time to preserve recall;
@@ -232,20 +251,20 @@ writing, permanent hidden failure or memory-limit increases.
 | owner | exclusive responsibility | prerequisite |
 | --- | --- | --- |
 | a: database capacity | `config.py`, `db/{engine,session,listen}.py`, runtime/worker lifetime wiring and deployment resource settings; freeze physical quotas and control reserve | current topology inventory |
-| b: retrieval | `search/semantic.py`, relevant `sources/indexed/scope/project` query changes, `suggestions.py`, indexing/owner helpers, selected0321 and postgres package | frozen exact reference and proper ranking identity |
+| b: retrieval | `search/semantic.py`, relevant `sources/indexed/scope/project` query changes, `suggestions.py`, indexing/owner helpers, selected 0329/down 0328 and postgres package | frozen exact reference and proper ranking identity |
 | c: operation/publication | `search/admission.py`, `api/search_operation.py`, route allowances, `search/service.py`, shortlist/discovery/oracle/tool caller scopes; watchdogs, retry classification and claim-fenced publication | b's measured complete read and a's ownership; agrees timer contract with d |
 | d: client/write outcomes | browser search policy/loaders, bff deadlines, existing pending/error presentation and busy/uncertainty consumers; consume main's authored contract | c's reviewed end-to-end allowance; no authored-owner rewrite |
 | e: integration | reconcile module/release docs, coordinate migration identity, temporary qualification and release evidence; no duplicate edits to a–d | their reviewed interfaces and acceptance below |
 
-this is remaining implementation scope, not a request to redo completed repairs.
-main assigns one editor per file before resuming. source-only old-policy drafts
+these are implementation responsibilities, not a request to redo completed repairs.
+assign one editor per file for remaining work. source-only old-policy drafts
 remain historical until deliberately revised; do not execute them as new acceptance.
 
 ## meaningful acceptance and release gates
 
-follow [testing standards](local-rules/testing-standards.md). no checks were run in
-this documentation review. future static verification uses only `./scripts/test`;
-retain exactly the existing three manually invoked search foundation checks.
+follow [testing standards](local-rules/testing-standards.md). static verification
+uses only `./scripts/test`; retain exactly the existing three manually invoked
+search foundation checks.
 other cases are temporary in the existing disposable/native workflows, not a new
 suite, benchmark campaign or runtime. freeze cases and comparison references
 before tuning; record actual waits without manufacturing latency percentiles.
@@ -256,8 +275,8 @@ before tuning; record actual waits without manufacturing latency percentiles.
 | useful coexistence | full five-anchor, both-family refresh and strict discovery finish through real job/claim/publication owners. overlapping foreground lexical and hybrid requests succeed independently; reading, local writing, sync and stop controls remain usable. after finite competing jobs/mutations drain, every active due feed publishes the settled revision within the predeclared observation window. timed-out reads and old publications fail this gate |
 | lifecycle/failure | supersession/disconnect and owned timeout retire real backends before reuse; subsequent work succeeds. contention alone refunds; compute expiry consumes attempts. failed/lost-claim work preserves the old publication; authority withdrawal removes access; revised inputs converge; listener reconnect rereads truth. unknown retirement never publishes or releases its physical allowance |
 | writing | local authored commits survive busy/disconnect and retry original sequence/bytes. server-owned writes preserve their own identity and uncertainty before dispatch and after a committed write whose response fails; no false refusal or lost intent |
-| actual capacity | current candidate on actual2gib topology, postgres512mib/no-swap and real service limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. preserve reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
-| integration/release | qualified selected0321 after main0320 plus the real deployed0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing |
+| actual capacity | current candidate on actual 2 gib topology, postgres512mib/no-swap and real service limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. preserve reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
+| integration/release | qualify 0329 after main 0328 plus the real deployed 0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing. historical 0321 receipts do not qualify this 0329 lineage |
 
 brave import/metadata remains blocked until entitlement permits real completion;
 no fake-provider pass or unrelated oracle success closes it. review the known

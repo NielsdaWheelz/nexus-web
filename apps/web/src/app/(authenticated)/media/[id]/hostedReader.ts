@@ -109,6 +109,12 @@ export function targetOfLocator(
   doc?: ReaderDocument,
 ): ReaderTarget | null {
   switch (locator.type) {
+    case "x_capture_offsets": {
+      if (doc?.kind !== "text") return null;
+      const unit = doc.units.find(candidate => candidate.id === locator.fragment_id ||
+        candidate.xPost?.owner?.capture_id === locator.capture_id && candidate.xPost.owner.fragment_id === locator.fragment_id);
+      return unit && locator.end_offset <= unit.length ? { kind: "range", unit: unit.id, start: locator.start_offset, end: locator.end_offset } : null;
+    }
     case "web_text_offsets":
     case "epub_fragment_offsets":
       if (doc) {

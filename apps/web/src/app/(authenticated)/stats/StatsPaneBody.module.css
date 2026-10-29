@@ -45,7 +45,8 @@
   font-size: 0.75rem;
   font-weight: 700;
 }
-.controls [role="group"] {
+.viewGroup,
+.dateGroup {
   display: flex;
   gap: 0.25rem;
 }
@@ -168,19 +169,7 @@
 .completionTotal strong {
   font-size: 1.8rem;
 }
-.loading {
-  height: 8rem;
-  margin-top: 1rem;
-  border-radius: 0.65rem;
-  background: linear-gradient(
-    90deg,
-    var(--surface-2),
-    var(--surface-3),
-    var(--surface-2)
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.2s linear infinite;
-}
+
 .yearHero {
   position: relative;
   margin-top: 1rem;
@@ -229,11 +218,7 @@
   gap: 0.3rem;
   margin: 0;
 }
-@keyframes shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
+
 @container (max-width: 720px) {
   .header {
     display: block;
@@ -246,11 +231,7 @@
     grid-template-columns: 1fr;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .loading {
-    animation: none;
-  }
-}
+
 /* forced colors: Reading is solid, Listening outlined, Viewing a dashed outline. */
 @media (forced-colors: active) {
   .heatmap span,

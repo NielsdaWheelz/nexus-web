@@ -1,21 +1,22 @@
 "use client";
 
-// One occurrence of a resource in an outline branch. Authored refs (notes, pages,
-// highlights) always render from the local store by ref, whichever prop supplied
-// them: a server item never replaces local writing. Other refs render their server
-// item; by ref they show the local source stub's literal label until it arrives.
+// One occurrence of a resource in an outline branch. Historical items render their
+// supplied evidence; ordinary authored refs render from the local store. Other
+// refs render their server item; by ref they show the local source stub's literal
+// label until it arrives.
 // The occurrence owns only its relationship menu (its outline's unlink, server-fact
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Writing rows keep native bullet navigation first and local disclosure last.
 // Their prepared projection owns first-render identity and navigation; browsing rows read theirs.
 // Browsing rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
-import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
-import {ChevronRight, CornerLeftUp} from "lucide-react";
+import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
+import {ChevronRight, CornerLeftUp, History, SquareDashedMousePointer, Unlink} from "lucide-react";
 import type {ResourceProjection} from "@nexus/authored/types";
-import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
-import {FeedbackNotice, FeedbackStatus, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import {FeedbackFailure, useFeedbackOccurrence, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
+import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
@@ -32,6 +33,8 @@ import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
 import type {WritingRuntime} from "@/lib/notes/runtime";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {connectionMutationErrorMessage, mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
 import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
@@ -44,7 +47,10 @@ import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import {cx} from "@/lib/ui/cx";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu from "./ContextualActionMenu";
-import ResourceBody, {ResourceMatchEvidence, type ResourceMatch} from "./ResourceBody";
+import { FullResourceBody } from "./ExcerptDisclosure";
+import { authoredItem } from "@/lib/notes/presentation";
+import {ResourceMatchEvidence, type ResourceMatch} from "./ResourceBody";
+import {ResourceTypeIcon} from "./ResourceType";
 import ResourceMetadata from "./ResourceMetadata";
 import {ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
@@ -52,9 +58,6 @@ import factualStyles from "./ResourceContent.module.css";
 
 type Item = Schema<"ResourceItemOut">;
 const EMPTY_EDGE_IDS: readonly string[] = [];
-const NO_SUBSCRIPTION = () => () => {};
-const IDLE = {saving: false, error: null as unknown, error_refs: [] as string[], revision: 0};
-const IDLE_SAVE = () => IDLE;
 type PlacementBranch = {expanded: boolean; toggle(): void; children: ReactNode};
 /** How the occurrence entered its branch: a local user link, a server fact, or a root.
  * The outline rendering a local link owns its unlink: execution, undo, focus, and any
@@ -88,6 +91,7 @@ type Shared = {
   authoredByViewer?: boolean;
   suppressedEdgeIds?: readonly string[];
   historical?: boolean;
+  readingRef?: string | null;
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
   /** The owning flat editor settles or refuses removal of its disclosed fields. */
@@ -99,16 +103,19 @@ type Shared = {
   | {writing: true; projection: ResourceProjection; childrenAvailable: boolean | null}
   | {writing?: false; projection?: never; childrenAvailable?: never}
 );
-type Props = ({item: Item; resourceRef?: never} | {resourceRef: string; item?: never}) & Shared;
+type Props = Shared & (
+  | {item: Item; resourceRef?: never; historical?: boolean; writing?: false}
+  | {item: Item; resourceRef?: never; historical?: false; writing: true}
+  | {resourceRef: string; item?: never; historical?: false}
+);
 /** What the shared occurrence chrome shows for one resource. */
 interface Presentation {
   ref: string;
   label: string;
-  identity: string;
   href: string | null;
   primary: ReactNode;
   item: Item | null;
-  /** A local highlight's id: attached notes are its children; `add note` composes one. */
+  /** A local highlight's id; its annotation body remains distinct from related resources. */
   highlightId: string | null;
   status: ReactNode;
 }
@@ -119,27 +126,29 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
   const mutation = incoming.mutation;
   if (mutation === null) return null;
   switch (mutation.kind) {
-    case "detach_context": return {id: mutation.kind, label: "remove from future context", run: () => mutateConnection(writing, mutation)};
-    case "remove_fact": return {id: mutation.kind, label: "remove suggested connection",
+    case "detach_context": return {id: mutation.kind, label: "Remove from future context", run: () => mutateConnection(writing, mutation)};
+    case "remove_fact": return {id: mutation.kind, label: "Remove suggested connection",
       run: () => mutateConnection(writing, {kind: "remove_fact", edge_id: incoming.edge_id})};
     default: return assertNever(mutation);
   }
 }
 
 export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props) {
+  shared.readingRef = item?.preview.body.kind === "passage" ? item.preview.body.reading_ref : shared.readingRef ?? null;
+  if(item!==undefined&&shared.historical)return <RemoteRow {...shared} item={item}/>;
   if(shared.writing)return <AuthoredRow {...shared} subject={item?.ref??resourceRef!}/>;
   if(item!==undefined)return item.authored_by_viewer&&AUTHORED.test(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
   return <LocalRow {...shared} subject={resourceRef!}/>;
 }
 
 function LocalRow(props:Shared&{subject:string}){
-  const read=useAuthoredQuery({kind:"resource",ref:props.subject});
+  const read=useAuthoredQuery(props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind:"resource",ref:props.subject});
   const resource=read.data?.rows[0]?.resource;
   const [ownedRef,setOwnedRef]=useState<string|null>(null);
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
   if(read.data)return <ReferenceRow {...props}/>;
-  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,identity:"resource",href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:read.error?<FeedbackNotice content={{tone:"Warning",title:"couldn’t read this on this device"}} announcement="Polite" actions={[{label:"retry",onClick:read.retry}]}/>:null}}/>;
+  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:<AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>}}/>;
 }
 
 /** A server item's presentation; shared so a by-ref row keeps one Occurrence while its item arrives. */
@@ -148,15 +157,16 @@ function remotePresentation(item: Item, props: Shared, runtime: ReturnType<typeo
   const activation = item.activation;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
-  const content = <ResourceBody body={item.preview.body} match={props.match}/>;
+  const content = <FullResourceBody item={item} historical={props.historical}/>;
   return {
-    ref: item.ref, label: item.label, identity: metadata.identity, href: activation.href, item, highlightId: null,
+    ref: item.ref, label: item.label, href: activation.href, item, highlightId: null,
     primary: <div className={styles.reference}>
       {activation.href ? <a ref={props.primaryLinkRef} className={styles.primaryLink} href={activation.href}
         aria-label={`open ${item.label}`} data-workspace-rich-target="true"
         onClick={event => activateTargetLink({event, runtime, target: {href: activation.href!, labelHint: item.label}})}
         onKeyDown={event => activateTargetLink({event, runtime, target: {href: activation.href!, labelHint: item.label}})}>
-        {content}</a> : content}
+        {item.preview.body.kind === "passage" ? item.preview.source?.title ?? item.label : content}</a> : item.preview.body.kind === "passage" ? null : content}
+      {item.preview.body.kind === "passage" ? content : null}
       {metadata.bibliography.length ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>
         <ResourceMetadata parts={metadata.bibliography} linkSource={false}/></span> : null}
     </div>,
@@ -177,77 +187,73 @@ function RemoteRow(props: Shared & {item: Item}) {
 /** A non-authored ref: the stub's literal capture until the server item arrives, in one Occurrence. */
 function ReferenceRow(props: Shared & {subject: string}) {
   const runtime = usePaneRuntime();
-  const remote = usePaneFreeServerValue<Item>({key: props.historical ? null : `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
+  const remote = usePaneFreeServerValue<Item>({key: `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
     load: signal => resolveResourceItem(props.subject, signal)});
   const local = useAuthoredQuery(props.writing || remote.status === "ready" ? null : {kind: "resource", ref: props.subject});
   const stub = props.writing ? props.projection : local.data?.rows[0]?.resource ?? null;
-  const parsed = parseResourceRef(props.subject);
   // Absent locally and still being read remotely is not yet "unavailable": show the literal ref.
-  const settled = props.historical || remote.status === "failed";
+  const settled = remote.status === "failed";
   const label = stub ? localResourceLabel(stub) : settled ? "unavailable resource" : props.subject;
   if(remote.status==="ready"&&remote.data.authored_by_viewer&&AUTHORED.test(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props, runtime), ref: props.subject} : {
-    ref: props.subject, label, identity: parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "resource",
+    ref: props.subject, label,
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
     primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
-    status: local.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
-      announcement="Polite" actions={[{label: "retry", onClick: local.retry}]}/>
+    status: local.error ? <AuthoredReadFailure {...local} title="couldn’t refresh this resource"/>
       : !stub && local.data && settled ? <p className={styles.status}>not available on this device</p> : null,
   }}/>;
 }
 
 function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;read?:ReturnType<typeof useAuthoredQuery>}) {
-  const ownRead = useAuthoredQuery(props.writing||suppliedRead ? null : {kind: "resource", ref: props.subject});
+  const ownRead = useAuthoredQuery(props.writing||suppliedRead ? null : props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind: "resource", ref: props.subject});
   const read=suppliedRead??ownRead;
   const resource = props.writing ? props.projection : read.data?.rows[0]?.resource ?? null;
   const source = useAuthoredQuery(resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const runtime = usePaneRuntime();
-  const writing = useWritingRuntime();
-  const saving = useSyncExternalStore(writing?.subscribe ?? NO_SUBSCRIPTION, writing?.snapshot ?? IDLE_SAVE, IDLE_SAVE);
   const branch = useContext(ResourceBranch);
   const parsed = parseResourceRef(props.subject)!;
   const label = resource ? localResourceLabel(resource) : parsed.scheme === "note_block" ? "unavailable note"
     : parsed.scheme === "page" ? "unavailable page" : "unavailable highlight";
-  const identity = resourceTypeLabel(parsed.scheme).toLowerCase();
   const terminal = classifyOutlineOccurrence({branch, targetRef: props.subject, edgeId: null}).kind === "reference";
   const editable = (props.editable ?? true) && !props.historical && !terminal;
-  const href = resource ? localResourceHref(resource) : null;
+  const href = resource ? localResourceHref(resource, { activationRef: props.readingRef ?? null }) : null;
   const link = (children: ReactNode) => href ? <a ref={props.primaryLinkRef} className={styles.primaryLink} href={href}
     aria-label={`open ${label}`} data-workspace-rich-target="true"
     onClick={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}
     onKeyDown={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}>{children}</a> : children;
   const sourceLabel = source.data?.rows[0]?.resource;
-  const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : "opening…"}</span>
+  const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : ""}</span>
     : resource.kind === "note" ? editable ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable/>
       : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
     : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
       placeholder={resource.local_date ?? "untitled page"}/> : <span data-resource-primary className={factualStyles.named}>{label}</span>
-    : resource.kind === "highlight" ? <div className={styles.reference}>
-      {link(<span data-resource-primary className={factualStyles.passage}>
-        <mark className={factualStyles.exact} data-color={resource.color ?? undefined}>{resource.selection?.quote_exact || "selected region"}</mark>
-      </span>)}
+    : resource.excerpt !== null ? <div className={styles.reference}>
+      {href ? link(sourceLabel ? localResourceLabel(sourceLabel) : "highlight") : null}
+      <FullResourceBody item={authoredItem(resource, props.readingRef ?? null)} />
       {sourceLabel ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>{localResourceLabel(sourceLabel)}</span> : null}
+      <HighlightAnnotation highlightRef={props.subject} occurrenceKey={props.occurrenceKey} editable={editable} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
-    ref: props.subject, label, identity, href, item: null, primary,
+    ref: props.subject, label, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
     status: <>
-      {read.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
-        announcement="Polite" actions={[{label: "retry", onClick: read.retry}]}/> : null}
-      {/* a note's own editor shows its failed commit; pages and highlights show theirs here. */}
-      {resource?.kind !== "note" && saving.error !== null && saving.error_refs.includes(props.subject) ?
-        <FeedbackNotice content={{tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving."}}
-          announcement="Assertive" actions={[{label: "retry saving", onClick: () => void writing?.retry().catch(() => undefined)}]}/> : null}
+      <AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>
     </>,
   }}/>;
 }
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, representedEdgeIds = EMPTY_EDGE_IDS, onChanged,
   body, sourceContent, resourceDetails, nestedContent, details, placement, rootProps, rowRef,
-  historical = false, editable = true, suppressedEdgeIds=EMPTY_EDGE_IDS, writing: writingRow = false, childrenAvailable, onSelectBlock, annotationFocusRequest = null, onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
-  const {ref, label, identity, href, item, highlightId} = presentation;
+  historical = false, editable: _editable = true, suppressedEdgeIds=EMPTY_EDGE_IDS, writing: writingRow = false, childrenAvailable, onSelectBlock, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
+  const {ref, label, href, item, highlightId} = presentation;
+  const parsed = parseResourceRef(ref);
+  // justify-defect: every occurrence names a canonical displayed resource.
+  if (parsed === null) throw new Error(`invalid canonical resource ref: ${ref}`);
+  const identity = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={parsed.scheme}/>;
   const runtime = usePaneRuntime();
+  const touch = useTouchCapable();
   const writing = useWritingRuntime();
   const outline = useContext(ResourceOutlineContext);
   const branch = useContext(ResourceBranch);
@@ -259,15 +265,14 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   const childrenBranch = useMemo(() => enterOutlineOccurrence({branch, ref, target: {kind: "occurrence", key: occurrenceKey},
     edgeIds: [...representedEdgeIds, ...(enteringEdgeId === null ? [] : [enteringEdgeId])]}),
     [branch, ref, occurrenceKey, representedEdgeIds, enteringEdgeId]);
-  // A highlight opens on its attached notes until someone folds it.
+  // A highlight opens its related resources until someone folds it.
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
   const open = projection.kind === "resource" &&
     (placement?.expanded ?? outline?.view.folds.get(occurrenceKey) ?? localOpen ?? highlightId !== null);
-  const [noteRequest, setNoteRequest] = useState(0);
-  const childrenSection = useRef<HTMLElement | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [failure, setFailure] = useState<{content: FeedbackContent; action: FeedbackAction | null} | null>(null);
+  const failureOccurrence = useFeedbackOccurrence(failure !== null, occurrenceKey);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {
     element.current = node;
@@ -280,7 +285,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     arrow.current=node;
   },[]);
   const excludedEdgeIds=useMemo(()=>[...new Set([...childrenBranch.traversedEdgeIds,...suppressedEdgeIds])].sort(),[childrenBranch,suppressedEdgeIds]);
-  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.prefix,item.preview.body.exact,item.preview.body.suffix,item.activation]:null;
+  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.excerpt,item.preview.body.capture_revision,item.activation]:null;
   const descriptor=!writingRow&&projection.kind==="resource"&&item?.missing!==true?{
     resource_ref:ref,excluded_edge_ids:excludedEdgeIds,
     identity:JSON.stringify([ref,excludedEdgeIds,aliasMeaning]),
@@ -307,31 +312,11 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
     if (placement) placement.toggle(); else if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
-  // `add note` and an annotation request open the children and focus their own composer,
-  // the one place a new attached note is written.
-  const latest = useRef({open: () => {}, onAnnotationClose});
-  latest.current = {open: () => { if (!open) toggle(); }, onAnnotationClose};
-  const focusToken = `${annotationFocusRequest ?? ""}:${noteRequest}`;
-  useEffect(() => {
-    if (focusToken === ":0") return;
-    latest.current.open();
-    let frames = 0;
-    let handle = requestAnimationFrame(function attempt() {
-      const target = childrenSection.current?.querySelector<HTMLElement>(
-        `[data-composer-destination="${CSS.escape(ref)}"] [contenteditable="true"]`);
-      // Found or given up, the request is consumed so a later remount does not replay it.
-      if (target) target.focus();
-      if (target || ++frames >= 30) latest.current.onAnnotationClose?.();
-      else handle = requestAnimationFrame(attempt);
-    });
-    return () => cancelAnimationFrame(handle);
-  }, [focusToken, ref]);
   /** One server-fact removal; its failure stays beside the row with the owner's retry. */
   async function mutate(attempt: () => Promise<unknown>) {
     if (busyRef.current || commandDisabledReason) return;
     busyRef.current = true;
     setBusy(true);
-    setFailure(null);
     const row = element.current;
     const fallback = row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
     // A nested fact may retire its whole ancestor once its list refreshes.
@@ -360,21 +345,22 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       setBusy(false);
     }
     const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
+    setFailure(null);
     onChanged?.();
     outline?.refreshChildren();
     if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
       neighbours.find(node => node.isConnected)?.focus({preventScroll: true});
   }
   const commands: ActionDescriptor[] = [];
-  if (onSelectBlock) commands.push({kind: "command", id: "Outline.SelectBlock", label: "select block",
+  if (onSelectBlock) commands.push({kind: "command", id: "Outline.SelectBlock", label: "Select block", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />,
     restoreFocusOnClose: false, onSelect: onSelectBlock});
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
-    label: `unlink from ${incoming.parentLabel}`, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
-  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label,
+    label: `Unlink from ${incoming.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
+  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Unlink size={16} aria-hidden="true" />,
     disabled: busy, disabledReason: busy ? "removal is pending" : undefined,
     restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
-  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "view creation",
+  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: <History size={16} aria-hidden="true" />,
     href: made.conversation_id && made.message_id
       ? `/conversations/${made.conversation_id}?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
@@ -383,9 +369,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     aria-label={`open ${identity}: ${label}`} data-workspace-rich-target="true" data-row-focusable="true"
     onClick={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}
     onKeyDown={event => {context.onKeyDown?.(event); if (!event.defaultPrevented)
-      activateTargetLink({event, runtime, target: {href, labelHint: label}});}}>•</a>
+      activateTargetLink({event, runtime, target: {href, labelHint: label}});}}>{marker}</a>
     : <button {...context} type="button" disabled={commands.length === 0} data-outline-bullet="true"
-      className={cx(styles.control, styles.bullet)} aria-label={`actions for unavailable ${label}`} data-row-focusable="true">•</button>;
+      className={cx(styles.control, styles.bullet)} aria-label={`actions for ${identity}: ${label}`} data-row-focusable="true">{marker}</button>;
   const disclosure = terminal ? <button ref={attachDisclosure} type="button" className={styles.control}
     disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${label}`}
     onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
@@ -402,30 +388,31 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref} data-writing={writingRow || undefined}>
       <div className={styles.head}>
         {!writingRow ? disclosure : null}
-        {commands.length || writingRow ? <ContextualActionMenu title={label} subjectKey={`relationship:${occurrenceKey}`}
+        {commands.length || writingRow ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]} commandDisabledReason={commandDisabledReason}
           label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({})}
         <div className={styles.content}>
           {body ?? presentation.primary}
           {sourceContent}
           {presentation.status}
-          {highlightId && editable && !historical && !terminal && !open ?
-            <Button className={styles.textButton} onClick={() => setNoteRequest(serial => serial + 1)}>add note</Button> : null}
           {resourceDetails}
           {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
             {connection.snapshot.rationale}</MachineText></div> : null}
           {details}
-          {busy ? <FeedbackStatus content={{tone: "Neutral", title: "removing…"}} announcement="None"/> : null}
-          {failure ? <FeedbackNotice content={failure.content} announcement="Assertive"
-            actions={failure.action ? [failure.action] : undefined}/> : null}
+          {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure.content} announcement="Assertive"
+            actions={failure.action ? [{...failure.action, busy}] : undefined}/> : null}
         </div>
         {writingRow ? disclosure : <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
-          displayedActivation={item?.activation} showSourceSubject={item !== null && item.action_ref !== item.ref}
+          navigation={item === null ? null : {
+            key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
+            fork: touch && runtime && item.activation.kind === "route" && item.activation.href !== null
+              ? paneForkLink({ runtime, target: { href: item.activation.href, labelHint: label }, disabledReason: commandDisabledReason ?? null }) : null,
+          }} showSourceSubject={item !== null && item.action_ref !== item.ref}
           commandDisabledReason={commandDisabledReason} sections={[]} label={`more actions for ${label}`}/></div>}
       </div>
       {nestedContent || open ? <div className={styles.children} data-outline-children="true">{nestedContent}{open ?
-        <section ref={childrenSection} id={childrenId} aria-label="linked resources">{placement?.children ??
+        <section id={childrenId} aria-label="linked resources">{placement?.children ??
           (writingRow ? <LocalOutline rootRef={ref} occurrencePrefix={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>
             : <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>)}</section> : null}</div> : null}
     </li>

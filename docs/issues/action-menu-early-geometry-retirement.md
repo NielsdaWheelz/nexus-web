@@ -14,6 +14,15 @@ an independently measured mobile-sheet animation mismatch was fixed in
 the installed epub/account journey now accepts its first downloads command.
 this does not establish the cause or resolution of the historical cases above.
 
+2026-10-28 overflow qualification reproduced an initial pdf menu retirement in
+firefox after real upload/publication, before the reader had been explicitly
+observed rendered. run `20261028-144727-1e17a8391ab2` passed reader-theme, native
+settings-link and separator assertions, then retired before mark-as-finished;
+`20261028-145334-112709327ace` retired during those read-only assertions. both
+announced the same warning. earlier run `20261028-143947-010004c57e86` completed
+the real finish/offline-undo journey. no invalidating coordinates were captured
+for these pdf cases; this is further reproduction, not a diagnosis or resolution.
+
 firefox mixed-reading run `20261026-201242-60e320bbbefa` at `a51f805d4` retired both
 permitted passage-menu activations before text resizing, after the actor kept
 g1 offline and the server published g2. the same annotation group, trigger,

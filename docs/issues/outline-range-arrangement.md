@@ -1,13 +1,13 @@
-# arranging selected block ranges
+# moving selected ranges up or down
 
-the mobile editor supports selecting a visible range and unlinking/copying that
-range, but arrangement still accepts one occurrence. `LocalOutline.tsx` disables
-indent, outdent and move buttons for `owner.state.keys.length > 1`; the row
-keyboard handler consumes and refuses those same range commands.
+indent/outdent and removal share the range planner. move-up/down still accepts
+one occurrence; a range receives “select one item to move.” the owner explicitly
+excluded bulk movement from range editing.
 
-full range arrangement needs explicit semantics for selected ancestor/descendant pairs and
-multiple parents, then one atomic graph command with one undo group. do not claim
-roam block-selection parity until this is implemented and qualified.
+evidence: `OutlineController.movePlan` and `commandState` in
+`apps/web/src/lib/notes/outlineController.ts` retain the single-item boundary.
+this is a deliberate capability limit, not a range-indent defect.
 
-resolved when keyboard and touch act on exactly the same selected occurrences,
-preserve their order/independent links, and undo restores structure and selection.
+resolve only with an approved movement contract for mixed parents, selected
+ancestors/descendants and shared edges. keyboard and existing controls must use
+one atomic plan; undo must restore literal order and the captured selection.

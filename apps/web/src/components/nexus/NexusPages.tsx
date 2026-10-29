@@ -1,20 +1,14 @@
 "use client";
 
 // Every Nexus page but Root, one tree for both surfaces.
-import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { ArrowLeft } from "lucide-react";
+import type { ReactNode } from "react";
+import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
-import { assertNever } from "@/lib/assertNever";
-import type { NexusPane } from "@/lib/nexus/model";
-import { paneState } from "@/lib/nexus/rows";
-import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
-import { paneControls } from "@/lib/workspace/paneControls";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
-import { NexusTitleFailure } from "./NexusRow";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
@@ -30,121 +24,8 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
+      <FeedbackRecoveryControl />
     </header>
-  );
-}
-
-function ManagePanes({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
-  const triggers = useRef(new Map<string, HTMLButtonElement>());
-  const stateDescriptionId = useId();
-  const [focusPaneId, setFocusPaneId] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    if (focusPaneId === null) return;
-    if (isTopmostInteractionOwner("Nexus")) {
-      triggers.current.get(focusPaneId)?.focus({ preventScroll: true });
-    }
-    setFocusPaneId(null);
-  }, [focusPaneId]);
-  const close = (paneId: string) => {
-    const index = controller.panes.findIndex((pane) => pane.id === paneId);
-    const neighbor = controller.panes[index + 1] ?? controller.panes[index - 1];
-    const selection = controller.closePane(paneId);
-    if (selection === null) return;
-    setFocusPaneId(neighbor?.id ?? selection.paneId);
-  };
-  // the default open state says nothing; only desktop maximizes.
-  const stateText = (pane: NexusPane) => !mobile && controller.desktopMaximized && pane.current ? "maximized"
-    : paneState(pane) === "Open" ? null : paneState(pane).toLowerCase();
-  return (
-    <section className={styles.page}>
-      <Header
-        title={mobile ? "all panes" : "Manage panes"}
-        onBack={controller.back}
-      />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
-      <section className={styles.panes} aria-labelledby="nexus-open-panes">
-        <h3 id="nexus-open-panes">{mobile ? "open" : "Open"}</h3>
-        <ul>
-          {controller.panes.map((pane) => (
-            <li key={pane.id}>
-              <button className={styles.paneOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={mobile && pane.visibility === "minimized" ? `restore ${pane.presentation.title}` : pane.presentation.title} aria-current={pane.current ? "page" : undefined}
-                aria-describedby={mobile || stateText(pane) === null ? undefined : `${stateDescriptionId}-${pane.id}`}
-                ref={(element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); }}
-                onClick={(event) => {
-                  const detail = prepareActionSelect(event, null);
-                  if (detail) controller.openPane(pane.id, detail.openIntent);
-                }}
-                onKeyDown={(event) => {
-                  if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) {
-                    event.preventDefault();
-                    return;
-                  }
-                  const detail = prepareActionSelect(event, null);
-                  if (detail) controller.openPane(pane.id, detail.openIntent);
-                }}>
-                <span className={styles.paneIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
-                  {stateText(pane) === null ? null : <small id={mobile ? undefined : `${stateDescriptionId}-${pane.id}`}>{stateText(pane)}</small>}
-                </span>
-              </button>
-              <div className={styles.paneActions}>
-                {paneControls({ state: controller.workspaceState, paneId: pane.id, title: pane.presentation.title, desktopMaximized: controller.desktopMaximized, isMobile: mobile }).map((control) => {
-                  const Icon = control.icon;
-                  return <Button
-                    key={control.slot}
-                    iconOnly
-                    icon={<Icon size={18} aria-hidden="true" />}
-                    aria-label={control.label}
-                    aria-disabled={control.disabledReason !== null || undefined}
-                    tooltip={{ text: control.disabledReason ?? control.tooltip }}
-                    onPointerDown={(event) => {
-                      if (isTopmostInteractionOwner("Nexus")) event.currentTarget.focus({ preventScroll: true });
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      if (!event.repeat && !event.nativeEvent.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) event.currentTarget.click();
-                    }}
-                    onClick={(event) => {
-                      if (!isTopmostInteractionOwner("Nexus")) return;
-                      event.currentTarget.focus({ preventScroll: true });
-                      switch (control.command) {
-                        case "minimize": {
-                          const selection = controller.minimizePane(pane.id);
-                          if (mobile && selection !== null) setFocusPaneId(pane.id);
-                          return;
-                        }
-                        case "maximize": controller.maximizePane(pane.id); return;
-                        case "restore_canvas": controller.restoreCanvas(pane.id); return;
-                        case "close": close(pane.id); return;
-                        default: assertNever(control.command);
-                      }
-                    }}
-                  />;
-                })}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-      {controller.closedPanes.length > 0 ? (
-        <section className={styles.panes} aria-labelledby="nexus-closed-panes">
-          <h3 id="nexus-closed-panes">{mobile ? "recently closed" : "Recently closed"}</h3>
-          <ul>
-            {controller.closedPanes.map((pane) => (
-              <li key={pane.id}>
-                <button className={styles.paneOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}
-                  onKeyDown={(event) => {
-                    if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) event.preventDefault();
-                  }}>
-                  <RotateCcw size={18} aria-hidden="true" />
-                  <span>{pane.presentation.title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-    </section>
   );
 }
 
@@ -153,15 +34,16 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
   switch (page.kind) {
     case "Root":
       return null;
+    case "UseText":
     case "ChooseCreate":
     case "ChooseBrowse":
       return (
         <section className={styles.page}>
           <Header
-            title={mobile ? page.kind === "ChooseCreate" ? page.draft ? "create from text" : "new" : "browse" : page.kind === "ChooseCreate" ? `Create “${page.draft}”` : `Browse${page.query ? ` for “${page.query}”` : ""}`}
-            subtitle={mobile ? (page.kind === "ChooseCreate" ? page.draft : page.query) ? <span className={styles.draftPreview}>{page.kind === "ChooseCreate" ? page.draft : page.query}</span> : undefined : page.kind === "ChooseCreate" ? "Choose where this draft belongs." : "Choose one source kind."}
+            title={page.kind === "UseText" ? "use this text" : page.kind === "ChooseCreate" ? "create" : "browse"}
             onBack={controller.back}
           />
+          {(page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query) ? <p className={styles.textPreview}>{page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query}</p> : null}
           <div className={styles.choices}>
             {controller.choices.map((row) => {
               const activate = (event: import("@/lib/ui/targetActivation").TargetActivationEvent) => {
@@ -190,16 +72,11 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CaptureToday":
       return (
         <section className={styles.page}>
-          <Header title={mobile ? "add to today" : "Add to Today"} onBack={controller.back} />
-          {page.submit.kind !== "Ready" && page.submit.content ? (
-            <FeedbackNotice
-              content={page.submit.content}
-              announcement="Assertive"
-              actions={page.submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
-            />
-          ) : (
-            <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
-          )}
+          <Header title="add to today" onBack={controller.back} />
+          <p>{page.text}</p>
+          <FeedbackBusy pending={page.submit.kind === "Running"} />
+          <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}
+            aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={() => controller.retryCapture("default")}>retry saving</Button>
         </section>
       );
     case "CreateLibrary":
@@ -234,8 +111,6 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           />
         </AddPanelBoundary>
       );
-    case "ManagePanes":
-      return <ManagePanes controller={controller} mobile={mobile} />;
   }
 }
 

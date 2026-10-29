@@ -30,7 +30,7 @@ export interface WorkGuard {
   confirmLoss(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
   readCopyText(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): string | null;
   confirmDocumentExit(): boolean;
-  hasWork(): boolean;
+  hasWork(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
 }
 
 function matches(scope: WorkScope, owner: WorkScope): boolean {
@@ -116,7 +116,8 @@ function createWorkRegistry() {
       return texts.length ? texts.join("\n\n") : null;
     },
     confirmDocumentExit: () => confirm(risk(() => true)),
-    hasWork: () => risky(risk(() => true)),
+    hasWork: ({ scopes, ownerIds }) => risky(risk(owner =>
+      ownerIds.includes(owner.id) || scopes.some(scope => matches(scope, owner.scope)))),
   };
   const restore = () => {
     signingOut = null;
@@ -192,5 +193,5 @@ export function useGuardedSignOut() {
 
 /** Automatic exits also retain admitted explicit writing, without adding a user-exit warning. */
 export function reloadStrandsWriting(guard: WorkGuard): boolean {
-  return guard.hasWork() || hasUncommittedWriting();
+  return guard.hasWork({scopes: [{kind: "account"}], ownerIds: []}) || hasUncommittedWriting();
 }

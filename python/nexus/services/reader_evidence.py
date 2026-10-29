@@ -46,6 +46,7 @@ from nexus.schemas.resource_items import (
     LocatedSourceLocationOut,
     ResourceItemOut,
     ResourceSourceTargetKey,
+    SourceTargetOut,
     UnavailableSourceLocationOut,
 )
 from nexus.schemas.retrieval import PdfPageLocator
@@ -96,15 +97,39 @@ def build_reader_evidence(
     pdf_page_heights: dict[int, float],
 ) -> ReaderEvidenceProjection:
     """Merge direct facts by exact far ref after constructing domain-owned roots."""
-    refs = {f"highlight:{highlight.id}" for highlight in highlights}
-    refs.update(connection.other.ref for connection in connections.items)
+    highlight_refs = {f"highlight:{highlight.id}" for highlight in highlights}
+    native_refs = set(highlight_refs)
+    if apparatus.status in ("ready", "partial"):
+        native_refs.update(item.resource_ref for item in apparatus.items)
+    generic_refs = {connection.other.ref for connection in connections.items} - native_refs
+    targets: dict[str, SourceTargetOut] = {}
+    reading_media_ids = {ref: media_id for ref in highlight_refs}
+    for ref in sorted(generic_refs):
+        try:
+            target = resolve_source_target(
+                db,
+                viewer_id=viewer_id,
+                target=ResourceSourceTargetKey(field=None, resource_ref=ref),
+                reading_media_id=media_id,
+            )
+        except NotFoundError:
+            # justify-ignore-error: absence does not prove local ownership; retain membership.
+            continue
+        targets[ref] = target
+        if (
+            target.source_activation is not None
+            and target.source_activation.resource_ref == f"media:{media_id}"
+            and isinstance(target.location, LocatedSourceLocationOut)
+        ):
+            reading_media_ids[ref] = media_id
     items = {
         item.ref: item
         for item in resource_items_out(
             db,
             viewer_id=viewer_id,
-            refs=[assert_resource_ref(ref) for ref in sorted(refs)],
-            reading_media_ids={ref: media_id for ref in refs},
+            refs=[assert_resource_ref(ref) for ref in sorted(highlight_refs | generic_refs)],
+            reading_media_ids=reading_media_ids,
+            excerpt_mode="full",
         )
     }
     roots: dict[str, ReaderEvidenceRootOut] = {}
@@ -187,7 +212,7 @@ def build_reader_evidence(
                 content=ReaderEvidenceSourceReferenceOut(
                     resource_ref=item.resource_ref,
                     action_ref=owner.uri,
-                    label=passage_label(selection),
+                    label=passage_label(selection.text),
                     excerpt=selection,
                     activation=activations[item.resource_ref],
                     location_label=(item.label or None) if apparatus_source is not None else None,
@@ -227,8 +252,7 @@ def build_reader_evidence(
                 continuation=None,
                 authored_placement=None,
                 resolution=_resource_resolution(
-                    db,
-                    viewer_id=viewer_id,
+                    target=targets.get(ref),
                     media_id=media_id,
                     canonical_media_id=canonical_media_id,
                     item=item,
@@ -317,9 +341,8 @@ def build_reader_evidence(
 
 
 def _resource_resolution(
-    db: Session,
     *,
-    viewer_id: UUID,
+    target: SourceTargetOut | None,
     media_id: UUID,
     canonical_media_id: UUID,
     item: ResourceItemOut,
@@ -328,18 +351,9 @@ def _resource_resolution(
     fragment_ranges: dict[str, tuple[int, int]],
     fragment_times: dict[str, tuple[int, int]],
 ) -> ReaderEvidenceResolutionOut | None:
-    try:
-        target = resolve_source_target(
-            db,
-            viewer_id=viewer_id,
-            target=ResourceSourceTargetKey(resource_ref=item.ref),
-            reading_media_id=media_id,
-        )
-    except NotFoundError:
-        # justify-ignore-error: absence does not prove local ownership; retain membership.
-        return None
     if (
-        target.source_activation is None
+        target is None
+        or target.source_activation is None
         or target.source_activation.resource_ref != f"media:{media_id}"
     ):
         return None
@@ -424,6 +438,7 @@ def _child_continuation(
             source = LinkPassageEndpoint(
                 candidate_ref=ref.uri,
                 passage_target=CapturedPassageTarget(
+                    field=None,
                     owner_ref=f"media:{media_id}",
                     locator=locator,
                     precision=precision,

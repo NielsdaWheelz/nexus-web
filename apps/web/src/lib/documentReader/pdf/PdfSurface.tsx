@@ -9,7 +9,7 @@
 // Link preparation owns availability, never action feedback. Busy activation is
 // consumed; unavailable activation enters the same navigator as resolved links.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type * as PdfJs from "pdfjs-dist";
@@ -168,7 +168,7 @@ export default function PdfSurface({
       const quads = rangeQuads(range, page, shown.viewport);
       const exact = selection.toString().trim();
       return quads.length && exact ? {
-        kind: "Captured",
+        kind: "Captured", excerpt: null, excerpt_start: null, excerpt_end: null,
         anchor: { kind: "pdf", page: number, quads, exact },
         quote: exact,
       } : null;
@@ -845,7 +845,7 @@ export default function PdfSurface({
       </p> : null}
       {status.kind === "Opening" ? (
         <div className={`${styles.feedback} ${styles.readerState}`}>
-          <FeedbackState content={{ tone: "Neutral", title: "opening pdf…" }} announcement={view.announcement ?? "Polite"} />
+          <FeedbackBusy pending />
         </div>
       ) : null}
       {status.kind === "Failed" ? (

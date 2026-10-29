@@ -1,8 +1,9 @@
+import type { ExcerptBody } from "@nexus/authored/excerpt";
 import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
 import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
-import type { Selection } from "@/lib/chat/wire";
+import type { SelectionEditor } from "@/lib/chat/selection";
 import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
 
@@ -26,9 +27,9 @@ export function recordDraftEdit(history: DraftHistory, edit: NoteEdit): DraftHis
 }
 
 export type DraftIssue =
-  | { kind: "Source"; message: string }
-  /** A local commit that did not persist: its frozen command retries; the input stays. */
-  | { kind: "Failed"; message: string; retry: () => void };
+  | { kind: "Source" | "Capture" | "Capacity"; message: string }
+  /** Preparation retries its retained gesture; commit retries its frozen account command. */
+  | { kind: "Failed"; phase: "Preparation" | "Commit"; message: string; retry: () => void };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" | "LookupFailed" }
@@ -37,23 +38,26 @@ export type ChatDestination =
       | { kind: "Ready"; tree: ConversationTree } };
 
 export type ReaderChatIssue = (
-  | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: Selection | null }
+  | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: SelectionEditor }
+  | { kind: "Recall"; state: "Pending" | "Failed"; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string }
 ) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Extract<SelectionEditor, { kind: "Selected" }>; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
 
 export interface ComposerDraft {
   id: string;
   /** Visual anchor and literal quote; capture-only fields live in `capture`. */
-  passage: Passage & { quote: string };
+  passage: Passage & { quote: string; excerpt: ExcerptBody | null; excerpt_start: number | null; excerpt_end: number | null };
   /** A new selection's frozen local capture; null when the draft opened an existing highlight. */
   capture: Capture | null;
-  /** The annotated highlight, once it exists. Its notes are its own resources, never this draft. */
+  /** The highlight whose permanent annotation is independent from this question draft. */
   highlightId: string | null;
-  /** The unsubmitted new note. Saving commits it locally; dismissal discards it. */
+  bodyRole: "annotation_or_question" | "question";
+  annotationBase: string | null;
+  /** Unsubmitted annotation-or-question input. Intentional loss uses the work guard. */
   body: Body;
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;
@@ -61,10 +65,12 @@ export interface ComposerDraft {
   operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" } | null;
   issue: DraftIssue | null;
   referenceActive: boolean;
+  linkInputActive: boolean;
   attachmentActive: boolean;
   sourceMediaId: string;
   sourceHasChats: boolean | null;
   destination: ChatDestination;
+  chatSelection: SelectionEditor;
   chatAttempt: ChatAttempt | null;
   chatIssue: ReaderChatIssue | null;
 }

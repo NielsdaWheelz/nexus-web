@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 from typing import cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import text
@@ -36,6 +37,8 @@ from nexus.schemas.imports import (
     ImportObligations,
     ImportPage,
     ImportSummary,
+    OriginalSource,
+    PendingCapture,
     RelatedImport,
     RetryUploadOffer,
     WaitingReason,
@@ -51,13 +54,14 @@ from nexus.services.collection_keyset import (
 )
 from nexus.services.import_history import events_of_import_sql, history_entries, read_history_page
 from nexus.services.media import MediaFacts, media_facts
-from nexus.services.media_upload_sessions import (
+from nexus.services.metadata_operations import metadata_operations_sql
+from nexus.services.source_attempts import web_recovery_eligible_sql
+from nexus.services.source_publication import load_source_progress
+from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES, LATEST_ORDER_SQL
+from nexus.services.upload_session_state import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
-from nexus.services.metadata_operations import metadata_operations_sql
-from nexus.services.source_publication import load_source_progress
-from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES, LATEST_ORDER_SQL
 
 _PLANS = {
     "NeedsAttention": [
@@ -108,10 +112,11 @@ WITH visible_media AS (
     SELECT operations.* FROM ({metadata_operations_sql()}) operations
     JOIN visible_media vm ON vm.media_id = operations.media_id
 ), media_work AS (
-    SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url,
+    SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url, m.canonical_source_url,
         m.processing_status::text AS processing_status, m.updated_at AS media_updated_at,
         rp.source_issues, COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
         msa.id AS attempt_id, msa.status AS attempt_status, msa.error_code AS attempt_error_code,
+        (msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL) AS has_import_lineage,
         msa.created_at AS attempt_created_at, msa.finished_at AS attempt_finished_at,
         msa.updated_at AS attempt_updated_at,
         CASE WHEN msa.source_type = ANY(CAST(:counted_source_types AS text[]))
@@ -173,7 +178,6 @@ WITH visible_media AS (
     ) live_jobs ON TRUE
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
     LEFT JOIN background_jobs holder ON holder.id = capacity.job_id
-    WHERE msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL
 ), media_classified AS (
     SELECT media_work.*,
         CASE WHEN attempt_id IS NULL THEN NULL
@@ -195,44 +199,74 @@ WITH visible_media AS (
             WHEN metadata_unfinished_count > 0 THEN 'Active'
             ELSE 'Complete' END AS metadata_classification
     FROM media_work
+), import_media AS (
+    SELECT * FROM media_classified WHERE has_import_lineage
 ), upload_sessions AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
         input_origin->>'kind' AS origin_kind, input_origin->>'source_url' AS capture_url,
+        input_origin->'capture_binding'->>'kind' AS binding_kind,
+        input_origin->'capture_binding'->'target'->>'media_id' AS target_media_id,
+        input_origin->'capture_binding'->'target'->>'expected_source_attempt_id' AS target_attempt_id,
         published_media_id, created_at AS session_created_at,
         updated_at AS session_updated_at, verification_error_code, verification_failed_at,
         upload_url_expires_at, {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
     FROM media_upload_sessions WHERE created_by_user_id = :viewer_id
+), recovery_sessions AS (
+    SELECT s.* FROM upload_sessions s
+    JOIN media m ON m.id::text = s.target_media_id
+    JOIN media_work w ON w.media_id = m.id AND w.attempt_id::text = s.target_attempt_id
+    WHERE s.binding_kind = 'WebRecovery' AND s.derived_state <> 'Published'
+      AND {web_recovery_eligible_sql("m", ":viewer_id")}
 ), import_refs AS (
     SELECT 'upload:' || session_id::text AS ref_key, session_id,
         published_media_id AS media_id, upload_kind, filename, origin_kind, capture_url,
         derived_state, session_created_at, session_updated_at, verification_error_code,
         verification_failed_at, upload_url_expires_at
-    FROM upload_sessions
+    FROM upload_sessions WHERE binding_kind IS DISTINCT FROM 'WebRecovery'
     UNION ALL
     SELECT 'media:' || media_id::text, NULL, media_id, NULL, NULL, NULL, NULL, NULL, NULL,
         NULL, NULL, NULL, NULL
-    FROM media_work w
-    WHERE NOT EXISTS (SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id)
+    FROM import_media w
+    WHERE NOT EXISTS (SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id
+        AND s.binding_kind IS DISTINCT FROM 'WebRecovery')
 ), import_work AS (
     SELECT r.ref_key, r.session_id, r.media_id, r.derived_state, r.origin_kind,
-        COALESCE(w.title, r.filename) AS title, r.filename AS original_filename,
+        pending.derived_state AS pending_state, w.requested_url,
+        (SELECT original.source_type FROM media_source_attempts original WHERE original.media_id = w.media_id
+            ORDER BY original.attempt_no LIMIT 1) = 'generic_web_url' AS is_ordinary_url,
+        CASE WHEN w.title = left(w.requested_url, 255) AND EXISTS (
+            SELECT 1 FROM upload_sessions capture WHERE capture.binding_kind = 'WebRecovery'
+                AND capture.target_media_id = w.media_id::text
+        ) THEN split_part(split_part(regexp_replace(w.requested_url,
+            '^[A-Za-z][A-Za-z0-9+.-]*://', ''), '?', 1), '#', 1)
+        ELSE COALESCE(w.title, r.filename) END AS title, r.filename AS original_filename,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
-        CASE WHEN r.session_id IS NULL THEN {_url_host("w.requested_url")}
+        CASE WHEN r.session_id IS NULL THEN {_url_host("COALESCE(w.canonical_source_url, w.requested_url)")}
             WHEN r.origin_kind = 'BrowserCapture' THEN {_url_host("r.capture_url")}
             END AS source_host,
-        CASE WHEN w.media_id IS NOT NULL THEN w.source_classification
+        CASE WHEN pending.session_id IS NOT NULL THEN
+                CASE WHEN pending.derived_state = 'AwaitingBytes' THEN 'Active' ELSE 'NeedsAttention' END
+            WHEN w.media_id IS NOT NULL THEN w.source_classification
             WHEN r.derived_state = ANY(CAST(:attention_states AS text[])) THEN 'NeedsAttention'
             ELSE 'Active' END AS source_classification,
-        CASE WHEN w.media_id IS NOT NULL THEN w.source_stage
+        CASE WHEN pending.session_id IS NOT NULL THEN
+                CASE WHEN pending.derived_state = 'VerificationFailed' THEN 'Validate' ELSE 'Upload' END
+            WHEN w.media_id IS NOT NULL THEN w.source_stage
             WHEN r.derived_state = 'VerificationFailed' THEN 'Validate'
             ELSE 'Upload' END AS source_stage,
-        CASE WHEN w.media_id IS NOT NULL THEN
+        CASE WHEN pending.derived_state = 'VerificationFailed' THEN pending.verification_error_code
+            WHEN pending.derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
+            WHEN pending.session_id IS NOT NULL THEN NULL
+            WHEN w.media_id IS NOT NULL THEN
                 CASE WHEN w.attempt_status = 'failed' THEN w.attempt_error_code
                     ELSE {_queue_code("w.source_job_error_code")} END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_error_code
             WHEN r.derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
             END AS source_failure_code,
-        CASE WHEN w.media_id IS NULL THEN
+        CASE WHEN pending.session_id IS NOT NULL THEN
+                CASE pending.derived_state WHEN 'VerificationFailed' THEN pending.verification_failed_at
+                    WHEN 'CapabilityExpired' THEN pending.upload_url_expires_at END
+            WHEN w.media_id IS NULL THEN
                 CASE r.derived_state WHEN 'VerificationFailed' THEN r.verification_failed_at
                     WHEN 'CapabilityExpired' THEN r.upload_url_expires_at END
             WHEN w.source_job_status = 'dead'
@@ -244,26 +278,31 @@ WITH visible_media AS (
         w.search_classification, {_queue_code("w.index_job_error_code")} AS search_failure_code,
         COALESCE(w.index_job_finished_at, w.index_job_updated_at) AS search_failed_at,
         w.metadata_classification, w.metadata_failure_code, w.metadata_attention_at,
-        GREATEST(r.session_updated_at, w.media_updated_at, w.attempt_updated_at,
+        GREATEST(pending.session_updated_at, r.session_updated_at, w.media_updated_at, w.attempt_updated_at,
             w.source_job_updated_at, w.index_updated_at, w.index_job_updated_at,
             w.metadata_updated_at, w.live_jobs_updated_at) AS updated_at,
         COALESCE(w.source_issue_count, 0) AS source_issue_count, w.source_issues,
         w.source_job_id, w.source_job_status, w.source_job_available_at, w.index_job_id,
         w.index_job_status, w.index_job_available_at, w.capacity_job_id, now() AS database_now
-    FROM import_refs r LEFT JOIN media_classified w ON w.media_id = r.media_id
+    FROM import_refs r LEFT JOIN import_media w ON w.media_id = r.media_id
+    LEFT JOIN LATERAL (
+        SELECT * FROM recovery_sessions s WHERE s.target_media_id = r.media_id::text
+        ORDER BY s.session_created_at DESC, s.session_id DESC LIMIT 1
+    ) pending ON TRUE
     WHERE r.derived_state IS DISTINCT FROM 'Published' OR w.media_id IS NOT NULL
 ), obligations AS (
     SELECT ref_key, 'source' AS key, source_classification AS classification,
         source_stage AS stage, source_failure_code AS failure_code, source_failed_at AS failed_at,
-        accepted_at, COALESCE(source_job_status IN {_LIVE}, FALSE) AS has_live_job
+        accepted_at, COALESCE(source_job_status IN {_LIVE}, FALSE) AS has_live_job,
+        pending_state IS NOT NULL AS is_capture_slot
     FROM import_work WHERE source_classification IN ('Active', 'NeedsAttention')
     UNION ALL
     SELECT ref_key, 'search', search_classification, 'Index', search_failure_code,
-        search_failed_at, accepted_at, COALESCE(index_job_status IN {_LIVE}, FALSE)
+        search_failed_at, accepted_at, COALESCE(index_job_status IN {_LIVE}, FALSE), FALSE
     FROM import_work WHERE search_classification IN ('Active', 'NeedsAttention')
     UNION ALL
     SELECT ref_key, 'metadata', metadata_classification, 'Metadata', metadata_failure_code,
-        metadata_attention_at, accepted_at, TRUE
+        metadata_attention_at, accepted_at, TRUE, FALSE
     FROM import_work WHERE metadata_classification IN ('Active', 'NeedsAttention')
 ), imports AS (
     SELECT i.*, speaking.key AS primary_key, speaking.stage AS primary_stage,
@@ -374,9 +413,10 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                 count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
                     AS needs_attention_count,
                 count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
-                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM media_work)
+                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM import_media)
                     + (SELECT count(*) FROM obligations
-                       WHERE classification = 'Active' AND NOT has_live_job))::integer
+                       WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
+                    + (SELECT count(*) FROM recovery_sessions WHERE derived_state = 'AwaitingBytes'))::integer
                     AS unfinished_work_count
             FROM imports"""),
             _params(viewer_id),
@@ -470,7 +510,30 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
         .all()
     )
     hydrated = _hydrate(db, viewer_id, [row, *related])
+    pending = (
+        db.execute(
+            text(f"""{_CTE} SELECT session_id, derived_state AS state,
+            session_created_at AS accepted_at, upload_url_expires_at AS expires_at,
+            CASE WHEN derived_state = 'VerificationFailed' THEN verification_error_code
+                WHEN derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
+                ELSE NULL END AS failure_code
+            FROM recovery_sessions WHERE target_media_id = CAST(:media_id AS text)
+            ORDER BY session_created_at DESC, session_id DESC"""),
+            {**_params(viewer_id), "media_id": row["media_id"]},
+        )
+        .mappings()
+        .all()
+    )
+    requested_url = row["requested_url"] if row["is_ordinary_url"] else None
+    original_source = None
+    if requested_url is not None:
+        parsed = urlsplit(requested_url)
+        original_source = OriginalSource(
+            source_url=requested_url, source_label=f"{parsed.hostname}{parsed.path}"
+        )
     return ImportDetail(
+        pending_captures=[PendingCapture.model_validate(dict(item)) for item in pending],
+        original_source=original_source,
         item=_item(row, hydrated, None),
         source_issues=SOURCE_ISSUES.validate_python(row["source_issues"] or []),
         related_imports=[
@@ -483,12 +546,18 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
 def read_media_search_obligation(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> ImportObligation | None:
-    """One media's search obligation as Imports shows it, for an owner presenting index
-    work in place (piece section preparation); None when the viewer has no such import."""
+    """A visible media's current index obligation, independent of import lineage.
+
+    Imports membership remains lineage-bound; section preparation observes the same
+    actual index work for every readable source, including sources outside Imports.
+    """
     row = (
         db.execute(
             text(
-                f"{_CTE} SELECT *, primary_key AS view_key FROM imports WHERE media_id = :media_id"
+                f"""{_CTE}
+                SELECT *, {_queue_code("index_job_error_code")} AS search_failure_code,
+                    now() AS database_now
+                FROM media_classified WHERE media_id = :media_id"""
             ),
             {**_params(viewer_id), "media_id": media_id},
         )
@@ -561,7 +630,12 @@ def _obligation(
     job = "source_job" if key == "source" else "index_job"
     active = classification == "Active"
     code = row[f"{key}_failure_code"] if classification == "NeedsAttention" else None
-    if facts is None:
+    if key == "source" and row["pending_state"] is not None:
+        offer = facts.source_offer if facts is not None and not active else None
+        restriction = facts.source_restriction if facts is not None and not active else None
+        waiting = "AwaitingUploadConfirmation" if active else None
+        status = "Queued" if active else None
+    elif facts is None:
         rejected = row["derived_state"] == "VerificationFailed"
         offer = None if rejected or row["origin_kind"] == "BrowserCapture" else RetryUploadOffer()
         restriction = "UploadRejected" if rejected else None
@@ -579,7 +653,7 @@ def _obligation(
         stage=row["source_stage"] if key == "source" else "Index",
         status=status,
         waiting_reason=waiting,
-        progress=progress if active and key == "source" else None,
+        progress=progress if active and key == "source" and row["pending_state"] is None else None,
         next_retry_at=row[f"{job}_available_at"] if waiting == "RetryBackoff" else None,
         failure_code=None if code is None else assume_safe_failure_code(code),
         recovery=offer,

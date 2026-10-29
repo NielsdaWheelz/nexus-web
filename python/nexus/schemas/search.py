@@ -32,6 +32,7 @@ class SearchOccurrenceOut(BaseModel):
     item: ResourceItemOut
     match: SearchMatchOut | None
     match_method: MatchMethod
+    matched_field: Literal["quote", "annotation"] | None
 
 
 class SearchResourceOut(BaseModel):
@@ -41,15 +42,16 @@ class SearchResourceOut(BaseModel):
     name_match: NameMatch | None
     match: SearchMatchOut | None
     match_method: MatchMethod | None
+    matched_field: Literal["quote", "annotation"] | None
     matching_passage: SearchOccurrenceOut | None
 
 
 class SearchPreviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     phase: PreviewPhase
-    resources: list[SearchResourceOut] = Field(max_length=4)
-    saved: list[SearchResourceOut] = Field(max_length=2)
-    passages: list[SearchOccurrenceOut] = Field(max_length=2)
+    resources: list[SearchResourceOut] = Field(max_length=8)
+    saved: list[SearchResourceOut] = Field(max_length=8)
+    passages: list[SearchOccurrenceOut] = Field(max_length=8)
     semantic_status: SemanticStatus
 
 

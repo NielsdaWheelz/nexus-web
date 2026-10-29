@@ -20,7 +20,7 @@ from nexus.auth.permissions import (
     visible_content_credit_rows_sql,
     visible_contributor_ids_cte_sql,
 )
-from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, Media
+from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, Media, MediaPart
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
@@ -444,11 +444,17 @@ def prepare_observed_role_slices_in_current_transaction(
     if isinstance(target, MediaTarget):
         if db.get(Media, target.media_id) is None:
             return nothing
+        part = db.get(MediaPart, target.media_id)
+        if part is not None and any(c.role == "publisher" for c in observation.credits):
+            raise ContributorObservationRejected("A piece cannot have publisher credits")
+        media_ids = [target.media_id]
+        if part is not None:
+            media_ids.append(part.source_media_id)
         handles = set(
             db.scalars(
                 select(Contributor.handle)
                 .join(ContributorCredit, ContributorCredit.contributor_id == Contributor.id)
-                .where(ContributorCredit.media_id == target.media_id)
+                .where(ContributorCredit.media_id.in_(media_ids))
             )
         )
         if any(
@@ -460,32 +466,11 @@ def prepare_observed_role_slices_in_current_transaction(
             )
     plan = plan_observation_credits(db, observation.credits)
     planned = list(zip(plan.identities, plan.credits, strict=True))
-    if source == "metadata_enrichment" and len(
+    if source in ("metadata_enrichment", "part_discovery") and len(
         {(planned_contributor_identity(p), c.role) for p, c in planned}
     ) != len(planned):
         raise ContributorObservationRejected("Duplicate contributor identity within a role")
     return PreparedContributorPublication(target, observation.managed_roles, plan, source)
-
-
-def prepare_contained_work_role_slices_in_current_transaction(
-    db: Session,
-    *,
-    source_media_id: UUID,
-    part_media_id: UUID,
-    observation: ObservedRoleSlices,
-) -> PreparedContributorPublication:
-    """prepare a new piece's finding against its source's offered contributor handles.
-
-    only the observed role slices move to the new child target; source credits are
-    not inherited. the caller owns source authority and creates the child in this
-    transaction. ordinary research still validates handles against its own target.
-    """
-    prepared = prepare_observed_role_slices_in_current_transaction(
-        db, target=MediaTarget(source_media_id), observation=observation, source="part_discovery"
-    )
-    return PreparedContributorPublication(
-        MediaTarget(part_media_id), prepared.managed_roles, prepared.identities, prepared.source
-    )
 
 
 def apply_prepared_role_slices_in_current_transaction(

@@ -1,15 +1,17 @@
 "use client";
 
 // The metadata overlay ("metadata…", J2): publication facts with linked, role-grouped
-// credits; the live operation status; source; reading or listening; activity;
+// credits, source edition for pieces, the live operation status, source, reading or listening, activity,
 // availability. It rereads the media whenever a new enrichment stamp or a newly admitted
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
-import { useRef, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { useEffect, useRef, type ReactNode } from "react";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import { formatPublicationDate } from "@/lib/resources/metadata";
 import InformationFrame from "@/components/resources/InformationFrame";
 import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
+import { useChangeStamp } from "@/lib/api/changes";
+import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { apiFetch } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -26,7 +28,6 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
   METADATA_FAILURE_COPY,
-  METADATA_FIELD_LABELS,
   METADATA_REVIEW_HELP,
   X_TITLE_CONTEXT_HELP,
   earlierMetadataRuns,
@@ -44,6 +45,7 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
+import MetadataResearchResult from "./MetadataResearchResult";
 import MetadataResearchActions from "./MetadataResearchActions";
 
 const VISIT = definePaneVisitDataKey<Visit<MediaDetail>>("MediaInfo.Detail");
@@ -83,6 +85,8 @@ function MediaInfo({
   readonly onReread: () => void;
 }) {
   const display = useRenderEnvironment();
+  const refreshOccurrence = useFeedbackOccurrence(refreshError, media.id);
+  const disconnectedOccurrence = useFeedbackOccurrence(disconnected, media.id);
   const instant = (value: string | null | undefined): ReactNode =>
     value ? (
       <time dateTime={value}>
@@ -102,8 +106,6 @@ function MediaInfo({
     kind: "Source",
     processingStatus: media.processing_status,
     lastErrorCode: media.last_error_code,
-    capabilities: media.capabilities,
-    sourceUrl: media.canonical_source_url,
   });
   const retrievalFailure = mediaErrorMessage({
     kind: "Retrieval",
@@ -113,22 +115,21 @@ function MediaInfo({
   const { duration, listening_state: listening } = media;
   const verb = duration?.modality === "Read" ? "read" : "listen";
   const operation = metadata.operation;
-  const outcome = operation?.status === "completed" ? operation.outcome : null;
   const earlierRuns = earlierMetadataRuns(metadata);
   const unfinished = metadata.unfinished_operation;
-  const bibliography = outcome?.purpose === "bibliography" ? outcome : null;
-  const originalUnresolved =
-    operation?.status === "no_findings" ||
-    bibliography?.unresolved_fields.includes("original_published_date");
   const { requested_url: requested, canonical_url: canonical } = media;
+  const sourceEdition = media.part_source_edition;
+  const bibliography = operation?.status === "completed" && operation.outcome.purpose === "bibliography" ? operation.outcome : null;
+  const hasResult = bibliography !== null && (bibliography.changed_fields.length > 0 || bibliography.unresolved_fields.length > 0 || bibliography.container_report !== null) ||
+    operation?.status === "no_findings" && operation.container_report !== null;
   return (
     <div className={styles.content} aria-busy={refreshing || undefined}>
       <div className={styles.resourceTitle} dir="auto">
         {media.title}
       </div>
       {refreshError ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "couldn’t refresh metadata", message: "the last loaded values are still shown." }}
+        <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
+          content={{ tone: "Warning", title: "couldn’t refresh metadata" }}
           announcement="Polite"
           actions={[{ label: "retry", onClick: onReread, busy: refreshing }]}
         />
@@ -142,7 +143,7 @@ function MediaInfo({
         ),
         ...credits.map((role) =>
           fact(
-            role.label,
+            role.label.toLowerCase(),
             role.credits.map((credit, index) => (
               <span key={`${credit.label}-${index}`}>
                 {index > 0 ? ", " : null}
@@ -157,13 +158,20 @@ function MediaInfo({
             )),
           ),
         ),
-        fact("publisher", publisherCredited ? null : media.publisher),
+        fact("publisher", sourceEdition !== null || publisherCredited ? null : media.publisher),
         fact("first published", publication(media.original_published_date)),
-        fact("this edition", publication(media.edition_published_date)),
-        fact("isbn", media.edition_isbn),
+        fact("this edition", sourceEdition !== null ? null : publication(media.edition_published_date)),
+        fact("isbn", sourceEdition !== null ? null : media.edition_isbn),
         fact("language", media.language),
         fact("description", media.description),
       ])}
+      {sourceEdition !== null ? group("source edition", [
+        fact("from", media.part_source?.href ? <a href={media.part_source.href} dir="auto">{media.part_source.title}</a> : media.part_source?.title),
+        fact("edition published", publication(sourceEdition.published_date)),
+        fact("publisher", sourceEdition.publisher),
+        fact("isbn", sourceEdition.isbn),
+      ]) : null}
+      {disconnected ? <FeedbackFailure scope="Local" occurrence={disconnectedOccurrence} content={{tone: "Warning", title: "metadata updates disconnected"}} announcement="Polite" actions={[{label: "reconnect", onClick: () => reconnectMetadataOperations(media.id)}]} /> : null}
       {group(metadataOperationName(operation?.purpose ?? metadata.retry.purpose), [
         fact(
           "status",
@@ -173,20 +181,7 @@ function MediaInfo({
               : `no recorded ${metadataOperationName(metadata.retry.purpose)}`}
           </span>,
         ),
-        fact(
-          "first publication",
-          !originalUnresolved
-            ? null
-            : media.original_published_date === null
-              ? "first publication remains unknown"
-              : `first publication unverified; kept ${formatPublicationDate(media.original_published_date)}`,
-        ),
-        fact(
-          "not established by this run",
-          bibliography?.unresolved_fields
-            .map((field) => METADATA_FIELD_LABELS[field])
-            .join(", "),
-        ),
+        fact("result", hasResult ? <MetadataResearchResult operation={operation} /> : null),
         fact(
           "explanation",
           operation?.status === "failed"
@@ -259,18 +254,9 @@ function MediaInfo({
             ? `${operation.selection.route} / ${operation.selection.model} / ${operation.selection.reasoning}`
             : null,
         ),
-        fact(
-          "live status",
-          disconnected ? (
-            <FeedbackNotice
-              content={{ tone: "Warning", title: "metadata updates disconnected" }}
-              announcement="Polite"
-              actions={[{ label: "reconnect", onClick: () => reconnectMetadataOperations(media.id) }]}
-            />
-          ) : null,
-        ),
+
       ])}
-      {group("source", [
+      {sourceEdition === null ? group("source", [
         fact("media type", media.kind.replaceAll("_", " ")),
         fact("provider", media.provider ?? "not recorded"),
         fact("provider id", media.provider_id),
@@ -301,7 +287,7 @@ function MediaInfo({
               : null,
           ),
         ),
-      ])}
+      ]) : null}
       {group("reading/listening", [
         fact("completion", COMPLETION[media.consumption.state]),
         fact(
@@ -371,12 +357,15 @@ export default function MediaInfoOverlay({
   const observation = useMediaMetadataOperations(open ? mediaId : null);
   const processing = useMediaProcessingStatus(open ? mediaId : null);
   const view = observation.view;
+  const changes = useChangeStamp("Metadata");
+  const foreground = useRefreshStamp(open, 0);
+  useEffect(() => { if (open) reconnectMetadataOperations(mediaId); }, [open, mediaId, foreground]);
   const titleJob =
     view?.operation?.purpose === "title" ? view.operation.job_id : "";
   const media = useServerValue({
     key: open ? `/media/${mediaId}` : null,
     // New source publication admits a title job before naming can succeed or fail.
-    stale: `${view?.last_enriched_at ?? ""}:${titleJob}`,
+    stale: `${view?.last_enriched_at ?? ""}:${titleJob}:${changes}:${foreground}`,
     visit: VISIT,
     load: async (signal) =>
       mediaDetailFromResponse(
@@ -389,7 +378,7 @@ export default function MediaInfoOverlay({
   });
   const content =
     media.status === "loading" ? (
-      <FeedbackState content={{ tone: "Neutral", title: "loading metadata…" }} announcement="Polite" />
+      <FeedbackBusy pending />
     ) : media.status === "failed" ? (
       <FeedbackState
         content={{ tone: "Danger", title: "couldn’t load metadata", requestId: media.error.requestId }}

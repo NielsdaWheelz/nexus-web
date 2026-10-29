@@ -104,15 +104,20 @@ interface Draft {
   locked: boolean;
   submission: {
     accountId: string;
+    accountEpoch: number;
     /** Creation retries retain the original draft; confirm owns final choices. */
     initialLibraryIds: string[];
-    removalRevision: string;
+    removalRevision: string | null;
     upload: Schema<"UploadRequired"> | null;
     bytesUploaded: boolean;
-    confirmation: Schema<"ConfirmUploadRequest"> | null;
+    createUncertain: boolean;
+    createOutcomeUnknown: boolean;
+    confirmationUncertain: boolean;
+    confirmation: Schema<"AcquireCaptureRequest"> | Schema<"RecoverCaptureRequest"> | null;
+    binding: Schema<"CreateCaptureRequest">["capture_binding"];
   } | null;
   /** Frozen with the article bytes; null is an unsigned preview or a document. */
-  captureTarget: (CaptureTarget & { accountId: string }) | null;
+  captureTarget: (CaptureTarget & { accountId: string; accountEpoch: number }) | null;
   /** what a save sends; a document's arrive with its first save */
   bytes: {
     kind: "web_article" | DocumentKind;
@@ -124,10 +129,12 @@ interface Draft {
 }
 
 let token: string | null = null;
+let accountEpoch = 0;
 let session: (ExtensionSession & { client: Nexus }) | null = null;
 let revocationFailure: CaptureFailure | null = null;
 let draft: Draft | null = null;
 let unsupported: string | null = null;
+let checkingFailed = false;
 let active: { controller: AbortController; done: Promise<void> } | null = null;
 /** `active` waits for an origin grant: a repeated command may take it over */
 let awaitingGrant = false;
@@ -170,7 +177,9 @@ browser.runtime.onConnect.addListener((port) => {
       // justify-type-assertion: this sender and port belong to the same extension build
       const sent = message as ViewCommand;
       view.acknowledged = sent.sequence;
-      if (draft?.id !== sent.draftId || session?.user_id !== sent.accountId) {
+      if (draft?.id !== sent.draftId || session?.user_id !== sent.accountId ||
+          (draft.target.kind === "article" && draft.captureTarget?.accountEpoch !== accountEpoch) ||
+          (draft.submission !== null && draft.submission.accountEpoch !== accountEpoch)) {
         pushState(port, failure("E_CAPTURE_CHANGED", "This capture or account changed. Open the chooser again.").failure);
         return;
       }
@@ -180,6 +189,14 @@ browser.runtime.onConnect.addListener((port) => {
           return;
         }
         setDraft({ ...draft, destinations: setDestination(draft.destinations, sent) });
+      } else if (sent.kind === "set_recovery_target") {
+        if (draft.locked || active !== null || draft.view.kind !== "article" || !draft.view.webChoice || draft.captureTarget === null || draft.captureTarget.accountId !== sent.accountId || draft.captureTarget.accountEpoch !== accountEpoch) {
+          pushState(port, failure("E_CAPTURE_LOCKED", "this capture cannot be changed now.").failure);
+          return;
+        }
+        const candidate = sent.candidate;
+        setDraft({ ...draft, captureTarget: { ...draft.captureTarget, capture_binding: candidate?.binding ?? null, target_summary: candidate?.summary ?? null },
+          view: { ...draft.view, purpose: candidate === null ? { kind: "New" } : { kind: "Recovery", candidate } } });
       } else {
         // exclusive claims its slot synchronously: every earlier delta is now
         // applied, and every later one is refused before save's first await.
@@ -216,6 +233,22 @@ async function handle(sent: Command): Promise<CommandResult> {
         const snapshot = await requireSession().client.destinations();
         return { kind: "destinations", snapshot };
       }
+      case "list_recovery_targets": {
+        const current = requireDraft();
+        const account = requireSession();
+        if (current.id !== sent.draftId || account.user_id !== sent.accountId || current.captureTarget?.accountId !== sent.accountId || current.captureTarget.accountEpoch !== accountEpoch)
+          throw failure("E_CAPTURE_CHANGED", "this capture or account changed.");
+        const page = await account.client.recoveryTargets(current.target.url, sent.q, sent.cursor);
+        if (draft?.id !== sent.draftId || session !== account) throw failure("E_CAPTURE_CHANGED", "this capture or account changed.");
+        return { kind: "recovery_targets", page };
+      }
+      case "retry_checking":
+        await activate();
+        break;
+      case "stop_checking":
+        await interrupt();
+        setDraft(null);
+        break;
       case "login":
         await login();
         break;
@@ -241,7 +274,7 @@ async function handle(sent: Command): Promise<CommandResult> {
     }
     return { kind: "state", state: await viewState() };
   } catch (error) {
-    return { kind: "failure", failure: await describe(error, sent.kind === "list_destinations" ? credential : token) };
+    return { kind: "failure", failure: await describe(error, sent.kind === "login" ? token : credential) };
   }
 }
 
@@ -286,16 +319,21 @@ async function interrupt(): Promise<void> {
     phase === "uploading" ||
     phase === "confirming"
   ) {
+    const submission = draft?.submission;
+    if (submission && submission.confirmation !== null) submission.confirmationUncertain = true;
+    if (submission?.createUncertain) submission.createOutcomeUnknown = true;
     setPhase({ kind: "failed", failure: INTERRUPTED,
-      recovery: (draft?.submission?.confirmation ?? null) !== null ? "Check" : "Retry" });
+      recovery: (draft?.submission?.confirmation ?? null) !== null || draft?.submission?.createUncertain === true ? "Check" : "Retry" });
   }
 }
 
 // --- view state ----------------------------------------------------------------
 
 async function viewState(): Promise<ViewState> {
-  const needsRecapture = draft?.target.kind === "article" &&
-    (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id);
+  const needsRecapture = draft !== null && (
+    draft.submission !== null && (draft.submission.accountId !== session?.user_id || draft.submission.accountEpoch !== accountEpoch) ||
+    draft.target.kind === "article" && (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id || draft.captureTarget.accountEpoch !== accountEpoch)
+  );
   const state = {
     account:
       session === null
@@ -319,6 +357,7 @@ async function viewState(): Promise<ViewState> {
             needsRecapture,
           },
     unsupported,
+    checkingFailed,
   };
   return { ...state, requiredOrigins: await requiredOrigins() };
 }
@@ -345,9 +384,10 @@ function pushState(failedPort?: browser.runtime.Port, failure: CaptureFailure | 
     .catch(() => undefined);
 }
 
-function setDraft(next: Draft | null, reason: string | null = null): void {
+function setDraft(next: Draft | null, reason: string | null = null, failedCheck = false): void {
   draft = next;
   unsupported = next === null ? reason : null;
+  checkingFailed = next === null && failedCheck;
   pushState();
 }
 
@@ -453,6 +493,7 @@ async function ensureSession(signal?: AbortSignal): Promise<void> {
 }
 
 async function forgetCredential(): Promise<void> {
+  accountEpoch += 1;
   await browser.storage.local.remove(CREDENTIAL_KEY);
   token = null;
   session = null;
@@ -599,12 +640,20 @@ async function activate(): Promise<void> {
     let reply: ContentReply;
     try {
       const account = session;
-      captureTarget = account === null ? null : {
-        ...await account.client.captureTarget(url, signal),
-        accountId: account.user_id,
-      };
+      const credential = token;
+      const epoch = accountEpoch;
+      try {
+        captureTarget = account === null ? null : {
+          ...await account.client.captureTarget(url, signal), accountId: account.user_id, accountEpoch: epoch,
+        };
+        if (session !== account || accountEpoch !== epoch) throw failure("E_CAPTURE_TARGET_CHANGED", "capture this page again for this account.");
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        await describe(error, credential);
+        return setDraft(null, "retry checking before saving.", true);
+      }
       reply = await injection.request({ kind: "extract", source_url: url,
-        x_article: captureTarget !== null && captureTarget.x_article_binding !== null });
+        x_article: captureTarget !== null && captureTarget.capture_binding?.kind === "XArticle" });
     } finally {
       injection.close();
     }
@@ -618,16 +667,25 @@ async function activate(): Promise<void> {
     const bytes = serializePacket(reply.packet);
     // a url may carry signed access parameters: the host stands in for a title
     const host = new URL(reply.packet.url).hostname;
+    let title = reply.packet.title || host;
+    if (title === reply.packet.url) {
+      const titleUrl = new URL(title);
+      title = `${titleUrl.hostname}${titleUrl.pathname}`;
+    }
     setDraft({
       id: crypto.randomUUID(),
       target: { kind: "article", windowId, url: reply.packet.url },
       view: {
         kind: "article",
-        title: reply.packet.title || host,
+        title,
         host,
         previewText: reply.previewText,
-        replacement: captureTarget?.x_article_binding?.native_target
-          ? { title: captureTarget.target_title } : null,
+        purpose: captureTarget?.capture_binding?.kind === "WebRecovery" && captureTarget.target_summary !== null
+          ? { kind: "Recovery", candidate: { binding: captureTarget.capture_binding, summary: captureTarget.target_summary } }
+          : captureTarget?.capture_binding?.kind === "XArticle" && captureTarget.capture_binding.target !== null
+            ? { kind: "Replacement", title: captureTarget.target_summary?.title ?? null } : { kind: "New" },
+        webMatch: captureTarget?.web_match ?? "None",
+        webChoice: captureTarget?.capture_binding?.kind !== "XArticle",
       },
       phase: { kind: "draft" },
       destinations: [],
@@ -831,7 +889,7 @@ async function review(signal: AbortSignal): Promise<void> {
     throw failure("E_CAPTURE_PHASE", "There is no save to review.");
   }
   const account = requireSession();
-  if (current.submission.accountId !== account.user_id) {
+  if (current.submission.accountId !== account.user_id || current.submission.accountEpoch !== accountEpoch) {
     throw failure("E_CAPTURE_TARGET_CHANGED", "Capture this page again for this account.");
   }
   await awaitOrigins(signal);
@@ -861,21 +919,32 @@ async function save(signal: AbortSignal): Promise<void> {
   setDraft({ ...requireDraft(), locked: true });
   try {
     const current = requireDraft();
-    if ((current.submission !== null && current.submission.accountId !== accountId) ||
+    if ((current.submission !== null && (current.submission.accountId !== accountId || current.submission.accountEpoch !== accountEpoch)) ||
         (current.target.kind === "article" &&
-        (current.captureTarget === null || current.captureTarget.accountId !== accountId))) {
+        (current.captureTarget === null || current.captureTarget.accountId !== accountId || current.captureTarget.accountEpoch !== accountEpoch))) {
       throw failure("E_CAPTURE_TARGET_CHANGED", "Capture this page again before saving it to this account.");
     }
     if (current.submission === null) {
-      const snapshot = await client.destinations(signal);
-      setDraft({ ...requireDraft(), submission: {
+      const binding = current.captureTarget?.capture_binding ?? null;
+      if (current.view.kind === "article" && current.view.webMatch === "Ambiguous" && binding === null)
+        throw failure("E_CAPTURE_TARGET_CHANGED", "choose the import to finish.");
+      setDraft({ ...current, submission: {
         accountId,
-        initialLibraryIds: current.destinations.map(item => item.id),
-        removalRevision: snapshot.removal_revision,
+        accountEpoch,
+        initialLibraryIds: binding?.kind === "WebRecovery" ? [] : current.destinations.map(item => item.id),
+        binding,
+        removalRevision: null,
         upload: null,
         bytesUploaded: false,
+        createUncertain: false,
+        createOutcomeUnknown: false,
+        confirmationUncertain: false,
         confirmation: null,
       } });
+    }
+    if (requireDraft().submission!.binding?.kind !== "WebRecovery" && requireDraft().submission!.removalRevision === null) {
+      const snapshot = await client.destinations(signal);
+      requireDraft().submission!.removalRevision = snapshot.removal_revision;
     }
     let bytes = requireDraft().bytes;
     if (bytes === null) {
@@ -921,11 +990,12 @@ async function save(signal: AbortSignal): Promise<void> {
         `This ${bytes.kind} is larger than ${megabytes} MB.`,
       );
     }
-    const { id, target, destinations, captureTarget, submission } = requireDraft();
+    const { id, target, destinations, submission } = requireDraft();
     if (submission === null) throw new Error("Capture submission was not frozen.");
     let answer: UploadAnswer;
     if (!submission.bytesUploaded) {
       setPhase({ kind: "uploading" });
+      submission.createUncertain = true;
       answer = await client.create(
         {
           id,
@@ -935,11 +1005,13 @@ async function save(signal: AbortSignal): Promise<void> {
           content_type: CONTENT_TYPE[bytes.kind],
           size_bytes: bytes.sizeBytes,
           sha256: bytes.sha256,
-          x_article_binding: captureTarget?.x_article_binding ?? null,
+          capture_binding: submission.binding,
           library_ids: submission.initialLibraryIds,
         },
         signal,
       );
+      submission.createUncertain = false;
+      submission.createOutcomeUnknown = false;
       if (answer.kind === "UploadRequired") {
         submission.upload = answer;
         await putBytes(answer, bytes.blob, signal);
@@ -950,14 +1022,12 @@ async function save(signal: AbortSignal): Promise<void> {
       answer = submission.upload;
     }
     if (answer.kind === "UploadRequired") {
-      submission.confirmation ??= {
-        generation: answer.generation,
-        expected_removal_revision: submission.removalRevision,
-        destinations: destinations.map(item => ({
-          library_id: item.id,
-          expected_order_revision: item.order_revision,
-        })),
-      };
+      if (submission.binding?.kind !== "WebRecovery" && submission.removalRevision === null) throw new Error("capture has no placement revision");
+      submission.confirmation ??= submission.binding?.kind === "WebRecovery"
+        ? { kind: "Recover", generation: answer.generation }
+        : { kind: "Acquire", generation: answer.generation,
+            expected_removal_revision: submission.removalRevision!,
+            destinations: destinations.map(item => ({ library_id: item.id, expected_order_revision: item.order_revision })) };
       setPhase({ kind: "confirming" });
       answer = await client.confirm(id, submission.confirmation, signal);
     }
@@ -968,7 +1038,9 @@ async function save(signal: AbortSignal): Promise<void> {
       );
     }
     const openUrl = answer.current_placements === null ? null
-      : `${__NEXUS_ORIGIN__}/media/${encodeURIComponent(answer.media_id)}`;
+      : submission.binding?.kind === "WebRecovery"
+        ? `${__NEXUS_ORIGIN__}/imports?selected=${encodeURIComponent(`media:${answer.media_id}`)}`
+        : `${__NEXUS_ORIGIN__}/media/${encodeURIComponent(answer.media_id)}`;
     setDraft({
       ...requireDraft(),
       phase: { kind: "saved", openUrl },
@@ -985,7 +1057,9 @@ async function save(signal: AbortSignal): Promise<void> {
     const current = requireDraft();
     const confirming = (current.submission?.confirmation ?? null) !== null;
     let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
-    if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
+    if (current.submission?.confirmationUncertain || current.submission?.createOutcomeUnknown) {
+      recovery = "Check";
+    } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
       if (current.submission === null) throw new Error("Refused confirmation has no owner.");
       current.submission.confirmation = null;
       recovery = "Review";
@@ -993,14 +1067,18 @@ async function save(signal: AbortSignal): Promise<void> {
                shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED" ||
                shown.code === "E_WIRE_MISMATCH") {
       recovery = "Recapture";
-    } else if (confirming && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
+    } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
       recovery = "Check";
     } else {
       recovery = TERMINAL.has(shown.code) ? "Discard" : "Retry";
     }
+    if (recovery === "Check" && current.submission !== null) {
+      if (confirming) current.submission.confirmationUncertain = true;
+      if (current.submission.createUncertain) current.submission.createOutcomeUnknown = true;
+    }
     setPhase({
       kind: "failed",
-      failure: recovery === "Review" ? { ...shown, message: "save needs review. review your choices and save again." }
+      failure: shown.code === "E_CAPTURE_TARGET_CHANGED" ? { ...shown, message: "this import changed. capture the page again." } : recovery === "Review" ? { ...shown, message: "save needs review. review your choices and save again." }
         : shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" ? { ...shown, message: "upload expired. capture the page again." } : shown,
       recovery,
     });

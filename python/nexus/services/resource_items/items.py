@@ -29,6 +29,7 @@ from nexus.auth.permissions import highlight_readability_sql, requested_media_id
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.reader_excerpts import ExcerptMode, ExcerptPreview, ExcerptProjection
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
@@ -49,9 +50,18 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media import media_summaries
 from nexus.services.notes import page_title_sql
+from nexus.services.reader_excerpts import (
+    plain_excerpt,
+    project_excerpts,
+    read_captures,
+    text_parts,
+)
 from nexus.services.resource_graph.liveness import ref_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.locations import ScopedMediaPassage, media_passages
+from nexus.services.resource_items.locations import (
+    ScopedMediaPassage,
+    media_passages,
+)
 from nexus.services.resource_items.routing import (
     _activations_from_resolved_passages,
 )
@@ -139,25 +149,22 @@ def _trim_excerpt(clipped: str, *, tail: bool) -> str:
 
 
 def passage_body(
-    exact: str,
-    prefix: str | None = None,
-    suffix: str | None = None,
+    projection: ExcerptProjection,
     color: HighlightColor | None = None,
     *,
-    limit: int = 600,
+    reading_ref: str | None = None,
+    captured: bool = True,
 ) -> PassageResourceBodyOut:
-    selection = excerpt(exact, limit)
     return PassageResourceBodyOut(
-        exact=selection,
-        prefix=excerpt(prefix, 48, tail=True) if prefix else None,
-        suffix=excerpt(suffix, 48) if suffix and not selection.truncated_after else None,
+        excerpt=projection.view,
+        capture_revision=projection.capture_revision if captured else None,
+        reading_ref=reading_ref,
         color=color,
     )
 
 
-def passage_label(selection: ExcerptOut) -> str:
-    """The resource label for an already-bounded passage excerpt."""
-    return selection.text[:120] or "Passage"
+def passage_label(value: str) -> str:
+    return excerpt(value, 120).text or "Passage"
 
 
 def resource_items_out(
@@ -166,6 +173,7 @@ def resource_items_out(
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
     reading_media_ids: Mapping[str, UUID] | None = None,
+    excerpt_mode: ExcerptMode = "compact",
 ) -> list[ResourceItemOut]:
     """Batch one reading per canonical ref; absent entries use authorized preference.
 
@@ -185,7 +193,9 @@ def resource_items_out(
                 {"viewer": viewer_id, "refs": resource_refs, "anchors": anchor_ids},
             )
         )
-    rows, passages = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
+    rows, passages = _rows(
+        db, viewer_id, refs, reading_media_ids=reading_media_ids, excerpt_mode=excerpt_mode
+    )
     summaries = media_summaries(
         db,
         viewer_id=viewer_id,
@@ -265,7 +275,15 @@ def _resource_item_out(
             body = _body(row, credits)
         if source is not None and row.get("location_label"):
             source = source.model_copy(update={"location_label": row["location_label"]})
-        label = _body_label(body)
+        if body.kind == "passage":
+            projection = row["excerpt_projection"]
+            label = (
+                "table excerpt"
+                if projection.view.kind == "table_summary"
+                else passage_label(projection.text_parts.exact)
+            )
+        else:
+            label = _body_label(body)
         action_ref = (
             (row.get("owner_ref") or ref.uri)
             if ref.scheme
@@ -292,14 +310,34 @@ def _resource_item_out(
 
 
 def resource_item_out(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
+    db: Session,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    reading_media_id: UUID | None = None,
+    excerpt_mode: ExcerptMode = "compact",
+    expected_capture_revision: str | None = None,
 ) -> ResourceItemOut:
-    return resource_items_out(
+    item = resource_items_out(
         db,
         viewer_id=viewer_id,
         refs=[ref],
         reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
+        excerpt_mode=excerpt_mode,
     )[0]
+    if excerpt_mode == "full" and not item.missing:
+        from nexus.errors import ApiErrorCode, ConflictError
+
+        body = item.preview.body
+        if (
+            body.kind != "passage"
+            or expected_capture_revision is None
+            or body.capture_revision != expected_capture_revision
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Excerpt changed; reload the resource"
+            )
+    return item
 
 
 def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> set[str]:
@@ -363,16 +401,16 @@ def _body(
     kind = row.get("body_kind", "named")
     if kind == "passage":
         return passage_body(
-            row.get("exact") or "",
-            row.get("prefix"),
-            row.get("suffix"),
+            row["excerpt_projection"],
             cast(HighlightColor | None, row.get("color")),
-            limit=limit,
+            reading_ref=row.get("reading_ref"),
+            captured=row.get("captured", False),
         )
     if kind == "note":
         if row["embed_ref"] is not None:
             return ReferenceResourceBodyOut(
                 target_ref=row["embed_ref"],
+                field=row["embed_field"],
                 label=excerpt(row["embed_label"], limit) if row.get("embed_label") else None,
             )
         prose = row.get("prose") or ""
@@ -413,7 +451,7 @@ def _body_label(body: ResourceBodyOut) -> str:
         case "named":
             return body.title
         case "passage":
-            return passage_label(body.exact)
+            return "Table excerpt" if body.excerpt.kind == "table_summary" else "Passage"
         case "prose":
             return body.excerpt.text[:120] or "Note"
         case "images":
@@ -430,6 +468,7 @@ def _rows(
     refs: Sequence[ResourceRef],
     *,
     reading_media_ids: Mapping[str, UUID] | None = None,
+    excerpt_mode: ExcerptMode = "compact",
 ) -> tuple[dict[str, dict[str, Any]], dict[str, ScopedMediaPassage]]:
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
@@ -439,7 +478,11 @@ def _rows(
         ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
     passages = media_passages(
-        db, viewer_id=viewer_id, refs=refs, reading_media_ids=reading_media_ids
+        db,
+        viewer_id=viewer_id,
+        refs=refs,
+        reading_media_ids=reading_media_ids,
+        include_excerpts=excerpt_mode == "full",
     )
     canonical_schemes = {
         "highlight",
@@ -453,9 +496,11 @@ def _rows(
     for ref in refs:
         row = out.get(ref.uri)
         if ref.scheme in canonical_schemes and (
-            ref.scheme
-            in {"highlight", "fragment", "reader_apparatus_item", "oracle_passage_anchor"}
-            or row is not None
+            ref.scheme in {"fragment", "reader_apparatus_item", "oracle_passage_anchor"}
+            or ref.scheme == "highlight"
+            and not (row is not None and row.get("owned"))
+            or ref.scheme != "highlight"
+            and row is not None
             and str(row.get("owner_ref", "")).startswith("media:")
         ):
             out.pop(ref.uri, None)
@@ -464,13 +509,130 @@ def _rows(
             out[ref.uri] = {
                 "id": ref.id,
                 "body_kind": "passage",
-                "exact": passage.quote.exact,
+                # Full matching/capture authority remains in passages. These rows
+                # carry bounded display evidence, as their SQL producers do.
+                "exact": passage.quote.exact[:601],
+                "preview_omitted_after": len(passage.quote.exact) > 601,
                 "prefix": passage.quote.prefix,
                 "suffix": passage.quote.suffix,
                 "color": passage.quote.color,
                 "owner_ref": passage.owner.uri,
                 "location_label": row.get("location_label") if row is not None else None,
+                "excerpt_preview": row.get("excerpt_preview") if row is not None else None,
             }
+    captures = read_captures(
+        db,
+        [
+            ref.uri
+            for ref in refs
+            if ref.uri in out
+            and out[ref.uri].get("body_kind") == "passage"
+            and not (
+                excerpt_mode == "compact"
+                and out[ref.uri].get("excerpt_preview") is not None
+                and (
+                    passages.get(ref.uri) is None
+                    or passages[ref.uri].excerpt_scope in (None, {"kind": "capture"})
+                )
+            )
+        ],
+    )
+    subjects = []
+    requests = []
+    for ref in refs:
+        row = out.get(ref.uri)
+        if row is None or row.get("body_kind") != "passage":
+            continue
+        passage = passages.get(ref.uri)
+        captured = captures.get(ref.uri)
+        if (
+            excerpt_mode == "compact"
+            and row.get("excerpt_preview") is not None
+            and (passage is None or passage.excerpt_scope in (None, {"kind": "capture"}))
+        ):
+            preview = ExcerptPreview.model_validate(row["excerpt_preview"])
+            row["excerpt_projection"] = ExcerptProjection(
+                view=preview.excerpt, text_parts=None, capture_revision=preview.capture_revision
+            )
+            row["captured"] = True
+            row["reading_ref"] = (
+                passage.owner.uri
+                if passage is not None and passage.owner.scheme == "media"
+                else None
+            )
+            continue
+        if captured is None:
+            if ref.scheme in ("highlight", "passage_anchor"):
+                raise AssertionError(
+                    "Canonical authored capture is missing"
+                )  # justify-defect: v2 authored identities always retain their canonical capture.
+
+            frozen = plain_excerpt(
+                row.get("exact") or "",
+                row.get("prefix"),
+                None if row.get("preview_omitted_after") else row.get("suffix"),
+            )
+            captured = {
+                "source_ref": row.get("owner_ref"),
+                "capture": {
+                    "kind": "passage",
+                    "value": {
+                        "quote_exact": row.get("exact") or "",
+                        "publication": None,
+                        "locator": None,
+                        "excerpt": frozen.model_dump(mode="json"),
+                    },
+                },
+            }
+        row["captured"] = ref.uri in captures
+        row["reading_ref"] = (
+            passage.owner.uri if passage is not None and passage.owner.scheme == "media" else None
+        )
+        scope = (
+            passage.excerpt_scope
+            if passage is not None and passage.excerpt_scope is not None
+            else {"kind": "capture"}
+        )
+        requests.append({**captured, "mode": excerpt_mode, "scope": scope})
+        subjects.append(row)
+    for row, projection in zip(subjects, project_excerpts(requests), strict=True):
+        if (
+            not row["captured"]
+            and row.get("preview_omitted_after")
+            and projection.view.kind == "content"
+        ):
+            projection = projection.model_copy(
+                update={
+                    "view": projection.view.model_copy(
+                        update={"selected_truncated_after": True, "omitted_after": True}
+                    )
+                }
+            )
+        row["excerpt_projection"] = projection
+    bounded = [
+        row
+        for row in out.values()
+        if row.get("excerpt_projection") is not None
+        and row["excerpt_projection"].text_parts is None
+        and row["excerpt_projection"].view.kind == "content"
+    ]
+    for row, parts in zip(
+        bounded, text_parts([row["excerpt_projection"].view.body for row in bounded]), strict=True
+    ):
+        row["excerpt_projection"] = row["excerpt_projection"].model_copy(
+            update={"text_parts": parts}
+        )
+    capture_fragments = [ref.id for ref in refs if ref.scheme == "fragment" and ref.uri in passages]
+    if capture_fragments:
+        for row in db.execute(
+            text("""SELECT f.id,COALESCE(c.payload #>> '{content,author,name}',
+                c.payload->>'attribution_text',c.payload->>'parent_title') AS title
+                FROM fragments f JOIN x_post_captures c ON c.id=f.x_post_capture_id
+                WHERE f.id=ANY(:ids)"""),
+            {"ids": capture_fragments},
+        ):
+            if row.title:
+                out[f"fragment:{row.id}"]["title"] = row.title
     return out, passages
 
 
@@ -510,6 +672,7 @@ SELECT n.id, 'note' AS body_kind, n.body_pm_json #>> '{{attrs,presentation}}' AS
        left(COALESCE(parts.prose, ''), 601) AS prose, COALESCE(parts.image_count, 0) AS image_count,
        parts.image_alts,
        CASE WHEN {_SOLE_EMBED} THEN n.body_pm_json #>> '{{content,0,attrs,resource_ref}}' END AS embed_ref,
+       CASE WHEN {_SOLE_EMBED} THEN n.body_pm_json #>> '{{content,0,attrs,field}}' END AS embed_field,
        CASE WHEN {_SOLE_EMBED} THEN left(n.body_pm_json #>> '{{content,0,attrs,label}}', 601) END AS embed_label
 FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE
 WHERE n.id = ANY(:ids) AND n.user_id = :viewer_id AND n.authored_visible
@@ -526,9 +689,9 @@ _QUERIES = {
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "external_snapshot": "SELECT id, title FROM resource_external_snapshots WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
-    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
+    "highlight": f"SELECT h.id, h.user_id=:viewer_id AS owned, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, h.excerpt_preview, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND ((h.user_id=:viewer_id AND h.authored_visible) OR {highlight_readability_sql('h')})",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
-    "passage_anchor": f"SELECT pa.id, 'passage' AS body_kind, left(pa.selector #>> '{{quote,exact}}',601) AS exact, right(pa.selector #>> '{{quote,prefix}}',49) AS prefix, left(pa.selector #>> '{{quote,suffix}}',49) AS suffix, pa.owner_scheme || ':' || pa.owner_id AS owner_ref FROM passage_anchors pa WHERE pa.id = ANY(:ids) AND pa.user_id = :viewer_id AND {_PASSAGE_LIVE}",
+    "passage_anchor": f"SELECT pa.id, 'passage' AS body_kind, left(pa.selector #>> '{{quote,exact}}',601) AS exact, right(pa.selector #>> '{{quote,prefix}}',49) AS prefix, left(pa.selector #>> '{{quote,suffix}}',49) AS suffix, pa.excerpt_preview, pa.owner_scheme || ':' || pa.owner_id AS owner_ref FROM passage_anchors pa WHERE pa.id = ANY(:ids) AND pa.user_id = :viewer_id AND {_PASSAGE_LIVE}",
     "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
     "oracle_passage_anchor": "SELECT a.id, 'passage' AS body_kind, left(a.quote,601) AS exact, a.display_label AS location_label, 'media:' || s.media_id AS owner_ref FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id WHERE a.id = ANY(:ids)",
 }
@@ -541,8 +704,12 @@ for _scheme, _table, _body_column in (
     ] = f"""SELECT t.id, 'passage' AS body_kind, left(t.{_body_column},601) AS exact,
         t.owner_kind || ':' || t.owner_id AS owner_ref
         FROM {_table} t LEFT JOIN note_blocks nb ON nb.id = t.owner_id AND t.owner_kind = 'note_block'
+        LEFT JOIN highlights h ON h.id=t.owner_id AND t.owner_kind='highlight'
+        LEFT JOIN content_index_states cis ON cis.owner_kind=t.owner_kind AND cis.owner_id=t.owner_id
         WHERE t.id = ANY(:ids) AND ((t.owner_kind = 'media' AND t.owner_id IN {_VISIBLE})
-          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id AND nb.authored_visible))"""
+          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id AND nb.authored_visible)
+          OR (t.owner_kind='highlight' AND h.user_id=:viewer_id AND h.authored_visible
+              AND h.annotation_body_pm_json IS NOT NULL AND cis.lexical_revision=cis.revision))"""
 
 
 def preview_text(item: ResourceItemOut) -> str:
@@ -552,7 +719,11 @@ def preview_text(item: ResourceItemOut) -> str:
         case "media":
             return body.media_summary.title
         case "passage":
-            return body.exact.text
+            return (
+                "table excerpt"
+                if body.excerpt.kind == "table_summary"
+                else text_parts([body.excerpt.body])[0].exact
+            )
         case "prose":
             return body.excerpt.text
         case "named":

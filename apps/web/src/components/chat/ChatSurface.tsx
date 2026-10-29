@@ -14,7 +14,6 @@ import {
   type RefObject,
 } from "react";
 import { ArrowDown } from "lucide-react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { CommandState } from "@/lib/chat/commands";
@@ -97,6 +96,7 @@ const ChatSurface = forwardRef<
           role="region"
           tabIndex={0}
           aria-label="Chat conversation"
+          aria-busy={loading}
           onScroll={scroll.onScroll}
           onFocus={scroll.onFocus}
           onWheel={scroll.onUserScroll}
@@ -106,9 +106,6 @@ const ChatSurface = forwardRef<
           onClick={scroll.onClick}
         >
           <div ref={transcript} className={styles.transcript} role="log" aria-label="Chat messages">
-            {loading && view.path.length === 0 ? (
-              <FeedbackNotice content={{ tone: "Info", title: "Loading conversation..." }} announcement="None" />
-            ) : null}
             {roots.length ? (
               <div className={styles.rootAlternatives}>
                 <AlternativeSelector options={roots} />
@@ -135,7 +132,7 @@ const ChatSurface = forwardRef<
             </div>
           ) : null}
         </div>
-        <div className={styles.composerSlot} onWheel={scroll.onComposerWheel}>
+        <div className={styles.composerSlot} data-has-messages={view.path.length > 0 || undefined} onWheel={scroll.onComposerWheel}>
           {composer}
         </div>
         <MessageDialogs request={dialog} messages={view.messages} onClose={closeDialog} />
@@ -161,7 +158,7 @@ const Row = memo(function Row({ message, ordinal, live, latest, siblings, engage
   return (
     <div className={styles.message} data-message-id={message.id} data-role="user" role="group" aria-label="Your message">
       <div className={styles.userPrompt}>
-        {quote ? <QuotedPassage quote={{ kind: "Sent", selection: quote }} occurrenceKey={`quote:${message.id}`} /> : null}
+        {quote ? <QuotedPassage quote={{ kind: "Sent", selection: quote }} /> : null}
         <span
           className={styles.userBody}
           data-pane-find-block="true"

@@ -1,19 +1,17 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { Download, LogOut } from "lucide-react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { useFeedback } from "@/components/feedback/Feedback";
-import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
-import { readDeviceStartup, sessionSignIn, sessionSignOut } from "@/lib/native/client";
+import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
+import { useAuthoredSignIn, useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
 import { prepareAuthoredSignOut } from "@/lib/authored/signOut";
 import { importAttentionDescription } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -128,14 +126,12 @@ export default function AccountMenu(props: {
   align: "start" | "center" | "end";
   renderTrigger: (
     trigger: Parameters<NonNullable<ComponentProps<typeof ActionMenu>["renderTrigger"]>>[0],
-    attention: ReactNode,
+    accountMark: ReactElement,
   ) => ReactNode;
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
   const workspace = useWorkspaceStore();
-  const feedback = useFeedback();
-  const [signingIn, setSigningIn] = useState(false);
-  const signInRunning = useRef(false);
+  const { signIn, busy: signingIn } = useAuthoredSignIn();
   const signOut = useContext(SignOutContext);
   const { summary } = useImports();
   const status = useAuthoredStatus();
@@ -177,26 +173,6 @@ export default function AccountMenu(props: {
     ),
   });
 
-  const signIn = async () => {
-    if (signInRunning.current) return;
-    if (!installedApp) {
-      window.location.assign(loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)));
-      return;
-    }
-    signInRunning.current = true;
-    setSigningIn(true);
-    try {
-      const result = await sessionSignIn();
-      if (result === "DifferentAccount") feedback.receipt({ tone: "Warning", title: "use the account already open here", message: "sign in with the account already open on this device to continue syncing." });
-      else if (result === "Failed") feedback.receipt({ tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." });
-    } catch (error) {
-      reportError(error);
-      feedback.receipt({ tone: "Warning", title: "couldn’t sign in", message: "your notes remain saved on this device. try signing in again." });
-    } finally {
-      signInRunning.current = false;
-      setSigningIn(false);
-    }
-  };
 
   const options: ActionDescriptor[] = [
     syncStatusOption(status, cause, { onSignIn: () => void signIn(), busy: signingIn || signOut.busy }),
@@ -206,7 +182,7 @@ export default function AccountMenu(props: {
     {
       kind: "command",
       id: "signout",
-      label: "Sign Out",
+      label: "Sign out",
       tone: "danger",
       icon: <LogOut size={16} aria-hidden="true" />,
       separatorBefore: true,
@@ -241,7 +217,10 @@ export default function AccountMenu(props: {
         renderTrigger={(trigger) => props.renderTrigger({
           ...trigger,
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
-        }, <span className={accountStyles.attention} data-visible={description !== null} aria-hidden="true" />)}
+        }, <span className={accountStyles.mark} aria-hidden="true">
+          <CircleUser size={20} />
+          <span className={accountStyles.attention} data-visible={description !== null} />
+        </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
       />
       <span id={descriptionId} className="sr-only">{description === null ? syncStatusText(status, cause) : `${syncStatusText(status, cause)}; ${description}`}</span>

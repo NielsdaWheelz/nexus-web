@@ -2,26 +2,24 @@
 
 import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
-  createContext,
-  useCallback,
   useContext,
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
-import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
-import { hasActiveModal, OverlayContext } from "@/lib/ui/overlay";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
+import { hasActiveModal, OverlayContext, useInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { createTransientFeedback } from "./transient";
-import WorkspaceFeedback from "./WorkspaceFeedback";
+import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
 import styles from "./Feedback.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
@@ -36,8 +34,8 @@ export interface FeedbackContent {
 }
 /** commandKey names an exact command, so a held control never silently changes meaning. */
 export type FeedbackAction =
-  | { label: string; onClick: (intent: OpenIntent) => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never; onActivate?: never }
-  | { label: string; href: string; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
+  | { label: string; onClick: (intent: OpenIntent) => void; busy?: boolean; disabledReason?: string; commandKey?: string; copiedOccurrence?: object; href?: never; onActivate?: never }
+  | { label: string; href: string; target?: "_blank"; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
 export type FeedbackActions = readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
 export interface FeedbackProps {
   content: FeedbackContent;
@@ -55,49 +53,117 @@ export interface FeedbackContextValue {
    * The returned retraction withdraws it, waiting or visible, once its state resolves. */
   receipt(content: FeedbackContent, action?: FeedbackAction): () => void;
 }
-const FeedbackContext = createContext<ReturnType<typeof createTransientFeedback> | null>(null);
-const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);
+/** A host owns its mounted contributions; only its presenters subscribe. */
+export function FeedbackScope({ host, children }: { host: FeedbackHost; children: ReactNode }) {
+  const [scope] = useState<FeedbackScopeValue>(() => {
+    const value: FeedbackScopeValue = { ...createFeedbackSet(), host, recovery: null, disclosure: null, disclosures: new Set(), disclosureTargets: new Set(), recoveryOpen: false, control: null,
+      eligible: () => hostEligible(value), mayRestoreFocus: () => hostEligible(value), returnFocus: () => value.host.returnFocus() };
+    return value;
+  });
+  useLayoutEffect(() => { scope.host = host; scope.changed(); }, [scope, host]);
+  return <Scope value={scope}>{children}</Scope>;
+}
 
-/** The existing pane projects its focus target and announcement permission. */
-export function FeedbackScope({ active, returnFocus, children }: {
-  active: boolean;
-  returnFocus: () => HTMLElement | null;
-  children: ReactNode;
+/** Presentation identity follows the owner's unresolved condition, including its retry. */
+export function useFeedbackOccurrence(active: boolean, identity?: unknown): object {
+  const [current, setCurrent] = useState(() => ({ active, identity, occurrence: {} }));
+  if (current.active === active && Object.is(current.identity, identity)) return current.occurrence;
+  const next = { active, identity, occurrence: active && (!current.active || !Object.is(current.identity, identity)) ? {} : current.occurrence };
+  setCurrent(next);
+  return next.occurrence;
+}
+
+export type FeedbackFailureProps = FeedbackNoticeProps & {
+  occurrence: object;
+  scope: "Local" | "Account";
+  announcementOccurrence?: object;
+};
+export function FeedbackFailure({ scope: placement, ...failure }: FeedbackFailureProps) {
+  const session = useContext(Session);
+  const scope = useContext(Scope);
+  const [token] = useState(() => ({}));
+  const owner = placement === "Account" ? session?.account : scope;
+  if (!session || !owner) throw new Error("feedback failure has no presentation owner");
+  useLayoutEffect(() => { owner.publish(token, failure); });
+  useLayoutEffect(() => () => owner.withdraw(token), [owner, token]);
+  return null;
+}
+export function FeedbackBusy({ pending, subject }: { pending: boolean; subject?: unknown }) {
+  const scope = useContext(Scope);
+  const token = useFeedbackOccurrence(true, subject);
+  useLayoutEffect(() => {
+    if (!scope) return;
+    scope.pending(token, pending);
+    return () => scope.pending(token, false);
+  }, [scope, token, pending]);
+  return null;
+}
+
+/** One permanently reserved control in the host's existing controls. */
+export function FeedbackRecoveryControl({ className, menu = false }: { className?: string; menu?: boolean }) {
+  const scope = useContext(Scope);
+  const session = useContext(Session);
+  if (!scope || !session) return null;
+  return <RecoveryControl scope={scope} session={session} className={className} menu={menu} />;
+}
+function RecoveryControl({ scope, session, className, menu }: {
+  scope: FeedbackScopeValue; session: ReturnType<typeof createFeedbackSession>; className?: string; menu: boolean;
 }) {
-  const currentActive = useRef(active);
-  currentActive.current = active;
-  const mayRestoreFocus = useCallback(() => currentActive.current, []);
-  const value = useMemo(() => ({ active, mayRestoreFocus, returnFocus }), [active, mayRestoreFocus, returnFocus]);
-  return <Scope value={value}>{children}</Scope>;
+  useInteractionOwner();
+  const local = useSyncExternalStore(scope.subscribe, scope.snapshot, scope.snapshot);
+  const account = useSyncExternalStore(session.account.subscribe, session.account.snapshot, session.account.snapshot);
+  const eligible = scope.eligible();
+  const failures = [...new Map([...local.failures, ...account.failures].map(failure => [failure.occurrence, failure])).values()];
+  const [open, setOpen] = useState(false);
+  if (open && failures.length === 0) setOpen(false);
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  const layer = useRef<import("@/lib/ui/overlay").Layer | null>(null);
+  useLayoutEffect(() => { scope.control = anchor; return () => { scope.control = null; }; }, [scope, anchor]);
+  useLayoutEffect(() => { scope.recovery = open ? layer.current : null; scope.recoveryOpen = open; scope.changed(); return () => { scope.recovery = null; scope.recoveryOpen = false; }; }, [scope, open]);
+  return <>
+    <Button ref={setAnchor} className={className} role={menu ? "menuitem" : undefined} tabIndex={menu ? -1 : undefined} iconOnly icon={eligible && failures.length ? <OctagonAlert /> : <span />}
+      aria-label="show recovery" tooltip={{ text: eligible && failures.length ? "show recovery" : "" }} aria-expanded={open && failures.length > 0} disabled={!eligible || !failures.length}
+      aria-busy={local.pending !== null || undefined} busyKey={local.pending} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
+    <FloatingActionSurface open={open && failures.length > 0} disclosure feedback interactionLayer={layer}
+      anchor={anchor} disclosureTrigger={anchor} align="end" placement="below" flip role="group" label="recovery" skipReturnFocus={() => !scope.eligible()}
+      className={styles.recovery} onDismiss={() => setOpen(false)}>
+      <div ref={element => { scope.disclosure = element; }} data-feedback-disclosure="true" className={styles.stack}>
+        {failures.map(failure => <ControlledSignal key={session.key(failure.occurrence)} failure={failure} />)}
+      </div>
+    </FloatingActionSurface>
+  </>;
+}
+export function ControlledSignal({ failure, onDismiss }: { failure: Failure; onDismiss?: () => void }) {
+  return <Signal {...failure} occurrence={failure.occurrence} announcement="None" className={styles.transientSignal}
+    disclosure="Anchored" onDismiss={onDismiss} />;
+}
+/** Speech belongs to the eligible scope, including when its card minimizes. */
+export function FailureAnnouncement({ failure, session }: { failure: Failure; session: ReturnType<typeof createFeedbackSession> }) {
+  const occurrence = failure.announcementOccurrence ?? failure.occurrence;
+  return session.acknowledged.get(failure.occurrence) !== occurrence && session.spoken.get(failure.occurrence) !== occurrence
+    ? <Announcement text={failure.content.title} level={failure.announcement} occurrence={occurrence}
+      onPublish={() => session.spoken.set(failure.occurrence, occurrence)} /> : null;
 }
 
 const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
 const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
 
 /** One account's presentation. The geometry provider is above this owner. */
-export function FeedbackProvider({ children, returnFocus }: {
-  children: ReactNode;
-  returnFocus?: () => HTMLElement | null;
-}) {
-  const [signals] = useState(createTransientFeedback);
-  useLayoutEffect(() => {
-    signals.resume();
-    return signals.dispose;
-  }, [signals]);
+export function FeedbackProvider({ children }: { children: ReactNode }) {
+  const [session] = useState(createFeedbackSession);
+  const signals = session.transient;
+  useLayoutEffect(() => { signals.resume(); return signals.dispose; }, [signals]);
   useEffect(() => {
     document.addEventListener("visibilitychange", signals.visibilityChanged);
     return () => document.removeEventListener("visibilitychange", signals.visibilityChanged);
   }, [signals]);
-  return <FeedbackContext value={signals}>
-    <div className={styles.viewport} data-workspace-feedback-root>{children}</div>
-    <WorkspaceFeedback signals={signals} fallbackFocus={returnFocus} />
-  </FeedbackContext>;
+  return <Session value={session}>{children}</Session>;
 }
 
 export function useFeedback(): FeedbackContextValue {
-  const signals = useContext(FeedbackContext);
-  if (!signals) throw new Error("useFeedback must be used within a FeedbackProvider");
-  return signals;
+  const session = useContext(Session);
+  if (!session) throw new Error("useFeedback must be used within a FeedbackProvider");
+  return session.transient;
 }
 
 export function FeedbackStatus(props: FeedbackProps) {
@@ -194,10 +260,10 @@ export function Signal({
           className={styles.control}
           aria-expanded={open}
           aria-controls={id}
-          aria-label={`details: ${content.title}`}
+          aria-label={`${open ? "show less" : "show more"}: ${content.title}`}
           onClick={() => changeExpanded(!open)}
         >
-          details
+          {open ? "show less" : "show more"}
           <ChevronDown size={14} aria-hidden="true" className={open ? `${styles.chevron} ${styles.expanded}` : styles.chevron} />
         </Button> : null}
         {onDismiss ? <Button
@@ -213,6 +279,7 @@ export function Signal({
     {disclosure === "Anchored" ? <FloatingActionSurface
       open={open}
       id={id}
+      feedback={scope !== null}
       disclosure
       anchor={summaryElement}
       disclosureTrigger={anchor}
@@ -225,7 +292,7 @@ export function Signal({
       onDismiss={() => changeExpanded(false)}
       skipReturnFocus={() => navigated.current}
     >{body}</FloatingActionSurface> : <div id={id} hidden={!open}>{body}</div>}
-    <Announcement text={content.title} level={scope?.active === false ? "None" : announcement} occurrence={announcementOccurrence} />
+    <Announcement text={content.title} level={scope !== null && !scope.eligible() ? "None" : announcement} occurrence={announcementOccurrence} />
   </article>;
 }
 
@@ -275,6 +342,8 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
     {shown.href !== undefined ? <ButtonLink
       {...events}
       href={shown.href}
+      target={shown.target}
+      rel={shown.target === "_blank" ? "noopener noreferrer" : undefined}
       className={styles.control}
       data-workspace-rich-target={shown.onActivate ? "true" : undefined}
       aria-disabled={blocked || undefined}
@@ -285,24 +354,34 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
     >{shown.label}</ButtonLink> : <Button
       {...events}
       className={styles.control}
+      icon={shown.href === undefined && shown.copiedOccurrence ? <Check /> : undefined}
+      reserveIcon
+      busyKey={action.commandKey ?? occurrence}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
       aria-describedby={reason ? `${contextId} ${reasonId}` : contextId}
       onClick={activate}
       onKeyDown={activate}
     >{shown.label}</Button>}
+    {shown.href === undefined && shown.copiedOccurrence ? <Announcement text="copied" level="Polite" occurrence={shown.copiedOccurrence} /> : null}
     {reason ? <p id={reasonId} className={styles.reason}>{reason}</p> : null}
   </div>;
 }
 
 /** Only the short fact is live; controls and disclosure never enter the live region. */
-export function Announcement({ text, level, deferred = false, occurrence }: {
-  text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object;
+export function Announcement({ text, level: requestedLevel, deferred = false, occurrence, onPublish }: {
+  text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object; onPublish?: () => void;
 }) {
+  const session = useContext(Session);
+  const scope = useContext(Scope);
+  useInteractionOwner();
+  const level = scope !== null && !scope.eligible() ? "None" : requestedLevel;
   // A new local occurrence keeps the live region empty for a rendered frame.
   const [spoken, setSpoken] = useState<{ text: string; occurrence?: object }>({ text: "" });
   const suppressed = useRef<{ text: string; occurrence?: object } | null>(null);
   const delivered = useRef<object | null>(null);
+  const publish = useRef(onPublish);
+  publish.current = onPublish;
   useEffect(() => {
     if (deferred) {
       suppressed.current = { text, occurrence };
@@ -311,21 +390,22 @@ export function Announcement({ text, level, deferred = false, occurrence }: {
     }
     if (suppressed.current?.text === text && suppressed.current.occurrence === occurrence) return;
     suppressed.current = null;
-    if (occurrence !== undefined && delivered.current === occurrence) return;
-    const next = { text: level === "None" ? "" : text, occurrence };
-    if (occurrence === undefined || level === "None") {
+    if (level === "None") { setSpoken({ text: "", occurrence }); return; }
+    if (occurrence !== undefined && (delivered.current === occurrence || session?.spoken.get(occurrence) === occurrence)) return;
+    const next = { text, occurrence };
+    if (occurrence === undefined) {
       setSpoken(next);
       return;
     }
     let publication: number | null = null;
     const empty = requestAnimationFrame(() => {
-      publication = requestAnimationFrame(() => { delivered.current = occurrence ?? null; setSpoken(next); });
+      publication = requestAnimationFrame(() => { if (scope !== null && !scope.eligible()) return; delivered.current = occurrence ?? null; if (occurrence !== undefined) session?.spoken.set(occurrence, occurrence); setSpoken(next); publish.current?.(); });
     });
     return () => {
       cancelAnimationFrame(empty);
       if (publication !== null) cancelAnimationFrame(publication);
     };
-  }, [text, level, deferred, occurrence]);
+  }, [text, level, deferred, occurrence, session, scope]);
   if (level === "None") return null;
   return <span
     className="sr-only"
@@ -336,19 +416,31 @@ export function Announcement({ text, level, deferred = false, occurrence }: {
 }
 
 function Diagnostics({ requestId }: { requestId: string }) {
-  const [result, setResult] = useState<{ requestId: string; state: "Copied" | "Failed" } | null>(null);
+  const copy = useCopyFeedback(requestId);
+  const [failure, setFailure] = useState<{ requestId: string; occurrence: object } | null>(null);
+  const failed = failure !== null && failure.requestId === requestId;
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const text = useRef<HTMLElement>(null);
   if (defect) throw defect.error;
-  const state = result?.requestId === requestId ? result.state : "Ready";
-  const copy = () => copyText(`Nexus request ID: ${requestId}`).then(
-    () => setResult({ requestId, state: "Copied" }),
-    (error: unknown) => error instanceof ClipboardWriteUnavailableError ? setResult({ requestId, state: "Failed" }) : setDefect({ error }),
-  );
+  const select = () => {
+    if (!text.current) return;
+    text.current.focus({ preventScroll: true });
+    const range = document.createRange(); range.selectNodeContents(text.current);
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+  };
+  const onCopy = () => {
+    setFailure(null);
+    void copy.copy(`Nexus request ID: ${requestId}`).catch((error: unknown) => {
+      if (error instanceof ClipboardWriteUnavailableError) setFailure({ requestId, occurrence: {} }); else setDefect({ error });
+    });
+  };
   return <div className={styles.diagnostics}>
     <div className={styles.diagnosticsBody}>
-      <code>request id: {requestId}</code>
-      <Button className={styles.control} onClick={() => void copy()}>copy diagnostics</Button>
+      <code ref={text} tabIndex={-1}>request id: {requestId}</code>
+      <Button className={styles.control} icon={copy.copied ? <Check /> : <span />} onClick={onCopy}>copy diagnostics</Button>
     </div>
-    <span className={styles.reason} role="status">{state === "Copied" ? "copied" : state === "Failed" ? "diagnostics couldn’t be copied; select the request id to copy it." : ""}</span>
+    {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
+    {failed ? <FeedbackNotice occurrence={failure.occurrence} content={{ tone: "Warning", title: "couldn’t copy diagnostics" }}
+      announcement="Polite" actions={[{ label: "select request id", onClick: select }]} /> : null}
   </div>;
 }

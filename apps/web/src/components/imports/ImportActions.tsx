@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -13,6 +13,8 @@ import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOf
 import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -27,6 +29,7 @@ type Command = Extract<ActionDescriptor, { kind: "command" }>;
 function useOpenAction(item: ImportItem) {
   const { ctx, run } = useActionRuntime();
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
   const mediaRef = item.media_id === null ? null : `media:${item.media_id}`;
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
@@ -47,14 +50,14 @@ function useOpenAction(item: ImportItem) {
     },
   });
   const action: Command | null = mediaRef !== null && (item.can_read || item.can_play) ? {
-    kind: "command", id: "Open", label: "open", disabled: busy,
+    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
-      ref: mediaRef, id: "Open", label: "open", title: item.title,
+      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, title: item.title,
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
-  return { action, feedback: failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" /> };
+  return { action, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 function OpenControl({ item, action }: { readonly item: ImportItem; readonly action: Command }) {
@@ -62,7 +65,7 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
     const detail = prepareActionSelect(event, null);
     if (detail && !action.disabled) action.onSelect(detail);
   };
-  return <ButtonLink href={`/media/${item.media_id}`}
+  return <ButtonLink reserveIcon busyKey={item.ref} href={`/media/${item.media_id}`}
     aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}
   >{action.label}</ButtonLink>;
@@ -80,9 +83,9 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
   const ref = mediaId === null ? null : `media:${mediaId}`;
   const busy = useBusyActionIds(ref);
   if (mediaId === null || ref === null || offer === null) return null;
-  const label = ACTION_CATALOG[offer.kind].label;
+  const { label, icon: Icon } = ACTION_CATALOG[offer.kind];
   return {
-    kind: "command", id: offer.kind, label, disabled: busy.has(offer.kind),
+    kind: "command", id: offer.kind, label, icon: <Icon size={16} aria-hidden="true" />, disabled: busy.has(offer.kind),
     disabledReason: busy.has(offer.kind) ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => run({
       ref, id: offer.kind, label, title: "", confirmation: null, tracked: true,
@@ -92,7 +95,7 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
 }
 
 function RecoveryControl({ action }: { readonly action: Command }) {
-  return <Button aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
+  return <Button reserveIcon busyKey={action.id} aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     onClick={event => { if (!action.disabled) action.onSelect({ triggerEl: event.currentTarget, openIntent: "default" }); }}
   >{action.label}</Button>;
 }
@@ -104,6 +107,7 @@ function RecoveryControl({ action }: { readonly action: Command }) {
 function useUploadActions(item: ImportItem) {
   const { run } = useActionRuntime();
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
   const busy = useBusyActionIds(item.ref);
   const inputRef = useRef<HTMLInputElement>(null);
   if (item.media_id !== null) return { input: null, retry: null, remove: null, feedback: null };
@@ -127,12 +131,12 @@ function useUploadActions(item: ImportItem) {
     },
   });
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
-    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label,
+    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon size={16} aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => { if (!retrying) inputRef.current?.click(); },
   } : null;
   const remove: Command = {
-    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label,
+    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: <ACTION_CATALOG.RemoveUpload.icon size={16} aria-hidden="true" />,
     tone: "danger", disabled: removing, disabledReason: removing ? "Removal is in progress." : undefined,
     onSelect: () => {
       if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`))
@@ -149,7 +153,7 @@ function useUploadActions(item: ImportItem) {
         send("RetryUpload", () => uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }));
     }}
   />;
-  return { input, retry, remove, feedback: failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" /> };
+  return { input, retry, remove, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 /** Commands and feedback survive CSS promotion; the row owns its overflow ref. */
@@ -158,14 +162,17 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   readonly triggerRef: RefObject<HTMLButtonElement | null>;
   readonly returnFocus: () => HTMLElement | null;
 }) {
+  const pane = usePaneRuntime();
+  const touch = useTouchCapable();
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; }, [triggerRef]);
   useActionFocusRecovery(shortcutsRef, returnFocus);
   const open = useOpenAction(item);
   const sourceOffer = item.obligations.source?.recovery ?? null;
   const searchOffer = item.obligations.search?.recovery ?? null;
-  const source = useRecoveryAction(item.media_id, sourceOffer?.kind === "RetryUpload" ? null : sourceOffer);
-  const search = useRecoveryAction(item.media_id, searchOffer?.kind === "RetryUpload" ? null : searchOffer);
+  const browserOffer = sourceOffer?.kind === "BrowserCapture" ? sourceOffer : null;
+  const source = useRecoveryAction(item.media_id, sourceOffer?.kind === "RetryUpload" || sourceOffer?.kind === "BrowserCapture" ? null : sourceOffer);
+  const search = useRecoveryAction(item.media_id, searchOffer?.kind === "RetryUpload" || searchOffer?.kind === "BrowserCapture" ? null : searchOffer);
   const upload = useUploadActions(item);
   const recovery = item.primary === "search" ? search : source;
   const metadata = item.obligations.metadata;
@@ -174,6 +181,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     {upload.input}
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
       ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
+      : browserOffer && item.primary === "source" ? <span data-import-shortcut=""><ButtonLink href={browserOffer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink></span>
       : recovery ? <span data-import-shortcut=""><RecoveryControl action={recovery} /></span> : null}
     {open.action ? <span data-import-shortcut=""><OpenControl item={item} action={open.action} /></span> : null}
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}
@@ -190,9 +198,11 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     title={item.title} subjectKey={`import:${item.ref}:media:${item.media_id}`}
     sections={[{ id: "View", actions: commands }]}
     omitResourceActions={commands.map(action => action.id)}
-    displayedActivation={{ kind: item.can_read || item.can_play ? "route" : "none",
-      href: item.can_read || item.can_play ? `/media/${item.media_id}` : null,
-      resource_ref: `media:${item.media_id}`, unavailable_reason: null }}
+    navigation={{
+      key: `import:${item.ref}:/media/${item.media_id}:${item.can_read || item.can_play}`,
+      fork: touch && pane && (item.can_read || item.can_play)
+        ? paneForkLink({ runtime: pane, target: { href: `/media/${item.media_id}`, labelHint: item.title }, disabledReason: null }) : null,
+    }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}
   />;
   return { shortcuts, menu, feedback: open.feedback || upload.feedback ? <>{open.feedback}{upload.feedback}</> : null };
@@ -204,7 +214,8 @@ export function ImportObligationActions({ item, obligation }: {
   readonly obligation: "source" | "search";
 }) {
   const offer = item.obligations[obligation]?.recovery ?? null;
-  const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" ? null : offer);
+  const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" || offer?.kind === "BrowserCapture" ? null : offer);
+  if (offer?.kind === "BrowserCapture") return <ButtonLink reserveIcon busyKey={item.ref} href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
   if (item.media_id === null) return obligation === "source" ? <UploadActions item={item} /> : null;
   return action ? <RecoveryControl action={action} /> : null;
 }

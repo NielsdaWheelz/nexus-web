@@ -6,7 +6,7 @@ Lexical phases never call the provider or neighbour query. Visible SQL facts det
 admission and order; canonical items own activation, including unavailable locations.
 A full resource prefix omits chunk neighbours only when selected media have lexical
 passages or no current eligible vectors; the prefix includes its continuation row.
-Preview omits chunk neighbours only when two lexical inside owners fill its prefix
+Preview omits chunk neighbours only when eight lexical inside owners fill its prefix
 and each selected media has a lexical child or no current eligible model vector.
 Full reads share database-wide backend admission; direct preview and one-character
 reads remain independent. Strict evidence retrieval remains in service.py.
@@ -72,7 +72,7 @@ from nexus.services.search.sources import (
 
 logger = get_logger(__name__)
 
-_SAVED = frozenset({"highlight", "passage_anchor"})
+_SAVED = frozenset({"highlight", "highlight_annotation", "passage_anchor"})
 _PASSAGES = GENERATED_FAMILIES | _SAVED | {"note_block"}
 
 
@@ -291,7 +291,14 @@ def _present(
         def occurrence(hit: DiscoveryHit) -> SearchOccurrenceOut:
             item, match = shown[(hit.ref.uri, hit.reading_media_id)]
             return SearchOccurrenceOut(
-                item=item, match=match, match_method="lexical" if hit.lexical else "semantic"
+                item=item,
+                match=match,
+                match_method="lexical" if hit.lexical else "semantic",
+                matched_field="annotation"
+                if hit.family == "highlight_annotation"
+                else "quote"
+                if hit.family == "highlight"
+                else None,
             )
 
         return [
@@ -308,6 +315,11 @@ def _present(
                 else None,
                 match_method=("lexical" if row.own.lexical else "semantic")
                 if row.own and terms
+                else None,
+                matched_field="annotation"
+                if row.own and row.own.family == "highlight_annotation"
+                else "quote"
+                if row.own and row.own.family == "highlight"
                 else None,
                 matching_passage=occurrence(row.passage) if row.passage else None,
             )
@@ -400,7 +412,9 @@ async def search(
                 ]
                 # Known rows dominate new semantic-only inside owners. Only a
                 # selected media's missing child can still change this full page.
-                if len(rows) < r.k or (missing and has_media_vectors(db, r.embedding[0], missing)):
+                if len(rows) < r.k or (
+                    missing and has_media_vectors(db, r.embedding[0], missing, r.viewer_id)
+                ):
                     logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
                     try:
                         facts = facts.with_semantic(
@@ -416,7 +430,10 @@ async def search(
             return SearchResourcesResponse(
                 phase=phase, results=resources, page=page(more), semantic_status=status
             )
-        unique = list({hit.ref: hit for hit in hits}.values())
+        distinct = {}
+        for hit in hits:
+            distinct.setdefault(hit.ref, hit)
+        unique = list(distinct.values())
         more = len(unique) > offset + limit and is_offset(offset + limit)
         _, passages = _present(
             db, facts, viewer_id, query.text, (), unique[offset : offset + limit]
@@ -446,7 +463,10 @@ async def preview(
     status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def read(db: Session) -> SearchPreviewResponse:
-        r = _retrieval(db, viewer_id, query, 4, embedding, failure)
+        r = replace(
+            _retrieval(db, viewer_id, query, 8, embedding, failure),
+            exclude_viewer_authored=True,
+        )
         if not query.requests_read:
             return SearchPreviewResponse(
                 phase=phase, resources=[], saved=[], passages=[], semantic_status=status
@@ -475,10 +495,9 @@ async def preview(
         def compose(
             facts: IndexedRead,
         ) -> tuple[list[_Resource], list[_Resource], list[DiscoveryHit]]:
-            rows = [_Resource(h.ref, h, None) for h in _rank(facts, r, primary, group=False)[:4]]
+            rows = [_Resource(h.ref, h, None) for h in _rank(facts, r, primary, group=False)[:8]]
             saved = [
-                _Resource(h.ref, h, None)
-                for h in _rank(facts, replace(r, k=2), saved_families, group=False)[:2]
+                _Resource(h.ref, h, None) for h in _rank(facts, r, saved_families, group=False)[:8]
             ]
             rows = _enrich(facts, rows, families)
             inside: list[DiscoveryHit] = []
@@ -489,7 +508,7 @@ async def preview(
                 inside.extend(
                     facts.rank(
                         (family,),
-                        k=2,
+                        k=8,
                         group_owners=True,
                         excluded_owners=[row.ref.id for row in rows if row.ref.scheme == scheme],
                     )
@@ -499,7 +518,7 @@ async def preview(
                 inside, key=lambda h: (*h.order[:-1], h.owner.uri if h.owner else h.ref.uri)
             ):
                 distinct.setdefault(hit.owner, hit)
-            return rows, saved, list(distinct.values())[:2]
+            return rows, saved, list(distinct.values())[:8]
 
         rows, saved, inside = compose(facts)
         if defer_chunks:
@@ -510,9 +529,9 @@ async def preview(
                 if row.ref.scheme == "media" and (row.passage is None or not row.passage.lexical)
             ]
             if (
-                len(inside) < 2
+                len(inside) < 8
                 or any(not hit.lexical for hit in inside)
-                or (missing and has_media_vectors(db, r.embedding[0], missing))
+                or (missing and has_media_vectors(db, r.embedding[0], missing, r.viewer_id))
             ):
                 logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
                 try:

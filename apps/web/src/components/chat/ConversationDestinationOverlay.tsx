@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PickerSurface from "@/components/ui/PickerSurface";
@@ -85,7 +85,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   const context = JSON.stringify([id, mediaId, view, query]);
   const options = items.map(item => ({ key: item.id, disabledReason: null }));
   const reconciled = reconcileSearchActive({ context, admitted: selectable, options,
-    firstExistingKey: items[0]?.id ?? null, active });
+    initialKey: items[0]?.id ?? null, active });
   useEffect(() => { if (active !== reconciled) setActive(reconciled); }, [active, reconciled]);
   const bindings = useSearchOptions({ listId: `${id}-list`, label: "chats", open: true, options,
     activeKey: selectable ? reconciled?.key ?? null : null,
@@ -93,8 +93,8 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     onActivate(key) { const item = selectable ? items.find(item => item.id === key) : null; if (item) onSelect(item); },
   });
   const failure = settled !== query ? null : pageFailure;
+  const occurrence = useFeedbackOccurrence(failure !== null, key);
   const emptyTitle = search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet";
-  const waiting = !selectable && failure === null;
   const readFeedback = useIndexReadFeedback({
     value: page, requestedKey: readKey, active: paneActive, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !(page.status === "ready") && failure === null,
     outcome: items.length > 0 ? "results updated." : emptyTitle,
@@ -111,9 +111,8 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       onChange={event => setQuery(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: page.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats", requestId: failure.requestId }} announcement={page.status === "ready" ? "None" : "Polite"}
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: page.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats", requestId: failure.requestId }} announcement={page.status === "ready" ? "None" : "Polite"}
       actions={[{ label: "try again", onClick: retry, busy }]} returnFocus={() => input.current} />
-      : waiting ? <FeedbackStatus content={{ tone: "Neutral", title: "searching…" }} announcement={paneActive ? "Polite" : "None"} />
       : selectable && items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
       {items.map(item => {

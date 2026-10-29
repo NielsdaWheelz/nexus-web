@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
+import choices from "@/components/ui/ChoiceField.module.css";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -116,13 +117,15 @@ const FindBar = forwardRef<
           iconOnly: true,
           activeCount: chips.length,
           content: (
-            <fieldset className={styles.options}>
+            <fieldset className={choices.group}>
               <legend>Find options</legend>
-              <ChoiceField label="Match case" checked={find.matchCase} onChange={find.setMatchCase} />
-              <ChoiceField label="Whole word" checked={find.wholeWord} onChange={find.setWholeWord} />
-              {find.narrowLabel !== null || find.narrowed ? (
-                <ChoiceField label={scopeOption} checked={find.narrowed} onChange={find.setNarrowed} />
-              ) : null}
+              <div className={choices.choices}>
+                <ChoiceField label="Match case" checked={find.matchCase} onChange={find.setMatchCase} />
+                <ChoiceField label="Whole word" checked={find.wholeWord} onChange={find.setWholeWord} />
+                {find.narrowLabel !== null || find.narrowed ? (
+                  <ChoiceField label={scopeOption} checked={find.narrowed} onChange={find.setNarrowed} />
+                ) : null}
+              </div>
             </fieldset>
           ),
           onClear() {

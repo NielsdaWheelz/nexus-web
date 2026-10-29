@@ -6,7 +6,7 @@
 // belong to this field; a selected person displays until the viewer types again.
 
 import { useId, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackStatus, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { apiFetch } from "@/lib/api/client";
@@ -63,7 +63,7 @@ export default function PeopleSearch({
   const expanded = !disabled && open && selected === null && q.length >= 3;
   const options = results.map(person => ({ key: person.user_id, disabledReason: null }));
   const current = reconcileSearchActive({
-    context: searchContext, admitted, options, firstExistingKey: results[0]?.user_id ?? null, active,
+    context: searchContext, admitted, options, initialKey: results[0]?.user_id ?? null, active,
   });
   if (current !== active) setActive(current);
   const navigation = useSearchOptions<HTMLUListElement>({
@@ -78,10 +78,12 @@ export default function PeopleSearch({
       });
     },
   });
+  const error = readKey !== null && search.status !== "loading" ? search.error : null;
+  const occurrence = useFeedbackOccurrence(error !== null, readKey);
+  const waiting = selected === null && q.length >= 3 && !admitted && error === null;
   const status = selected !== null || q === "" ? null
     : q.length < 3 ? "Enter at least 3 characters."
-      : search.status === "failed" ? "People couldn’t be searched. Try again."
-        : !admitted ? "Searching…"
+      : !admitted ? null
           : results.length === 0 ? "No matching Nexus users."
             : `${results.length} ${results.length === 1 ? "result" : "results"}`;
 
@@ -98,7 +100,7 @@ export default function PeopleSearch({
         aria-describedby={[
           description && `${id}-description`, status && `${id}-status`,
         ].filter(Boolean).join(" ") || undefined}
-        aria-busy={status === "Searching…" || undefined}
+        aria-busy={waiting || undefined}
         disabled={disabled}
         onFocus={() => setOpen(true)}
         onCompositionStart={() => { composing.current = true; }}
@@ -120,14 +122,12 @@ export default function PeopleSearch({
         }}
       />
       {description ? <span id={`${id}-description`} className={collection.detail}>{description}</span> : null}
-      {status ? <div id={`${id}-status`}>
-        {search.status === "failed" ? <FeedbackNotice
-          content={{ tone: "Warning", title: "people search couldn’t load", requestId: search.error.requestId }}
-          announcement="Polite"
-          actions={[{ label: "retry search", onClick: search.refetch, busy: search.retrying }]}
-          returnFocus={() => input.current}
-        /> : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" />}
-      </div> : null}
+      <FeedbackBusy subject={searchContext} pending={waiting}/>
+      {error ? <FeedbackFailure scope="Local" occurrence={occurrence}
+        content={{tone: "Warning", title: "people search couldn’t load", requestId: error.requestId}} announcement="Polite"
+        actions={[{label: "retry search", onClick: search.refetch, busy: search.status === "failed" ? search.retrying : search.status === "ready" && search.refreshing}]}
+        returnFocus={() => input.current}/> : null}
+      {status ? <div id={`${id}-status`}><FeedbackStatus content={{tone: "Neutral", title: status}} announcement="Polite"/></div> : null}
       {expanded ? <ul ref={navigation.listRef} {...navigation.listProps}
         aria-busy={!admitted || undefined} className={`${collection.surface} ${collection.compactViewport}`}>
         {results.map(person => <li key={person.user_id} {...navigation.optionProps(person.user_id)} className={collection.row}>

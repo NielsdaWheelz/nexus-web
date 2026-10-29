@@ -74,3 +74,10 @@
     display: none;
   }
 }
+
+/* Passive contributors render no DOM and must not create a spacing item. */
+.stack:empty,
+.brief:empty,
+.footer:empty,
+.empty:empty,
+.content:empty { display: none; }

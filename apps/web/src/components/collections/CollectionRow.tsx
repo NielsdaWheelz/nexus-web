@@ -2,10 +2,13 @@
 
 import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
 import ResourceActions from "@/components/resources/ResourceActions";
+import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import IndexBibliography from "@/components/resources/IndexBibliography";
@@ -20,6 +23,7 @@ import { assertNever } from "@/lib/assertNever";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import styles from "./CollectionRow.module.css";
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -52,9 +56,15 @@ export default function CollectionRow({
   readonly attention?: string;
   readonly listPosition?: { readonly index: number; readonly count: number };
 }) {
+  const parsed = row.resourceRef === null ? null : parseResourceRef(row.resourceRef);
+  // justify-defect: a nonnull collection ref identifies the displayed canonical resource.
+  if (row.resourceRef !== null && parsed === null) throw new Error(`Invalid canonical collection resource ref: ${row.resourceRef}`);
+  const typeLabel = parsed === null ? null : resourceTypeLabel(parsed.scheme).toLowerCase();
   const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
   const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
-  const paneId = usePaneRuntime()?.paneId;
+  const pane = usePaneRuntime();
+  const paneId = pane?.paneId;
+  const touch = useTouchCapable();
   const moreRef = useRef<HTMLButtonElement>(null);
   const primaryControlRef = useRef<HTMLSpanElement>(null);
   const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
@@ -65,8 +75,10 @@ export default function CollectionRow({
     get afterRemoval() { return suppliedActionFocus?.afterRemoval ?? successFocus; },
   };
   useActionFocusRecovery(primaryControlRef, returnFocus);
-  const title = row.title.segments
+  const title = media !== null && parsed === null ? <MediaTitle subject={media.subject} /> : row.title.segments
     ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
+  const primary = typeLabel !== null && row.primary.kind !== "static"
+    ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
   const activity = row.activity !== null ? collectionActivityText(row.activity) : null;
   const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
     ? "processing failed; open metadata for details and recovery"
@@ -92,7 +104,11 @@ export default function CollectionRow({
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
-    displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
+    navigation={attention !== null && row.kind === "podcast" ? null : {
+      key: `collection:${row.id}:${row.primary.kind === "link" ? row.primary.href : "unavailable"}`,
+      fork: touch && pane && row.primary.kind === "link" && row.primary.href !== null
+        ? paneForkLink({ runtime: pane, target: { href: row.primary.href, labelHint: row.primary.paneLabelHint }, disabledReason: null }) : null,
+    }}
     label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
@@ -116,12 +132,17 @@ export default function CollectionRow({
     default: assertNever(row.presentation);
   }
   return <ResourceRow
-    as={as} primary={row.primary} selected={row.selected}
+    as={as} primary={primary} selected={row.selected}
     rootProps={{ "aria-current": row.selected ? "true" : undefined,
       "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
       "aria-setsize": listPosition?.count,
       "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
-    title={media ? <MediaTitle subject={media.subject} /> : title}
+    title={parsed === null ? title : <ResourceIndexTitle
+      scheme={parsed.scheme} hasArtwork={row.artwork !== undefined}
+    >
+      {row.primary.kind === "static" ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
+      {title}
+    </ResourceIndexTitle>}
     content={content}
     leadingVisual={row.artwork !== undefined ? <PodcastRowArtwork key={row.artwork.imageUrl} title={row.title.text} imageUrl={row.artwork.imageUrl} /> : undefined}
     controls={<>

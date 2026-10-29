@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.reader_excerpts import ExcerptView, FrozenExcerpt
 from nexus.schemas.retrieval import RetrievalLocator
 
 
@@ -51,16 +52,27 @@ class NotePublication(Closed):
     sha256: str = Field(pattern="^[0-9a-f]{64}$")
 
 
-Publication = Annotated[ReaderPublication | NotePublication, Field(discriminator="kind")]
+class XCapturePublication(Closed):
+    kind: Literal["x_capture"]
+    capture_id: UUID
 
 
-class SelectionCapture(Closed):
+Publication = Annotated[
+    ReaderPublication | NotePublication | XCapturePublication, Field(discriminator="kind")
+]
+
+
+class SelectionLocation(Closed):
     publication: Publication | None
     locator: RetrievalLocator
     quote_exact: str
     prefix: str | None
     suffix: str | None
     passage_ref: str | None
+
+
+class SelectionCapture(SelectionLocation):
+    excerpt: FrozenExcerpt
 
 
 class Causality(Closed):
@@ -85,6 +97,7 @@ class HighlightPatch(Causality):
     source_ref: str
     selection: Register[SelectionCapture]
     color: Register[HighlightColor]
+    body_update: str | None
 
 
 ResourcePatch = Annotated[NotePatch | PagePatch | HighlightPatch, Field(discriminator="kind")]
@@ -101,7 +114,15 @@ class PageState(Causality):
     title_state: str
 
 
-ResourceState = Annotated[NoteState | PageState | HighlightPatch, Field(discriminator="kind")]
+class HighlightState(Causality):
+    kind: Literal["highlight"]
+    source_ref: str
+    selection: Register[SelectionCapture]
+    color: Register[HighlightColor]
+    body_state: str
+
+
+ResourceState = Annotated[NoteState | PageState | HighlightState, Field(discriminator="kind")]
 
 
 class LinkState(Closed):
@@ -115,6 +136,7 @@ class LinkState(Closed):
 
 
 class PassageCapture(Closed):
+    excerpt: FrozenExcerpt
     quote_exact: str
     publication: Publication | None
     locator: RetrievalLocator | None
@@ -159,16 +181,19 @@ class Corpus(Closed):
 class ResourceProjection(Closed):
     authored_by_viewer: bool
     ref: str
-    kind: Literal["note", "page", "highlight"]
+    kind: Literal["note", "page", "highlight", "source"]
     visible: bool
     body_pm_json: dict[str, object] | None
     body_text: str | None
     title: str | None
     local_date: str | None
     source_ref: str | None
-    selection: SelectionCapture | None
+    source_publication: Publication | None
+    selection: SelectionLocation | None
     color: HighlightColor | None
     embedded_refs: list[str]
+    excerpt: ExcerptView | None
+    capture_revision: str | None
 
 
 class MergeResult(Corpus):
@@ -181,6 +206,7 @@ class ProvisionReplica(Closed):
 
 
 class UploadChanges(Closed):
+    format_revision: Literal[4]
     replica_id: UUID
     changes: list[Change] = Field(min_length=1, max_length=64)
 
@@ -205,7 +231,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[1]
+    format_revision: Literal[4]
     head_cursor: Counter
     lamport: Counter
 
@@ -239,7 +265,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[1]
+    format_revision: Literal[4]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts
@@ -329,6 +355,14 @@ class ScopeInterval(Closed):
     end_cut: bool
 
 
+class ScopeIncompleteTable(Closed):
+    kind: Literal["incomplete_table"]
+    reading_ref: str
+    fragment_id: UUID
+    start_offset: int
+    end_offset: int
+
+
 ScopeInput = Annotated[
     ScopeIdentity
     | ScopeWorkspaceMember
@@ -338,7 +372,8 @@ ScopeInput = Annotated[
     | ScopeSourceAlias
     | ScopeHighlightMember
     | ScopeReading
-    | ScopeInterval,
+    | ScopeInterval
+    | ScopeIncompleteTable,
     Field(discriminator="kind"),
 ]
 

@@ -3,7 +3,7 @@
 import Button from "@/components/ui/Button";
 
 import { useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { MessageAction } from "@/lib/chat/runTail";
@@ -26,6 +26,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
   const [busy, setBusy] = useState(false);
   // A refused undo says so until the next undo; it never disables the other writes.
   const [failure, setFailure] = useState<{ message: string } | { defect: unknown } | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null || busy);
   if (failure && "defect" in failure) throw failure.defect;
   const writes = actions.filter(
     (tool) => tool.effect === "Write" && tool.result_kind === "mutation" &&
@@ -35,10 +36,10 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
   if (!writes.length) return null;
   const undo = async (id: string) => {
     setBusy(true);
-    setFailure(null);
     try {
       await undoAssistantWrite(id);
       onUndone(id);
+      setFailure(null);
     } catch (error) {
       if (!handleUnauthenticatedApiError(error)) {
         try {
@@ -51,14 +52,14 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
     setBusy(false);
   };
   return <div role="list" aria-label="Assistant actions">
-    {failure && "message" in failure ? <FeedbackNotice
+    {failure && "message" in failure ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure}
       announcement="Assertive"
       content={{ tone: "Warning", title: "Undo unavailable", message: failure.message }}
     /> : null}
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
-      const kicker = ref ? KICKERS[ref.kind] : tool.activity.verb;
+      const kicker = ref?.field === "annotation" ? "Annotated" : ref ? KICKERS[ref.kind] : tool.activity.verb;
       const target = ref?.label ?? tool.activity.subject;
       const reverted = tool.reverted_at !== null || (tool.id !== null && undone.has(tool.id));
       return <div key={tool.tool_call_index} className={styles.write} role="listitem">
@@ -69,7 +70,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
         </span> : null}
         {reverted ? <span className={styles.kicker}>Undone</span>
           : tool.undo_allowed && tool.id !== null ? <Button
-            disabled={busy}
+            disabled={busy} aria-busy={busy} reserveIcon
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
             aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>undo unavailable for this older filing</span> : null}
       </div>;

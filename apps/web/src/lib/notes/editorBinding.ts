@@ -47,20 +47,7 @@ export class InlineBinding implements EditorBinding {
     const current = this.body();
     if (sameBody(current, after)) return;
     if (!sameBody(current, before)) throw new Error("the note changed. review this insertion before applying it.");
-    const old = docFromBody(before).firstChild!, next = docFromBody(after).firstChild!;
-    const start = old.content.findDiffStart(next.content);
-    const edits: BodyEdit[] = [];
-    if (start !== null) {
-      const end = old.content.findDiffEnd(next.content)!;
-      const overlap = Math.max(0, start - Math.min(end.a, end.b));
-      const content: InlineNode[] = [];
-      next.content.cut(start, end.b + overlap).forEach(node => {
-        // justify-type-assertion: canonical body schema and applyBodyEdits validate this inline value.
-        content.push(node.toJSON() as InlineNode);
-      });
-      edits.push({ kind: "replace", from: start, to: end.a + overlap, content });
-    }
-    if (old.attrs.presentation !== next.attrs.presentation) edits.push({ kind: "presentation", value: next.attrs.presentation });
+    const edits = bodyEdits(before, after);
     this.updating = true;
     try {
       applyBodyEdits(this.baseline, edits);
@@ -112,4 +99,26 @@ function transactionEdits(transaction: Transaction): BodyEdit[] {
     if (json.stepType === "addMark" || json.stepType === "removeMark") return { kind: json.stepType === "addMark" ? "add_mark" : "remove_mark", from: json.from - 1, to: json.to - 1, mark: json.mark };
     throw new TypeError(`Unsupported note operation: ${json.stepType}`);
   });
+}
+
+/** Draft edits preserve the opening permanent character identities. */
+export function applyDraftBody(doc: Y.Doc, before: NoteBody, after: NoteBody): void {
+  applyBodyEdits(doc, bodyEdits(before, after));
+}
+function bodyEdits(before: NoteBody, after: NoteBody): BodyEdit[] {
+  const old = docFromBody(before).firstChild!, next = docFromBody(after).firstChild!;
+  const start = old.content.findDiffStart(next.content);
+  const edits: BodyEdit[] = [];
+  if (start !== null) {
+    const end = old.content.findDiffEnd(next.content)!;
+    const overlap = Math.max(0, start - Math.min(end.a, end.b));
+    const content: InlineNode[] = [];
+    next.content.cut(start, end.b + overlap).forEach(node => {
+      // justify-type-assertion: canonical body schema and applyBodyEdits validate this inline value.
+      content.push(node.toJSON() as InlineNode);
+    });
+    edits.push({ kind: "replace", from: start, to: end.a + overlap, content });
+  }
+  if (old.attrs.presentation !== next.attrs.presentation) edits.push({ kind: "presentation", value: next.attrs.presentation });
+  return edits;
 }

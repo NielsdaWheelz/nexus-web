@@ -1,11 +1,11 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { recoveryOf } from "@/lib/chat/commands";
-import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
+import { routeOf, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -121,7 +121,16 @@ function Repeat({ message, operation, openIntent, onClose }: {
     kind: "Selected",
     // an answer's trail always carries its run
     selection: own?.command.kind === "Repeat" ? own.command.selection : message.trust_trail!.run.run_selection.selection,
+    route: own?.command.kind === "Repeat" ? own.command.selectionRoute : catalog.status === "ready" ? routeOf(catalog.data, message.trust_trail!.run.run_selection.selection) : null,
   }));
+  useLayoutEffect(() => {
+    if (own !== null || catalog.status !== "ready") return;
+    setDraft(current => {
+      if (current.kind !== "Selected" || current.route !== null) return current;
+      const route = routeOf(catalog.data, current.selection);
+      return route ? { ...current, route } : current;
+    });
+  }, [catalog, own]);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const [busyCaption, setBusyCaption] = useState<string>(operation);
   const caption = own?.kind === "Busy" ? busyCaption
@@ -138,26 +147,26 @@ function Repeat({ message, operation, openIntent, onClose }: {
     setFailure(null);
     // a refresh after a refusal settles and leaves the dialog open: the chat changed, decide again
     const outcome = own !== null ? await store.retryCommand(intent)
-      : draft.kind === "Selected" ? await store.repeat(operation, message.id, draft.selection, intent) : null;
+      : draft.kind === "Selected" ? await store.repeat(operation, message.id, { selection: draft.selection, route: draft.route }, intent) : null;
     if (outcome?.kind === "Gone" || outcome?.kind === "Accepted") onClose();
     else if (outcome?.kind === "Failed") setFailure(outcome.feedback);
   };
   const shown = own?.feedback ?? failure;
+  const occurrence = useFeedbackOccurrence(failure !== null);
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
       {reason ? <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" /> : null}
-      {shown ? <FeedbackNotice content={shown} announcement="Polite" /> : null}
-      {!shown && own?.kind === "Busy" ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: operation === "rerun" ? "rerunning…" : "regenerating…" }} announcement="Polite" />
-      ) : null}
+      {shown ? <FeedbackFailure scope="Local" occurrence={own?.occurrence ?? occurrence} announcementOccurrence={shown} content={shown} announcement="Polite" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button
+          reserveIcon
           emphasis="strong"
           disabled={own ? own.kind === "Busy" : command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
+          busyKey={own?.command}
           aria-busy={own?.kind === "Busy"}
         >
           {caption}

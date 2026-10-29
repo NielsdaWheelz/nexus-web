@@ -1,5 +1,5 @@
 .row {
-  --outline-control-size: var(--size-xs);
+  --outline-control-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
   position: relative;
   min-width: 0;
   padding-block: var(--space-1);
@@ -39,15 +39,6 @@
 
 .row[data-selected="true"] > .head {
   background: var(--accent-muted);
-}
-
-.row[data-root="true"] .content {
-  padding-top: 0;
-}
-
-.row[data-root="true"][data-outline-kind="title"] .content {
-  font-size: var(--text-xl);
-  font-weight: var(--weight-semibold);
 }
 
 .control {
@@ -93,7 +84,7 @@
 }
 
 @media (any-pointer: coarse) {
-  .row {--outline-control-size: var(--size-xl);}
+  .row {--outline-control-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
   .content {padding-top: var(--space-2);}
 }
 

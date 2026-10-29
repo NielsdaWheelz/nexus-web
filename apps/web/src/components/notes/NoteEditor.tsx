@@ -28,6 +28,7 @@ import { OutlineEmbeddingOccurrence, useEditorDraft, useNoteEditorHost, useOptio
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import ReferencePicker from "@/components/resources/ReferencePicker";
+import { getInteractionOwner } from "@/lib/ui/overlay";
 import {
   useReferenceInput,
   type ReferenceInputHost,
@@ -37,6 +38,9 @@ import ResourceOutlineList, {
   ResourceOutlineContext,
 } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import NoteBodyPreview from "./NoteBodyPreview";
+import AuthoredReadFailure from "./AuthoredReadFailure";
+import {useAuthoredQuery} from "@/lib/notes/hooks";
 import ResourceLink from "@/components/resources/ResourceLink";
 import {
   enterOutlineOccurrence,
@@ -70,11 +74,12 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackFailure, FieldFeedback, useFeedback, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import {
+  emptyBody,
   bodyFromNode,
   bodyText,
   docFromBody,
@@ -118,13 +123,21 @@ export interface StructuralKeys {
 }
 
 /** The outline can preserve an occurrence's caret without reaching into its view. */
-export interface NoteEditorHandle {
+export interface TextEditorHandle {
+  readText(): string;
+  encodedBytes(): number;
   readSelection(): { anchor: number; head: number };
+  /** Snapshot reconciled editor state; never change native selection during focus. */
   captureSelection(): (document: WritingDocument) => FocusSelection;
   focus(selection: FocusSelection | ((document: WritingDocument) => FocusSelection), preventScroll?: boolean): void;
   canArrange(): boolean;
   settleNativeInput(): boolean;
   localHistory(command: "undo" | "redo"): {enabled: boolean; execute(): void} | null;
+}
+export interface NoteEditorHandle extends TextEditorHandle {
+  clear(): void;
+  setInputMode(mode: "text" | "blocks" | "controls"): void;
+  refuse(message: string): void;
 }
 
 /** prosemirror-view 1.41.8 exposes no public DOM reconciliation operation.
@@ -168,6 +181,8 @@ export interface NoteEditorProjection {
 
 export interface NoteEditorProps {
   projection?: NoteEditorProjection;
+  embedding?: {row_id: string; context: ReturnType<NoteEditorProjection["context"]>};
+  header?: true;
   reference?: ReferenceInputHost | null;
   writingDocument?: WritingDocument;
   writingOrigin?: unknown;
@@ -197,6 +212,7 @@ export interface NoteEditorProps {
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
   onEditorReady?(editor: NoteEditorHandle | null): void;
   onAttachmentActiveChange?(active: boolean): void;
+  onLinkInputActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
@@ -284,14 +300,22 @@ function NoteEditorContent(props: NoteEditorProps) {
   const attachment = useEditorDraft<{
     row_id: string | null;
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
-    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null;
+    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null; occurrence: object;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
     value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
   busy.current = attachment.value?.pending === true;
   const [linkVisible, setLinkVisible] = useState(false);
   const link = linkDraft.value;
-  const setLink = linkDraft.set;
-  const readLink = linkDraft.read;
+  const { set: setLinkDraft, read: readLink } = linkDraft;
+  const setLink = useCallback((value: LinkDialog | null) => {
+    latest.current.onLinkInputActiveChange?.(value !== null);
+    setLinkDraft(value);
+  }, [setLinkDraft]);
+  useLayoutEffect(() => { latest.current.onLinkInputActiveChange?.(link !== null); }, [link]);
+  useLayoutEffect(() => {
+    const report = latest.current.onLinkInputActiveChange;
+    return () => { if (!retainedInput) report?.(false); };
+  }, [retainedInput, readLink]);
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
   const attachmentActive = attachmentValue !== null;
   useLayoutEffect(() => { latest.current.onAttachmentActiveChange?.(attachmentActive); }, [attachmentActive]);
@@ -306,15 +330,17 @@ function NoteEditorContent(props: NoteEditorProps) {
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
-  const [embeds, setEmbeds] = useState<ReadonlyMap<HTMLElement, {ref: string; row_id: string | null; key: string}>>(() => new Map());
+  const [embeds, setEmbeds] = useState<ReadonlyMap<HTMLElement, {ref: string; field: "annotation" | null; label: string | null; row_id: string | null; key: string}>>(() => new Map());
   const embedSerial = useRef(0);
   const [toolbar, setToolbar] = useState(false);
+  const inputMode = useRef<"text" | "blocks" | "controls">("text");
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [presentation, setPresentation] = useState<"title" | "prose" | "code">("prose");
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
+  const attachmentFeedbackOccurrence = useFeedbackOccurrence(attachmentFeedback !== null, props.editorKey);
   const [referenceFocused, setReferenceFocused] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(true);
   const referenceHost = activeRowId !== null && props.projection ? props.projection.reference(activeRowId) : props.reference ?? null;
@@ -413,7 +439,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       else latest.current.onEdit(edit);
       queueMicrotask(() => bindingRef.current?.refresh());
       return true;
-    } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); return false; }
+    } catch { warn("insertion needs review", "your existing writing is kept."); return false; }
   }, [warn]);
   const refreshMarks = useCallback((state: EditorState) => {
     const field = editingField(state);
@@ -433,7 +459,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (
       !view ||
-      !latest.current.editable ||
+      !latest.current.editable || inputMode.current !== "text" ||
       view.composing || compositionBase.current !== null
     )
       return false;
@@ -469,7 +495,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (
       !view ||
       !box ||
-      !latest.current.editable ||
+      !latest.current.editable || inputMode.current !== "text" ||
       view.composing || compositionBase.current !== null
     )
       return false;
@@ -585,7 +611,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       const abort = () => controller.abort();
       signal.addEventListener("abort", abort, { once: true });
       const unsubscribe = uploadHost.subscribe(() => { if (!uploadHost.is_owned()) controller.abort(); });
-      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: null };
+      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: retained?.failure ?? null, occurrence: retained?.occurrence ?? {} };
       setAttachment(task);
       busy.current = true;
       view.setProps({ editable: () => false });
@@ -596,7 +622,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
           return;
         }
-        const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, label: files[0]!.name }));
+        const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, field: null, label: files[0]!.name }));
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
@@ -611,7 +637,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         unsubscribe();
         signal.removeEventListener("abort", abort);
         busy.current = false;
-        if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable });
+        if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable && inputMode.current === "text" });
       }
     },
     [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost, schema.nodes.body, schema.nodes.resource_embed],
@@ -631,7 +657,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     // would briefly disable and blur this body during canonical binding.
     latest.current = { ...latest.current, editable: props.editable && referenceRef.current.isReady() };
     viewRef.current?.setProps({
-      editable: () => latest.current.editable && !busy.current,
+      editable: () => latest.current.editable && !busy.current && inputMode.current === "text",
     });
     const view = viewRef.current;
     if (view) notifySelection(view.state);
@@ -707,6 +733,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       }
       if (latest.current.history) {
+        releaseNativeInput(current);
         if (redo) latest.current.history.redo(); else latest.current.history.undo();
         return true;
       }
@@ -825,7 +852,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           selectionAfter: original.row_id === editingField(current.state)?.row_id ? fieldSelection(current.state, field) : original.selection,
         }, original.row_id);
         else { if (!binding) replaceDoc(current, docFromBody(latest.current.body)); transferred = true; }
-      } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
+      } catch { warn("insertion needs review", "your existing writing is kept."); }
       finally {
         if (transferred && !current.isDestroyed && compositionBase.current === original) {
           compositionBase.current = null;
@@ -883,7 +910,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             : styles.view,
           role: activeReference(state) !== null ? "combobox" : "textbox",
           "aria-readonly": String(
-            !latest.current.editable || busy.current,
+            !latest.current.editable || busy.current || inputMode.current !== "text",
           ),
           ...(activeReference(state) !== null
             ? {
@@ -894,7 +921,7 @@ function NoteEditorContent(props: NoteEditorProps) {
                 "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
               }
             : latest.current.projection && latest.current.editable && !busy.current
-              ? {tabindex: nativeEntry ? "0" : "-1"}
+              ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
           "aria-label": latest.current.label,
           "aria-multiline": "true",
@@ -915,8 +942,9 @@ function NoteEditorContent(props: NoteEditorProps) {
           dom.contentEditable = "false";
           dom.className = "note-object-embed";
           const ref = node.attrs.resource_ref;
-          if (standalone && editorHost.embedded_preview === "workspace") {
-            const entry = {ref, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
+          if (node.attrs.field === "annotation" || standalone && editorHost.embedded_preview === "workspace") {
+            const embeddedField: "annotation" | null = node.attrs.field === "annotation" ? "annotation" : null;
+            const entry = {ref, field: embeddedField, label: typeof node.attrs.label === "string" ? node.attrs.label : null, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
             setEmbeds(value => new Map(value).set(dom, entry));
           }
           else dom.textContent = node.attrs.label ?? ref;
@@ -930,7 +958,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         ...latest.current.projection?.nodeViews,
       },
       editable: () =>
-        latest.current.editable && !busy.current,
+        latest.current.editable && !busy.current && inputMode.current === "text",
       clipboardTextSerializer: slice => clipboardPlainText(slice.content),
       transformPasted: (slice, current) => latest.current.projection || current.state.selection.$from.parent.attrs.presentation === "code"
         ? slice : (oneBlock(slice, schema) ?? slice),
@@ -957,8 +985,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         let pasted = slice;
         if (latest.current.projection) {
           try { pasted = inlinePaste(slice, editingField(current.state)?.kind ?? "body"); }
-          catch (error) {
-            warn("paste not applied", error instanceof Error ? error.message : "this clipboard content cannot be inserted here.");
+          catch {
+            warn("paste not applied", "this clipboard content cannot be inserted here.");
             return true;
           }
         }
@@ -988,6 +1016,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             event.target.closest("input, textarea, select, button")
           )
             return true;
+          if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
           beginNativeInput(current, event);
           // Returning true leaves the browser event alone while stopping PM's
           // keymap/capture fallback from turning composition into a newline.
@@ -1206,6 +1235,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       dispatchTransaction(tr) {
         const projectionSource = tr.getMeta(outlineTransactionSource);
         const external = tr.getMeta(SOURCE) === "external" || projectionSource === "projection" || projectionSource === "semantic";
+        if (inputMode.current !== "text" && !external && (tr.docChanged || tr.selectionSet && !(tr.selection instanceof NodeSelection && typeof tr.selection.node.attrs.row_id === "string"))) return;
         const first = tr.steps[0]?.toJSON();
         const changed = first && typeof first.from === "number" && view.state.doc.type.name === "outline_doc" ? fieldAt(view.state.doc, first.from) : editingField(view.state);
         const query = referenceRef.current.getState();
@@ -1213,7 +1243,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const composingField = compositionBase.current !== null && changed?.row_id === compositionBase.current.row_id;
         if (binding && tr.docChanged && !external && !editingQuery && !(composingField && compositionBase.current?.reference)) {
           try { binding.apply(tr); }
-          catch (error) { warn("edit couldn’t be applied", error instanceof Error ? error.message : "your existing writing is kept."); return; }
+          catch { warn("edit couldn’t be applied", "your existing writing is kept."); return; }
         }
         if(binding && !editingQuery)tr.setMeta("addToHistory",false);
         const before = view.state;
@@ -1264,6 +1294,12 @@ function NoteEditorContent(props: NoteEditorProps) {
     viewRef.current = view;
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
+      encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
+      readText() {
+        flushNativeDOM(view);
+        const field = editingField(view.state);
+        return field ? clipboardPlainText(field.node.content) : "";
+      },
       readSelection() {
         latest.current.projection?.onFocus();
         if (!nativeInputOpen.current && !view.composing && compositionBase.current === null) syncNativeSelection(view);
@@ -1273,7 +1309,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         return selection;
       },
       captureSelection() {
-        const selection = handle.readSelection();
+        const field = editingField(view.state);
+        const selection = field ? fieldSelection(view.state, field) : {anchor: 1, head: 1};
         if (!binding?.baseline) return () => selection;
         const inline = editingField(view.state)?.kind === "title" ? binding.baseline.getText("title") : bodyInline(binding.baseline);
         const relative = (position: number) => Y.createRelativePositionFromTypeIndex(inline,
@@ -1284,6 +1321,14 @@ function NoteEditorContent(props: NoteEditorProps) {
           const b = Y.createAbsolutePositionFromRelativePosition(head, document.doc);
           return {anchor: a ? a.index + 1 : selection.anchor, head: b ? b.index + 1 : selection.head};
         };
+      },
+      clear() {
+        if (!view.editable || view.composing || !editorHandle.current?.settleNativeInput() || referenceRef.current.getState() !== null || readLink() !== null || readAttachment() !== null) return;
+        const field = editingField(view.state);
+        if (!field || field.kind !== "body") return;
+        latest.current.history?.boundary();
+        reportEdit({before: fieldBody(field), after: emptyBody(), selectionBefore: fieldSelection(view.state, field), selectionAfter: {anchor: 1, head: 1}, source: "format"});
+        latest.current.history?.boundary();
       },
       focus(selection, preventScroll = false) {
         if (!view.editable || view.composing) return;
@@ -1302,14 +1347,20 @@ function NoteEditorContent(props: NoteEditorProps) {
         view.dispatch(preventScroll ? transaction : transaction.scrollIntoView());
         view.focus();
       },
+      setInputMode(mode) {
+        inputMode.current = mode;
+        view.setProps({editable: () => latest.current.editable && !busy.current && inputMode.current === "text"});
+        if (mode !== "text") {setToolbar(false); setLinkVisible(false);}
+      },
+      refuse(message) {warn("outline unchanged", message);},
       canArrange() {
         return latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
           compositionBase.current === null && referenceRef.current.getState() === null;
       },
       settleNativeInput() {
-        if (!handle.canArrange()) return false;
+        if (nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         reconcile(view);
-        if (view.isDestroyed || !handle.canArrange()) return false;
+        if (view.isDestroyed || nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         syncNativeSelection(view);
         return true;
       },
@@ -1398,9 +1449,15 @@ function NoteEditorContent(props: NoteEditorProps) {
       tabIndex={-1}
       data-row-focusable="true"
       className={styles.shell}
+      data-header-editor={props.header ? "true" : undefined}
       onKeyDownCapture={(event) => {
+        if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         const view = viewRef.current;
         const intent = view && activeReference(view.state);
+        if (event.key === "Escape" && (view?.composing || compositionBase.current !== null || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) {
+          event.stopPropagation();
+          return;
+        }
         if (
           event.key !== "Escape" ||
           !view ||
@@ -1418,6 +1475,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
           if (shell.current?.contains(document.activeElement)) return;
+          const owner = getInteractionOwner();
+          const opener = owner?.opener instanceof HTMLElement ? owner.opener : owner?.opener?.element;
+          if (owner?.options.current.kind === "modal" && opener && shell.current?.contains(opener)
+            && owner.element?.contains(document.activeElement)) return;
           suspended.current = true;
           setReferenceFocused(false);
           setToolbar(false);
@@ -1426,16 +1487,16 @@ function NoteEditorContent(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {attachmentFeedback ? <FeedbackNotice content={attachmentFeedback} announcement="Polite" /> : null}
-      {attachmentValue && !attachmentValue.pending && !attachmentValue.body ? <FeedbackNotice announcement="Polite"
+      {attachmentFeedback ? <FeedbackFailure scope="Local" occurrence={attachmentFeedbackOccurrence} content={attachmentFeedback} announcement="Polite" /> : null}
+      {attachmentValue && attachmentValue.failure && !attachmentValue.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite"
         content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={attachmentValue.upload.expired
           ? [{ label: "discard attachment", onClick: discardAttachment }] : [{
-          label: attachmentValue.upload.review_required ? "review and save" : "check save", onClick: () => {
+          label: attachmentValue.upload.review_required ? "review and save" : "check save", busy: attachmentValue.pending, onClick: () => {
             const task = readAttachment(), view = viewRef.current;
             if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
           },
         }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {attachmentValue?.body ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
+      {attachmentValue?.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
         label: "insert attachment", onClick: () => {
           const task = readAttachment(), view = viewRef.current;
           if (!view || view.composing || compositionBase.current !== null) return;
@@ -1446,27 +1507,30 @@ function NoteEditorContent(props: NoteEditorProps) {
           setAttachment(null);
         },
       }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {editorHost.embedded_preview === "workspace" ? [...embeds].map(([dom, embed]) => {
-        const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : null;
+      {[...embeds].map(([dom, embed]) => {
+        const owner = embed.row_id ?? props.embedding?.row_id ?? null;
+        const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : props.embedding?.context;
         // A portal has a mount identity; history names the stable field occurrence.
-        const scope = embed.row_id !== null ? `${embed.row_id}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
+        const scope = owner !== null ? `${owner}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
-        return createPortal(<OutlineEmbeddingOccurrence value={embed.row_id}><EmbeddedResource
-          resourceRef={embed.ref} supplied={props.embeddedItem ?? null}
+        return createPortal(<OutlineEmbeddingOccurrence value={owner}><EmbeddedResource
+          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null}
           scope={scope}
           branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
           beforeCollapse={beforeCollapse ? () => beforeCollapse(scope) : undefined}
           atomic={props.atomicEmbeds === true} onRevealRoot={() => shell.current?.focus()}
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
-      }) : null}
+      })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <ReferencePicker
-          input={reference}
-          returnFocus={() => viewRef.current?.dom ?? null}
-          onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
-        />
+        <div data-collection-constrained={props.header || undefined}>
+          <ReferencePicker
+            input={reference}
+            returnFocus={() => viewRef.current?.dom ?? null}
+            onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
+          />
+        </div>
       ) : null}
-      {props.editable && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
+      {props.editable && inputMode.current === "text" && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
         <div
           className={styles.toolbar}
           role="toolbar"
@@ -1488,7 +1552,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           <Button iconOnly icon={<Code2 size={16} aria-hidden="true" />} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
-              const view=viewRef.current;if(!view||!latest.current.editable||view.composing||compositionBase.current!==null)return;
+              const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
               flushNativeDOM(view);syncNativeSelection(view);
               if(activeReference(view.state)!==null)return;
               const field=editingField(view.state);if(!field||field.kind!=="body")return;
@@ -1514,7 +1578,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       {link && linkVisible ? (
         <div
           className={styles.linkDialog}
-          style={{ left: link.left, top: link.top }}
+          style={props.header ? undefined : { left: link.left, top: link.top }}
           role="dialog"
           aria-label="Add hyperlink"
         >
@@ -1704,6 +1768,7 @@ function inspectionPlugin(focus: () => void): Plugin<InspectionState | null> {
 
 /** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
 function EmbeddedResource({
+  field, label,
   resourceRef,
   supplied,
   scope,
@@ -1714,6 +1779,8 @@ function EmbeddedResource({
   beforeCollapse,
 }: {
   resourceRef: string;
+  field: "annotation" | null;
+  label: string | null;
   supplied: ResourceItem | null;
   scope: string;
   branch: OutlineBranch;
@@ -1722,8 +1789,27 @@ function EmbeddedResource({
   onRevealRoot(): void;
   beforeCollapse?(): Promise<boolean>;
 }) {
+  if (field === "annotation") return <EmbeddedAnnotation resourceRef={resourceRef} label={label}/>;
+  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
+}
+function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
+  const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
+  const resource = read.data?.rows[0]?.resource;
+  return <>
+    <FeedbackBusy subject={resourceRef} pending={read.pending}/>
+    <AuthoredReadFailure {...read} title="couldn’t refresh this annotation"/>
+    <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
+      ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
+      : read.data ? "annotation unavailable" : "annotation"}</a>
+  </>;
+}
+function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, onRevealRoot, beforeCollapse}: {
+  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
+}) {
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const failureOccurrence = useFeedbackOccurrence(failed, resourceRef);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const item =
@@ -1736,14 +1822,14 @@ function EmbeddedResource({
   useEffect(() => {
     if (item) return;
     const controller = new AbortController();
-    setFailed(false);
+    setLoading(true);
     void resolveResourceItem(resourceRef, controller.signal).then(
-      setResolved,
+      value => {if (!controller.signal.aborted) {setResolved(value); setFailed(false); setLoading(false);}},
       (error: unknown) => {
         if (controller.signal.aborted || handleUnauthenticated(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error))
           setDefect({ error });
-        else setFailed(true);
+        else {setFailed(true); setLoading(false);}
       },
     );
     return () => controller.abort();
@@ -1766,19 +1852,8 @@ function EmbeddedResource({
       />
     </ResourceOutlineList>
   ) : (
-    <p role={failed ? "alert" : "status"}>
-      {failed ? (
-        <>
-          couldn’t load embedded resource{" "}
-          <Button
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            retry
-          </Button>
-        </>
-      ) : (
-        "loading embedded resource…"
-      )}
-    </p>
+    failed ? <FeedbackFailure scope="Local" occurrence={failureOccurrence}
+      content={{tone: "Warning", title: "couldn’t open embedded resource"}} announcement="Polite"
+      actions={[{label: "retry", busy: loading, onClick: () => setAttempt(value => value + 1)}]}/> : null
   );
 }

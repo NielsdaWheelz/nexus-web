@@ -49,6 +49,8 @@ export type OverlayOptions = {
     ) & {
       /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
       readonly inside?: () => readonly (Element | null)[];
+      /** A logical part of a transient which is not an element box. */
+      readonly containsPoint?: (event: PointerEvent) => boolean;
       /** Read at dispatch: false passes Escape and Back to the next layer. */
       readonly eligible?: () => boolean;
       /** Names the layer for isTopmostInteractionOwner. */
@@ -138,6 +140,21 @@ export function hasActiveModal(): boolean {
 /** Observe the existing stack; feedback never owns modal state. */
 export function useModalActive(): boolean {
   return useSyncExternalStore(subscribe, hasActiveModal, () => false);
+}
+
+/** Portaled controls keep the editing interaction of their real opener. */
+export function ownsOverlayFocus(root: Element, target: Element | null): boolean {
+  if (!target) return false;
+  const owned: Element[] = [root];
+  for (const layer of layers) {
+    const options = layer.options.current;
+    if (options.kind === "tooltip") continue;
+    const opener = layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element;
+    if (!opener || !owned.some(element => element.contains(opener))) continue;
+    if (layer.element) owned.push(layer.element);
+    for (const element of options.inside?.() ?? []) if (element) owned.push(element);
+  }
+  return owned.some(element => element.contains(target));
 }
 
 export function hasActiveInteractionOwner(): boolean {
@@ -438,7 +455,7 @@ function onPointerDown(event: PointerEvent): void {
     const options = layer.options.current;
     const { kind, inside } = options;
     if (layer.parent !== modal || kind === "modal" || !inside) continue;
-    if (inside().some((element) => element?.contains(target))) {
+    if (inside().some((element) => element?.contains(target)) || (kind === "transient" && options.containsPoint?.(event))) {
       if (kind === "transient") return;
       // A caption's portal belongs to the same surface as its trigger.
       const trigger = options.kind === "tooltip" ? options.trigger() : null;

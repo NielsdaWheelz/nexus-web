@@ -32,6 +32,7 @@ from nexus.jobs.queue import (
 from nexus.schemas.metadata_enrichment import (
     METADATA_FIELDS,
     BibliographyMetadataJobPayload,
+    ContainerReport,
     MetadataBibliographyCompletedOutcome,
     MetadataFailedOutcome,
     MetadataFailureCode,
@@ -226,7 +227,12 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
                         strict=True,
                     ),
                 ),
-                decode=lambda out: accept_findings(out, handles=handles),
+                decode=lambda out: accept_findings(
+                    out,
+                    handles=handles,
+                    container=research.container,
+                    private_values=research.private_values,
+                ),
                 tools=Tools("MetadataResearch", frozenset({f"media:{media_id}"})),
             )
         with runtime.session_factory() as publication:
@@ -328,9 +334,23 @@ def _publish(
     if (code := _stale(db, media, job, research)) is not None:
         return failed(code)
     findings = terminal.value
-    unresolved = unresolved_fields(findings)
-    if len(unresolved) == len(METADATA_FIELDS):
-        return finish(MetadataNoFindingsOutcome(purpose="bibliography", completed_at=_now(db)))
+    assert isinstance(research, MetadataResearchInput)
+    unresolved = unresolved_fields(findings, is_part=research.container is not None)
+    report = None
+    if findings.container_discrepancies:
+        assert research.container is not None
+        source_title = research.container["title"]
+        assert isinstance(source_title, str)
+        report = ContainerReport(
+            source_title=source_title, discrepancies=findings.container_discrepancies
+        )
+    applicable_count = len(METADATA_FIELDS) - (3 if research.container is not None else 0)
+    if len(unresolved) == applicable_count:
+        return finish(
+            MetadataNoFindingsOutcome(
+                purpose="bibliography", completed_at=_now(db), container_report=report
+            )
+        )
     try:
         credits = prepare_observed_role_slices_in_current_transaction(
             db,
@@ -352,6 +372,7 @@ def _publish(
             completed_at=_stamp(db, media),
             changed_fields=changed,
             unresolved_fields=unresolved,
+            container_report=report,
         )
     )
 

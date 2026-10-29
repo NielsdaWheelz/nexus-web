@@ -25,6 +25,7 @@ import {
   type RunRead,
   type Selection,
 } from "@/lib/chat/wire";
+import type { Route } from "@/lib/chat/selection";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
@@ -258,17 +259,17 @@ export function createChatStore(accountId: string, conversationId: string | null
      * `onAcceptance` runs once when the server admits it, whoever retries; the Accepted
      * outcome is the awaiting surface's to land.
      */
-    send(request: DraftRequest, openIntent: OpenIntent, onAcceptance: () => void): Promise<CommandOutcome> {
+    send(request: DraftRequest, selectionRoute: Route | null, openIntent: OpenIntent, onAcceptance: () => void): Promise<CommandOutcome> {
       const { destination } = request;
       const observed = revision();
       if (destination.kind === "Existing" && observed === null) return Promise.resolve(UNAVAILABLE);
       const exact = destination.kind === "New" ? destination : { ...destination, expected_revision: observed ?? 0 };
-      const send = { kind: "Send", runId: createRandomId(), request: { ...request, destination: exact }, viewId, openIntent } as const;
+      const send = { kind: "Send", runId: createRandomId(), request: { ...request, destination: exact }, selectionRoute, viewId, openIntent } as const;
       return command(() => commands.execute(send, onAcceptance), false);
     },
 
     /** Reuse the exact source choice unless the user explicitly chooses another. */
-    repeat(operation: "rerun" | "regenerate", assistantId: string, explicit: Selection | null, openIntent: OpenIntent): Promise<CommandOutcome> {
+    repeat(operation: "rerun" | "regenerate", assistantId: string, explicit: { selection: Selection; route: Route | null } | null, openIntent: OpenIntent): Promise<CommandOutcome> {
       const message = state.messages.get(assistantId);
       if (!state.conversation || state.gone || !message) return Promise.resolve(UNAVAILABLE);
       const conversation = state.conversation;

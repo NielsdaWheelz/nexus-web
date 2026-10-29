@@ -15,10 +15,11 @@ from collections.abc import Collection
 
 _DERIVED_OWNERS = {
     "highlight": (
-        "LEFT JOIN LATERAL (SELECT h.anchor_media_id FROM highlights h\n"
+        "LEFT JOIN LATERAL (SELECT h.anchor_media_id,hfa.fragment_id FROM highlights h\n"
+        "          LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id=h.id\n"
         "          WHERE e.scheme = 'highlight' AND h.id = e.id OFFSET 0) h ON true",
-        None,
-        "h.anchor_media_id",
+        "CASE WHEN h.anchor_media_id IS NOT NULL THEN 'media' WHEN h.fragment_id IS NOT NULL THEN 'fragment' END",
+        "COALESCE(h.anchor_media_id,h.fragment_id)",
     ),
     "fragment": (
         "LEFT JOIN LATERAL (SELECT f.media_id FROM fragments f\n"

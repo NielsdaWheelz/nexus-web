@@ -1,14 +1,17 @@
 "use client";
 /** Saved notes reuse the existing contextual formatting, references and attachment
- * UI. Each surface's Yjs origin keeps its undo separate from other appearances. */
+ * UI. Supplied history joins the containing outline; standalone surfaces own theirs. */
 import { useEffect, useState } from "react";
 import * as Y from "yjs";
+import {FeedbackBusy} from "@/components/feedback/Feedback";
 import { bodyInline, readBody } from "@nexus/authored/documents";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import NoteEditor from "./NoteEditor";
-export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady }: {
+export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange, embedding, header }: {
+  onAttachmentActiveChange?: NoteEditorProps["onAttachmentActiveChange"]; onLinkInputActiveChange?: NoteEditorProps["onLinkInputActiveChange"];
+  embedding?: NoteEditorProps["embedding"]; header?: true;
   focus?: NoteEditorProps["focus"]; onSelectionChange?: NoteEditorProps["onSelectionChange"]; onEditorReady?: (editor: NoteEditorHandle | null) => void;
   reference?: import("@/lib/resourceGraph/useReferenceInput").ReferenceInputHost | null;
   document: WritingDocument; label: string; editable?: boolean;
@@ -24,13 +27,14 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
     setOwn({document,origin,manager});
     return()=>{manager.clear();manager.destroy();};
   },[document,history]);
+  useEffect(() => history?.retain(), [history]);
   useEffect(() => {
     const update = () => setBody(readBody(document.doc));
     document.doc.on("update", update); update();
     return () => document.doc.off("update", update);
   }, [document]);
-  if(!history && own?.document!==document)return <p>opening note…</p>;
-  return <NoteEditor focus={focus} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
+  if(!history && own?.document!==document)return <FeedbackBusy subject={document} pending/>;
+  return <NoteEditor embedding={embedding} header={header} placeholder="write or @ to link" focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable} compact
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
     keys={{ ...structuralKeys, ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoin ? { join: direction => onJoin(direction,document.capture()) } : {}) }}

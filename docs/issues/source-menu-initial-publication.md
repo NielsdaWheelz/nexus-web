@@ -47,3 +47,17 @@ occurrence. private evidence: `artifacts/native-feedback/failure-dom.txt`,
 `failure.png`, and `.nexus-local/player-feedback-native/green-native*.log`.
 player-feedback qualification uses the existing inline playback control instead;
 this source-menu concern remains open outside that change.
+
+2026-10-28 chat review at `fe52fb1a8` with the inline regeneration shortcut
+removed: run `20261028-154818-524a3fae37a9` successfully regenerated from desktop
+overflow, then changed from 1280px to 390px and opened the next answer's menu
+with enter. its action read returned 200 in 22.25ms, but the failure snapshot
+showed no menu/dialog and retained the loading announcement. the temporary
+driver also incorrectly expected desktop menuitem roles on the narrow sheet
+and had not awaited the trigger's mobile projection. this is additional
+transition evidence, not a confirmed cause or missing-command diagnosis.
+the corrected driver awaited `aria-haspopup="dialog"` and used native sheet
+button roles; wide and narrow regeneration passed in
+`20261028-155221-3c2fdb9dc373` without product menu changes. that pass does not
+classify the earlier retirement or close this issue.
+private artifacts: `/tmp/nexus-chat-regeneration-evidence-zmcvskmz/`.

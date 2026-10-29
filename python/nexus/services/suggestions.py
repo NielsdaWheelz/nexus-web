@@ -36,6 +36,7 @@ from nexus.services import highlights, libraries, library_entries, notes, readin
 from nexus.services import media as media_service
 from nexus.services.consumption import lectern, projection
 from nexus.services.content_indexing import reading_chunks_sql
+from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
 from nexus.services.podcasts.subscriptions_query import (
     active_subscription_rows_sql,
@@ -47,7 +48,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 
 SUGGESTION_ANCHOR_LIMIT = 5
 _PER_FAMILY = 20
-_EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_embed", "discovery"]
+_EDGE_ORIGINS = ["user", "citation", "note_body", "document_embed", "discovery"]
 # Human-reviewed calibration: a neighbour ranks only under this exact embedding
 # identity at this similarity. Another model yields no Similar evidence.
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)
@@ -547,7 +548,7 @@ def _reading_membership(
     family: str,
     anchor_id: UUID,
 ) -> tuple[str, str, dict[str, object]]:
-    """Same-snapshot own/piece admission for one anchor and family."""
+    """Same-snapshot own/piece/capture admission for one anchor and family."""
     selected = [row for row in readings if row[1] == family and row[0] != anchor_id]
     direct_ids = [media_id for media_id, _, _ in selected]
     piece_ids = [media_id for media_id, _, source_id in selected if media_id != source_id]
@@ -556,15 +557,20 @@ def _reading_membership(
         "piece_ids": piece_ids,
         "source_ids": list({row[2] for row in selected} | set(direct_ids)),
     }
-    projection = "SELECT cc.owner_id AS reading_media_id,cc.id AS chunk_id WHERE cc.owner_id=ANY(CAST(:direct_ids AS uuid[]))"
+    projection = "SELECT cc.owner_id AS reading_media_id,cc.id AS chunk_id WHERE cc.owner_kind='media' AND cc.owner_id=ANY(CAST(:direct_ids AS uuid[]))"
     if piece_ids:
         pieces = reading_chunks_sql("""SELECT p.media_id FROM media_parts p
             WHERE p.source_media_id=cc.owner_id
               AND p.media_id=ANY(CAST(:piece_ids AS uuid[]))""")
         projection += f""" UNION ALL SELECT reading_media_id,chunk_id
-            FROM ({pieces}) piece_admission WHERE chunk_id=cc.id"""
+            FROM ({pieces}) piece_admission WHERE cc.owner_kind='media' AND chunk_id=cc.id"""
+    captures = reading_chunks_sql("SELECT unnest(CAST(:direct_ids AS uuid[])) AS media_id")
+    projection += f""" UNION ALL SELECT reading_media_id,chunk_id
+        FROM ({captures}) capture_admission WHERE cc.owner_kind='fragment' AND chunk_id=cc.id"""
     return (
-        "cc.owner_kind='media' AND cc.owner_id=ANY(CAST(:source_ids AS uuid[]))",
+        f"""((cc.owner_kind='media' AND cc.owner_id=ANY(CAST(:source_ids AS uuid[])))
+            OR (cc.owner_kind='fragment' AND cc.owner_id=ANY(ARRAY(
+                SELECT fragment_id FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:direct_ids AS uuid[])) AS media_id")}) captured))))""",
         projection,
         params,
     )
@@ -598,7 +604,7 @@ def _similar(
         WITH anchors AS (
             SELECT * FROM unnest(CAST(:anchor_ids AS uuid[]), CAST(:anchor_ranks AS integer[]))
                 AS a(id, rank)
-        ), anchor_chunks AS ({reading_chunks_sql("SELECT a.id AS media_id FROM anchors a JOIN media_parts p ON p.media_id=a.id")})
+        ), anchor_chunks AS ({reading_chunks_sql(f"SELECT a.id AS media_id FROM anchors a WHERE EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=a.id) OR EXISTS (SELECT 1 FROM ({x_capture_scope_rows_sql('SELECT a.id AS media_id')}) captured)")})
         SELECT a.id,a.rank,first_chunk.id AS chunk_id
         FROM anchors a
         JOIN content_index_states cis ON cis.owner_kind='media' AND cis.owner_id=a.id
@@ -616,6 +622,7 @@ def _similar(
             AND ce.embedding_dimensions=:embedding_dimensions
             AND ce.embedding_vector IS NOT NULL
         WHERE NOT EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT a.id AS media_id")}) captured)
         UNION ALL
         SELECT a.id,a.rank,av.chunk_id FROM anchors a
         CROSS JOIN LATERAL (
@@ -628,14 +635,14 @@ def _similar(
                 AND (cis.lexical_revision=cis.revision) IS TRUE
                 AND cis.active_embedding_provider=:embedding_provider
                 AND cis.active_embedding_model=:embedding_model
-            WHERE admitted.reading_media_id=a.id AND cc.owner_kind='media'
+            WHERE admitted.reading_media_id=a.id AND cc.owner_kind IN ('media','fragment')
                 AND ce.embedding_provider=:embedding_provider
                 AND ce.embedding_model=:embedding_model
                 AND ce.embedding_dimensions=:embedding_dimensions
                 AND ce.embedding_vector IS NOT NULL
             ORDER BY cc.chunk_idx,cc.id LIMIT 1
         ) av
-        WHERE EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=a.id)
+        WHERE a.id IN (SELECT reading_media_id FROM anchor_chunks)
         ORDER BY 2
     """),
         bindings,

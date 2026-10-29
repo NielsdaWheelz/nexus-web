@@ -10,7 +10,7 @@ from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from llm_tools import ToolEffect
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
@@ -41,8 +41,15 @@ class Out(BaseModel):
 class ReaderSelectionKey(Wire):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    media_id: UUID
+    media_id: UUID | None
+    capture_id: UUID | None
     highlight_id: UUID
+
+    @model_validator(mode="after")
+    def validate_reading(self) -> ReaderSelectionKey:
+        if (self.media_id is None) == (self.capture_id is None):
+            raise ValueError("exactly one reading identity is required")
+        return self
 
 
 class ReaderSelectionSnapshot(Wire):

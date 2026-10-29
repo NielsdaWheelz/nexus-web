@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchImportDetail } from "@/lib/imports/api";
+import { useImports } from "@/lib/imports/ImportsProvider";
+
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,
 // find, the chrome around it, and reading activity. Everything positional is
@@ -14,9 +17,9 @@ import {
   useSyncExternalStore,
   type FocusEvent,
 } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import { SourcePieces, PieceDetails } from "@/components/media/containedWorks/Pieces";
+import HostedContents from "./HostedContents";
 import { useShareController } from "@/lib/sharing/controller";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -43,7 +46,6 @@ import { assertNever } from "@/lib/assertNever";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { localPoint } from "@/lib/documentReader/model";
-import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
   useDocumentReader,
@@ -87,7 +89,7 @@ import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
 import { createMediaAnnotations } from "./annotations";
 import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@/lib/documentReader/annotations";
-import { AnnotationList, LocalWritingError, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { AnnotationList, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
 import EmbedCard, { PostActions } from "./Embeds";
@@ -118,6 +120,30 @@ export default function MediaPaneBody() {
   if (attemptId !== null && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination")
     return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
   return <MediaRoute key={id} id={id} />;
+}
+
+function FailedSource({ mediaId, code, content, announcement }: {
+  mediaId: string;
+  code: string | null;
+  content: import("@/components/feedback/Feedback").FeedbackContent;
+  announcement: "Polite" | "None";
+}) {
+  const { observation } = useImports();
+  const detail = usePaneFreeServerValue({
+    key: `failed-source:${mediaId}`,
+    stale: observation,
+    load: signal => fetchImportDetail(`media:${mediaId}`, signal),
+  });
+  const offer = detail.status === "ready" ? detail.data.item.obligations.source?.recovery : null;
+  if (offer?.kind !== "BrowserCapture") return <FeedbackState content={content} announcement={announcement} />;
+  let title = content.title;
+  if (code === "E_SOURCE_ACCESS_DENIED") title = "this page blocked the import.";
+  if (code === "E_SOURCE_NOT_READABLE") title = "no readable article was found.";
+  return <>
+    <FeedbackState content={{ tone: "Danger", title }} announcement={announcement}
+      actions={[{ label: "open source in new tab", href: offer.source_url, target: "_blank" }]} />
+    <p>when the article is visible, use nexus capture to finish this import.</p>
+  </>;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
@@ -152,7 +178,7 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
         busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing },
       viewImports]} />;
   if (settled)
-    return <PaneLoadingState label="opening your saved source" announcement="Polite" />;
+    return <PaneLoadingState />;
   if (source.status === "loading")
     return <FeedbackState content={{ tone: "Neutral", title: "opening your saved source" }}
       announcement="Polite" actions={[viewImports]} />;
@@ -183,6 +209,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   });
   usePaneReturnReady(record.status === "failed" || !admitted && !catalog.loading && record.status !== "ready");
   const failure = record.status === "loading" ? null : record.error;
+  const recordOccurrence = useFeedbackOccurrence(failure !== null, id);
   const savedReady = saved.kind === "Ready";
   useEffect(() => {
     if (savedReady && view !== "live" && (admission === "Unavailable" || admission === "SignInRequired" || admission === "UpdateRequired")) setOpenedOffline(true);
@@ -199,13 +226,14 @@ function MediaRoute({ id }: { readonly id: string }) {
     </div>
     {failure !== null && [403, 404, 410].includes(failure.status) ? <FeedbackNotice
       content={{ tone: "Warning", title: "original no longer available · downloaded copy kept" }} announcement="Polite" /> : null}
-    {view === "live" && record.status !== "ready" ? <FeedbackNotice content={{ tone: record.status === "failed" ? "Warning" : "Neutral",
-      title: !admitted ? "connect to view the current version" : record.status === "failed" ? "current version couldn’t open · downloaded copy kept" : "opening current version · downloaded copy kept" }} announcement="Polite"
-      actions={record.status === "failed" && admitted ? [{ label: "retry current version", onClick: record.refetch, busy: record.retrying }] : undefined} /> : null}
+    {view === "live" && record.status === "failed" && admitted ? <FeedbackFailure scope="Local" occurrence={recordOccurrence}
+      content={{tone: "Warning", title: "couldn’t open the current version", message: "downloaded copy kept."}} announcement="Polite"
+      actions={[{label: "retry current version", onClick: record.refetch, busy: record.retrying}]} /> : null}
+    {view === "live" && record.status === "loading" && admitted ? <FeedbackBusy pending /> : null}
     <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
   </div>;
   if (view === "downloaded" && !savedReady) return saved.kind === "Loading"
-    ? <PaneLoadingState label="opening downloaded copy…" announcement="Polite" />
+    ? <PaneLoadingState />
     : <FeedbackState content={{ tone: "Warning", title: saved.kind === "Failed" ? saved.message : "this episode is not downloaded" }} announcement="Polite"
       actions={saved.kind === "Failed" ? [{ label: "retry downloaded copy", onClick: saved.retry }, { label: "view current version", onClick: () => switchView("live") }]
         : [{ label: "view current version", onClick: () => switchView("live") }]} />;
@@ -213,7 +241,7 @@ function MediaRoute({ id }: { readonly id: string }) {
     {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
     <MediaPane id={id} record={record} />
   </div>;
-  if (localContentAvailable && saved.kind === "Loading") return <PaneLoadingState label="opening saved content…" announcement="Polite" />;
+  if (localContentAvailable && saved.kind === "Loading") return <PaneLoadingState />;
   if (localContentAvailable && saved.kind === "Failed") return <FeedbackState content={{ tone: "Warning", title: saved.message,
     message: "downloaded content needs repair. this does not remove saved files or listening history." }} announcement="Polite"
     actions={[{ label: "retry downloaded copy", onClick: saved.retry }, { label: "manage downloads", href: "/downloads" }]} />;
@@ -230,7 +258,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   return record.status === "failed" ? <>
     <FeedbackState content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
     <LocalAnnotations mediaId={id} />
-  </> : <PaneLoadingState label="loading item…" announcement="Polite" />;
+  </> : <PaneLoadingState />;
 }
 
 /** Writing about a source this device can't open: its quotes and notes stay local and editable. */
@@ -241,7 +269,6 @@ function LocalAnnotations({ mediaId }: { readonly mediaId: string }) {
   const state = useSyncExternalStore(annotations.subscribe, annotations.getState, annotations.getState);
   if (!state.annotations.length) return null;
   return <div className={styles.state}>
-    <LocalWritingError />
     <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement="None" />
     <AnnotationList annotations={state.annotations} />
   </div>;
@@ -254,6 +281,7 @@ function UnavailableSavedMedia({ error }: { readonly error: { readonly code: str
 }
 
 function SavedMedia({ summary, record }: { readonly summary: MediaSummary; readonly record: ServerValue<MediaDetail> }) {
+  const occurrence = useFeedbackOccurrence(record.status !== "loading" && record.error !== null, summary.media_id);
   const authors = groupContributorCredits(selectMediaAuthors(summary.contributors)).find(group => group.role === "author");
   usePaneChrome({
     displayTitle: summary.title,
@@ -269,8 +297,8 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
     <p><MediaFacts summary={summary} /></p>
     {summary.processing_status === "failed" ? <FeedbackStatus content={{ tone: "Warning", title: "processing failed" }} announcement="None" /> : null}
     {!remoteReady() ? <FeedbackNotice content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
-      : record.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
-      : <PaneLoadingState label="loading item…" announcement="Polite" />}
+      : record.status === "failed" ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
+      : <PaneLoadingState />}
   </div></div>;
 }
 
@@ -373,6 +401,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
     : [];
   const [embedFailure, setEmbedFailure] = useState<ApiError | null>(null);
+  const embedOccurrence = useFeedbackOccurrence(embedFailure !== null, id);
   const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
     embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
   useEffect(() => {
@@ -391,7 +420,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     return () => stops.forEach((close) => close());
   }, [articleIds, paneVisible, reader]);
   useEffect(() => {
-    if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
+    if (readable && doc && media?.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
   }, [doc, media?.reader_generation, readable, reader]);
   useEffect(() => {
@@ -668,7 +697,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       }
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
-      if (source_identity !== doc.identity) return "Unavailable";
+      if (locator.type === "x_capture_offsets") {
+        if (source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
+        const unit = doc.units.find(item => item.xPost?.owner?.capture_id === locator.capture_id && item.xPost.owner.fragment_id === locator.fragment_id);
+        if (!unit || locator.end_offset > unit.length || locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return "Unavailable";
+      } else if (source_identity !== doc.identity && source_identity !== doc.identity.split(":", 1)[0]) return "Unavailable";
       if (apparatus_reference_id !== null) {
         return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, source_identity, context);
       }
@@ -705,7 +738,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       }
       const current = reader.getState().document;
       if (context.signal.aborted) return "Cancelled";
-      if (current.status !== "ready" || current.doc.identity !== source_identity) return "Unavailable";
+      if (current.status !== "ready" || current.doc.identity !== doc.identity) return "Unavailable";
       setInspection({ ...paint, activationId: context.activationId });
       context.signal.addEventListener("abort", () => {
         setInspection((current) => current?.activationId === context.activationId ? null : current);
@@ -716,6 +749,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   });
   arrivalRef.current = arrival;
   const [staleBuild, setStaleBuild] = useState(false);
+  const staleOccurrence = useFeedbackOccurrence(staleBuild || isStaleBuild(arrival.failure?.error), id);
   useLayoutEffect(() => {
     if (isStaleBuild(arrival.failure?.error)) setStaleBuild(true);
   }, [arrival.failure]);
@@ -737,9 +771,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   // the host knows its own title and a part's source title; other owners keep their stubs.
   const sourceLabel = useCallback((sourceRef: string) => !media ? null
     : sourceRef === `media:${id}` ? { kind: media.kind, label: media.title }
+    : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
   const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
+  const verbsOccurrence = useFeedbackOccurrence(verbs.notice !== null, id);
   verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(
@@ -781,11 +817,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const contents = useMemo(
     () =>
       doc?.kind === "text" && (media?.kind === "text_part" || media?.kind === "epub" || media?.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
-        <>
-          <SourceIssuesNotice issues={doc.sourceIssues} readable />
-          {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} /></>
-            : media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x" && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post") ? <SourcePieces source={id} reader={reader} /> : <Contents reader={reader} />}
-        </>
+        <HostedContents id={id} media={media} reader={reader} focusTarget={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? null} />
       ) : undefined,
     [doc, id, media, reader],
   );
@@ -808,9 +840,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   }, [annotations.remote, doc]);
   const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds && !verbs.composer.reselection ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
-    {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
-      title: verbs.bounds.phase === "Submitting" ? (isMobile ? "applying…" : "updating highlighted passage…")
-        : verbs.bounds.issue ?? (verbs.bounds.scope.kind === "quote"
+    {verbs.bounds && (verbs.bounds.phase !== "Submitting" || verbs.bounds.issue) ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
+      title: verbs.bounds.issue ?? (verbs.bounds.scope.kind === "quote"
           ? isMobile ? "select text matching the original quote to relocate it." : "select text matching the original quote to relocate it. escape cancels."
           : isMobile ? "select the new passage in this text section." : "select the new passage in this text section. escape cancels.") }}
       actions={verbs.bounds.phase === "Selecting" ? [{ label: "cancel", onClick: verbs.cancelBounds }] : undefined}
@@ -841,7 +872,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   if (record.status === "loading" || (record.status === "ready" && !media))
     return (
       <div className={styles.stateScrollport} data-mobile={isMobile}>
-        <PaneLoadingState label="loading item…" announcement={paneActive ? "Polite" : "None"} />
+        <PaneLoadingState />
       </div>
     );
   if (record.status === "failed" || !media) {
@@ -863,13 +894,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     kind: "Source",
     processingStatus: media.processing_status,
     lastErrorCode: media.last_error_code,
-    capabilities: { can_retry: media.capabilities?.can_retry === true },
-    sourceUrl: media.canonical_source_url,
   });
   const failure = arrival.failure;
   const arrivalNotice = staleBuild || isStaleBuild(failure?.error)
-    ? <FeedbackNotice content={STALE_BUILD_FEEDBACK} announcement={paneActive ? "Polite" : "None"} returnFocus={returnFocus} />
-    : failure ? <FeedbackNotice
+    ? <FeedbackFailure scope="Local" occurrence={staleOccurrence} content={STALE_BUILD_FEEDBACK} announcement={paneActive ? "Polite" : "None"} returnFocus={returnFocus} />
+    : failure ? <FeedbackFailure scope="Local"
       content={(failure.error && apiTransportFeedback(failure.error, failure.title)) ?? { tone: "Warning", title: failure.title }}
       occurrence={failure}
       onDismiss={() => arrival.dismissFailure(failure)}
@@ -898,9 +927,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
             />
           ) : sourceError ? (
-            <FeedbackState content={sourceError} announcement={paneActive ? "Polite" : "None"}
-              actions={sourceError.action.kind === "OpenSource" ? [{ label: "open source", href: sourceError.action.href }] : undefined}
-            />
+            media.processing_status === "failed" ? <FailedSource mediaId={id} code={media.last_error_code} content={sourceError} announcement={paneActive ? "Polite" : "None"} />
+              : <FeedbackState content={sourceError} announcement={paneActive ? "Polite" : "None"} />
           ) : (
             <FeedbackState content={{ tone: "Neutral", title: "preparing this item for reading" }} announcement={paneActive ? "Polite" : "None"} />
           )}
@@ -929,7 +957,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
 
   return (
     <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode} onBlurCapture={cancelTranscriptFocus}>
-      {verbs.notice ? <FeedbackStatus content={verbs.notice} announcement={paneActive ? "Polite" : "None"} /> : null}
+      {verbs.notice ? <FeedbackFailure scope="Local" occurrence={verbsOccurrence} announcementOccurrence={verbs.notice} content={verbs.notice} actions={verbs.noticeActions} announcement={paneActive ? "Polite" : "None"} /> : null}
       <HostedReaderView
         mediaId={id}
         transcriptReaderKey={snapshot?.transcript_reader_key ?? null}
@@ -952,21 +980,20 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         }}
         apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
-        renderPostActions={(unit) => unit.xPost ? <PostActions key={unit.id} post={unit.xPost} /> : null}
+        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
-          return embed ? <EmbedCard embed={embed} /> : null;
+          return embed ? <EmbedCard embed={embed} reader={reader} /> : null;
         }}
         before={
           <>
-            <LocalWritingError />
             {documentFailed && annotations.local.annotations.length ? <>
               <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement={paneActive ? "Polite" : "None"} />
               <AnnotationList annotations={annotations.local.annotations} />
             </> : null}
-            {embedFailure ? <FeedbackNotice content={{ tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId }}
+            {embedFailure ? <FeedbackFailure scope="Local" occurrence={embedOccurrence} content={{ tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId }}
               announcement={paneActive ? "Polite" : "None"} /> : null}
-            {forkFailure ? <FeedbackNotice
+            {forkFailure ? <FeedbackFailure scope="Local"
               content={{ tone: "Warning", title: forkFailure.title }}
               occurrence={forkFailure}
               onDismiss={() => setForkFailure((current) => current === forkFailure ? null : current)}

@@ -8,6 +8,10 @@ import { prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncStatus } from "@nexus/authored/types";
 
+/** Existing host admission refusals are recoverable setup conditions. */
+export class AuthoredSetupError extends Error {
+  constructor(readonly reason: "Persistence" | "SharedWorker") { super("authored setup unavailable"); }
+}
 const retiredAccounts = new Set<string>();
 export function admitAuthoredAccount(accountId: string): void { retiredAccounts.delete(accountId); }
 export function retireAuthoredAccount(accountId: string): void {
@@ -42,10 +46,10 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
 }
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
-  if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new Error("persistent storage is required to make your notes available offline. allow persistent storage for nexus, then retry.");
+  if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new AuthoredSetupError("Persistence");
   await prepareShell();
   if (retiredAccounts.has(accountId)) throw new Error("authored account retired before opening storage");
-  if (typeof SharedWorker === "undefined") throw new Error("this browser cannot open the shared authored store");
+  if (typeof SharedWorker === "undefined") throw new AuthoredSetupError("SharedWorker");
   const worker = new SharedWorker("/_nexus/authored/worker.js", { type: "module", name: `nexus-authored-${accountId}-format-${FORMAT_REVISION}` });
   const port = worker.port;
   let sequence = 0;
@@ -75,7 +79,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       const timer = setTimeout(() => {
         waiting.delete(id); unresponsive++;
         if (unresponsive >= 2) failPort("the local notes store isn’t responding. keep this page open and copy unfinished writing before restarting nexus.");
-        reject(terminalFailure ?? new Error("local notes did not acknowledge completion. keep this page open and retry saving."));
+        reject(terminalFailure ?? Object.assign(new Error("local notes did not acknowledge completion. keep this page open and retry saving."), {code: "E_AUTHORED_LOCAL"}));
       }, 30_000);
       waiting.set(id, { resolve: value => { clearTimeout(timer); unresponsive = 0; resolve(value as T); }, reject: error => { clearTimeout(timer); reject(error); } });
       port.postMessage({ id, op, ...input });
@@ -101,7 +105,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       const pending = waiting.get(data.id);
       waiting.delete(data.id);
       if (data.ok) pending?.resolve(data.result);
-      else pending?.reject(new Error(data.error));
+      else pending?.reject(Object.assign(new Error(data.error), {code: data.code}));
     }
   };
   worker.onerror = () => failPort("the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus.");

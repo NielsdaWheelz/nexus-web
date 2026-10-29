@@ -2,6 +2,7 @@
 
 from datetime import date
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import (
     AfterValidator,
@@ -62,8 +63,16 @@ class WorkspaceDailyLocator(_Locator):
     local_date: Annotated[date, BeforeValidator(_local_date)]
 
 
+class WorkspaceCaptureLocator(_Locator):
+    kind: Literal["x_capture"]
+    capture_id: UUID
+
+
 WorkspacePresentationLocator = Annotated[
-    WorkspaceResourceLocator | WorkspaceContributorLocator | WorkspaceDailyLocator,
+    WorkspaceResourceLocator
+    | WorkspaceContributorLocator
+    | WorkspaceDailyLocator
+    | WorkspaceCaptureLocator,
     Field(discriminator="kind"),
 ]
 

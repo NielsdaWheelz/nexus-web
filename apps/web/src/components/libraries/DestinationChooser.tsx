@@ -3,6 +3,7 @@
 import { forwardRef, type MouseEventHandler } from "react";
 import { ChevronDown } from "lucide-react";
 import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
+import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -42,14 +43,13 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
 });
 
 /** Local draft selection over one complete writable catalog. Reads belong to serverState. */
-export default function DestinationChooser({ context, selection, onSet, disabled, create, error, status }: {
+export default function DestinationChooser({ context, selection, onSet, disabled, create, error }: {
   readonly context: string;
   readonly selection: DestinationSelection;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
   readonly create: ChooserCreation | null;
   readonly error?: ChooserError | null;
-  readonly status?: string;
 }) {
   const stamp = useChangeStamp("Libraries");
   const catalog = usePaneFreeServerValue({ key: "/libraries/destinations", stale: stamp, load: libraryDestinations });
@@ -75,6 +75,7 @@ export default function DestinationChooser({ context, selection, onSet, disabled
     };
   });
   const readError = catalog.status === "failed" ? catalog.error : catalog.status === "ready" ? catalog.error : null;
+  const occurrence = useFeedbackOccurrence(readError !== null, "library-destinations");
   const feedback = readError ? libraryErrorFeedback(readError, "libraries couldn’t be loaded", fail, signIn) : null;
   const names = entries.filter(entry => entry.included > 0).map(entry => entry.destination).toSorted(compareLibraryNames).map(destination => destination.name);
   return <LibraryChooser context={context} membershipKind="Chosen" rows={rows}
@@ -84,8 +85,7 @@ export default function DestinationChooser({ context, selection, onSet, disabled
     }}
     loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
     summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
-    status={status}
-    error={error ?? (feedback ? { content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
+    error={error ?? (feedback ? { occurrence, content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
     create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null }}
     empty="no libraries yet" />;
 }

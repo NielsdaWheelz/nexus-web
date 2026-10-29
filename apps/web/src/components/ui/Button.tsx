@@ -17,7 +17,7 @@ export type ButtonProps = Omit<ComponentProps<"button">, "children" | "aria-labe
 /** Native command, quiet/compact by default and type=button. Busy never decides blocking. */
 export default function Button(props: ButtonProps) {
   const {
-    emphasis, tone, size, iconOnly, icon, tooltip: _tooltip, children, className, ref,
+    emphasis, tone, size, iconOnly, icon, reserveIcon, busyKey, tooltip: _tooltip, children, className, ref,
     "aria-label": label, type = "button", ...attributes
   } = props;
   const blocked = attributes.disabled === true || attributes["aria-disabled"] === true || attributes["aria-disabled"] === "true";
@@ -31,7 +31,7 @@ export default function Button(props: ButtonProps) {
       aria-label={label}
       className={cx(buttonClassName({ emphasis, tone, size, iconOnly }), className)}
     >
-      <ControlContents icon={icon} busy={busy}>{children}</ControlContents>
+      <ControlContents icon={icon} reserveIcon={reserveIcon} busy={busy} busyKey={busyKey}>{children}</ControlContents>
     </button>}
   />;
 }

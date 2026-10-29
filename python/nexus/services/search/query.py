@@ -31,7 +31,7 @@ DISCOVERY_KINDS: tuple[DiscoveryKind, ...] = get_args(DiscoveryKind)
 DISCOVERY_FAMILIES: dict[DiscoveryKind, tuple[str, ...]] = {
     "documents": ("media", "podcast", "content_chunk", "fragment", "reader_apparatus_item"),
     "notes": ("page", "note_block"),
-    "highlights": ("highlight",),
+    "highlights": ("highlight", "highlight_annotation"),
     "conversations": ("conversation", "message"),
     "people": ("contributor",),
     "web": ("web_result",),
@@ -107,11 +107,6 @@ class SearchQuery:
     def effective_result_types(self) -> tuple[str, ...]:
         wanted = {t for kind in self.effective_kinds for t in KIND_TO_RESULT_TYPES[kind]}
         return tuple(t for t in ALL_RESULT_TYPES if t in wanted)
-
-    @property
-    def highlight_notes_only(self) -> bool:
-        """Highlights without notes also finds the notes hanging off readable highlights."""
-        return "highlights" in self.effective_kinds and "notes" not in self.effective_kinds
 
     @property
     def terms(self) -> str:
