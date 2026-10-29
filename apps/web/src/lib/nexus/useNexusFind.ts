@@ -6,6 +6,7 @@
 // local scope inputs are explicit. Exact authored refs resolve locally;
 // other exact refs use the existing resource resolver and never enter textual discovery.
 import type { SearchFamily } from "@nexus/authored/scope";
+import type { AuthoredQuery } from "@nexus/authored/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
@@ -28,6 +29,7 @@ import type { NexusRecent, NexusSource } from "./model";
 import type { NexusQuery } from "./query";
 
 type History = ApiJson<"/me/nexus-history", "get">;
+type RetainedLocalTarget = Extract<AuthoredQuery, {kind: "search_admission"}>["targets"][number];
 
 const EMPTY_RECENT: readonly NexusRecent[] = [];
 const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
@@ -40,7 +42,7 @@ const PREVIEW_PHASE_RANK = { direct: 0, lexical: 1, hybrid: 2 } as const;
 const PROGRESS_REVEAL_MS = 150;
 export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"];
 
-export function useNexusFind({ open, query, retainedLocalRefs }: { open: boolean; query: NexusQuery; retainedLocalRefs: readonly string[] }) {
+export function useNexusFind({ open, query, retainedLocalTargets }: { open: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
   const { accountId } = useAuthenticatedAccount();
   const live = useRef(true);
   useLayoutEffect(() => {
@@ -73,16 +75,16 @@ export function useNexusFind({ open, query, retainedLocalRefs }: { open: boolean
   const local = useLocalSearchPreview(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
   const scopes = localSearchScopes(query.searchQuery.scope);
   const families: SearchFamily[] | null = query.searchQuery.requestedKinds === null ? null : [...query.searchQuery.requestedKinds].filter(kind => kind !== "web").sort();
-  const retainedLocal = useAuthoredQuery(open && query.intent.kind === "Search" && retainedLocalRefs.length && scopes !== null && localSearchApplies(query.searchQuery)
-    ? { kind: "search_admission", text: query.searchQuery.text.trim(), refs: [...retainedLocalRefs], scopes, families } : null);
+  const retainedLocal = useAuthoredQuery(open && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
+    ? { kind: "search_admission", text: query.searchQuery.text.trim(), targets: [...retainedLocalTargets], scopes, families } : null);
   const localValidationReady = query.intent.kind === "Resource" ? localRead.data !== null
     : retainedLocal.data !== null && (local.storeRevision === null || BigInt(retainedLocal.data.store_revision) >= BigInt(local.storeRevision));
   const missingLocal = useMemo(() => {
-    if (local.scopeAvailable === false) return new Set(retainedLocalRefs);
+    if (local.scopeAvailable === false) return new Set(retainedLocalTargets.map(target => target.ref));
     if (!localValidationReady || retainedLocal.data === null) return new Set<string>();
     const present = new Set(retainedLocal.data.rows.map(row => row.resource.ref));
-    return new Set(retainedLocalRefs.filter(ref => !present.has(ref)));
-    // The serialized read already owns the stable reference set.
+    return new Set(retainedLocalTargets.filter(target => !present.has(target.ref)).map(target => target.ref));
+    // The serialized read owns proof of each held field, not just resource presence.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localValidationReady, retainedLocal.data, local.scopeAvailable]);
   const reference = usePaneFreeServerValue<ResourceItem>({

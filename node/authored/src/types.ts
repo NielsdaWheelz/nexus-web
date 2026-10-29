@@ -80,7 +80,7 @@ export type AuthoredQuery =
   | { kind: "backlinks"; ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "search"; text: string; cursor: string | null; limit: number; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
   | { kind: "search_preview"; text: string; limit: number; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
-  | { kind: "search_admission"; text: string; refs: ResourceRef[]; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
+  | { kind: "search_admission"; text: string; targets: {ref: ResourceRef; field: "annotation" | null}[]; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null; matched_field: "quote" | "annotation" | null; activation_field: "annotation" | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */

@@ -797,11 +797,12 @@ def _discovery_predicates(
     _, scope_params = _ctes(r)
     where = cell[0] + filters
     if r.exclude_viewer_authored:
-        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(family)
+        scheme = "highlight" if family == "highlight_annotation" else family
+        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(scheme)
         if authored is not None:
             where += f""" AND NOT EXISTS(SELECT 1 FROM authored_resources authored
                 WHERE authored.account_id=:viewer_id
-                  AND authored.ref='{family}:' || {authored}.id::text)"""
+                  AND authored.ref='{scheme}:' || {authored}.id::text)"""
         elif family == "passage_anchor":
             where += """ AND NOT EXISTS(SELECT 1 FROM authored_passages authored
                 WHERE authored.account_id=:viewer_id AND authored.anchor_id=pa.id::text)"""

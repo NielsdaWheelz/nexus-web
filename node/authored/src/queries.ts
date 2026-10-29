@@ -543,7 +543,7 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
   const preview = query.kind !== "search";
   const admission = query.kind === "search_admission";
   if (query.kind === "search_preview" && !Number.isFinite(query.limit)
-    || admission && query.refs.length > 8) throw new RangeError("Search preview exceeds bound");
+    || admission && query.targets.length > 8) throw new RangeError("Search preview exceeds bound");
   const limit = admission ? 8 : Math.max(1, Math.min(preview ? 8 : 100, Math.floor(query.limit)));
   if (preview && !query.text.trim()) return result;
   const all = query.scopes.some(scope => scope.kind === "all");
@@ -706,7 +706,7 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
     // never renders, so null materializes the complete vocabulary. Full search keeps its cursor.
     const families = query.families === null && !preview ? null : JSON.stringify(query.families ?? SEARCH_FAMILIES);
     const batch = names || !preview ? 100 : limit + nameCount - accepted;
-    const raw = await read(admission ? {sql: SEARCH_ADMISSION_SQL, params: [JSON.stringify(query.refs), expression, families]}
+    const raw = await read(admission ? {sql: SEARCH_ADMISSION_SQL, params: [JSON.stringify(query.targets.map(target => target.ref)), expression, families]}
       : names ? {sql: SEARCH_NAMES_SQL, params: [families, cursor]}
       : {sql: all ? SEARCH_SQL : SEARCH_SCOPED_SQL, params: all ? [expression, families, cursor, batch] : [scopesJson, expression, families, cursor, batch]});
     const candidates = raw.flatMap(row => {
@@ -758,15 +758,17 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         if (!requested.length && directFacts.has(resource.ref) && resource.source_ref && !await loadExactReadings(resource.source_ref, null))
           return {...result, rows: [], next_cursor: null, scope_available: false};
         const texts = requested.length || !directFacts.has(resource.ref) ? requested : textsForHighlight(resource, false, true);
+        // A held row proves its original field; another winning field cannot rescue its loss.
+        const held = admission ? query.targets.find(target => target.ref === resource.ref)! : null;
         let bestScore:number|null=null;
-        for (const text of texts) {
+        if (held === null || held.field === null) for (const text of texts) {
           const witnessScore=await score(text.lexical,expression);
           if (witnessScore!==null && (bestScore===null || witnessScore<bestScore)) {
             bestScore=witnessScore;
             match={resource,link:null,match_text:text.literal,activation_ref:text.activation_ref,matched_field:"quote",activation_field:null};
           }
         }
-        if (resource.authored_by_viewer && resource.body_pm_json!==null && (all || directFacts.has(resource.ref) || texts.length)) {
+        if ((held === null || held.field === "annotation") && resource.authored_by_viewer && resource.body_pm_json!==null && (all || directFacts.has(resource.ref) || texts.length)) {
           const witnessScore=await score(resource.body_text ?? "",expression);
           if (witnessScore!==null && (bestScore===null || witnessScore<bestScore)) {
             match={resource,link:null,match_text:resource.body_text,activation_ref:resource.ref,matched_field:"annotation",activation_field:"annotation"};
