@@ -14,7 +14,7 @@ export function paneForkLink({ runtime, target, disabledReason }: {
 }): Extract<ActionDescriptor, { kind: "link" }> {
   const action = ACTION_CATALOG.OpenInNewPane;
   return {
-    kind: "link", id: "Row.OpenInNewPane", label: action.label,
+    kind: "link", id: "Row.OpenInNewPane", label: action.label.toLowerCase(),
     icon: createElement(action.icon, { size: 16, "aria-hidden": true }), href: target.href,
     disabled: disabledReason !== null, disabledReason: disabledReason ?? undefined,
     restoreFocusOnClose: false,

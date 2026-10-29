@@ -11,8 +11,8 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "@nexus/authored/schema";
+import { bindingQueries, compileQuery, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
@@ -26,12 +26,12 @@ export class Persistence {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
       if (state.format_revision === FORMAT_REVISION) return;
-      if (state.format_revision !== 1) throw new Error("authored format mismatch");
+      if (state.format_revision !== 1 && state.format_revision !== 2) throw new Error("authored format mismatch");
       const pending = await this.db.all("SELECT 1 FROM pending_changes LIMIT 1");
-      if (pending.length) throw new Error("authored format upgrade requires an empty outbox");
-      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations"]) await this.db.run(`DELETE FROM ${table}`);
-      await this.db.run("UPDATE scope_state SET active_revision=NULL,staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1");
-      await this.db.run("UPDATE replica_state SET replica_id=?,command_seq=0,store_revision=0,lamport=0,server_cursor=0,format_revision=?,provisioning_complete=0 WHERE singleton=1", [crypto.randomUUID(), FORMAT_REVISION]);
+      if (pending.length) throw new Error("sync this device’s pending writing with the previous nexus version before updating.");
+      for (const table of RETIRED_FORMAT_TABLES) await this.db.run(`DROP TABLE ${table}`);
+      for (const sql of DEVICE_SCHEMA) if (!sql.startsWith("PRAGMA")) await this.db.run(sql);
+      await this.db.run("UPDATE replica_state SET format_revision=?,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1", [FORMAT_REVISION]);
     });
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
@@ -67,6 +67,10 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
+    if (query.kind === "excerpt") {
+      const result = await excerptQuery(plan => this.db.all(plan.sql,plan.params),query);
+      return {store_revision:(await this.replica()).store_revision,...result};
+    }
     if (query.kind === "source_alias") {
       const result = await sourceAliasQuery(plan => this.db.all(plan.sql, plan.params), query);
       return {store_revision:(await this.replica()).store_revision,...result};
@@ -143,7 +147,11 @@ export class Persistence {
       const visible = Object.entries(state.add_vv).some(([id, value]) => BigInt(value) > BigInt(state.remove_vv[id] ?? "0"));
       await this.db.run("INSERT INTO links VALUES(?,?,?,?,?,?,?) ON CONFLICT(link_id) DO UPDATE SET position_a=excluded.position_a,position_b=excluded.position_b,visible=excluded.visible,state_json=excluded.state_json", [state.link_id, state.endpoint_a, state.endpoint_b, state.position_a?.value ?? null, state.position_b?.value ?? null, Number(visible), JSON.stringify(state)]);
     }
-    for (const state of states.passages) await this.db.run("INSERT INTO passages VALUES(?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json", [state.anchor_id, state.source_ref, JSON.stringify([state.source_ref, state.normalized_exact, state.prefix, state.suffix]), JSON.stringify(state)]);
+    for (const state of states.passages) {
+      const projection = states.projections.find(value => value.ref === `passage_anchor:${state.anchor_id}`);
+      if (!projection) throw new Error("missing passage projection");
+      await this.db.run("INSERT INTO passages VALUES(?,?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json,projection_json=excluded.projection_json", [state.anchor_id, state.source_ref, JSON.stringify([state.source_ref, state.normalized_exact, state.prefix, state.suffix]), JSON.stringify(state), JSON.stringify(projection)]);
+    }
     for (const state of states.source_stubs) await this.db.run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", [state.source_ref, JSON.stringify(state)]);
     const indexed = new Set([...states.resources.map(state => state.ref), ...states.passages.map(state => `passage_anchor:${state.anchor_id}`), ...states.source_stubs.map(state => state.source_ref)]);
     for (const ref of indexed) {

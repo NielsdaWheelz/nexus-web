@@ -21,6 +21,7 @@ from nexus.schemas.imports import (
 )
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
+from nexus.schemas.reader_excerpts import ExcerptView
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 BlockReason = Literal[
@@ -98,9 +99,9 @@ class MediaResourceBodyOut(_Out):
 
 class PassageResourceBodyOut(_Out):
     kind: Literal["passage"] = "passage"
-    prefix: ExcerptOut | None
-    exact: ExcerptOut
-    suffix: ExcerptOut | None
+    excerpt: ExcerptView
+    capture_revision: str | None
+    reading_ref: str | None
     color: HighlightColor | None
 
 

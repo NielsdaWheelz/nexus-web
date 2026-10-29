@@ -129,6 +129,7 @@ def build_reader_evidence(
             viewer_id=viewer_id,
             refs=[assert_resource_ref(ref) for ref in sorted(highlight_refs | generic_refs)],
             reading_media_ids=reading_media_ids,
+            excerpt_mode="full",
         )
     }
     roots: dict[str, ReaderEvidenceRootOut] = {}
@@ -211,7 +212,7 @@ def build_reader_evidence(
                 content=ReaderEvidenceSourceReferenceOut(
                     resource_ref=item.resource_ref,
                     action_ref=owner.uri,
-                    label=passage_label(selection),
+                    label=passage_label(selection.text),
                     excerpt=selection,
                     activation=activations[item.resource_ref],
                     location_label=(item.label or None) if apparatus_source is not None else None,

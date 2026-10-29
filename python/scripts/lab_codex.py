@@ -589,10 +589,10 @@ def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
                 "python",
                 image_id,
                 "-c",
-                "import json,subprocess,codex_cli_bin; from provider_runtime.agent_runtime import "
+                "import json,subprocess; from apps.codex_agent.binary import codex_command; from provider_runtime.agent_runtime import "
                 "CODEX_CONTAINMENT_VERSION as v,CODEX_CONTAINMENT_CATALOG_REVISION as c,AGENT_BACKEND_CONTRACT_REVISION as b; "
                 "print(json.dumps(dict(codex_version=v,catalog_revision=c,backend_contract_revision=b,"
-                "native_version=subprocess.check_output([codex_cli_bin.bundled_codex_path(),'--version'],text=True).strip())))",
+                "native_version=subprocess.check_output([*codex_command(),'--version'],text=True).strip())))",
             ]
         )
     )

@@ -216,10 +216,11 @@ function DelayedMenuRegion({ children, returnFocus }: {
 }
 
 /**
- * One invocation owns preparation, publication and dismissal. Initial preparation
- * has one hidden transient; publication has one desktop transient or mobile frame.
- * A complete measured result must beat its activation-time deadline. Published
- * meaning and geometry are immutable; callbacks and availability remain current.
+ * One invocation owns initial publication, preparation and dismissal. Known initial
+ * controls publish without completing the preparation deadline. The first ready
+ * prepared snapshot freezes separately; its failure or retry retains the initial
+ * controls and frame. Published meaning and geometry stay fixed while callbacks
+ * and availability remain current.
  */
 export interface ActionMenuProps {
   readonly source: MenuSource;
@@ -581,8 +582,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       (coordinate, index) => Math.abs(coordinate - delayed[index]) <= 1 / 64,
     );
   };
-  // Render-induced changes retire before paint. Readiness alone cannot publish:
-  // the complete host must be measured and still inside this attempt's budget.
+  // Measure each publication before paint. Only prepared readiness completes the
+  // attempt; its snapshot must still beat the preparation deadline.
   const publish = () => {
     const active = current.current;
     // Initial begin schedules the admitted render; its ref alone cannot publish
@@ -785,8 +786,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     return () => report.current?.(false);
   }, [visible]);
   const focusKey = invocation?.admission ?? invocation?.meaning ?? invocation?.feedback;
-  // Ready focus precedes the removed failure notice's deferred return focus.
-  // Initial content stays hidden until its measured publication commits.
+  // The first publication owns focus; delayed readiness and retry retain its key.
+  // Content stays hidden until its measured publication commits.
   useLayoutEffect(() => {
     if (!visible || sheet || !current.current) return;
     const node = menu.ref.current;

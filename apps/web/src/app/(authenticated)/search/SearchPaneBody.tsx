@@ -1,4 +1,8 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
+import { authoredItem } from "@/lib/notes/presentation";
+import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
+import ResourceBody from "@/components/resources/ResourceBody";
 
 // Two complete server-ranked lists. Hidden generations own page one; adoption
 // freezes their key/stamp, then ordinary invalidation rereads the selected prefix.
@@ -355,7 +359,7 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
   // justify-defect: local result identity is an authored canonical resource ref.
   if (parsed === null) throw new Error(`Invalid canonical local search ref: ${resource.ref}`);
   const typeLabel = resourceTypeLabel(parsed.scheme).toLowerCase();
-  const titleProvidesType = resource.kind === "highlight" && !resource.selection?.quote_exact.trim();
+  const titleProvidesType = resource.kind === "highlight" && resource.excerpt?.kind === "content" && !excerptTextParts(resource.excerpt.body).exact.trim();
   const title = <ResourceIndexTitle scheme={parsed.scheme} hasArtwork={false}>
     {!href && !titleProvidesType ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
     {titleProvidesType ? typeLabel : label}
@@ -366,6 +370,8 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
       data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{title}</a>
       : <span className={styles.localTitle} dir="auto">{title}</span>}
     {parsed.scheme === "note_block" ? <span className={styles.localKind}> · {typeLabel}</span> : null}
+    {resource.excerpt !== null ? <ResourceBody body={authoredItem(resource, match.readingRef).preview.body} /> : null}
+    <ExcerptDisclosure item={authoredItem(resource, match.readingRef)} />
     {excerpt ? <p className={styles.evidence}>
       {excerpt.before ? "…" : null}
       {excerpt.marks.reduce<{ at: number; parts: ReactNode[] }>((acc, [start, end], index) => ({ at: end,
@@ -385,9 +391,9 @@ function SearchResult({ row, selection, podcastSubject, afterRemoval }: { row: R
   const body = item.preview.body;
   const hasExcerpt = (value: Schema<"ExcerptOut">) => Boolean(value.text || value.truncated_before || value.truncated_after);
   let excerpt: ReactNode = null;
-  if (match && hasExcerpt(match.excerpt)) excerpt = <ExcerptText excerpt={match.excerpt} match={match} />;
+  if (body.kind === "passage") excerpt = <><ResourceBody body={body} />{match && hasExcerpt(match.excerpt) ? <div><ExcerptText excerpt={match.excerpt} match={match} /></div> : null}</>;
+  else if (match && hasExcerpt(match.excerpt)) excerpt = <ExcerptText excerpt={match.excerpt} match={match} />;
   else switch (body.kind) {
-    case "passage": excerpt = hasExcerpt(body.exact) ? <ExcerptText excerpt={body.exact} /> : null; break;
     case "prose": {
       const text = hasExcerpt(body.excerpt);
       excerpt = text || body.image_count > 0 ? <>{text ? <ExcerptText excerpt={body.excerpt} /> : null}{text && body.image_count > 0 ? " · " : null}{body.image_count > 0 ? body.image_count === 1 ? "image" : `${body.image_count} images` : null}</> : null;
@@ -403,10 +409,16 @@ function SearchResult({ row, selection, podcastSubject, afterRemoval }: { row: R
   return <ResourceIndexRow
     item={displayItem} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`search:${row.item.ref}`} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={evidence !== row ? ["matching passage", item.preview.source?.location_label].filter(Boolean).join(" · ") : undefined}
-    presentation={{ kind: "Search", excerpt: excerpt && href ? <a href={href} data-resource-ref={item.ref}
-      className={styles.evidence} data-workspace-rich-target="true"
-      onClick={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
-      onKeyDown={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
-    >{excerpt}</a> : excerpt }}
+    presentation={{ kind: "Search", excerpt: <>
+      {body.kind === "passage" ? <>
+        {href ? <a href={href} data-resource-ref={item.ref} className={styles.evidence} data-workspace-rich-target="true"
+          onClick={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+          onKeyDown={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}>open matching passage</a> : null}
+        {excerpt}
+      </> : excerpt && href ? <a href={href} data-resource-ref={item.ref} className={styles.evidence} data-workspace-rich-target="true"
+        onClick={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+        onKeyDown={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}>{excerpt}</a> : excerpt}
+      <ExcerptDisclosure item={item} />
+    </> }}
   />;
 }

@@ -25,14 +25,13 @@ export interface ContextActionSection {
 /**
  * A caller's known navigation and occurrence/view choices publish immediately.
  * Authoritative resource verbs retain their prepared snapshot and source label.
- * A supplied disabled
- * reason blocks commands. An owned authored principal publishes its local verbs as
- * soon as one local read settles; the server's verbs for it settle separately in the
+ * A supplied disabled reason blocks commands. An owned authored principal publishes
+ * its local verbs as soon as one local read settles; the server's verbs settle in the
  * menu's trailing region (loading, ready or failed), never gating, reordering or
  * replacing the local snapshot.
  */
 type ContextualMenuProps = Pick<ActionMenuProps,
-  "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
+  "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
 > & {
   readonly actionFocus?: PodcastActionFocus;
   readonly title: string;
@@ -126,5 +125,5 @@ function ContextualMenuInvocation({
       state: request === null ? null : local === null ? { kind: "Loading", request }
         : remote?.kind === "Ready" || remote?.kind === "Failed" && remote.connectionRequired ? { kind: "Ready", request, content } : remote,
     };
-  return <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} returnFocusTo={props.returnFocusTo} />;
+  return <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} onOpenChange={props.onOpenChange} returnFocusTo={props.returnFocusTo} />;
 }

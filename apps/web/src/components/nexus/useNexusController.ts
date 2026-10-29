@@ -7,6 +7,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
+import { truncateText } from "@/lib/display/format";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
 import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
@@ -33,7 +34,7 @@ import {
   type NexusTarget,
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
-import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
+import { NEXUS_COMMANDS, nexusQueryAction, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction, pickerRows, pickerTarget } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
@@ -151,7 +152,10 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
-  const queryTarget = nexusQueryTarget(parsed);
+  const queryAction = nexusQueryAction(parsed);
+  const lookupGuidance = parsed.intent.kind === "CommandLookup"
+    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)} — `}choose a command to start empty, or search this text`
+    : null;
   const listIdentity = JSON.stringify([rootMode === "NewPane", query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode !== "Overview");
   const find = useNexusFind({ open: finding && !composing, query: parsed });
@@ -171,12 +175,12 @@ export function useNexusController() {
     if (!finding) return;
     setList((previous) => {
       const candidates = candidateRows({
-      query: parsed, panes, picker: rootMode === "NewPane", frecency: find.frecency, preview: find.preview,
-      reference: find.reference, referenceFailed: find.referenceFailed,
-      local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
-      retained: previous.identity === listIdentity ? previous.rows : [],
+        query: parsed, panes, picker: rootMode === "NewPane", frecency: find.frecency, preview: find.preview,
+        reference: find.reference, referenceFailed: find.referenceFailed,
+        local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
+        retained: previous.identity === listIdentity ? previous.rows : [],
       });
-      return mergeResults(previous, listIdentity, rootMode === "NewPane" ? pickerRows(candidates, panes) : candidates);
+      return mergeResults(previous, listIdentity, rootMode === "NewPane" ? pickerRows(candidates, panes, parsed) : candidates, parsed.intent);
     });
   }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision, rootMode]);
 
@@ -243,7 +247,7 @@ export function useNexusController() {
   const playback = player.state.kind === "Loaded" && player.state.phase === "Paused" ? playingEpisode(player.state) : null;
   const groups = nexusGroups({
     desktop: !viewport.isMobile,
-    mobileMode: rootMode,
+    rootMode,
     query: parsed,
     list: list.identity === listIdentity ? list : EMPTY_LIST,
     panes,
@@ -257,7 +261,9 @@ export function useNexusController() {
   const currentActive = reconcileSearchActive({
     context: searchContext, admitted,
     options: rows.map(row => ({ key: row.key, disabledReason: row.action.kind === "Unavailable" ? row.action.reason : null })),
-    firstExistingKey: rows.find(row => row.existing && row.action.kind === "Available")?.key ?? null,
+    initialKey: parsed.intent.kind === "CommandLookup" ? null
+      : (rows.find(row => row.rank.tier === "ExplicitIntent" && row.action.kind === "Available")
+        ?? rows.find(row => row.existing && row.action.kind === "Available"))?.key ?? null,
     active: list.active,
   });
   if (currentActive !== list.active) setList({ ...list, active: currentActive });
@@ -558,7 +564,11 @@ export function useNexusController() {
     setList(EMPTY_LIST);
     setPage(nextPage);
     setOpen(true);
-    if (intent.kind === "QuickAction") run(NEXUS_COMMANDS[intent.actionId].target(""), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search" });
+    if (intent.kind === "QuickAction") {
+      const action = NEXUS_COMMANDS[intent.actionId].action("");
+      if (action.kind === "Available") run(action.target, PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search" });
+      else setAnnouncement(action.reason);
+    }
   }
 
   function setQuery(next: string) {
@@ -669,13 +679,14 @@ export function useNexusController() {
   function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
     if (action.kind === "Unavailable") { setAnnouncement(action.reason); return null; }
     let target = action.target;
-    if (rootMode === "NewPane" && page.kind === "Root") {
+    const current = currentPage.current;
+    if (rootMode === "NewPane" && current.kind === "Root") {
       const admitted = pickerTarget(target, panes);
       if (!admitted) { setAnnouncement("this action isn’t available in this picker"); return null; }
       target = admitted;
       activation = { disposition: { kind: "Fork" } };
-    } else if ((page.kind === "ChooseCreate" || page.kind === "ChooseBrowse") && page.activation.disposition.kind === "Fork") {
-      activation = page.activation;
+    } else if ((current.kind === "ChooseCreate" || current.kind === "ChooseBrowse") && current.activation.disposition.kind === "Fork") {
+      activation = current.activation;
     }
     return run(target, activation, row);
   }
@@ -692,10 +703,11 @@ export function useNexusController() {
     rootScroll,
     groups,
     activeKey,
-    choices: choiceRows(page, viewport.isMobile),
-    textActions: queryActions(parsed, false).slice(0, 4),
+    choices: choiceRows(page),
+    textActions: parsed.intent.kind === "Command" || parsed.intent.kind === "CommandLookup" ? []
+      : queryActions(parsed, false).filter(row => row.key !== "Continuation:SeeAll"),
     explicitIntent: parsed.intent.kind !== "Search",
-    excludedPickerIntent: rootMode === "NewPane" && parsed.intent.kind !== "Search" && queryTarget !== null && pickerTarget(queryTarget, panes) === null,
+    lookupGuidance,
     failures: find.failures,
     searchProgress: find.progress,
     searchUnavailable: find.searchUnavailable,
@@ -740,7 +752,20 @@ export function useNexusController() {
       return null;
     },
     enterNewPane: () => { rootFocus.current = "Search"; setRootMode("NewPane"); setFocusRevision((value) => value + 1); },
-    submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
+    submitInput(activation: NexusTargetActivation) {
+      const admission = parsed.intent.kind === "Command" ? NEXUS_COMMANDS[parsed.intent.id].action("") : queryAction;
+      if (rootMode === "NewPane" && admission?.kind === "Available" && parsed.intent.kind !== "Search" && pickerTarget(admission.target, panes) === null) {
+        setAnnouncement("this action isn’t available in this picker");
+        return;
+      }
+      if (!viewport.isMobile && currentActive !== null) {
+        if (currentActive.key === null) { setAnnouncement("selection no longer available"); return; }
+        if (!admitted) return;
+        const selected = rows.find(row => row.key === currentActive.key);
+        if (selected) activate(selected.action, activation, selected);
+        return;
+      }
+      if (lookupGuidance !== null) { setAnnouncement(lookupGuidance); return; }
       if (parsed.intent.kind === "Resource") {
         const local = find.localReference;
         if (local !== null) {
@@ -749,12 +774,10 @@ export function useNexusController() {
           return;
         }
         if (find.reference === null) return;
-        const action = resourceAction(find.reference);
-        if (action.kind === "Unavailable") setAnnouncement(action.reason);
-        else activate(action, activation);
+        activate(resourceAction(find.reference), activation);
         return;
       }
-      if (queryTarget) activate({ kind: "Available", target: queryTarget }, activation);
+      if (queryAction !== null) activate(queryAction, activation);
     },
     setActive,
     retry: find.retry,

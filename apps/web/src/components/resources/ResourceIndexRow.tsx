@@ -1,4 +1,5 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
 import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
@@ -17,6 +18,7 @@ import { assertNever } from "@/lib/assertNever";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { ExcerptText, ResourceIndexBody, type ResourceMatch } from "./ResourceBody";
+import { FullResourceBody } from "./ExcerptDisclosure";
 import IndexBibliography from "./IndexBibliography";
 import ResourceMetadata from "./ResourceMetadata";
 import ContextualActionMenu from "./ContextualActionMenu";
@@ -84,7 +86,7 @@ export default function ResourceIndexRow({
       case "images": title = body.count === 1 ? "image" : `${body.count} images`; break;
       case "passage":
       case "prose": {
-        const literal = body.kind === "passage" ? body.exact.text : body.excerpt.text;
+        const literal = body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.excerpt.text;
         if (source?.title?.trim()) title = source.title.trim();
         else if (literal.startsWith(item.label)) {
           title = typeLabel;
@@ -135,7 +137,7 @@ export default function ResourceIndexRow({
   </span>;
   let content: ComponentProps<typeof ResourceRow>["content"];
   switch (presentation.kind) {
-    case "Context": content = { kind: "Index", metadata: contextMetadata, supportingContent: presentation.supportingContent }; break;
+    case "Context": content = { kind: "Index", metadata: contextMetadata, supportingContent: <>{body.kind === "passage" && status === null ? <FullResourceBody item={item} /> : null}{presentation.supportingContent}</> }; break;
     case "Search": content = { kind: "Search", metadata: rowMetadata, excerpt: presentation.excerpt }; break;
     default: assertNever(presentation);
   }

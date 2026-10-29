@@ -1,5 +1,6 @@
 "use client";
 /** Local authored candidates remain selectable beside unavailable remote results. */
+import ExcerptDisclosure from "./ExcerptDisclosure";
 import ResourceBody from "./ResourceBody";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -7,7 +8,7 @@ import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourc
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
 import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
 import collection from "@/components/ui/Collection.module.css";
-export default function ReferencePicker({ input, onReviewPosition }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
+export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
   const { state, search, bindings } = input;
   if (!state) return null;
   return <div className={collection.surface}>
@@ -19,10 +20,11 @@ export default function ReferencePicker({ input, onReviewPosition }: { input: Re
         const key = targetKey(target), scheme = parseResourceRef(target.item.ref)!.scheme;
         const props = bindings.optionProps(key);
         return <div key={key} {...props} className={collection.row} aria-labelledby={`${props.id}-label`} aria-describedby={`${props.id}-detail`}>
-          <span className={collection.content}><span id={`${props.id}-label`}><ResourceBody body={target.item.preview.body} /></span><span id={`${props.id}-detail`} className={collection.detail}>{resourceTypeLabel(scheme)}{target.existing_link_id ? " · already linked" : ""}</span></span>
+          <div className={collection.content}><div id={`${props.id}-label`}><ResourceBody body={target.item.preview.body} /></div><span id={`${props.id}-detail`} className={collection.detail}>{resourceTypeLabel(scheme)}{target.existing_link_id ? " · already linked" : ""}</span></div>
         </div>;
       })}
     </div>
+    <ExcerptDisclosure item={search.items.find(target => targetKey(target) === input.selected)?.item ?? null} returnFocus={returnFocus} />
     {search.error ? <FeedbackNotice content={{ tone: "Warning", title: "remote resources aren’t available", requestId: search.error.requestId }} announcement="Polite" actions={[{ label: "retry remote search", onClick: search.retry }]} /> : null}
     {search.localError ? <p role="alert">couldn’t search notes on this device.</p> : null}
     {!search.localComplete ? <Button onClick={search.moreLocal}>show more notes</Button> : null}

@@ -4,6 +4,7 @@
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
+import { captureLocator } from "@nexus/authored/capture";
 import type { NoteBody } from "@nexus/authored/body";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
 
@@ -71,7 +72,7 @@ export function useReferenceInput(
   const admitted = pickerOpen && state !== null && state.row_id === row_id && !paused && search.querySettled && !search.minimum && search.current;
   const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
-    firstExistingKey: options[0]?.key ?? null, active: state?.active ?? null });
+    initialKey: options[0]?.key ?? null, active: state?.active ?? null });
   const selected = admitted ? reconciled?.key ?? null : null;
   useEffect(() => {
     const value = draft.read();
@@ -118,7 +119,7 @@ export function useReferenceInput(
     const selectedTarget =
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
-        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target };
+        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target, capture: { ...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref) } };
     set(null);
     input.accepted(value.row_id, value.base);
     owner.onSelected(selectedTarget, target.item);

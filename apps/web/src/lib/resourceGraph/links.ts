@@ -6,8 +6,8 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { insertionPositions, type Intent } from "@nexus/authored/commands";
 import { isVisible } from "@nexus/authored/merge";
-import { captureLocator } from "@nexus/authored/capture";
 import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
+import type { PassageCapture } from "@nexus/authored/types";
 import type { LinkState } from "@nexus/authored/types";
 import { type WritingRuntime, selectStates } from "@/lib/notes/runtime";
 import { parseResourceRef } from "./resourceRef";
@@ -15,7 +15,7 @@ import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
 export type ConnectionCommand = { kind: "unlink"; link_id: string } | Extract<ConnectionMutation, { kind: "detach_context" }> | { kind: "remove_fact"; edge_id: string };
-export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null };
+export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null; capture: PassageCapture | null };
 export type InsertionSource = LinkTarget | { kind: "daily_page"; local_date: string; page_id: string };
 export interface Position { after: string | null; before?: string | null; prelude?: readonly Intent[] }
 export interface LinkRequest { source_ref: string; target_ref: string; source_label: string | null; target_label: string | null; after: string | null; before?: string | null; prelude?: readonly Intent[] }
@@ -23,7 +23,7 @@ export function endpointForResource(ref: string): LinkTarget | null {
   const parsed = parseResourceRef(ref);
   if (!parsed) return null;
   const mode = RESOURCE_CAPABILITIES[parsed.scheme].link_mode;
-  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref, passage_target: null };
+  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref, passage_target: null, capture: null };
 }
 /** Fetch only the adjacent keys. A collision expands to its observed tie run,
  * never to the endpoint's resource bodies or unrelated relationships. */
@@ -123,27 +123,29 @@ export function connectionMutationErrorMessage(error: unknown): FeedbackContent 
  * bindings survive deletion; no server reread is substituted during acceptance. */
 export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget): Promise<{ ref: string; intents: Intent[] }> {
   if (target.kind === "resource") return { ref: target.ref, intents: [] };
-  const capture = target.passage_target;
-  if (capture === null) throw new Error("This passage has no retained selection. select it again before linking.");
-  const locator = captureLocator(capture.locator, capture.owner_ref);
+  const capture = target.capture;
+  const capturedTarget = target.passage_target;
+  if (capture === null || capturedTarget === null) throw new Error("This passage has no retained selection. select it again before linking.");
+  const locator = capture.locator;
+  if (locator === null) throw new Error("This passage has no retained location.");
   const selector = "text_quote_selector" in locator ? locator.text_quote_selector : null;
-  const quote_exact = selector?.exact ?? (locator.type === "pdf_page_geometry" ? locator.exact : null);
+  const quote_exact = capture.quote_exact;
   if (quote_exact === null || quote_exact.length === 0) throw new Error("This passage has no retained quote. select it again before linking.");
   const prefix = normalizeQuote(selector?.prefix ?? (locator.type === "pdf_page_geometry" ? locator.prefix ?? "" : ""));
   const suffix = normalizeQuote(selector?.suffix ?? (locator.type === "pdf_page_geometry" ? locator.suffix ?? "" : ""));
   const normalized_exact = normalizeQuote(quote_exact);
-  const source_ref = capture.owner_ref;
+  const source_ref = capturedTarget.owner_ref;
   const store = await runtime.store;
   const replica = await store.readReplica();
   const known = await store.query({ kind: "binding", key: { kind: "passage", source_ref, normalized_exact, prefix, suffix } });
   const anchor_id = known.binding_id ?? passageId(replica.account_id, source_ref, await passageKey(normalized_exact, prefix, suffix));
-  const publication = null;
+  const publication = capture.publication;
   const source = parseResourceRef(source_ref);
   if (!source) throw new TypeError("Invalid passage source");
   const sources=await store.readStates(selectStates({source_refs:[source_ref]}));
   const stub:Intent[] = /^(note_block|page|highlight):/u.test(source_ref) || sources.source_stubs.some(stub=>stub.source_ref===source_ref) ? [] : [{kind:"capture_source",source_ref,capture:{kind:source.scheme,label:source_ref,publication}}];
   return { ref: `passage_anchor:${anchor_id}`, intents: [
     ...stub,
-    { kind: "capture_passage", anchor_id, source_ref, normalized_exact, prefix, suffix, capture: { quote_exact, publication, locator } },
+    { kind: "capture_passage", anchor_id, source_ref, normalized_exact, prefix, suffix, capture },
   ] };
 }

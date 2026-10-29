@@ -15,7 +15,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.resource_evidence import CapturedPassageTarget
+from nexus.schemas.authored import PassageCapture, XCapturePublication
+from nexus.schemas.resource_evidence import CapturedPassageTarget, LocationQuote
 from nexus.schemas.resource_search import (
     ResourceTargetOut,
     ResourceTargetPassageOut,
@@ -140,7 +141,7 @@ def _targets(
         except NotFoundError:
             continue
         quote = (
-            (require_ref(captured.target.owner_ref), captured.quote.exact)
+            (require_ref(captured.target.owner_ref), captured.quote)
             if captured is not None
             and isinstance(captured.target, CapturedPassageTarget)
             and captured.quote is not None
@@ -160,6 +161,16 @@ def _targets(
             target = ResourceTargetPassageOut(
                 candidate_ref=ref.uri,
                 target=captured.target,
+                capture=PassageCapture(
+                    quote_exact=quote[1].exact,
+                    publication=XCapturePublication(
+                        kind="x_capture", capture_id=captured.target.locator.capture_id
+                    )
+                    if captured.target.locator.type == "x_capture_offsets"
+                    else None,
+                    locator=captured.target.locator,
+                    excerpt=quote[1].excerpt,
+                ),
                 item=items[ref.uri],
                 existing_link_id=_link(db, viewer_id, link_source, anchor),
             )
@@ -213,7 +224,7 @@ def source_identities(
         else {}
     )
     quotes = {
-        uri: (passage.owner, passage.quote.exact)
+        uri: (passage.owner, passage.quote)
         for uri, passage in {**current, **media}.items()
         if retrieval_locator_json(passage.locator) is not None
     }
@@ -247,21 +258,21 @@ def source_identities(
 
 
 def _passage_identity(
-    db: Session, viewer_id: UUID, owner: ResourceRef, exact: str
+    db: Session, viewer_id: UUID, owner: ResourceRef, quote: LocationQuote
 ) -> tuple[str, ResourceRef | None] | None:
     """The anchor key a quote occupies in its owner (and its saved anchor), if unique there."""
-    return _passage_identities(db, viewer_id, {owner.uri: (owner, exact)}).get(owner.uri)
+    return _passage_identities(db, viewer_id, {owner.uri: (owner, quote)}).get(owner.uri)
 
 
 def _passage_identities(
-    db: Session, viewer_id: UUID, quotes: Mapping[str, tuple[ResourceRef, str]]
+    db: Session, viewer_id: UUID, quotes: Mapping[str, tuple[ResourceRef, LocationQuote]]
 ) -> dict[str, tuple[str, ResourceRef | None]]:
     sources = locator_resolver.read_passage_sources(
         db, list({(owner.scheme, owner.id) for owner, _ in quotes.values()})
     )
     keys: dict[str, tuple[ResourceRef, str]] = {}
-    for uri, (owner, exact) in quotes.items():
-        normalized = passage_anchors.normalize_quote_text(exact)
+    for uri, (owner, quote) in quotes.items():
+        normalized = passage_anchors.normalize_quote_text(quote.exact)
         if not normalized:
             continue
         resolution = locator_resolver.resolve_passage_selector(
@@ -269,6 +280,8 @@ def _passage_identities(
             owner_scheme=owner.scheme,
             owner_id=owner.id,
             exact=normalized,
+            prefix=passage_anchors.normalize_quote_text(quote.prefix or ""),
+            suffix=passage_anchors.normalize_quote_text(quote.suffix or ""),
             source_reads=sources,
         )
         if resolution.status is QuoteStatus.unique:
