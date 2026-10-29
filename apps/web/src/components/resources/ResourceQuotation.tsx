@@ -53,9 +53,8 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
 
   return <figure className={styles.quotation}>
     {identity === null ? body.kind === "passage"
-      && (body.exact.text || body.exact.truncated_before || body.exact.truncated_after)
-      ? <blockquote className={styles.body}><ResourceBody body={body} /></blockquote>
-      : <div className={styles.body}><ResourceBody body={body} /></div> : null}
+      ? <blockquote className={styles.body}><ResourceBody body={body} full /></blockquote>
+      : <div className={styles.body}><ResourceBody body={body} full /></div> : null}
     <figcaption className={styles.attribution}>
       <div className={styles.identity}>
         {!distinctSource ? glyph : null}

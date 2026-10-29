@@ -5,12 +5,14 @@ not swallow them.
 """
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
+from nexus.schemas.reader_excerpts import ExcerptMode
 from nexus.schemas.resource_items import (
     ResolveSourceTargetRequest,
     ResourceActionsOut,
@@ -52,10 +54,26 @@ def resolve_source_target(
 
 
 @router.get("/{resource_ref}")
-def get_resource_item(resource_ref: str, viewer: ViewerDep, db: DbSession) -> Data[ResourceItemOut]:
+def get_resource_item(
+    resource_ref: str,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    excerpt_mode: ExcerptMode = "compact",
+    reading_media_id: UUID | None = None,
+    expected_capture_revision: str | None = None,
+) -> Data[ResourceItemOut]:
     """An invisible ref answers 200 with ``missing: true``."""
     ref = require_ref(resource_ref)
-    return Data(data=items.resource_item_out(db, viewer_id=viewer.user_id, ref=ref))
+    return Data(
+        data=items.resource_item_out(
+            db,
+            viewer_id=viewer.user_id,
+            ref=ref,
+            excerpt_mode=excerpt_mode,
+            reading_media_id=reading_media_id,
+            expected_capture_revision=expected_capture_revision,
+        )
+    )
 
 
 @router.get("/{resource_ref}/actions")

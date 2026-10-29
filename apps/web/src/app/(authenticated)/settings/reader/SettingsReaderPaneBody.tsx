@@ -6,7 +6,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Toggle from "@/components/ui/Toggle";
-import { READER_FONT_STACKS } from "@/lib/documentReader/DocumentReader";
+import { READER_FONT_STACKS } from "@/lib/reader/typography";
 import {
   useReaderContext,
   type ReaderProfile,

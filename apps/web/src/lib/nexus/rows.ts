@@ -1,3 +1,4 @@
+import { authoredItem } from "@/lib/notes/presentation";
 import type { SearchActive } from "@/lib/ui/searchOptions";
 // Launcher composition: local navigation, resources and evidence have separate budgets.
 // Selection preserves identity; deliberate movement also pins the visible prefix.
@@ -264,6 +265,8 @@ function localRow(match: LocalMatch, home: NexusHomeSection, panes: readonly Nex
   const excerpt = match.excerpt;
   return {
     key: `Resource:${ref}`, existing: true, label: match.label,
+    item: authoredItem(match.resource, match.readingRef),
+    match: excerpt === null ? null : { excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after }, ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })) },
     icon: resourceIconForScheme(parseResourceRef(ref)!.scheme), type: resourceTypeLabel(parseResourceRef(ref)!.scheme),
     detail: excerpt === null ? undefined : `${excerpt.before ? "…" : ""}${excerpt.text}${excerpt.after ? "…" : ""}`,
     state: pane ? paneState(pane) : undefined,

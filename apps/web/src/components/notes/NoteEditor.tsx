@@ -28,6 +28,7 @@ import { OutlineEmbeddingOccurrence, useEditorDraft, useNoteEditorHost, useOptio
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import ReferencePicker from "@/components/resources/ReferencePicker";
+import { getInteractionOwner } from "@/lib/ui/overlay";
 import {
   useReferenceInput,
   type ReferenceInputHost,
@@ -1408,6 +1409,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       data-row-focusable="true"
       className={styles.shell}
       onKeyDownCapture={(event) => {
+        if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         const view = viewRef.current;
         const intent = view && activeReference(view.state);
         if (
@@ -1427,6 +1429,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
           if (shell.current?.contains(document.activeElement)) return;
+          const owner = getInteractionOwner();
+          const opener = owner?.opener instanceof HTMLElement ? owner.opener : owner?.opener?.element;
+          if (owner?.options.current.kind === "modal" && opener && shell.current?.contains(opener)
+            && owner.element?.contains(document.activeElement)) return;
           suspended.current = true;
           setReferenceFocused(false);
           setToolbar(false);

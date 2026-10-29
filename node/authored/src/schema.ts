@@ -14,7 +14,7 @@ export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS links (link_id TEXT PRIMARY KEY, endpoint_a TEXT NOT NULL, endpoint_b TEXT NOT NULL, position_a TEXT, position_b TEXT, visible INTEGER NOT NULL, state_json TEXT NOT NULL, UNIQUE(endpoint_a,endpoint_b), CHECK(endpoint_a<endpoint_b))`,
   `CREATE INDEX IF NOT EXISTS links_a ON links(endpoint_a,position_a,link_id)`,
   `CREATE INDEX IF NOT EXISTS links_b ON links(endpoint_b,position_b,link_id)`,
-  `CREATE TABLE IF NOT EXISTS passages (anchor_id TEXT PRIMARY KEY, source_ref TEXT NOT NULL, semantic_key TEXT NOT NULL UNIQUE, state_json TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS passages (anchor_id TEXT PRIMARY KEY, source_ref TEXT NOT NULL, semantic_key TEXT NOT NULL UNIQUE, state_json TEXT NOT NULL, projection_json TEXT NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS passage_bindings ON passages(source_ref,json_extract(state_json,'$.normalized_exact'),json_extract(state_json,'$.prefix'),json_extract(state_json,'$.suffix'))`,
   `CREATE UNIQUE INDEX IF NOT EXISTS passages_ref ON passages('passage_anchor:'||anchor_id)`,
   `CREATE TABLE IF NOT EXISTS source_stubs (source_ref TEXT PRIMARY KEY, state_json TEXT NOT NULL)`,
@@ -41,3 +41,6 @@ export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS scope_text_progress (revision TEXT NOT NULL,reading_ref TEXT NOT NULL,cursor TEXT,raw_complete INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(revision,reading_ref))`,
   `CREATE TABLE IF NOT EXISTS scope_revocations (scope_ref TEXT PRIMARY KEY)`,
 ] as const;
+
+/** Finite v1/v2 retirement: only authored state and derived indexes, never replica metadata or downloaded sources. */
+export const RETIRED_FORMAT_TABLES = ["search_fts", "resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_state", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations"] as const;

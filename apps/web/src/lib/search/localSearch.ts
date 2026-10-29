@@ -29,6 +29,7 @@ const FAMILIES: Partial<Record<string, SearchKind>> = {
 const kindOf = (resource: ResourceProjection): SearchKind | null => FAMILIES[parseResourceRef(resource.ref)?.scheme ?? ""] ?? null;
 const PAGE = 50;
 const CONTEXT = 60;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Format and credit filters exclude authored families on both search owners. */
 export function localSearchApplies(query: SearchQuery): boolean {
@@ -40,6 +41,7 @@ export function localSearchApplies(query: SearchQuery): boolean {
 
 export interface LocalMatch {
   readonly resource: ResourceProjection;
+  readonly readingRef: ResourceRef | null;
   /** Its discovery family, for the row's type and the kind filter. */
   readonly kind: SearchKind;
   readonly label: string;
@@ -56,13 +58,18 @@ export function localResult(resource: ResourceProjection, text: string): LocalMa
 
 export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string,
   { matchText, activationRef }: { matchText: string | null; activationRef: ResourceRef | null } = { matchText: null, activationRef: null }): LocalMatch {
-  const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
+  const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource) : resource.kind === "note" ? resource.body_text ?? ""
     : resource.title ?? resource.local_date ?? "");
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
-  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), excerpt: null };
-  const start = Math.max(0, first - CONTEXT), end = Math.min(body.length, first + CONTEXT * 2);
+  if (!body || first === Infinity) return { resource, readingRef: activationRef, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), excerpt: null };
+  const rawStart = Math.max(0, first - CONTEXT), rawEnd = Math.min(body.length, first + CONTEXT * 2);
+  const segments = graphemes.segment(body);
+  // The context heuristic yields to complete source graphemes at both edges.
+  const start = rawStart < body.length ? segments.containing(rawStart)!.index : body.length;
+  const last = segments.containing(rawEnd - 1)!;
+  const end = last.index + last.segment.length;
   const slice = body.slice(start, end);
   const sliceLower = slice.toLowerCase();
   const marks: [number, number][] = [];
@@ -71,7 +78,7 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
   // overlapping token spans keep the earliest; each character renders once.
   const kept: [number, number][] = [];
   for (const mark of marks) if (!kept.length || mark[0] >= kept.at(-1)![1]) kept.push(mark);
-  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }),
+  return { resource, readingRef: activationRef, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }),
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
