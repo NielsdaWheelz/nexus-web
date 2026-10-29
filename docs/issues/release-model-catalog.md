@@ -1,36 +1,26 @@
-# current model catalog release prerequisites
+# current model catalog production cutover
 
-implementation is isolated on `codex/current-model-catalog`; release qualification
-is incomplete. current source contracts live in [llms](../modules/llms.md).
+implementation is qualified in the isolated catalog branch; production activation
+remains pending. contracts live in [llms](../modules/llms.md), exact provider/kernel
+revisions in `python/uv.lock`, and native `0.165.0` in `node/codex/bun.lock`.
 
-- freeze exact llm-calling, compatible kernel/sdk, host binary and nexus revisions.
-  resolve [host qualification](codex-containment-host-upgrade.md) with the current
-  stable candidate when implementation begins; no floating pin, version-only
-  bypass, shared-daemon restart or credential copying.
-- enumerate every target model/configuration and its actual live result. on
-  2026-10-28 the owner allowed bounded anthropic checks under standard retention
-  and use of production keys. xai remains unavailable; the owner approved
-  [both model omissions](model-catalog-xai-live-access.md). qualify every
-  permitted cell; never substitute an old model or count an omission as a pass.
-- qualify an isolated full candidate cohort, then freeze the published subset.
-  review omitted rows and unchanged fingerprints/execution code before carrying
-  candidate evidence forward; perform final inventory and integration checks on
-  the exact released cohort. no runtime test bypass or qualification flag.
-- verify the installed dependencies match the reviewed locks. the audit found
-  the local virtualenv at `602a5604` while nexus pins `2ab70c1f`; it cannot qualify
-  that pin. use an isolated, correctly installed checkout.
-- use the existing release owner's controls to stop new admissions/background
-  producers, drain queued/running generations, and confirm zero nonterminal work.
-  deploy the compatible host/api/worker/web cohort before reopening admissions.
-  do not rewrite saved specs or completed history. bind operator commands to the
-  actual deployment when preparing the release; do not invent a second controller.
-- observe catalog health, containment, a live ordinary-worker generation and the
-  changed seed/oracle. confirm old selections cannot dispatch, history is intact,
-  and every published addition has its required proof. no migration or wire bump
-  is implied; unrelated concurrent changes keep their own release requirements.
-- prove old→new history/receipt preservation, stranded queued-run refusal and
-  drain completion through existing release primitives. an unavailable rehearsal
-  is a blocking verification issue; partial model publication does not waive it.
+- use the existing [release procedure](../../deployment.md) to stop admissions
+  and background producers, drain queued/running generations, and verify zero
+  nonterminal work. the stranded-run rehearsal proves refusal, not production
+  drain completion. never rewrite admitted specs, receipts or saved history.
+- deploy the compatible host/api/worker/web cohort before reopening admissions.
+  the host uses the locked npm launcher and contained catalog v2; the provider
+  client uses agent catalog v3 and api catalog v5. old clients/hosts are rejected;
+  no version bypass or credential copying. this adds no migration or wire bump;
+  the paired controls release still requires wire 17.
+- verify deployed catalog health, current offerings, ordinary-worker chat with
+  the sol 6.1/xhigh seed, strict-json oracle, and preserved historical presentation.
+  use the existing host account and isolation contract. production account refresh
+  remains [separately unqualified](codex-auth-refresh-not-qualified.md).
+- keep [both xai models omitted](model-catalog-xai-live-access.md) until access
+  and their complete live contract qualify. anthropic bounded synthetic checks
+  are authorized under standard retention; the earlier refusal was reversed.
 
-resolved when the exact published cohort passes these checks and omissions have
-their own honest unresolved records. source/docs review is not release proof.
+proof and exact tested source cohorts belong in the pr. delete this release
+record after the deployed cohort and drain are verified; laboratory success does
+not establish production activation.
