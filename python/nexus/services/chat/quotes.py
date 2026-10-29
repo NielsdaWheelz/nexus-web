@@ -103,7 +103,7 @@ def selection_out(
     key = (
         ReaderQuoteSourceTargetKey(message_id=message_id)
         if message_id
-        else ResourceSourceTargetKey(resource_ref=ref.uri)
+        else ResourceSourceTargetKey(field=None, resource_ref=ref.uri)
     )
     item = evidence_items(db, viewer_id=viewer_id, occurrences=[(ref, snapshot.evidence, key)])[0]
     if message_id is None and item.activation.kind != "none":
@@ -132,7 +132,7 @@ def quote_block(
     prefix: str | None = None,
     suffix: str | None = None,
     source: str | None = None,
-    note: str | None = None,
+    annotation: str | None = None,
     offset_status: str | None = None,
 ) -> str:
     """The one XML renderer for quote-shaped prompt blocks."""
@@ -145,8 +145,8 @@ def quote_block(
     lines.append(f"<exact>{escape(exact)}</exact>")
     if suffix:
         lines.append(f"<suffix>{escape(suffix)}</suffix>")
-    if note:
-        lines.append(f"<note>{escape(note)}</note>")
+    if annotation:
+        lines.append(f"<annotation>{escape(annotation)}</annotation>")
     lines.append(f"</{tag}>")
     return "\n".join(lines)
 

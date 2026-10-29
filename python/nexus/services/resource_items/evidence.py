@@ -27,6 +27,8 @@ from nexus.schemas.resource_evidence import (
     CapturedSource,
     CapturedTarget,
     CapturedUnavailableTarget,
+    ResourceField,
+    validate_resource_field,
 )
 from nexus.schemas.resource_items import (
     CitationSourceTargetKey,
@@ -86,11 +88,47 @@ _UNAVAILABLE_SOURCE = SourceTargetOut(
 
 
 def capture_evidence(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
+    db: Session,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    reading_media_id: UUID | None = None,
+    field: ResourceField = None,
 ) -> CapturedEvidence:
     """A current readable target's complete words and location, captured together. 404
     when the viewer cannot see it; 409 ``E_READER_CONTENT_CHANGED`` when its publication
     changes under the capture (I7)."""
+    validate_resource_field(ref.uri, field)
+    if field == "annotation":
+        from nexus.services.highlights import annotation_locator, read_highlight_annotations
+
+        annotation = read_highlight_annotations(
+            db, viewer_id=viewer_id, highlight_ids=[ref.id]
+        ).get(ref.id)
+        if annotation is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
+        locator = annotation_locator(ref.id, annotation.body_text)
+        return CapturedEvidence(
+            quote=CapturedQuote(exact=annotation.body_text, prefix=None, suffix=None, color=None)
+            if locator is not None
+            else None,
+            source=CapturedSource(
+                ref=ref.uri,
+                title="annotation",
+                media_kind=None,
+                contributors=None,
+                location_label="annotation",
+            ),
+            target=CapturedPassageTarget(
+                field="annotation",
+                owner_ref=ref.uri,
+                locator=_LOCATOR.validate_python(locator),
+                precision="exact",
+                source_identity=None,
+            )
+            if locator is not None
+            else CapturedResourceTarget(field="annotation", owner_ref=ref.uri),
+        )
     item = resource_item_out(db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id)
     if item.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
@@ -147,7 +185,17 @@ def _capture(
         quote = CapturedQuote(
             exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
         )
-        locator = resolve_quote(db, owner, quote, row.selector.get("locator_hint"))
+        from nexus.services import locator_resolver
+
+        locator = resolve_quote(
+            db,
+            owner,
+            quote,
+            row.selector.get("locator_hint"),
+            locator_resolver.read_passage_sources(
+                db, [(owner.scheme, owner.id)], viewer_id=viewer_id
+            ),
+        )
     elif ref.scheme == "note_block":
         note = read_notes(db, viewer_id=viewer_id, note_ids=[ref.id]).get(ref.id)
         if note is None:
@@ -179,9 +227,15 @@ def _capture(
                 "end_offset": len(row.content),
                 "text_quote_selector": {"exact": row.content},
             }
+    field = (
+        "annotation"
+        if locator is not None and locator["type"] == "highlight_annotation_offsets"
+        else None
+    )
     if locator is not None and locator["type"] == "note_block_offsets":
         # Note offsets freeze with the body version they were proven against.
         proof = CapturedPassageTarget(
+            field=None,
             owner_ref=owner.uri,
             locator=_LOCATOR.validate_python(locator),
             precision="exact",
@@ -202,11 +256,12 @@ def _capture(
     )
     target: CapturedTarget
     if quote is None:
-        target = CapturedResourceTarget(owner_ref=owner.uri)
+        target = CapturedResourceTarget(field=field, owner_ref=owner.uri)
     elif locator is None:
-        target = CapturedUnavailableTarget(owner_ref=owner.uri)
+        target = CapturedUnavailableTarget(field=field, owner_ref=owner.uri)
     else:
         target = CapturedPassageTarget(
+            field=field,
             owner_ref=owner.uri,
             locator=_LOCATOR.validate_python(locator),
             precision=_precision(locator),
@@ -238,6 +293,15 @@ def _admitted_evidence(
 ) -> CapturedEvidence | None:
     """Historical words remain frozen, but current scope governs their disclosure."""
     target = evidence.target
+    if target.field == "annotation":
+        owner = require_ref(target.owner_ref or "")
+        allowed = db.scalar(
+            text(
+                "SELECT EXISTS(SELECT 1 FROM highlights WHERE id=:id AND user_id=:viewer AND authored_visible)"
+            ),
+            {"id": owner.id, "viewer": viewer_id},
+        )
+        return evidence if allowed else None
     owner_ref = target.owner_ref or evidence.source.ref
     if not isinstance(target, CapturedPassageTarget):
         if evidence.quote is not None and owner_ref and owner_ref.startswith("media:"):
@@ -369,6 +433,7 @@ def evidence_items(
                             source=None,
                         ),
                         "activation": ResourceActivationOut(
+                            field=None,
                             resource_ref=ref.uri,
                             kind="none",
                             href=None,
@@ -395,6 +460,7 @@ def evidence_items(
             and current_locator(evidence.target, evidence.quote, reads) is None
         ):
             activation = ResourceActivationOut(
+                field=None,
                 resource_ref=ref.uri,
                 kind="none",
                 href=None,
@@ -431,13 +497,29 @@ def _occurrence_activation(
 ) -> ResourceActivationOut:
     """The owner's route with the occurrence as its fragment (I5): ``#quote-``,
     ``#citation-``, ``#retrieval-``; an outside source opens as itself."""
+    if evidence.target.field == "annotation":
+        owner = require_ref(evidence.target.owner_ref or "")
+        return ResourceActivationOut(
+            field="annotation",
+            resource_ref=owner.uri,
+            kind="route",
+            href=f"/highlights/{owner.id}#annotation",
+        )
     if source is None or source.kind == "none":
         return ResourceActivationOut(
-            resource_ref=ref, kind="none", href=None, unavailable_reason="source_unavailable"
+            field=None,
+            resource_ref=ref,
+            kind="none",
+            href=None,
+            unavailable_reason="source_unavailable",
         )
     if evidence.target.kind == "unavailable":
         return ResourceActivationOut(
-            resource_ref=ref, kind="none", href=None, unavailable_reason="location_unavailable"
+            field=None,
+            resource_ref=ref,
+            kind="none",
+            href=None,
+            unavailable_reason="location_unavailable",
         )
     if source.kind == "external" or isinstance(key, ResourceSourceTargetKey):
         return source.model_copy(update={"resource_ref": ref})
@@ -449,7 +531,7 @@ def _occurrence_activation(
         case RetrievalSourceTargetKey():
             fragment = f"retrieval-{key.retrieval_id}"
     href = source.href.split("#", 1)[0] + "#" + fragment if source.href else None
-    return ResourceActivationOut(resource_ref=ref, kind=source.kind, href=href)
+    return ResourceActivationOut(field=None, resource_ref=ref, kind=source.kind, href=href)
 
 
 def resolve_source_target(
@@ -463,6 +545,34 @@ def resolve_source_target(
     match target:
         case ResourceSourceTargetKey():
             ref = require_ref(target.resource_ref)
+            if target.field == "annotation":
+                try:
+                    evidence = capture_evidence(
+                        db, viewer_id=viewer_id, ref=ref, field="annotation"
+                    )
+                except NotFoundError:
+                    return _UNAVAILABLE_SOURCE
+                captured = evidence.target
+                activation = ResourceActivationOut(
+                    field="annotation",
+                    resource_ref=ref.uri,
+                    kind="route",
+                    href=f"/highlights/{ref.id}#annotation",
+                )
+                if captured.kind == "resource":
+                    return SourceTargetOut(
+                        source_activation=activation, location=WholeSourceLocationOut()
+                    )
+                assert isinstance(captured, CapturedPassageTarget)
+                return SourceTargetOut(
+                    source_activation=activation,
+                    location=LocatedSourceLocationOut(
+                        locator=captured.locator,
+                        precision="exact",
+                        source_identity=None,
+                        apparatus_reference_id=None,
+                    ),
+                )
             if (
                 reading_media_id is not None
                 and ref.scheme == "media"
@@ -550,6 +660,17 @@ def resolve_source_target(
         or source.activation.kind == "none"
     ):
         return _UNAVAILABLE_SOURCE
+    if captured.field == "annotation":
+        source = source.model_copy(
+            update={
+                "activation": ResourceActivationOut(
+                    field="annotation",
+                    resource_ref=owner.uri,
+                    kind="route",
+                    href=f"/highlights/{owner.id}#annotation",
+                )
+            }
+        )
     if captured.kind == "resource":
         return SourceTargetOut(
             source_activation=source.activation, location=WholeSourceLocationOut()

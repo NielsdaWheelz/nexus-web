@@ -389,7 +389,9 @@ class ContentIndexState(Base):
     active_embedding_model: Mapped[str | None]
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    owner_kind: Mapped[Literal["media", "note_block", "fragment"]] = mapped_column(Text)
+    owner_kind: Mapped[Literal["media", "note_block", "fragment", "highlight"]] = mapped_column(
+        Text
+    )
     owner_id: Mapped[UUID]
     revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     section_witness_key: Mapped[str | None]
@@ -799,7 +801,7 @@ class PodcastPlaybackSettings(Base):
 
 
 class Highlight(Base):
-    """Projection of one authored highlight's selection: ``fragment_offsets`` (half-open over
+    """Projection of one authored highlight and its optional annotation. Selection: ``fragment_offsets`` (half-open over
     canonical_text) or ``pdf_page_geometry``. Kept while deleted, hidden by ``authored_visible``.
     """
 
@@ -812,6 +814,10 @@ class Highlight(Base):
     exact: Mapped[str]
     prefix: Mapped[str]
     suffix: Mapped[str]
+    annotation_body_pm_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    annotation_body_text: Mapped[str | None]
     authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

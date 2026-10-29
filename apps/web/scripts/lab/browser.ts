@@ -15,10 +15,12 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
  * a non-null state seeds the fresh profile. chromium revokes its grant when its CDP session
  * detaches, so the session stays attached to the returned page until close(); callers
  * keep that page open. firefox's macOS app-data bookkeeping also belongs to the
- * temporary root. close() removes all browser state. */
+ * temporary root. optional proxies apply to the whole private profile, including
+ * shared workers; TLS remains end to end. close() removes all browser state. */
 export async function openLabBrowser(input: {
   web_origin: string;
   storage_state: string | null;
+  proxy?: {server: string};
 } & (
   | { browser?: "chromium"; web_tls: { leaf_spki_sha256: string } }
   | { browser: "firefox"; web_tls: { ca_file: string } }
@@ -49,12 +51,14 @@ export async function openLabBrowser(input: {
       }
       context = await firefox.launchPersistentContext(profile, {
         headless: true,
+        ...(input.proxy ? {proxy: input.proxy, firefoxUserPrefs: {"network.proxy.allow_hijacking_localhost": true, "network.proxy.no_proxies_on": ""}} : {}),
         args: [], ignoreHTTPSErrors: false,
         ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: appData } } : {}),
       });
     } else {
       context = await chromium.launchPersistentContext(profile, {
         headless: true,
+        ...(input.proxy ? {proxy: input.proxy} : {}),
         args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
       });
     }

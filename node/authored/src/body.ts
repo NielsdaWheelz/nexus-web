@@ -69,9 +69,9 @@ const nodes = {
   },
   resource_embed: {
     inline:true,group:"inline",atom:true,selectable:true,
-    attrs:{resource_ref:{},label:{default:null}},
-    parseDOM:[{tag:"span[data-resource-ref]",getAttrs:dom=>({resource_ref:dom.getAttribute("data-resource-ref"),label:dom.getAttribute("data-label")})}],
-    toDOM:node=>["span",{"data-resource-ref":node.attrs.resource_ref,"data-label":node.attrs.label,contenteditable:"false",class:"note-resource-embed"},embedLabel(node)],
+    attrs:{resource_ref:{},field:{},label:{default:null}},
+    parseDOM:[{tag:"span[data-resource-ref]",getAttrs:dom=>({resource_ref:dom.getAttribute("data-resource-ref"),field:dom.getAttribute("data-field"),label:dom.getAttribute("data-label")})}],
+    toDOM:node=>["span",{"data-resource-ref":node.attrs.resource_ref,"data-field":node.attrs.field,"data-label":node.attrs.label,contenteditable:"false",class:"note-resource-embed"},embedLabel(node)],
   },
 } satisfies Record<string,NodeSpec>;
 
@@ -317,11 +317,14 @@ function validateBodyJson(value: unknown, inline = false): void {
   const kind = node.type;
   if ((!inline && kind !== "body") || (inline && !["text", "hard_break", "image", "resource_embed"].includes(String(kind)))) throw new TypeError("Invalid body node");
   const attrs = node.attrs == null ? {} : record(node.attrs);
-  const allowed = kind === "body" ? ["presentation"] : kind === "image" ? ["src", "alt", "title"] : kind === "resource_embed" ? ["resource_ref", "label"] : [];
+  const allowed = kind === "body" ? ["presentation"] : kind === "image" ? ["src", "alt", "title"] : kind === "resource_embed" ? ["resource_ref", "field", "label"] : [];
   if (Object.keys(attrs).some(key => !allowed.includes(key))) throw new TypeError("Unsupported node attributes");
   if (kind === "body" && attrs.presentation !== undefined && !["prose", "code"].includes(String(attrs.presentation))) throw new TypeError("Invalid presentation");
   if (kind === "image" && !isSafeImage(attrs.src)) throw new TypeError("Invalid image source");
-  if (kind === "resource_embed" && !isResourceRef(attrs.resource_ref)) throw new TypeError("Invalid embedded reference");
+  if (kind === "resource_embed") {
+    if (!isResourceRef(attrs.resource_ref)) throw new TypeError("Invalid embedded reference");
+    if (attrs.field !== null && (attrs.field !== "annotation" || !attrs.resource_ref.startsWith("highlight:"))) throw new TypeError("Invalid embedded resource field");
+  }
   for (const key of ["alt", "title", "label"]) if (attrs[key] != null && typeof attrs[key] !== "string") throw new TypeError("Invalid literal attribute");
   if (kind === "text") {
     if (typeof node.text !== "string" || node.text.length === 0 || /[\uD800-\uDFFF]/u.test(node.text) || node.content !== undefined) throw new TypeError("Invalid text node");

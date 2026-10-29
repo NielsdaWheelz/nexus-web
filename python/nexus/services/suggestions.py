@@ -42,7 +42,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 
 SUGGESTION_ANCHOR_LIMIT = 5
 _PER_FAMILY = 20
-_EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_embed", "discovery"]
+_EDGE_ORIGINS = ["user", "citation", "note_body", "document_embed", "discovery"]
 # Human-reviewed calibration: a neighbour ranks only under this exact embedding
 # identity at this similarity. Another model yields no Similar evidence.
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)

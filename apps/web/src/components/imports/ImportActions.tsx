@@ -192,7 +192,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     title={item.title} subjectKey={`import:${item.ref}:media:${item.media_id}`}
     sections={[{ id: "View", actions: commands }]}
     omitResourceActions={commands.map(action => action.id)}
-    displayedActivation={{ kind: item.can_read || item.can_play ? "route" : "none",
+    displayedActivation={{ field: null, kind: item.can_read || item.can_play ? "route" : "none",
       href: item.can_read || item.can_play ? `/media/${item.media_id}` : null,
       resource_ref: `media:${item.media_id}`, unavailable_reason: null }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}

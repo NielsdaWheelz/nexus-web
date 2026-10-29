@@ -87,6 +87,7 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
     ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
   const target = row.action.kind === "Available" ? row.action.target : null;
   const activation = row.item?.activation ?? (target?.kind === "Resource" ? target.activation : {
+    field: null,
     kind: target?.kind === "InternalHref" ? "route" as const : "none" as const,
     href: target?.kind === "InternalHref" ? target.href : null,
     resource_ref: secondary?.kind === "ResourceMenu" ? secondary.resourceRef : row.key,

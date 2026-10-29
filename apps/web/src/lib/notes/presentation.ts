@@ -37,7 +37,7 @@ export function authoredPreview(resource: ResourceProjection): { label: string; 
     const attrs = nodes[0]!.attrs!;
     const target_ref = String(attrs.resource_ref);
     const label = typeof attrs.label === "string" && attrs.label ? excerpt(attrs.label) : null;
-    return { label: label?.text || target_ref, body: { kind: "reference", target_ref, label } };
+    return { label: label?.text || target_ref, body: { kind: "reference", target_ref, field: attrs.field === "annotation" ? "annotation" : null, label } };
   }
   const images = nodes.filter(node => node.type === "image");
   const prose = nodes.map(node => node.type === "text" ? node.text! : node.type === "hard_break" ? "\n" : node.type === "resource_embed" ? String(node.attrs?.label ?? node.attrs?.resource_ref) : "").join("");
@@ -57,6 +57,6 @@ export function authoredPreview(resource: ResourceProjection): { label: string; 
 
 export function authoredItem(resource: ResourceProjection): ResourceItem {
   const { label, body } = authoredPreview(resource);
-  const href = resource.kind === "page" || resource.kind === "note" ? localResourceHref(resource) : null;
-  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
+  const href = localResourceHref(resource);
+  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, field: null, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
 }

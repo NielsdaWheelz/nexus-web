@@ -4,7 +4,7 @@ import type { ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
-  page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
+  highlight: "/highlights", page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
   library: "/libraries", podcast: "/podcasts", oracle_reading: "/oracle",
 };
 const routeFor = (ref: string): string | null => {
@@ -27,10 +27,17 @@ export function localResourceHref(resource: ResourceProjection,
     if (resource.source_publication?.kind === "x_capture" && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.source_publication.capture_id}`;
     return routeFor(activationRef ?? resource.ref);
   }
+  return activationRef !== null && activationRef !== resource.ref ? highlightSourceHref(resource, activationRef) : routeFor(resource.ref);
+}
+
+/** Source navigation retains the captured highlight occurrence. */
+export function highlightSourceHref(resource: ResourceProjection, activationRef: ResourceRef | null = null): string | null {
+  if (resource.kind !== "highlight") return null;
+  const own = parseResourceRef(resource.ref);
   if (resource.selection?.publication?.kind === "x_capture" && own && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.selection.publication.capture_id}#highlight-${own.id}`;
   const sourceRef = activationRef ?? resource.source_ref;
-  const source = sourceRef ? parseResourceRef(sourceRef) : null;
-  return source?.scheme === "media" && own ? `/media/${source.id}#highlight-${own.id}` : sourceRef ? routeFor(sourceRef) : null;
+  const source = sourceRef ? routeFor(sourceRef) : null;
+  return source && own ? `${source}#highlight-${own.id}` : null;
 }
 
 /** The literal label a local projection supplies for menus, links and parents. */

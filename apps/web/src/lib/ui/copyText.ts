@@ -12,7 +12,7 @@ export class ClipboardWriteUnavailableError extends Error {
 export const RESOURCE_CLIPBOARD_TYPE = "application/x-nexus-reference+json";
 
 /** A hidden-textarea `execCommand("copy")`, for insecure origins, older browsers and custom types. */
-function copyWithCommand(value: string, ref?: string): void {
+function copyWithCommand(value: string, ref?: string, field: "annotation" | null = null): void {
   if (typeof document === "undefined")
     throw new ClipboardWriteUnavailableError();
   const textArea = document.createElement("textarea");
@@ -27,7 +27,7 @@ function copyWithCommand(value: string, ref?: string): void {
     event.clipboardData.setData("text/plain", value);
     event.clipboardData.setData(
       RESOURCE_CLIPBOARD_TYPE,
-      JSON.stringify({ ref }),
+      JSON.stringify({ ref, field }),
     );
     event.preventDefault();
     written = true;
@@ -46,8 +46,9 @@ function copyWithCommand(value: string, ref?: string): void {
 export async function copyResourceLink(
   href: string,
   ref: string,
+  field: "annotation" | null = null,
 ): Promise<void> {
-  copyWithCommand(href, ref);
+  copyWithCommand(href, ref, field);
 }
 
 export async function copyText(value: string): Promise<void> {

@@ -7,8 +7,9 @@ import { readBody } from "@nexus/authored/documents";
 import type { EditorHistory, OutlineHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
-export default function BoundNoteEditor({ noteRef, document: suppliedDocument, label = "edit note", editable = true, onSplit, onJoin, session, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady }: {
-  document?: WritingDocument;
+export default function BoundNoteEditor({ noteRef, document: suppliedDocument, history: suppliedHistory, label = "edit note", editable = true, onSplit, onJoin, session, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange }: {
+  document?: WritingDocument; history?: EditorHistory;
+  onAttachmentActiveChange?: NoteEditorProps["onAttachmentActiveChange"]; onLinkInputActiveChange?: NoteEditorProps["onLinkInputActiveChange"];
   focus?: NoteEditorProps["focus"]; onSelectionChange?: NoteEditorProps["onSelectionChange"]; onEditorReady?: (editor: NoteEditorHandle | null) => void;
   reference?: import("@/lib/resourceGraph/useReferenceInput").ReferenceInputHost | null;
   noteRef: string;
@@ -19,6 +20,7 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, l
   onJoin?: (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => void;
   session?: OutlineHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
 }) {
+  const kind = noteRef.startsWith("highlight:") ? "annotation" : "note";
   const { document: opened, error, retry } = useWritingDocument(suppliedDocument ? null : noteRef);
   const document = suppliedDocument ?? opened;
   const runtime = useWritingRuntime();
@@ -30,10 +32,10 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, l
     setHistory({document,session,history});
     return release;
   },[document,session]);
-  const history=openedHistory?.document===document&&openedHistory.session===session?openedHistory.history:undefined;
-  if (error) return <div role="alert"><p>couldn’t open this note on this device.</p><Button onClick={retry}>retry</Button></div>;
+  const history=suppliedHistory ?? (openedHistory?.document===document&&openedHistory.session===session?openedHistory.history:undefined);
+  if (error) return <div role="alert"><p>couldn’t open this {kind} on this device.</p><Button onClick={retry}>retry</Button></div>;
   return <>
-    {document && (!session || history) ? <AuthoredNoteEditor focus={focus} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} document={document} label={label} editable={editable} onSplit={onSplit} onJoin={onJoin} history={history} structuralKeys={structuralKeys} inspection={inspection} reference={reference} /> : <p>opening note…</p>}
+    {document && (!session || history) ? <AuthoredNoteEditor focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} document={document} label={label} editable={editable} onSplit={onSplit} onJoin={onJoin} history={history} structuralKeys={structuralKeys} inspection={inspection} reference={reference} /> : <p>opening {kind}…</p>}
     {state.error !== null && state.error_refs.includes(noteRef) ? <div role="alert"><p>{writingStoreStopped(state.error)?"the local store stopped. copy your writing before restarting nexus.":"couldn’t save on this device. keep this page open. retry saving."}</p>{writingStoreStopped(state.error) ? <Button onClick={()=>window.location.reload()}>restart nexus</Button> : <Button onClick={() => { void runtime?.retry().catch(() => {}); }}>retry</Button>}<Button onClick={() => { void navigator.clipboard.writeText(document ? readBody(document.doc).body_text : ""); }}>copy</Button></div> : null}
   </>;
 }

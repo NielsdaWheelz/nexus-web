@@ -1,101 +1,102 @@
 # highlights
 
-highlights are independently identified authored selections. the shared authored
-kernel owns their state and merge; device sqlite owns durable local commands;
-python `services/authored` owns replication and relational projection. existing
-`highlights.py`, location resolution and schemas expose the
-server read/tool contracts. reader surfaces own paint, hit-testing and selection
-presentation. chat owns quotation context and run assembly.
+a highlight owns one captured source quotation and one optional rich annotation.
+`node/authored` owns meaning and merge; device sqlite owns durable local commands;
+python `services/authored` owns replication and relational projection. ordinary
+related notes remain independent resources. graph adjacency never defines an
+annotation.
 
-## identity and capture
+## identity and writing
 
-create mints one random client uuid and retries retain it. independently created
-overlapping or identical extents remain distinct highlights, each with independent
-notes and links. no extent singleton, duplicate alias or resize collision exists.
-editing and deleting always address one exact id.
+create freezes one body initializer and a random client uuid before asynchronous
+preparation. retries retain both. identical or overlapping selections remain
+independent highlights. each highlight retains its immutable source ref,
+observed-delete liveness, permanent yjs body, selection register and color register.
+selection publication, typed locator, literal quote and context move together;
+resizing or changing color never replaces the body.
 
-a highlight has immutable source ref, observed-delete liveness, a selection
-register and a separate color register. the greatest `(lamport,replica_id)` wins
-each scalar register. selection publication, typed locator, literal quote and
-prefix/suffix travel together; concurrent resizing selects one coherent capture.
-resizing preserves the highlight id and every attached-note link.
+the body uses the shared note grammar and editor. empty prose projects as absent;
+whitespace, breaks, images, embeds and empty code are content. canonical yjs bytes
+remain present even when the nullable annotation projection is absent. clearing
+is one undoable edit of observed inline content and presentation, preserving the
+body root, mounted editor and history. unseen concurrent inserts survive clear.
+an unseen annotation edit can revive an observed-deleted highlight; a later
+observing delete hides both quotation and annotation.
 
-a reusable passage binding is separate from a highlight. passage identity is
-source plus normalized exact/prefix/suffix; literal captures are not rewritten by
-matching normalization. same-key captures merge their hint register and retain
-known ids. differing publication/locator evidence is not another identity.
-a geometric pdf selection may have no textual passage ref and an empty quote.
+new selections save explicitly. blank input saves a highlight; authored input
+saves its annotation in the same local command. first annotation or reannotation
+of an existing highlight stages a clone of its actual permanent body. saving
+admits only its incremental delta; cancel commits nothing. bound annotation
+editing autosaves through the ordinary writing runtime keyed by `highlight:<id>`.
+annotation editing has no note split/join behavior. creation enter saves,
+shift-enter inserts a break; bound enter inserts a break and tab stays native.
 
-## local interaction
+explicit save closes only after local durability and only for the unchanged
+submitted draft. a stale completion cannot consume newer writing. failed commits
+retain writing and the existing retry/copy controls. already committed pending
+upload acquires no loss warning. body, reference, hyperlink and attachment input
+participate in the shared work guard. involuntary source changes or remote
+deletion retain unsubmitted input without submitting or retargeting it.
 
-an unsubmitted selection composer is ephemeral. its existing explicit save commits
-the highlight, optional independent note and links in one durable local command.
-attached-note editing subsequently autosaves through the ordinary note owner.
-multiple notes remain independent; unlinking or deleting an annotation does not
-consume them. canceling a creation dialog commits nothing.
+## presentation and access
 
-enter and save finish explicit capture after the local commit, without waiting
-for upload. empty input creates a fresh highlight but adds nothing to an existing
-one. successful capture closes its own unchanged opening and returns to reading;
-later input, focus, navigation or child interaction keeps the newer work open.
-attached-note autosave, ensuring a highlight and color changes do not close it.
+reader, compact/downloaded reader, outline and detail surfaces share one annotation
+editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`
+and `clear annotation`. related resources remain separate. copy-passage and
+frozen message quotations contain only source words. a question draft has separate
+ownership; submission neither copies nor clears the saved annotation. authorized
+context assembly can read annotation explicitly.
 
-local failure keeps the input and requires explicit retry of the original command.
-the composer observes its completion even when another writing surface retries it;
-only its own eligible retry may renew permission to close. settlement clears only
-the matching operation and failure. submitted text is consumed only at its original
-revision with no unfinished reference, hyperlink or attachment. hyperlink activity
-includes hidden retained input; hiding its form is not cancellation.
+`/highlights/:id` reads the local authored capture, annotation and relationships,
+independently of source availability. `#annotation` reveals the annotation;
+`#passage-<id>` reveals exact annotation evidence. focus delivery waits for the
+real editor handle and respects newer user intent. ordinary quotation arrivals
+do not start an annotation draft. `view in source` retains the existing source
+destination. there is no annotation resource identity or route.
 
-hosted and downloaded readers share the annotation controller. local authored
-queries own annotation reads online as well as offline. sources already on the
-device remain annotatable without a network publication lookup. retained source
-stubs/quotes/labels do not grant access to unavailable bytes. direct native source
-mainframes and subframes receive no authored bridge authority.
+annotation content, embeds and retrieval are owner-private. a source or highlight
+grant authorizes the captured quotation, never the annotation. peers receive no
+annotation controls, empty-state claims or private metadata. annotation-only edits
+leave the public quotation timestamp and other viewers’ notification revisions
+unchanged. current source metadata requires current source access. source stubs and
+captured quotations grant no access to unavailable source bytes.
 
-the passive mobile row retains the shared highlighter and overflow controls with
-notebook/pen and question openers. names describe the next action, and unavailable
-controls remain focusable with their reason. copy uses the frozen nonblank quote
-unchanged, independently of note saving or remote action reads. desktop copy/share
-remain direct commands; mobile keeps copy/share, colors and existing-chat choices
-in overflow. closing an unused menu returns focus to the reader; completed commands
-retain their own focus transfers. the sheet keeps its native close handle and
-fixed toolbar above the scrolling editor.
+## evidence and publication
 
-## locations and source generations
+field targets are explicit: `field:null` addresses ordinary resource meaning;
+`field:"annotation"` addresses content inside a highlight. precise annotation
+embeds and hrefs target that field; graph edges connect resources without fields.
+annotation-owned passages use `source_ref=highlight:<id>` and
+`highlight_annotation_offsets`, half-open unicode codepoint offsets in canonical
+annotation text. a matching body hash certifies offsets; otherwise relocation
+requires a unique quote/context match. unresolved evidence retains frozen words.
+source quotation offsets are never annotation offsets.
 
-reflowable locations use canonical codepoint offsets. dom provenance maps source
-spans to canonical codepoints for selection and paint; normalization can compose
-or expand source characters. mixed-atom note locations use the shared canonical
-text projection, never an independent editor-text approximation.
+private annotation search has its own `highlight_annotation` family and admission
+before matching or scoring. the highlights filter includes quotation and
+annotation evidence and returns the strongest eligible witness per highlight,
+with its field and activation. locatable quotation evidence opens its selected
+source or piece; unlocated owned quotations open the retained highlight pane
+without claiming a source position. annotation evidence opens the highlight
+field. saved annotation passages retain their passage id at the highlight
+destination. lexical evidence retains
+the existing precedence over semantic-only matches; scores from those two systems
+are not compared directly. `authored_text_indexing` owns note and highlight
+text publication under the existing revision, claim and body fences. clearing or
+deletion withdraws annotation evidence independently of quotation evidence.
 
-pdf locations use canonical page-space quads. viewport transforms are derived
-presentation; geometry normalization belongs to the shared semantic owner and
-retains the existing precision rules. every overlap remains selectable even when
-its paint coincides with another annotation.
+tools create highlights through the same authored command. annotation-only undo
+clears the observed body under the account head lock, never deleting the highlight
+or its relationships. an absent, hidden or already empty target is already undone
+and emits no revival touch. whole-highlight undo subsumes annotation clear from
+the same creation receipt, while provenance retains distinct field identities.
 
-store the mounted publication identity with the original literal quote and typed
-locator. a source change before upload does not reject the already committed
-capture. exact valid relocation may update a derived location. absent or changed
-publication provenance requires unique quote resolution; ambiguity remains beside
-the saved quotation. unknown provenance never permits blind offset reuse.
+## cutover
 
-reader projection and relocation caches are rebuildable. source teardown retains
-authored highlights, geometry, quotes, passage identities and independent notes.
-source foreign keys cannot cascade or reject an accepted offline capture merely
-because original bytes/generation no longer exist. current reading permission
-still belongs to the source owner.
-
-## server and migration
-
-server tools create captures through the same semantic owner and feed, inside
-their existing permission/fencing boundary. no direct highlight projection writer
-or whole-body annotation-note endpoint remains. server reads honor semantic
-liveness and keep captured writing available independently of source access.
-
-revision 0320 freezes old grammar conversion and preserves current highlight,
-note, link and passage ids. old annotations without proved publication provenance
-seed `publication:null`; their literal quotes and locators survive. unsupported
-records and conflicting live semantic bindings refuse the transaction. paired
-release, backup and device qualification belong to the
-[release issue](../issues/release-local-first-writing.md).
+revision 0325 consumes unambiguous attached notes and transfers their actual yjs
+bodies, references, placements and unchanged index publications to highlights.
+ambiguous ownership, liveness or binding collisions abort atomically with exact
+record ids. old accepted bytes remain inert behind authored format 3 and the
+snapshot floor. old clients and external note urls have no compatibility path.
+paired release, drained queues, backup, repair and device qualification belong to
+[the release issue](../issues/release-highlight-annotations.md).

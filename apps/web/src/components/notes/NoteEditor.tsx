@@ -37,6 +37,8 @@ import ResourceOutlineList, {
   ResourceOutlineContext,
 } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import NoteBodyPreview from "./NoteBodyPreview";
+import {useAuthoredQuery} from "@/lib/notes/hooks";
 import ResourceLink from "@/components/resources/ResourceLink";
 import {
   enterOutlineOccurrence,
@@ -75,6 +77,7 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import {
+  emptyBody,
   bodyFromNode,
   bodyText,
   docFromBody,
@@ -119,6 +122,7 @@ export interface StructuralKeys {
 
 /** The outline can preserve an occurrence's caret without reaching into its view. */
 export interface NoteEditorHandle {
+  clear?(): void;
   readSelection(): { anchor: number; head: number };
   captureSelection(): (document: WritingDocument) => FocusSelection;
   focus(selection: FocusSelection | ((document: WritingDocument) => FocusSelection), preventScroll?: boolean): void;
@@ -315,7 +319,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
-  const [embeds, setEmbeds] = useState<ReadonlyMap<HTMLElement, {ref: string; row_id: string | null; key: string}>>(() => new Map());
+  const [embeds, setEmbeds] = useState<ReadonlyMap<HTMLElement, {ref: string; field: "annotation" | null; label: string | null; row_id: string | null; key: string}>>(() => new Map());
   const embedSerial = useRef(0);
   const [toolbar, setToolbar] = useState(false);
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
@@ -605,7 +609,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
           return;
         }
-        const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, label: files[0]!.name }));
+        const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, field: null, label: files[0]!.name }));
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
@@ -924,8 +928,9 @@ function NoteEditorContent(props: NoteEditorProps) {
           dom.contentEditable = "false";
           dom.className = "note-object-embed";
           const ref = node.attrs.resource_ref;
-          if (standalone && editorHost.embedded_preview === "workspace") {
-            const entry = {ref, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
+          if (node.attrs.field === "annotation" || standalone && editorHost.embedded_preview === "workspace") {
+            const embeddedField: "annotation" | null = node.attrs.field === "annotation" ? "annotation" : null;
+            const entry = {ref, field: embeddedField, label: typeof node.attrs.label === "string" ? node.attrs.label : null, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
             setEmbeds(value => new Map(value).set(dom, entry));
           }
           else dom.textContent = node.attrs.label ?? ref;
@@ -1294,6 +1299,14 @@ function NoteEditorContent(props: NoteEditorProps) {
           return {anchor: a ? a.index + 1 : selection.anchor, head: b ? b.index + 1 : selection.head};
         };
       },
+      clear() {
+        if (!view.editable || view.composing || !editorHandle.current?.settleNativeInput() || referenceRef.current.getState() !== null || readLink() !== null || readAttachment() !== null) return;
+        const field = editingField(view.state);
+        if (!field || field.kind !== "body") return;
+        latest.current.history?.boundary();
+        reportEdit({before: fieldBody(field), after: emptyBody(), selectionBefore: fieldSelection(view.state, field), selectionAfter: {anchor: 1, head: 1}, source: "format"});
+        latest.current.history?.boundary();
+      },
       focus(selection, preventScroll = false) {
         if (!view.editable || view.composing) return;
         if (typeof selection === "function") {
@@ -1455,19 +1468,19 @@ function NoteEditorContent(props: NoteEditorProps) {
           setAttachment(null);
         },
       }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {editorHost.embedded_preview === "workspace" ? [...embeds].map(([dom, embed]) => {
+      {[...embeds].map(([dom, embed]) => {
         const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : null;
         // A portal has a mount identity; history names the stable field occurrence.
         const scope = embed.row_id !== null ? `${embed.row_id}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
         return createPortal(<OutlineEmbeddingOccurrence value={embed.row_id}><EmbeddedResource
-          resourceRef={embed.ref} supplied={props.embeddedItem ?? null}
+          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null}
           scope={scope}
           branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
           beforeCollapse={beforeCollapse ? () => beforeCollapse(scope) : undefined}
           atomic={props.atomicEmbeds === true} onRevealRoot={() => shell.current?.focus()}
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
-      }) : null}
+      })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
         <ReferencePicker
           input={reference}
@@ -1713,6 +1726,7 @@ function inspectionPlugin(focus: () => void): Plugin<InspectionState | null> {
 
 /** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
 function EmbeddedResource({
+  field, label,
   resourceRef,
   supplied,
   scope,
@@ -1723,6 +1737,8 @@ function EmbeddedResource({
   beforeCollapse,
 }: {
   resourceRef: string;
+  field: "annotation" | null;
+  label: string | null;
   supplied: ResourceItem | null;
   scope: string;
   branch: OutlineBranch;
@@ -1730,6 +1746,19 @@ function EmbeddedResource({
   atomic: boolean;
   onRevealRoot(): void;
   beforeCollapse?(): Promise<boolean>;
+}) {
+  if (field === "annotation") return <EmbeddedAnnotation resourceRef={resourceRef} label={label}/>;
+  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
+}
+function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
+  const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
+  const resource = read.data?.rows[0]?.resource;
+  return <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
+    ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
+    : read.error ? "annotation unavailable" : read.data ? "annotation unavailable" : "loading annotation…"}</a>;
+}
+function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, onRevealRoot, beforeCollapse}: {
+  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
 }) {
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);

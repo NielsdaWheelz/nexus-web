@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.resource_items import ResourceItemOut
 
 HIGHLIGHT_COLORS = HighlightColor
 
@@ -53,14 +52,9 @@ class LinkedConversationRef(BaseModel):
     title: str
 
 
-class LinkedNoteBlockRef(BaseModel):
-    """One independently attached note, by its exact link, in the highlight's order."""
-
-    link_id: UUID
-    note_block_id: UUID
+class HighlightAnnotationOut(BaseModel):
     body_pm_json: dict[str, object]
     body_text: str
-    embedded_item: ResourceItemOut | None = None
 
 
 class TypedHighlightOut(BaseModel):
@@ -75,7 +69,7 @@ class TypedHighlightOut(BaseModel):
     author_user_id: UUID
     is_owner: bool
     linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
-    linked_note_blocks: list[LinkedNoteBlockRef] = Field(default_factory=list)
+    annotation: HighlightAnnotationOut | None
 
     model_config = ConfigDict(
         from_attributes=True, json_schema_serialization_defaults_required=True

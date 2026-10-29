@@ -39,6 +39,8 @@ export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {
   if(reference){
     const value:unknown=JSON.parse(reference);
     if(!value||typeof value!=="object"||!("ref" in value)||typeof value.ref!=="string"||!parseResourceRef(value.ref))throw new TypeError("Invalid copied reference");
+    if (!("field" in value) || value.field !== null && value.field !== "annotation" || value.field === "annotation" && parseResourceRef(value.ref)?.scheme !== "highlight") throw new TypeError("Invalid copied reference field");
+    if (value.field === "annotation") return [{kind: "note", parent: null, body: parseBody({type: "body", attrs: {presentation: "prose"}, content: [{type: "resource_embed", attrs: {resource_ref: value.ref, field: "annotation", label: null}}]})}];
     return [{kind:"resource",ref:value.ref,label:value.ref,parent:null}];
   }
   const html=clipboard.getData("text/html");

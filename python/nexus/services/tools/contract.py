@@ -31,6 +31,7 @@ from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.podcast import PodcastAdmissionOut
+from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.schemas.resource_graph import (
     EDGE_KINDS,
     ConnectionDirection,
@@ -76,6 +77,7 @@ class _Closed(BaseModel):
 class NexusEvidence(_Closed):
     """One bounded, immutable evidence receipt for what a Nexus read returned."""
 
+    field: ResourceField
     admission_scope: Annotated[str, Field(max_length=128)]
     citation_target: Annotated[str, Field(max_length=128)] | None
     content_sha256: Annotated[str, Field(max_length=64)] | None
@@ -196,6 +198,13 @@ class NexusSearchSuccess(_Closed):
 
 
 class ResourceReadInput(_Closed):
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        validate_resource_field(self.uri, self.field)
+        return self
+
     uri: Annotated[
         str,
         Field(max_length=_URI, description="A visible Nexus resource or read URI."),
@@ -389,11 +398,11 @@ class HighlightCreateInput(_Closed):
         str,
         Field(max_length=_URI, description="The visible source media URI."),
     ]
-    note: Annotated[
+    annotation: Annotated[
         str | None,
         Field(
             max_length=20_000,
-            description="Optional literal note; Markdown syntax is preserved unchanged.",
+            description="Optional literal annotation; Markdown syntax is preserved unchanged.",
         ),
     ]
     prefix: Annotated[
@@ -409,7 +418,6 @@ class HighlightCreateInput(_Closed):
 class HighlightCreateSuccess(_Closed):
     exact: Annotated[str, Field(max_length=20_000)]
     highlight_uri: Annotated[str, Field(max_length=_URI)]
-    note_uri: Annotated[str | None, Field(max_length=_URI)]
 
 
 class EdgeCreateInput(_Closed):

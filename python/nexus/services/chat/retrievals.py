@@ -31,6 +31,7 @@ from nexus.schemas.resource_evidence import (
     CapturedPassageTarget,
     CapturedQuote,
     CapturedSource,
+    ResourceField,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
@@ -55,8 +56,8 @@ STRICT_LOCATOR = frozenset(
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "content_chunk": ("source_kind", "evidence_span_ids"),
     "contributor": ("contributor_handle",),
-    "note_block": ("body_text", "highlight_excerpt"),
-    "highlight": ("color", "exact"),
+    "note_block": ("body_text",),
+    "highlight": ("color", "exact", "matched_field"),
     "message": ("conversation_id", "seq"),
     "reader_apparatus_item": ("apparatus_kind",),
 }
@@ -84,7 +85,7 @@ def compact(value: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: compact(item) if key == "context_ref" else item
         for key, item in value.items()
-        if key == "passage_target"
+        if key in ("passage_target", "field")
         or (item is not None and item != [] and not (key == "selected" and item is False))
     }
 
@@ -209,6 +210,8 @@ def reopen_search_result(
     result_type: str,
     source_id: str,
     passage_target: CapturedPassageTarget | None = None,
+    field: ResourceField = None,
+    captured_evidence: CapturedEvidence | None = None,
 ) -> SearchResultOut:
     """One search result reopened by identity for a single read or an attached resource.
 
@@ -220,9 +223,18 @@ def reopen_search_result(
     target = passage_target
     if target is None and result_type in _READING_OWNED:
         ref = ResourceRef(cast(ResourceScheme, result_type), UUID(source_id))
-        captured = capture_evidence(db, viewer_id=viewer_id, ref=ref).target
+        captured_evidence = capture_evidence(db, viewer_id=viewer_id, ref=ref, field=field)
+        captured = captured_evidence.target
         target = captured if isinstance(captured, CapturedPassageTarget) else None
-    return get_search_result(db, viewer_id, result_type, source_id, passage_target=target)
+    return get_search_result(
+        db,
+        viewer_id,
+        result_type,
+        source_id,
+        passage_target=target,
+        field=field,
+        captured_evidence=captured_evidence,
+    )
 
 
 def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -> RetrievalCitation:
@@ -245,6 +257,7 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
             ),
             target=CapturedPassageTarget.model_validate(
                 {
+                    "field": None,
                     "owner_ref": ref,
                     "locator": locator,
                     "precision": "exact",
@@ -261,7 +274,12 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
         citation_target=ref,
         citation_label=None,
         locator=locator,
-        context_ref={"type": "web_result", "id": str(snapshot_id), "passage_target": None},
+        context_ref={
+            "type": "web_result",
+            "id": str(snapshot_id),
+            "field": None,
+            "passage_target": None,
+        },
         evidence_span_id=None,
         media_id=None,
         media_kind=None,

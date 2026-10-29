@@ -4,14 +4,18 @@
  * Exit 2 rejects input, 3 exceeds the input budget, and 1 reports an unexpected
  * failure. Stderr is diagnostic only. The platform owns SQL publication. */
 import { mergeChanges, isVisible } from "./src/merge.ts";
-import { createNoteIntent, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
-import { parseBody } from "./src/body.ts";
+import * as Y from "yjs";
+import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody } from "./src/documents.ts";
+import { createHighlightIntent, createNoteIntent, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
+import { bodyHasContent, parseBody } from "./src/body.ts";
 import { dailyId, linkId, normalizeQuote, passageId, passageKey, validateBindings } from "./src/identity.ts";
 import { generateKeyBetween } from "fractional-indexing";
 import type { Change, Corpus } from "./src/types.ts";
 type ServerCommand =
-  | Exclude<Intent, { kind: "create_note" | "add_link" | "batch" }>
+  | Exclude<Intent, { kind: "create_note" | "create_highlight" | "add_link" | "batch" }>
   | { kind: "create_note"; ref: string; body_pm_json: unknown }
+  | (Omit<Extract<Intent, {kind:"create_highlight"}>, "body_update"> & {body_pm_json:unknown})
+  | { kind: "clear_annotation"; ref: string }
   | (Omit<Extract<Intent, { kind: "add_link" }>, "link_id" | "position_a" | "position_b"> & { link_id: null; position_a: string | null; position_b: string | null })
   | { kind: "capture_passage"; anchor_id: null; source_ref: string; exact: string; prefix: string | null; suffix: string | null; capture: Extract<Intent, { kind: "capture_passage" }>["capture"] }
   | { kind: "batch"; intents: ServerCommand[] };
@@ -21,10 +25,10 @@ const commandKeys = new Map<string, string>(Object.entries({
   delete_resource: "ref observed_touch", restore_resource: "ref",
   add_link: "link_id endpoint_a endpoint_b position_a position_b", restore_link: "link_id",
   unlink: "link_id observed_add", restore_position: "link_id endpoint_ref expected position",
-  move_link: "link_id endpoint_ref position", create_highlight: "ref source_ref selection color",
+  move_link: "link_id endpoint_ref position", create_highlight: "ref source_ref selection color body_pm_json", clear_annotation: "ref",
   update_highlight: "ref selection color", capture_source: "source_ref capture",
   capture_passage: "anchor_id source_ref normalized_exact prefix suffix capture", batch: "intents",
-} satisfies Record<Intent["kind"], string>));
+} satisfies Record<Intent["kind"] | "clear_annotation", string>));
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected semantic object");
   // justify-type-assertion: JSON object shape was checked; fields remain unknown.
@@ -77,6 +81,20 @@ async function serverIntent(value: unknown, states: Corpus, account_id: string, 
     return { kind: "batch", intents };
   }
   if (command.kind === "create_note") return createNoteIntent(command.ref, parseBody(command.body_pm_json));
+  if (command.kind === "create_highlight") return createHighlightIntent(command.ref,command.source_ref,command.selection,command.color,parseBody(command.body_pm_json));
+  if (command.kind === "clear_annotation") {
+    const resource=states.resources.find(item=>item.ref===command.ref);
+    if (!resource) return {kind:"batch",intents:[]};
+    if (resource.kind!=="highlight") throw new TypeError("Annotation clear addresses a highlight");
+    if (!isVisible(resource.touch_vv,resource.delete_vv)) return {kind:"batch",intents:[]};
+    const doc=hydrateNote(resource.body_state);
+    try {
+      if (!bodyHasContent(readBody(doc))) return {kind:"batch",intents:[]};
+      const before=Y.encodeStateVector(doc);
+      applyBodyEdits(doc,[{kind:"replace",from:0,to:bodyInline(doc).length,content:[]},{kind:"presentation",value:"prose"}]);
+      return {kind:"edit_body",ref:resource.ref,body_update:encodeBytes(Y.encodeStateAsUpdate(doc,before))};
+    } finally { doc.destroy(); }
+  }
   if (command.kind === "add_link") {
     const a = command.endpoint_a, b = command.endpoint_b;
     const known = states.links.find(link => link.endpoint_a === a && link.endpoint_b === b);

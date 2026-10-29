@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -33,7 +33,7 @@ from nexus.services import authored, library_entries, locator_resolver, text_quo
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
-PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block")
+PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block", "highlight")
 
 _QUAD_KEYS = ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4")
 
@@ -64,6 +64,14 @@ def canonical_locator_hint(hint: dict[str, Any] | None) -> dict[str, Any] | None
     if hint is None:
         return None
     kind = hint.get("kind")
+    if kind == "highlight_annotation_text":
+        return {
+            "kind": kind,
+            "highlight_id": str(UUID(hint["highlight_id"])),
+            "start_offset": _canonical_int(hint["start_offset"], field="start_offset"),
+            "end_offset": _canonical_int(hint["end_offset"], field="end_offset"),
+            "body_sha256": hint["body_sha256"],
+        }
     if kind == "text":
         out: dict[str, Any] = {"kind": "text"}
         if hint.get("fragment_id") is not None:
@@ -149,6 +157,13 @@ def materialize_or_reuse(
         if not can_read_media(db, user_id, owner_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    if owner_scheme == "highlight" and not db.scalar(
+        text(
+            "SELECT EXISTS(SELECT 1 FROM highlights WHERE id=:id AND user_id=:viewer AND authored_visible AND annotation_body_pm_json IS NOT NULL)"
+        ),
+        {"id": owner_id, "viewer": user_id},
+    ):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
     quote_exact = normalize_quote_text(exact)
     resolution = locator_resolver.resolve_passage_selector(
         db,
@@ -158,12 +173,30 @@ def materialize_or_reuse(
         prefix=normalize_quote_text(prefix or ""),
         suffix=normalize_quote_text(suffix or ""),
         locator_hint=canonical_locator_hint(locator_hint),
+        source_reads=locator_resolver.read_passage_sources(
+            db, [(owner_scheme, owner_id)], viewer_id=user_id
+        ),
     )
     if resolution.status is not QuoteStatus.unique:
         raise ApiError(
             ApiErrorCode.E_LINK_TARGET_AMBIGUOUS,
             _REFUSAL_MESSAGES[resolution.status],
         )
+    capture_locator = None
+    if owner_scheme == "highlight":
+        assert resolution.locator is not None
+        capture_locator = {
+            "type": "highlight_annotation_offsets",
+            "highlight_id": str(owner_id),
+            "start_offset": resolution.locator["start_offset"],
+            "end_offset": resolution.locator["end_offset"],
+            "body_sha256": resolution.locator["body_sha256"],
+            "text_quote_selector": {
+                "exact": exact,
+                "prefix": resolution.prefix,
+                "suffix": resolution.suffix,
+            },
+        }
     result = authored.server_command(
         db,
         user_id,
@@ -174,7 +207,7 @@ def materialize_or_reuse(
             "exact": quote_exact,
             "prefix": resolution.prefix,
             "suffix": resolution.suffix,
-            "capture": {"quote_exact": exact, "publication": None, "locator": None},
+            "capture": {"quote_exact": exact, "publication": None, "locator": capture_locator},
         },
         resource_refs=[],
         link_ids=[],

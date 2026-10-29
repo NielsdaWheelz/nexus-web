@@ -61,10 +61,14 @@ passage.
 
 `ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing,
 authored_by_viewer}`. an
-activation is `{resource_ref, kind: route | external | none, href, unavailable_reason}`;
+activation is `{resource_ref, field, kind: route | external | none, href, unavailable_reason}`;
 a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
 `#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
 `#citation-`, `#retrieval-`) and the web derives the source-target key from it.
+`field` is required: null addresses ordinary resource meaning, `annotation` addresses
+only a highlight’s private body. embeds, captured evidence, read targets and
+reopening preserve that field, including unavailable destinations. annotation
+embeds show authored body or their recorded label, never source quotation.
 `ref` owns disclosure; `action_ref` owns resource actions; `label` names accessible
 controls and confirmations. `preview` contains `body` and nullable `source`.
 every wire key is present and snake_case; absence is null.
@@ -282,9 +286,10 @@ return controls remain navigation. availability never closes a branch or unmount
 writing. removing a focused chevron returns focus to the same occurrence's bullet.
 ordinary insertion and nesting keep their existing local command owners.
 
-highlight annotations render through ordinary linked-note children.
+highlight rows render one captured quotation and their owned annotation editor.
+ordinary related notes remain graph children; they never define annotation content.
 terminal note repeats retain read-only rich bodies and atomic embed links.
-annotation child insertion belongs to the annotation note, not the highlight.
+annotation links and insertions belong to the highlight.
 reader roots and source-owned membership never invent an incoming graph mutation.
 
 arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retain

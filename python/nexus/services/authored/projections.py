@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.schemas.authored import MergeResult, ResourceProjection
 from nexus.schemas.retrieval import (
     EpubFragmentOffsetsLocator,
+    HighlightAnnotationOffsetsLocator,
     NoteBlockOffsetsLocator,
     PdfPageGeometryLocator,
     PdfPageLocator,
@@ -25,7 +26,9 @@ from nexus.schemas.retrieval import (
 from nexus.services.resource_graph.refs import require_ref
 
 
-def project(db: Session, account_id: UUID, result: MergeResult) -> None:
+def project(
+    db: Session, account_id: UUID, result: MergeResult, *, public_highlight_changes: set[UUID]
+) -> None:
     from nexus.services.media_deletion import lock_highlight_sources, release_highlight_sources
 
     hiding = [
@@ -50,7 +53,9 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
     changed_notes = []
     for item in result.projections:
         ref = require_ref(item.ref)
-        scalar = "body_text" if item.kind == "note" else "NULL"
+        scalar = {"note": "body_text", "highlight": "annotation_body_text", "page": "NULL"}[
+            item.kind
+        ]
         previous = db.execute(
             text(
                 f"SELECT user_id,authored_visible,{scalar} FROM "
@@ -87,19 +92,11 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                     "visible": item.visible,
                 },
             )
-            from nexus.services.note_bodies import project_note_embeds
+            from nexus.services.note_bodies import project_body_embeds
 
-            project_note_embeds(
-                db, viewer_id=account_id, note_id=ref.id, embedded_refs=item.embedded_refs
+            project_body_embeds(
+                db, viewer_id=account_id, owner=ref, embedded_refs=item.embedded_refs
             )
-            if item.visible and (words_changed or item.ref in visibility_changes):
-                from nexus.services.note_indexing import enqueue_note_reindex
-
-                enqueue_note_reindex(db, note_block_id=ref.id, reason="authored_merge")
-            elif not item.visible and item.ref in visibility_changes:
-                from nexus.services.note_indexing import hide_note_index
-
-                hide_note_index(db, note_block_id=ref.id)
         elif item.kind == "page":
             db.execute(
                 text(
@@ -123,12 +120,37 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                     {"a": account_id, "d": item.local_date, "p": ref.id},
                 )
         else:
-            _highlight(db, account_id, item)
+            _highlight(db, account_id, item, public_changed=ref.id in public_highlight_changes)
             if existing is None and item.visible:
                 from nexus.services.connection_discovery import queue_connection_discovery_scan
 
                 queue_connection_discovery_scan(
                     db, user_id=account_id, ref=ref, reason="authored_create"
+                )
+            from nexus.services.note_bodies import project_body_embeds
+
+            project_body_embeds(
+                db, viewer_id=account_id, owner=ref, embedded_refs=item.embedded_refs
+            )
+        if item.kind in ("note", "highlight"):
+            from nexus.services.authored_text_indexing import (
+                enqueue_authored_text_reindex,
+                hide_authored_text_index,
+            )
+
+            owner_kind = "note_block" if item.kind == "note" else "highlight"
+            if not item.visible or item.body_pm_json is None:
+                if (
+                    previous is not None
+                    and previous[2] is not None
+                    and (previous[2] != item.body_text or item.ref in visibility_changes)
+                ):
+                    hide_authored_text_index(db, owner_kind=owner_kind, owner_id=ref.id)
+            elif (
+                previous is None or previous[2] != item.body_text or item.ref in visibility_changes
+            ):
+                enqueue_authored_text_reindex(
+                    db, owner_kind=owner_kind, owner_id=ref.id, reason="authored_merge"
                 )
     for passage in result.passages:
         owner = require_ref(passage.source_ref)
@@ -143,7 +165,15 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
         locator = passage.capture.value.locator
         hint = None
         if locator is not None:
-            if isinstance(
+            if isinstance(locator, HighlightAnnotationOffsetsLocator):
+                hint = {
+                    "kind": "highlight_annotation_text",
+                    "highlight_id": str(locator.highlight_id),
+                    "start_offset": locator.start_offset,
+                    "end_offset": locator.end_offset,
+                    "body_sha256": locator.body_sha256,
+                }
+            elif isinstance(
                 locator,
                 (
                     WebTextOffsetsLocator,
@@ -189,26 +219,15 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 "selector": json.dumps({"quote": quote, "locator_hint": hint}),
             },
         )
-    highlight_ids = _project_links(db, account_id, result, visibility_changes)
-    highlight_ids |= {
+    _project_links(db, account_id, result, visibility_changes)
+    private_highlight_changes = {
         require_ref(item.ref).id for item in result.projections if item.kind == "highlight"
-    }
-    if changed_notes:
-        highlight_ids.update(
-            db.scalars(
-                text("""SELECT DISTINCT h.id FROM resource_edges e
-            JOIN highlights h ON (e.source_scheme='highlight' AND e.source_id=h.id)
-                OR (e.target_scheme='highlight' AND e.target_id=h.id)
-            WHERE e.user_id=:a AND e.authored_visible AND e.origin IN ('user','highlight_note','link_note')
-                AND ((e.source_scheme='note_block' AND e.source_id=ANY(:ids))
-                    OR (e.target_scheme='note_block' AND e.target_id=ANY(:ids)))"""),
-                {"a": account_id, "ids": changed_notes},
-            )
-        )
-    if highlight_ids:
+    } - public_highlight_changes
+    if public_highlight_changes or private_highlight_changes:
         from nexus.services.highlights import annotations_changed
 
-        annotations_changed(db, highlight_ids)
+        annotations_changed(db, public_highlight_changes)
+        annotations_changed(db, private_highlight_changes, viewer_id=account_id)
     from nexus.services.search import projection
     from nexus.services.suggestion_changes import record_input_change
 
@@ -221,6 +240,11 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
             if kind == "note"
             else [require_ref(item.ref).id for item in result.projections if item.kind == kind],
         )
+    projection.refresh(
+        db,
+        "highlight_annotation",
+        [require_ref(item.ref).id for item in result.projections if item.kind == "highlight"],
+    )
     projection.refresh(db, "passage_anchor", [passage.anchor_id for passage in result.passages])
     captures = [
         item.source_ref
@@ -252,11 +276,10 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
 
 def _project_links(
     db: Session, account_id: UUID, result: MergeResult, visibility_changes: list[str]
-) -> set[UUID]:
+) -> None:
     """Project explicit link edits; bulk-propagate only changed endpoint liveness."""
     ids = [str(item.link_id) for item in result.links]
     conversation_links: list[tuple[UUID, bool | None, bool]] = []
-    highlight_ids: set[UUID] = set()
     if visibility_changes:
         changed = db.execute(
             text("""WITH old AS MATERIALIZED (
@@ -272,21 +295,15 @@ def _project_links(
             UPDATE resource_edges e SET authored_visible=old.visible FROM old
             WHERE e.id=old.id AND e.authored_visible IS DISTINCT FROM old.visible
             RETURNING e.id,old.before,e.authored_visible AS after,old.state
-        ) SELECT id,before,after,state->>'endpoint_a',state->>'endpoint_b' FROM changed
-            WHERE state->>'endpoint_a' LIKE 'conversation:%' OR state->>'endpoint_b' LIKE 'conversation:%'
-                OR state->>'endpoint_a' LIKE 'highlight:%' OR state->>'endpoint_b' LIKE 'highlight:%'"""),
+        ) SELECT id,before,after FROM changed
+            WHERE state->>'endpoint_a' LIKE 'conversation:%' OR state->>'endpoint_b' LIKE 'conversation:%'"""),
             {"a": account_id, "ids": ids, "refs": visibility_changes},
         ).tuples()
-        for identity, before, after, left, right in changed:
-            if left.startswith("conversation:") or right.startswith("conversation:"):
-                conversation_links.append((identity, before, after))
-            highlight_ids.update(
-                require_ref(ref).id for ref in (left, right) if ref.startswith("highlight:")
-            )
+        for identity, before, after in changed:
+            conversation_links.append((identity, before, after))
     for link in result.links:
         value = link.model_dump(mode="json")
         a, b = require_ref(value["endpoint_a"]), require_ref(value["endpoint_b"])
-        highlight_ids.update(endpoint.id for endpoint in (a, b) if endpoint.scheme == "highlight")
         visible = any(
             int(seq) > int(value["remove_vv"].get(replica, "0"))
             for replica, seq in value["add_vv"].items()
@@ -342,10 +359,11 @@ def _project_links(
         from nexus.services.resource_graph.context import project_conversation_links
 
         project_conversation_links(db, viewer_id=account_id, links=conversation_links)
-    return highlight_ids
 
 
-def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
+def _highlight(
+    db: Session, account_id: UUID, item: ResourceProjection, *, public_changed: bool
+) -> None:
     capture = item.selection
     assert capture is not None and item.source_ref is not None
     ref = require_ref(item.ref)
@@ -358,10 +376,12 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
     )
     db.execute(
         text(
-            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible) "
-            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible) "
+            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible,annotation_body_pm_json,annotation_body_text) "
+            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible,CAST(:body AS jsonb),:words) "
             "ON CONFLICT(id) DO UPDATE SET color=excluded.color,exact=excluded.exact, "
-            "prefix=excluded.prefix,suffix=excluded.suffix,authored_visible=excluded.authored_visible,updated_at=now()"
+            "prefix=excluded.prefix,suffix=excluded.suffix,authored_visible=excluded.authored_visible, "
+            "annotation_body_pm_json=excluded.annotation_body_pm_json,annotation_body_text=excluded.annotation_body_text, "
+            "updated_at=CASE WHEN :public_changed THEN now() ELSE highlights.updated_at END"
         ),
         {
             "id": ref.id,
@@ -370,6 +390,9 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
             "media": None if isinstance(locator, XCaptureOffsetsLocator) else source.id,
             "color": item.color,
             "exact": capture.quote_exact,
+            "body": json.dumps(item.body_pm_json) if item.body_pm_json is not None else None,
+            "words": item.body_text,
+            "public_changed": public_changed,
             "prefix": capture.prefix or "",
             "suffix": capture.suffix or "",
             "visible": item.visible,

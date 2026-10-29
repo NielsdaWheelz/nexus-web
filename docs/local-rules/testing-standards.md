@@ -109,6 +109,9 @@ persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
 gecko bridge accepts that permission without applying it; the helper verifies the
 grant and real storage persistence before returning. on macos its app-data home
 also stays inside the owned temporary root. no global profile or trust changes.
+its optional profile proxy covers shared-worker traffic with end-to-end tls.
+page-level simulated offline state alone does not prove shared-worker disconnection;
+network-loss cases must verify their actual transport boundary.
 
 native firefox drivers import `open_native_firefox` from
 `python/scripts/lab_firefox.py`, using the checkout's `python` import root. it

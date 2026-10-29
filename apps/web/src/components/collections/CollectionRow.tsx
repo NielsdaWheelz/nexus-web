@@ -100,7 +100,7 @@ export default function CollectionRow({
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
-    displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
+    displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { field: null, kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { field: null, kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
     label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />

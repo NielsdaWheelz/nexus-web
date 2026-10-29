@@ -72,7 +72,7 @@ from nexus.services.search.sources import (
 
 logger = get_logger(__name__)
 
-_SAVED = frozenset({"highlight", "passage_anchor"})
+_SAVED = frozenset({"highlight", "highlight_annotation", "passage_anchor"})
 _PASSAGES = GENERATED_FAMILIES | _SAVED | {"note_block"}
 
 
@@ -291,7 +291,14 @@ def _present(
         def occurrence(hit: DiscoveryHit) -> SearchOccurrenceOut:
             item, match = shown[(hit.ref.uri, hit.reading_media_id)]
             return SearchOccurrenceOut(
-                item=item, match=match, match_method="lexical" if hit.lexical else "semantic"
+                item=item,
+                match=match,
+                match_method="lexical" if hit.lexical else "semantic",
+                matched_field="annotation"
+                if hit.family == "highlight_annotation"
+                else "quote"
+                if hit.family == "highlight"
+                else None,
             )
 
         return [
@@ -308,6 +315,11 @@ def _present(
                 else None,
                 match_method=("lexical" if row.own.lexical else "semantic")
                 if row.own and terms
+                else None,
+                matched_field="annotation"
+                if row.own and row.own.family == "highlight_annotation"
+                else "quote"
+                if row.own and row.own.family == "highlight"
                 else None,
                 matching_passage=occurrence(row.passage) if row.passage else None,
             )
@@ -418,7 +430,10 @@ async def search(
             return SearchResourcesResponse(
                 phase=phase, results=resources, page=page(more), semantic_status=status
             )
-        unique = list({hit.ref: hit for hit in hits}.values())
+        distinct = {}
+        for hit in hits:
+            distinct.setdefault(hit.ref, hit)
+        unique = list(distinct.values())
         more = len(unique) > offset + limit and is_offset(offset + limit)
         _, passages = _present(
             db, facts, viewer_id, query.text, (), unique[offset : offset + limit]

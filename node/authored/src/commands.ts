@@ -23,7 +23,7 @@ export type Intent =
   | { kind:"unlink"; link_id:string; observed_add:Vector }
   | { kind:"restore_position"; link_id:string; endpoint_ref:string; expected:Stamp; position:string }
   | { kind:"move_link"; link_id:string; endpoint_ref:string; position:string }
-  | { kind:"create_highlight"; ref:string; source_ref:string; selection:SelectionCapture; color:HighlightColor }
+  | { kind:"create_highlight"; ref:string; source_ref:string; selection:SelectionCapture; color:HighlightColor; body_update:string }
   | { kind:"update_highlight"; ref:string; selection:SelectionCapture|null; color:HighlightColor|null }
   | { kind:"capture_passage"; anchor_id:string; source_ref:string; normalized_exact:string; prefix:string; suffix:string; capture:PassageCapture }
   | { kind:"capture_source"; source_ref:string; capture:SourceCapture }
@@ -32,11 +32,14 @@ export type Intent =
 export function createNoteIntent(ref:string, body:NoteBody): Extract<Intent,{kind:"create_note"}> {
   return {kind:"create_note",ref,body_update:createNote(body)};
 }
+export function createHighlightIntent(ref:string,source_ref:string,selection:SelectionCapture,color:HighlightColor,body:NoteBody): Extract<Intent,{kind:"create_highlight"}> {
+  return {kind:"create_highlight",ref,source_ref,selection:structuredClone(selection),color,body_update:createNote(body)};
+}
 function patchOf(r:ResourceState):ResourcePatch {
   switch(r.kind) {
     case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null};
     case "page": return {ref:r.ref,kind:"page",touch_vv:{},delete_vv:{},local_date:r.local_date,title_update:null};
-    case "highlight": return {...r,touch_vv:{},delete_vv:{}};
+    case "highlight": return {ref:r.ref,kind:"highlight",source_ref:r.source_ref,selection:r.selection,color:r.color,touch_vv:{},delete_vv:{},body_update:null};
   }
 }
 export function prepareChange(context:CommandContext,intent:Intent,states:Corpus):Change {
@@ -64,8 +67,11 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
         change.resources.push({kind:"page",ref:action.ref,touch_vv:dot,delete_vv:{},local_date:action.local_date,title_update:createTitle(action.title)});return;
       }
       case "edit_body": {
-        if(resource(action.ref).kind!=="note")throw new TypeError("Body edit addresses a note");
-        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;
+        const old=resource(action.ref);
+        if(old.kind==="page")throw new TypeError("Body edit addresses a note or highlight");
+        change.resources.push(old.kind==="note"
+          ? {kind:"note",ref:old.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update}
+          : {kind:"highlight",ref:old.ref,source_ref:old.source_ref,selection:old.selection,color:old.color,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;
       }
       case "edit_title": {
         const old=resource(action.ref);if(old.kind!=="page")throw new TypeError("Title edit addresses a page");
@@ -92,10 +98,14 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
         const old=link(action.link_id);if(action.endpoint_ref!==old.endpoint_a&&action.endpoint_ref!==old.endpoint_b)throw new TypeError("Move addresses one exact endpoint");
         change.links.push({...old,add_vv:{},remove_vv:{},position_a:action.endpoint_ref===old.endpoint_a?register(action.position):null,position_b:action.endpoint_ref===old.endpoint_b?register(action.position):null});return;
       }
-      case "create_highlight":change.resources.push({kind:"highlight",ref:action.ref,source_ref:action.source_ref,touch_vv:dot,delete_vv:{},selection:register(canonicalSelection(action.selection)),color:register(action.color)});return;
+      case "create_highlight": {
+        const known=knownResource(action.ref);
+        if(known){if(known.kind!=="highlight"||known.source_ref!==action.source_ref)throw new TypeError("Highlight kind and source are immutable");return;}
+        change.resources.push({kind:"highlight",ref:action.ref,source_ref:action.source_ref,touch_vv:dot,delete_vv:{},selection:register(canonicalSelection(action.selection)),color:register(action.color),body_update:action.body_update});return;
+      }
       case "update_highlight": {
         const old=resource(action.ref);if(old.kind!=="highlight")throw new TypeError("Highlight edit addresses a highlight");
-        change.resources.push({...old,touch_vv:dot,delete_vv:{},selection:action.selection===null?old.selection:register(canonicalSelection(action.selection)),color:action.color===null?old.color:register(action.color)});return;
+        change.resources.push({kind:"highlight",ref:old.ref,source_ref:old.source_ref,body_update:null,touch_vv:dot,delete_vv:{},selection:action.selection===null?old.selection:register(canonicalSelection(action.selection)),color:action.color===null?old.color:register(action.color)});return;
       }
     }
   };

@@ -92,6 +92,7 @@ class HighlightPatch(Causality):
     source_ref: str
     selection: Register[SelectionCapture]
     color: Register[HighlightColor]
+    body_update: str | None
 
 
 ResourcePatch = Annotated[NotePatch | PagePatch | HighlightPatch, Field(discriminator="kind")]
@@ -108,7 +109,15 @@ class PageState(Causality):
     title_state: str
 
 
-ResourceState = Annotated[NoteState | PageState | HighlightPatch, Field(discriminator="kind")]
+class HighlightState(Causality):
+    kind: Literal["highlight"]
+    source_ref: str
+    selection: Register[SelectionCapture]
+    color: Register[HighlightColor]
+    body_state: str
+
+
+ResourceState = Annotated[NoteState | PageState | HighlightState, Field(discriminator="kind")]
 
 
 class LinkState(Closed):
@@ -213,7 +222,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[2]
+    format_revision: Literal[3]
     head_cursor: Counter
     lamport: Counter
 
@@ -247,7 +256,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[2]
+    format_revision: Literal[3]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts

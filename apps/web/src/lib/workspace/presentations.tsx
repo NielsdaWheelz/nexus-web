@@ -26,7 +26,7 @@ const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
 const PublisherContext = createContext<PublishTitle | null>(null);
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
-  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
+  return resource ? {ref: resource.ref, title: resource.title ?? resource.selection?.quote_exact ?? resource.body_text?.split("\n")[0] ?? "", local_date: resource.local_date} : null;
 }
 /** A successful root read supplies title evidence; unknown/error is never absence. */
 export function useNoteRootTitle(ref: string, rootRead: OutlineRootMetadata): void {

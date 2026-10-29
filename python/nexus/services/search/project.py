@@ -25,7 +25,6 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.locator_resolver import evidence_resolution, locator_from_resolution
 from nexus.services.media import media_summaries
-from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import source_attributions
@@ -127,6 +126,8 @@ def _refs(row: Mapping[str, Any]) -> tuple[ResourceRef, ResourceRef]:
     """(occurrence, owner): the resource a hit names and the one that receives it."""
     t = row["type"]
     ref = _ref(SCHEMES.get(t) or t, row["id"])
+    if (row.get("locator") or {}).get("type") == "highlight_annotation_offsets":
+        return ref, _ref("highlight", row["id"])
     if row.get("chunk_owner_kind") == "fragment":
         return ref, _ref("fragment", UUID(str(row["chunk_locator"]["fragment_id"])))
     if (row.get("locator") or {}).get("type") == "x_capture_offsets":
@@ -171,10 +172,17 @@ def project(
     credits = load_contributor_credits_for_media(db, sourced)
     credits |= load_contributor_credits_for_podcasts(db, ids.get("podcast", []))
     summaries = media_summaries(db, viewer_id=viewer_id, media_ids=ids.get("media", []))
-    excerpts = highlight_excerpts_for_note_blocks(db, viewer_id, ids.get("note_block", []))
     placed = []
     for hit in hits:
         row = rows.get((family_of(hit.type), hit.id, hit.reading_media_id))
+        if row is not None:
+            row["matched_field"] = (
+                "annotation"
+                if hit.type == "highlight_annotation"
+                else "quote"
+                if hit.type == "highlight"
+                else None
+            )
         locator = None if row is None else _locator(row)
         if (
             row is None
@@ -228,6 +236,21 @@ def project(
         t = row["type"]
         rid = row["id"]
         activation = activations[ref.uri]
+        field = (
+            "annotation"
+            if row.get("matched_field") == "annotation"
+            or (locator or {}).get("type") == "highlight_annotation_offsets"
+            else None
+        )
+        if field == "annotation":
+            activation = activation.model_copy(
+                update={
+                    "resource_ref": owner.uri,
+                    "field": "annotation",
+                    "kind": "route",
+                    "href": f"/highlights/{owner.id}#annotation",
+                }
+            )
         if activation.href is None:
             continue
         values: dict[str, Any] = {"media_id": None, "media_kind": None, **row}
@@ -242,15 +265,13 @@ def project(
                 original_published_date=row["original_published_date"],
             )
             values |= {"source": source, "title": source.title}
-            values["source_label"] = build_source_label(source)
+            values["source_label"] = (
+                "annotation" if field == "annotation" else build_source_label(source)
+            )
         if t == "podcast":
             values["contributors"] = credits.get(rid, [])
             names = [c.credited_name for c in values["contributors"] if c.credited_name]
             values["source_label"] = " - ".join([row["title"], *names])
-        if t == "note_block":
-            excerpt = excerpts.get(rid)
-            values["highlight_excerpt"] = None if excerpt is None else _truncate(excerpt)
-            values["note_origin"] = "note" if excerpt is None else "highlight_note"
         if t in ("content_chunk", "evidence_span"):
             values |= {"evidence_span_ids": [row["span_id"]], "evidence_span_id": row["span_id"]}
         if t in MEDIA_TYPES:
@@ -265,12 +286,6 @@ def project(
             "action_ref": (owner if t in _PASSAGES else ref).uri,
             "activation": activation,
             "citation_target": ref.uri if capability(ref.scheme).citable_result_type else None,
-            "context_ref": SearchResultContextRefOut(
-                type="media" if t in MEDIA_TYPES else t,
-                id=handle or rid,
-                evidence_span_ids=[row["span_id"]] if t == "content_chunk" else [],
-                passage_target=None,
-            ),
             "locator": locator,
         }
         attribution = source_metadata.get(owner.uri)
@@ -320,6 +335,7 @@ def project(
         frozen_target = (
             CapturedPassageTarget.model_validate(
                 {
+                    "field": field,
                     "owner_ref": owner.uri,
                     "locator": locator,
                     "precision": precision,
@@ -327,12 +343,17 @@ def project(
                 }
             )
             if locator is not None
-            else CapturedResourceTarget(owner_ref=owner.uri)
+            else CapturedResourceTarget(field=field, owner_ref=owner.uri)
         )
-        if isinstance(frozen_target, CapturedPassageTarget):
-            values["context_ref"] = values["context_ref"].model_copy(
-                update={"passage_target": frozen_target}
-            )
+        values["context_ref"] = SearchResultContextRefOut(
+            type="media" if t in MEDIA_TYPES else t,
+            id=handle or rid,
+            field=field,
+            evidence_span_ids=[row["span_id"]] if t == "content_chunk" else [],
+            passage_target=frozen_target
+            if isinstance(frozen_target, CapturedPassageTarget)
+            else None,
+        )
         values["captured_evidence"] = CapturedEvidence(
             quote=quote, source=frozen_source, target=frozen_target
         )

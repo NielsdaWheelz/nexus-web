@@ -86,7 +86,7 @@ def _ctes() -> str:
         UNION SELECT state->>'endpoint_b' FROM authored_links WHERE account_id=:viewer_id
         UNION SELECT e.target_scheme||':'||e.target_id::text FROM resource_edges e
             WHERE e.user_id=:viewer_id AND e.origin='note_body'
-                AND e.source_scheme='note_block'
+                AND e.source_scheme IN ('note_block','highlight')
         UNION SELECT 'media:'||e.target_id::text FROM resource_edges e
             JOIN conversations c ON c.id=e.source_id AND c.owner_user_id=:viewer_id
             WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'

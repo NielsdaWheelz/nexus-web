@@ -1,6 +1,6 @@
 # authored notes
 
-titled pages, one-block notes, independent annotations and undirected links form
+titled pages, one-block notes, annotated highlights and undirected links form
 one account-scoped authored graph. the same local query and commit owners serve
 writing online and offline. source downloads, chat, imports and account operations
 retain their separate owners.
@@ -76,10 +76,9 @@ without inserting that default into the title crdt. title storage has no display
 length ceiling.
 
 links are relationships, never ownership. explicit unlink preserves endpoints;
-deleting a page, note or highlight never consumes an independent note. attached
-annotation notes are ordinary independent notes and links, including multiple
-notes and independently overlapping highlights. pdf resizing keeps the exact
-highlight id and its note links.
+deleting a page, note or highlight never consumes an independent related note.
+a highlight owns its single annotation body; ordinary note links confer no
+annotation meaning. pdf resizing preserves the highlight id, annotation and links.
 
 source stubs retain literal references when a source disappears, including a
 deleted conversation. source deletion does not unlink the authored graph; a
@@ -132,7 +131,7 @@ removed in that exact prestate. this command’s removals cannot supply that pro
 it never imports other prestate lanes or covers a live intervening same-replica
 edit merely because text is unchanged.
 
-ordinary and attached-note editing autosave locally. annotation creation retains
+ordinary note and bound highlight annotation editing autosave locally. annotation creation retains
 its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
 writing retains the loss guard and retry/copy affordance. committed unsynchronized
 writing survives app termination and does not acquire an exit warning.

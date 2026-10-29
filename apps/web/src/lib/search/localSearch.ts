@@ -43,6 +43,7 @@ export interface LocalMatch {
   /** Its discovery family, for the row's type and the kind filter. */
   readonly kind: SearchKind;
   readonly label: string;
+  readonly matchedField: "quote" | "annotation" | null;
   readonly href: string | null;
   /** A literal slice of the matched text and the matched token spans within it. */
   readonly excerpt: { readonly text: string; readonly marks: readonly (readonly [number, number])[]; readonly before: boolean; readonly after: boolean } | null;
@@ -55,13 +56,14 @@ export function localResult(resource: ResourceProjection, text: string): LocalMa
 }
 
 export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string,
-  { matchText, activationRef }: { matchText: string | null; activationRef: ResourceRef | null } = { matchText: null, activationRef: null }): LocalMatch {
+  { matchText, activationRef, matchedField, activationField }: { matchText: string | null; activationRef: ResourceRef | null; matchedField: "quote" | "annotation" | null; activationField: "annotation" | null } = { matchText: null, activationRef: null, matchedField: null, activationField: null }): LocalMatch {
+  const href = resource.kind === "highlight" && activationField === "annotation" ? `/highlights/${resource.ref.split(":")[1]}#annotation` : localResourceHref(resource, {activationRef});
   const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
     : resource.title ?? resource.local_date ?? "");
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
-  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), excerpt: null };
+  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), matchedField, href, excerpt: null };
   const start = Math.max(0, first - CONTEXT), end = Math.min(body.length, first + CONTEXT * 2);
   const slice = body.slice(start, end);
   const sliceLower = slice.toLowerCase();
@@ -71,7 +73,7 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
   // overlapping token spans keep the earliest; each character renders once.
   const kept: [number, number][] = [];
   for (const mark of marks) if (!kept.length || mark[0] >= kept.at(-1)![1]) kept.push(mark);
-  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }),
+  return { resource, kind, label: localResourceLabel(resource), matchedField, href,
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
@@ -92,9 +94,9 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
   const query: Extract<AuthoredQuery, {kind: "search"}> | null = text === null || invalidScope ? null
     : { kind: "search", text, cursor: null, limit: PAGE, scopes, families };
   const prefix = useAuthoredPrefix(query, pages);
-  const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref }) => {
+  const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref, matched_field, activation_field }) => {
     const kind = kindOf(resource);
-    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref })] : [];
+    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref, matchedField: matched_field, activationField: activation_field })] : [];
   }), [prefix.data, kinds, text]);
   if (text !== null && invalidScope) return { matches: [], complete: true, scopeAvailable: false, error: null, retry: prefix.retry };
   return { matches, complete: prefix.data?.next_cursor === null, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,

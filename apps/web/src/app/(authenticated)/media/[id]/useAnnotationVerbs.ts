@@ -257,7 +257,7 @@ export function useAnnotationVerbs(input: {
   const startBounds = useCallback((id: string, scope: BoundsSession["scope"]) => {
     if (!publication) return;
     retireSelection();
-    composer.dismiss();
+    if (!composer.dismiss()) return;
     setMenu(null);
     setSelectionIssue(null);
     showBounds({ id: createRandomId(), highlightId: id, identity: publication, scope, phase: "Selecting", issue: null });
@@ -297,7 +297,7 @@ export function useAnnotationVerbs(input: {
     switch (entry.kind) {
       case "EditHighlight":
         return setColour(id);
-      case "EditHighlightNote":
+      case "EditHighlightAnnotation":
         setNoteEdit((current) => ({ id, request: (current?.request ?? 0) + 1 }));
         return openEvidence(id);
       case "EditHighlightBounds":

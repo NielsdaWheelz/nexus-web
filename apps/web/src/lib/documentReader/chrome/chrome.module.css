@@ -239,19 +239,12 @@
   background: var(--highlight-purple);
 }
 
-.attachedNotes {
+.highlightChoices {
   display: grid;
   gap: var(--space-2);
   margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
-}
-
-.attachedNote {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-1);
 }
 
 .annotationList ul {

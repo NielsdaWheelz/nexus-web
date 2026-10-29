@@ -373,6 +373,7 @@ def _body(
         if row["embed_ref"] is not None:
             return ReferenceResourceBodyOut(
                 target_ref=row["embed_ref"],
+                field=row["embed_field"],
                 label=excerpt(row["embed_label"], limit) if row.get("embed_label") else None,
             )
         prose = row.get("prose") or ""
@@ -453,9 +454,11 @@ def _rows(
     for ref in refs:
         row = out.get(ref.uri)
         if ref.scheme in canonical_schemes and (
-            ref.scheme
-            in {"highlight", "fragment", "reader_apparatus_item", "oracle_passage_anchor"}
-            or row is not None
+            ref.scheme in {"fragment", "reader_apparatus_item", "oracle_passage_anchor"}
+            or ref.scheme == "highlight"
+            and not (row is not None and row.get("owned"))
+            or ref.scheme != "highlight"
+            and row is not None
             and str(row.get("owner_ref", "")).startswith("media:")
         ):
             out.pop(ref.uri, None)
@@ -521,6 +524,7 @@ SELECT n.id, 'note' AS body_kind, n.body_pm_json #>> '{{attrs,presentation}}' AS
        left(COALESCE(parts.prose, ''), 601) AS prose, COALESCE(parts.image_count, 0) AS image_count,
        parts.image_alts,
        CASE WHEN {_SOLE_EMBED} THEN n.body_pm_json #>> '{{content,0,attrs,resource_ref}}' END AS embed_ref,
+       CASE WHEN {_SOLE_EMBED} THEN n.body_pm_json #>> '{{content,0,attrs,field}}' END AS embed_field,
        CASE WHEN {_SOLE_EMBED} THEN left(n.body_pm_json #>> '{{content,0,attrs,label}}', 601) END AS embed_label
 FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE
 WHERE n.id = ANY(:ids) AND n.user_id = :viewer_id AND n.authored_visible
@@ -537,7 +541,7 @@ _QUERIES = {
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "external_snapshot": "SELECT id, title FROM resource_external_snapshots WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
-    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
+    "highlight": f"SELECT h.id, h.user_id=:viewer_id AS owned, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND ((h.user_id=:viewer_id AND h.authored_visible) OR {highlight_readability_sql('h')})",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
     "passage_anchor": f"SELECT pa.id, 'passage' AS body_kind, left(pa.selector #>> '{{quote,exact}}',601) AS exact, right(pa.selector #>> '{{quote,prefix}}',49) AS prefix, left(pa.selector #>> '{{quote,suffix}}',49) AS suffix, pa.owner_scheme || ':' || pa.owner_id AS owner_ref FROM passage_anchors pa WHERE pa.id = ANY(:ids) AND pa.user_id = :viewer_id AND {_PASSAGE_LIVE}",
     "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
@@ -552,8 +556,12 @@ for _scheme, _table, _body_column in (
     ] = f"""SELECT t.id, 'passage' AS body_kind, left(t.{_body_column},601) AS exact,
         t.owner_kind || ':' || t.owner_id AS owner_ref
         FROM {_table} t LEFT JOIN note_blocks nb ON nb.id = t.owner_id AND t.owner_kind = 'note_block'
+        LEFT JOIN highlights h ON h.id=t.owner_id AND t.owner_kind='highlight'
+        LEFT JOIN content_index_states cis ON cis.owner_kind=t.owner_kind AND cis.owner_id=t.owner_id
         WHERE t.id = ANY(:ids) AND ((t.owner_kind = 'media' AND t.owner_id IN {_VISIBLE})
-          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id AND nb.authored_visible))"""
+          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id AND nb.authored_visible)
+          OR (t.owner_kind='highlight' AND h.user_id=:viewer_id AND h.authored_visible
+              AND h.annotation_body_pm_json IS NOT NULL AND cis.lexical_revision=cis.revision))"""
 
 
 def preview_text(item: ResourceItemOut) -> str:

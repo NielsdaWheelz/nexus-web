@@ -118,7 +118,8 @@ def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, 
                              "start_offset": start, "end_offset": end, "media_kind": "web_article",
                              "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix}}}
     authored.server_command(db, viewer, command={"kind": "create_highlight", "ref": "highlight:" + str(highlight_id),
-                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow"},
+                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow",
+                            "body_pm_json": {"type": "body", "attrs": {"presentation": "prose"}, "content": []}},
                             resource_refs=[], link_ids=[])
 
 if mode == "seed":
@@ -405,7 +406,7 @@ else:
             assert len(stale)==1 and stale[0]["item"]["ref"]=="highlight:"+f["stale"], "stored unlocated quote is not searchable from its source"
             item=stale[0]["item"]
             assert not item["missing"] and item["preview"]["body"]["kind"]=="passage" and item["preview"]["body"]["exact"]["text"]==f["stale_quote"]
-            assert item["activation"]["kind"]=="none" and item["activation"]["href"] is None and item["activation"]["unavailable_reason"]=="location_unavailable", "unlocated quote invented a destination"
+            assert item["activation"]["kind"]=="route" and item["activation"]["resource_ref"]=="highlight:"+f["stale"] and item["activation"]["field"] is None and item["activation"]["href"]=="/highlights/"+f["stale"], "unlocated quote lost its durable capture destination"
             assert item["preview"]["source"]["ref"]=="media:"+f["source"], "stored quote lost its readable source"
             assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["stale_term"],kinds=("highlights",)))["results"]==[], "piece admitted a source-only unlocated quote"
             return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"],"piece_passage":bounded,"stale_item":item}
@@ -447,7 +448,7 @@ async function run(mode: string): Promise<void> {
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 await run("seed");
-const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale_term: string; stale_quote: string };
+const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale: string; stale_term: string; stale_quote: string };
 const browser = await openLabBrowser({ web_origin: context.web_origin, web_tls: context.web_tls,
   storage_state: context.browser_state_file });
 let diagnosticPage: Page | null = null;
@@ -557,11 +558,34 @@ try {
     true, "piece detail lost current lexical capability");
   const staleRows = (await search(`media:${fixture.source}`, fixture.stale_term, "highlights")).results;
   assert.deepEqual(staleRows.map(row => row.item.ref), [proof.stale_item.ref]);
-  assert.deepEqual(staleRows[0].item, proof.stale_item, "browser lost the stored unavailable quote");
+  assert.deepEqual(staleRows[0].item, proof.stale_item, "browser lost the retained quote");
   assert.deepEqual((await search(`media:${fixture.part}`, fixture.stale_term, "highlights")).results, [], "browser piece admitted a source-only unlocated quote");
   await page.goto(`${context.web_origin}/search?${new URLSearchParams({ q: fixture.stale_term, kinds: "highlights", scope: `media:${fixture.source}` })}`, { waitUntil: "domcontentloaded" });
   await page.getByText(fixture.stale_quote, { exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
-  facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true };
+  const staleTarget = proof.stale_item.activation;
+  assert.equal(staleTarget.resource_ref, `highlight:${fixture.stale}`, "unlocated quote invented a reading owner");
+  assert.equal(staleTarget.field, null, "quote activation became annotation activation");
+  assert.equal(staleTarget.href, `/highlights/${fixture.stale}`, "unlocated quote invented a source route");
+  const sourceResolution = await browserRequest(page, { web_origin: context.web_origin,
+    path: "/api/resource-items/source-targets/resolve", method: "POST", headers: {},
+    body: { target: { kind: "resource", resource_ref: proof.stale_item.ref, field: null }, reading_media_id: null } });
+  assert.equal(sourceResolution.status, 200, "retained quote location read failed");
+  // justify-type-assertion: the source-target route returns its generated data envelope.
+  const sourceTarget = (JSON.parse(sourceResolution.body) as { data: components["schemas"]["SourceTargetOut"] }).data;
+  assert.deepEqual(sourceTarget.location, { kind: "unavailable", reason: "location_unavailable" }, "unlocated quote invented source geometry");
+  assert.equal(sourceTarget.source_activation?.resource_ref, `media:${fixture.source}`, "unlocated quote invented another source owner");
+  assert.equal(sourceTarget.source_activation?.href, `/media/${fixture.source}`, "unlocated quote invented a source position");
+  assert.equal(sourceTarget.source_activation?.field, null);
+  const staleLink = page.locator(`a[href="${staleTarget.href}"]`).first();
+  await staleLink.waitFor({ state: "visible", timeout: 15_000 });
+  await staleLink.click();
+  await page.waitForURL(url => url.pathname === staleTarget.href && url.hash === "", { timeout: 15_000 });
+  const highlightPane = page.locator('[data-pane-shell="true"][data-active="true"]');
+  await highlightPane.locator("article blockquote mark").filter({ hasText: fixture.stale_quote }).waitFor({ state: "visible", timeout: 15_000 });
+  assert.equal(await highlightPane.locator("article blockquote mark").first().textContent(), fixture.stale_quote, "durable pane changed the retained literal quote");
+  assert.equal(await highlightPane.locator("[data-reader-text]").count(), 0, "durable capture invented a source reading");
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true,
+    durable_capture_opened: true, source_location_unavailable: true };
   await saveFacts();
   const piecePassage = proof.piece_passage;
   assert.ok(piecePassage.match, "piece passage has no literal match");

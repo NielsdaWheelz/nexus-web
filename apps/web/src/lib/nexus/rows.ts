@@ -423,7 +423,7 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
     }
     const index = rows.indexOf(source);
     rows[index] = { ...source, matchingPassage: source.matchingPassage ?? {
-      item: row.item, match: row.match ?? null, match_method: row.matchMethod,
+      item: row.item, match: row.match ?? null, match_method: row.matchMethod, matched_field: row.item.activation.field === "annotation" ? "annotation" : null,
     } };
     suppressed.add(row.key);
   }

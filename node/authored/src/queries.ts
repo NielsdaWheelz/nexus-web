@@ -50,7 +50,7 @@ export const SEARCH_INDEX_SQL = `${READABLE}, indexed AS (
 ) INSERT INTO search_documents(ref,text) SELECT ref,CASE kind
   WHEN 'page' THEN COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')
   WHEN 'note' THEN COALESCE(json_extract(projection_json,'$.body_text'),'')
-  WHEN 'highlight' THEN ${HIGHLIGHT_SEARCH_SQL}
+  WHEN 'highlight' THEN ${HIGHLIGHT_SEARCH_SQL} || ' ' || COALESCE(json_extract(projection_json,'$.body_text'),'')
   ELSE COALESCE(title,'') END FROM indexed WHERE ref=? ON CONFLICT(ref) DO UPDATE SET text=excluded.text WHERE search_documents.text IS NOT excluded.text`;
 export const SEARCH_REMOVE_SQL = `${READABLE} DELETE FROM search_documents WHERE ref=?1 AND NOT EXISTS(SELECT 1 FROM readable WHERE readable.ref=?1)`;
 
@@ -125,7 +125,7 @@ const SEARCH_SCOPED_SQL = `WITH ${SEARCH_SCOPE_CTES},
   ),scope_refs(ref) AS NOT MATERIALIZED(
     SELECT ref FROM scope_highlights UNION SELECT ref FROM linked_notes
     UNION SELECT r.ref FROM resources r WHERE r.visible=1 AND r.kind IN ('note','page') AND r.ref IN (SELECT target_ref FROM facts)
-    UNION SELECT 'passage_anchor:'||p.anchor_id FROM passages p WHERE p.source_ref IN (SELECT ref FROM linked_notes)
+    UNION SELECT 'passage_anchor:'||p.anchor_id FROM passages p WHERE p.source_ref IN (SELECT ref FROM linked_notes UNION SELECT ref FROM scope_highlights)
       OR 'passage_anchor:'||p.anchor_id IN (SELECT target_ref FROM facts)
       OR EXISTS(SELECT 1 FROM members m WHERE p.source_ref IN (m.reading_ref,m.source_ref)
         OR EXISTS(SELECT 1 FROM scope_facts owner WHERE owner.revision=m.revision AND owner.kind='source_alias' AND owner.owner_ref=p.source_ref AND owner.target_ref=m.source_ref))
@@ -193,6 +193,7 @@ const SEARCH_ALIASES_SQL = `SELECT owner_ref,target_ref FROM scope_facts
   UNION SELECT reading_ref,source_ref FROM scope_readings
   WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
     AND reading_ref IN (SELECT value FROM json_each(?1))`;
+const SEARCH_ANNOTATION_OWNERS_SQL = `SELECT projection_json FROM resources WHERE kind='highlight' AND ref IN (SELECT value FROM json_each(?1)) ORDER BY ref`;
 const SEARCH_RESOURCES_SQL = `SELECT ref,visible FROM resources WHERE kind='note' AND ref IN (SELECT value FROM json_each(?1)) ORDER BY ref`;
 // Pick one positive window by its small cursor metadata before projecting text.
 // The candidate scan may visit the reading, but never retains every overlap blob.
@@ -245,11 +246,11 @@ export const SEARCH_MATCH_SQL = {
   search_match_create: `CREATE VIRTUAL TABLE IF NOT EXISTS temp.scope_search_match USING fts5(text,tokenize='unicode61 remove_diacritics 2')`,
   search_match_clear: `DELETE FROM temp.scope_search_match`,
   search_match_insert: `INSERT INTO temp.scope_search_match(text) VALUES(?)`,
-  search_match_read: `SELECT 1 AS matched FROM temp.scope_search_match WHERE scope_search_match MATCH ? LIMIT 1`,
+  search_match_read: `SELECT bm25(scope_search_match) AS score FROM temp.scope_search_match WHERE scope_search_match MATCH ? LIMIT 1`,
 } as const;
 /** Every read shape is finite and packaged by content identity for the native host. */
 export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
-  SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias] as const;
+  SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_ANNOTATION_OWNERS_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
 function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclude:string,requireRootLive=true):string {
@@ -359,38 +360,6 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       const where=cursor===null?'':`WHERE(display_title,ref)>(?,?)`;
       return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
-    case "highlight_notes": return {
-      sql: `WITH attached AS (
-        SELECT l.link_id,l.position_a AS position,l.state_json AS link_json,l.endpoint_b AS note_ref
-        FROM links l INDEXED BY links_a WHERE l.endpoint_a=?1 AND l.visible=1
-        UNION ALL
-        SELECT l.link_id,l.position_b AS position,l.state_json AS link_json,l.endpoint_a AS note_ref
-        FROM links l INDEXED BY links_b WHERE l.endpoint_b=?1 AND l.visible=1
-      ) SELECT json_set(n.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,a.link_json
-        FROM attached a JOIN resources n ON n.ref=a.note_ref
-        WHERE n.kind='note' AND n.visible=1
-          AND NOT EXISTS(SELECT 1 FROM resources h WHERE h.ref=?1 AND (h.kind<>'highlight' OR h.visible=0))
-        ORDER BY a.position COLLATE BINARY NULLS LAST,a.link_id COLLATE BINARY`,
-      params: [query.ref],
-    };
-    case "annotation_notes": {
-      let cursor: [string,string,string] | null = null;
-      if (query.cursor !== null) {
-        const value: unknown = JSON.parse(query.cursor);
-        if (!Array.isArray(value) || value.length !== 3 || value.some(item=>typeof item!=="string")) throw new TypeError("Invalid annotation note cursor");
-        cursor=[value[0],value[1],value[2]];
-      }
-      return {
-        sql: `WITH attached AS (
-          SELECT json_set(n.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,l.state_json AS link_json,h.ref AS highlight_ref,l.link_id,
-          CASE WHEN l.endpoint_a=h.ref THEN l.position_a ELSE l.position_b END AS position
-          FROM resources h JOIN links l ON (l.endpoint_a=h.ref OR l.endpoint_b=h.ref)
-          JOIN resources n ON n.ref=CASE WHEN l.endpoint_a=h.ref THEN l.endpoint_b ELSE l.endpoint_a END
-          WHERE h.kind='highlight' AND h.source_ref=? AND h.visible=1 AND l.visible=1 AND n.kind='note' AND n.visible=1
-        ) SELECT projection_json,link_json,json_array(highlight_ref,position,link_id) AS cursor_json FROM attached WHERE (? IS NULL OR highlight_ref>? OR (highlight_ref=? AND (position>? OR(position=? AND link_id>?)))) ORDER BY highlight_ref,position,link_id LIMIT ?`,
-        params:[query.source_ref,cursor?.[0]??null,cursor?.[0]??"",cursor?.[0]??"",cursor?.[1]??"",cursor?.[1]??"",cursor?.[2]??"",limit],
-      };
-    }
     case "annotations": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
     case "search": return { sql: SEARCH_SQL, params: [searchExpression(query.text) || '""', query.families === null ? null : JSON.stringify(query.families), query.cursor ?? "", limit] };
@@ -429,7 +398,7 @@ export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQ
  * Only positive bounded quote windows cross the storage boundary; source text and
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search"}>,
-  matches: (text: string, expression: string) => Promise<boolean>): Promise<Omit<QueryResult, "store_revision">> {
+  score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
   const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, outline_window: null};
   const limit = Math.max(1, Math.min(100, Math.floor(query.limit)));
   const all = query.scopes.some(scope => scope.kind === "all");
@@ -449,6 +418,7 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
   const exactReadings = new Map<string, SearchReading>();
   const loadedExactSources = new Set<string>();
   const sourceNotes = new Map<string, boolean>();
+  const annotationOwners = new Map<string, ResourceProjection>();
   const peers = new Map<string, {ref: string; resource: ResourceProjection | null; scoped: boolean}[]>();
   const aliases = new Map<string, string>();
   const highlightTexts = new Map<string, SearchText[]>();
@@ -519,7 +489,11 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         fields = {...selection, ...clippedHighlightFields(selection, locator.start_offset, locator.end_offset,
           Math.min(...intervals.map(interval => interval.start_offset)), Math.max(...intervals.map(interval => interval.end_offset)))};
       }
-      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" "), activation_ref: reading.reading_ref}];
+      const locator=selection.locator;
+      const located=locator.type==="pdf_page_geometry" || highlightFitsReading([
+        {fragment_id:locator.fragment_id,start_offset:locator.start_offset,end_offset:locator.end_offset},
+      ],reading.intervals);
+      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" "), activation_ref: located?reading.reading_ref:resource.ref}];
     }
     highlightTexts.set(key, variants);
     return variants;
@@ -532,7 +506,12 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
     if (known !== undefined) return known;
     let admitted = false;
     let activation_ref: string | null = null;
-    if (passage.source_ref.startsWith("note_block:")) admitted = sourceNotes.has(passage.source_ref)
+    if (passage.source_ref.startsWith("highlight:")) {
+      const owner=annotationOwners.get(passage.source_ref);
+      admitted=Boolean(owner?.visible && owner.authored_by_viewer && owner.body_pm_json !== null
+        && (all || directFacts.has(owner.ref) || textsForHighlight(owner,false).length));
+      activation_ref=admitted?passage.source_ref:null;
+    } else if (passage.source_ref.startsWith("note_block:")) admitted = sourceNotes.has(passage.source_ref)
       && (all || directFacts.has(ref) || sourceNotes.get(passage.source_ref) === true && noteInScope(passage.source_ref));
     else {
       const source = aliases.get(passage.source_ref) ?? passage.source_ref;
@@ -576,6 +555,11 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
       if (resource.kind === "note") sourceNotes.set(resource.ref, resource.visible);
       return {resource, passage};
     });
+    const annotationRefs = [...new Set(candidates.flatMap(({passage}) => passage?.source_ref.startsWith("highlight:") ? [passage.source_ref] : []))];
+    if (annotationRefs.length) for (const row of await read({sql:SEARCH_ANNOTATION_OWNERS_SQL,params:[JSON.stringify(annotationRefs)]})) {
+      const owner:ResourceProjection=JSON.parse(String(row.projection_json));
+      annotationOwners.set(owner.ref,owner);
+    }
     const noteRefs = [...new Set(candidates.flatMap(({resource, passage}) => resource.kind === "note" || resource.kind === "page" ? [resource.ref]
       : passage?.source_ref.startsWith("note_block:") ? [passage.source_ref] : []))];
     const missingNotes = noteRefs.filter(ref => !peers.has(ref));
@@ -591,7 +575,7 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         sourceNotes.set(String(row.ref), Number(row.visible) === 1);
       }
     }
-    const sources = [...new Set([...candidates.flatMap(({resource, passage}) => passage ? [passage.source_ref] : resource.kind === "highlight" && resource.source_ref ? [resource.source_ref] : []),
+    const sources = [...new Set([...candidates.flatMap(({resource, passage}) => passage ? [annotationOwners.get(passage.source_ref)?.source_ref ?? passage.source_ref] : resource.kind === "highlight" && resource.source_ref ? [resource.source_ref] : []),
       ...noteRefs.flatMap(ref => (peers.get(ref) ?? []).flatMap(peer => peer.scoped ? [] : peer.resource?.kind === "highlight" && peer.resource.source_ref ? [peer.resource.source_ref] : [peer.ref]))])];
     const newSources = sources.filter(ref => !loadedSources.has(ref));
     if (newSources.length) {
@@ -601,23 +585,36 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
       if (!await loadReadings(newReadings, readings)) return {...result, rows: [], next_cursor: null, scope_available: false};
       for (const source of newSources) loadedSources.add(source);
     }
-    const factRefs = [...new Set([...candidates.map(candidate => candidate.resource.ref), ...noteRefs])];
+    const factRefs = [...new Set([...candidates.map(candidate => candidate.resource.ref), ...noteRefs, ...annotationRefs])];
     for (const row of await read({sql: SEARCH_FACTS_SQL, params: [requestedInputs, JSON.stringify(factRefs)]})) directFacts.add(String(row.target_ref));
     for (const {resource, passage} of candidates) {
       let match: QueryRow | null = null;
       if (resource.kind === "note" || resource.kind === "page") {
-        if (all || noteInScope(resource.ref)) match = {resource, link: null, match_text: null, activation_ref: null};
+        if (all || noteInScope(resource.ref)) match = {resource, link: null, match_text: null, activation_ref: null, matched_field: null, activation_field: null};
       } else if (resource.kind === "highlight") {
         const requested = textsForHighlight(resource, false);
         if (!requested.length && directFacts.has(resource.ref) && resource.source_ref && !await loadExactReadings(resource.source_ref, null))
           return {...result, rows: [], next_cursor: null, scope_available: false};
         const texts = requested.length || !directFacts.has(resource.ref) ? requested : textsForHighlight(resource, false, true);
-        for (const text of texts) if (await matches(text.lexical, expression)) {match = {resource, link: null, match_text: text.literal, activation_ref: text.activation_ref}; break;}
+        let bestScore:number|null=null;
+        for (const text of texts) {
+          const witnessScore=await score(text.lexical,expression);
+          if (witnessScore!==null && (bestScore===null || witnessScore<bestScore)) {
+            bestScore=witnessScore;
+            match={resource,link:null,match_text:text.literal,activation_ref:text.activation_ref,matched_field:"quote",activation_field:null};
+          }
+        }
+        if (resource.authored_by_viewer && resource.body_pm_json!==null && (all || directFacts.has(resource.ref) || texts.length)) {
+          const witnessScore=await score(resource.body_text ?? "",expression);
+          if (witnessScore!==null && (bestScore===null || witnessScore<bestScore)) {
+            match={resource,link:null,match_text:resource.body_text,activation_ref:resource.ref,matched_field:"annotation",activation_field:"annotation"};
+          }
+        }
       } else if (passage) {
         const admitted = await passageInScope(passage, resource.ref);
         if (admitted === null) return {...result, rows: [], next_cursor: null, scope_available: false};
-        if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact, activation_ref: admitted.activation_ref};
-      } else if (all) match = {resource, link: null, match_text: null, activation_ref: null};
+        if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact, activation_ref: admitted.activation_ref, matched_field: passage.source_ref.startsWith("highlight:")?"annotation":null, activation_field: passage.source_ref.startsWith("highlight:")?"annotation":null};
+      } else if (all) match = {resource, link: null, match_text: null, activation_ref: null, matched_field: null, activation_field: null};
       if (match) result.rows.push(match);
       if (result.rows.length === limit) return {...result, next_cursor: resource.ref};
     }

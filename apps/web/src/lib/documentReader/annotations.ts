@@ -1,21 +1,13 @@
 "use client";
 
-// Reader annotations over the local authored store. A highlight is an independent
-// authored resource; its attached notes are its linked notes in endpoint order, read
-// for a whole source at once. This
-// module maps them onto one mounted publication and turns reader selections into
-// exact local commands. Every host (workspace, shelf, saved episode) uses it.
-//
-// Placement never rewrites writing: the same publication or an exact quote at the
-// saved offsets places a mark; otherwise a unique literal occurrence places a derived
-// mark; otherwise the annotation stays unlocated beside its literal quote. A host
-// without source text still lists every annotation with editable notes.
-import { createNoteIntent, type Intent } from "@nexus/authored/commands";
-import type { NoteBody } from "@nexus/authored/body";
+// Reader marks retain the captured quotation; the highlight's one optional body
+// is edited through its permanent local writing document. Placement never changes
+// writing: unresolved captures remain beside their literal quotation.
+import { createHighlightIntent, type Intent } from "@nexus/authored/commands";
+import { emptyBody, type NoteBody } from "@nexus/authored/body";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
-import type { AuthoredStore, HighlightColor, LinkState, Locator, PassageState, QueryResult, SelectionCapture } from "@nexus/authored/types";
+import type { AuthoredStore, HighlightColor, Locator, PassageState, QueryResult, SelectionCapture } from "@nexus/authored/types";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
-import { prepareLink } from "@/lib/resourceGraph/links";
 import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
 import type { DraftAnchor, Inspection, Mark, MarkAnchor } from "./DocumentReader";
 import type { ReaderDocument, ReaderTarget, TextDocument, TextUnit } from "./model";
@@ -24,11 +16,6 @@ const CONTEXT = 64;
 const PAGE = 100;
 const WHITE = /[\p{White_Space}\u001c-\u001f]/u;
 
-export interface AttachedNote {
-  readonly ref: string;
-  readonly linkId: string;
-  readonly position: string;
-}
 export type Placement =
   | { readonly kind: "placed"; readonly anchor: MarkAnchor }
   | { readonly kind: "unlocated" }
@@ -41,7 +28,7 @@ export interface ReaderAnnotation {
   readonly color: HighlightColor;
   readonly selection: SelectionCapture;
   readonly placement: Placement;
-  readonly notes: readonly AttachedNote[];
+  readonly body: NoteBody | null;
 }
 export interface AnnotationsState {
   readonly status: "loading" | "ready" | "failed";
@@ -272,7 +259,7 @@ interface Loaded {
   readonly sourceRef: string;
   readonly color: HighlightColor;
   readonly selection: SelectionCapture;
-  readonly notes: readonly AttachedNote[];
+  readonly body: NoteBody | null;
 }
 
 async function readAll(store: AuthoredStore, query: (cursor: string | null) => Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult["rows"]> {
@@ -284,8 +271,6 @@ async function readAll(store: AuthoredStore, query: (cursor: string | null) => P
     cursor = page.next_cursor;
   }
 }
-
-const endpointPosition = (link: LinkState, ref: string) => (link.endpoint_a === ref ? link.position_a : link.position_b)?.value ?? "";
 
 /** One account's annotations for one reader occurrence; re-reads whenever local state commits. */
 export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
@@ -337,20 +322,10 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
   async function read(current: number) {
     const next: Loaded[] = [];
     for (const source of sources) {
-      const [highlights, attached] = await Promise.all([
-        readAll(store, cursor => ({ kind: "annotations", source_ref: source, cursor, limit: PAGE })),
-        readAll(store, cursor => ({ kind: "annotation_notes", source_ref: source, cursor, limit: PAGE })),
-      ]);
-      // attached notes arrive ordered by highlight, then that highlight's endpoint position.
-      const notes = new Map<string, AttachedNote[]>();
-      for (const { resource: note, link } of attached) {
-        if (!link) continue;
-        const highlight = link.endpoint_a === note.ref ? link.endpoint_b : link.endpoint_a;
-        notes.set(highlight, [...notes.get(highlight) ?? [], { ref: note.ref, linkId: link.link_id, position: endpointPosition(link, highlight) }]);
-      }
+      const highlights = await readAll(store, cursor => ({ kind: "annotations", source_ref: source, cursor, limit: PAGE }));
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, notes: notes.get(resource.ref) ?? [] });
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
       }
     }
     if (current !== generation) return;
@@ -421,15 +396,7 @@ async function boundCapture(store: AuthoredStore, accountId: string, capture: Ca
     capture: { quote_exact: selection.quote_exact, publication: selection.publication, locator: selection.locator } }] };
 }
 
-/** An independent note appended after the highlight's notes, with its first link. */
-async function noteIntents(runtime: WritingRuntime, highlight: string, body: NoteBody): Promise<Intent[]> {
-  const ref = `note_block:${crypto.randomUUID()}`;
-  const initializer = createNoteIntent(ref, body);
-  const link = await prepareLink(runtime, { source_ref: highlight, target_ref: ref, source_label: null, target_label: null, after: null });
-  return [initializer, ...link.intents];
-}
-
-/** Commits one new highlight, its passage, its source stub and an optional first note atomically. */
+/** Commits one new highlight, its passage, its source stub and its annotation atomically. */
 export async function createHighlight(runtime: WritingRuntime, input: {
   /** Minted by the caller so a retried local commit keeps the same highlight. */
   readonly id: string;
@@ -437,33 +404,29 @@ export async function createHighlight(runtime: WritingRuntime, input: {
   readonly color: HighlightColor;
   /** The literal label this host knows for the capture's source, if any. */
   readonly source: SourceLabel | null;
-  readonly note: NoteBody | null;
+  readonly annotation: NoteBody | null;
 }): Promise<LocalCommit> {
+  const frozen = structuredClone(input);
+  const initializer = createHighlightIntent(highlightRef(frozen.id), frozen.capture.sourceRef, frozen.capture.selection, frozen.color, frozen.annotation ?? emptyBody());
   const store = await runtime.store;
   const { account_id } = await store.readReplica();
-  const ref = highlightRef(input.id);
-  const { sourceRef } = input.capture;
-  const passage = await boundCapture(store, account_id, input.capture);
+  const ref = highlightRef(frozen.id);
+  const { sourceRef } = frozen.capture;
+  const passage = await boundCapture(store, account_id, frozen.capture);
   const intents: Intent[] = [...passage.intents];
   // a known label refreshes the stub; an unknown source keeps its stub, or gets its ref as a truthful label.
-  const known = input.source !== null || (await store.query({ kind: "resource", ref: sourceRef })).rows.length > 0;
-  if (input.source || !known) intents.push({ kind: "capture_source", source_ref: sourceRef,
-    capture: { kind: input.source?.kind ?? "media", label: input.source?.label ?? sourceRef, publication: passage.selection.publication } });
-  intents.push({ kind: "create_highlight", ref, source_ref: sourceRef, selection: passage.selection, color: input.color });
-  if (input.note) intents.push(...await noteIntents(runtime, ref, input.note));
+  const known = frozen.source !== null || (await store.query({ kind: "resource", ref: sourceRef })).rows.length > 0;
+  if (frozen.source || !known) intents.push({ kind: "capture_source", source_ref: sourceRef,
+    capture: { kind: frozen.source?.kind ?? "media", label: frozen.source?.label ?? sourceRef, publication: passage.selection.publication } });
+  intents.push({ ...initializer, ref, selection: passage.selection });
   return runtime.run({ kind: "batch", intents });
-}
-
-/** A new independent note after the highlight's current notes. */
-export async function attachNote(runtime: WritingRuntime, annotation: ReaderAnnotation, body: NoteBody): Promise<LocalCommit> {
-  return runtime.run({ kind: "batch", intents: await noteIntents(runtime, annotation.ref, body) });
 }
 
 export function recolorHighlight(runtime: WritingRuntime, annotation: ReaderAnnotation, color: HighlightColor): Promise<LocalCommit> {
   return runtime.run({ kind: "update_highlight", ref: annotation.ref, selection: null, color });
 }
 
-/** Publication, extent, quote, context and passage move together; identity, colour and notes stay. */
+/** Publication, extent, quote, context and passage move together; identity, colour and annotation stay. */
 export async function resizeHighlight(runtime: WritingRuntime, annotation: ReaderAnnotation, capture: Capture): Promise<LocalCommit> {
   if (capture.sourceRef !== annotation.sourceRef) throw new Error("a highlight keeps its source");
   const store = await runtime.store;
