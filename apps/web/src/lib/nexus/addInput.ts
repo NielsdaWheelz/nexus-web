@@ -5,6 +5,8 @@ import {
   type UploadFileKind,
 } from "@/lib/imports/ingest";
 
+export const MAX_ADD_ITEMS = 20;
+
 export type DraftSource =
   | { readonly kind: "Url"; readonly text: string }
   | { readonly kind: "File"; readonly file: File };

@@ -11,6 +11,7 @@ import {OutlineController, type BranchRequest, type RootField} from "@/lib/notes
 import {OutlinePendingInput} from "@/lib/notes/outlinePending";
 import {OutlineHistory} from "@/lib/notes/structure";
 import {useOutlineWindow} from "@/lib/notes/useOutlineWindow";
+import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError, copyText} from "@/lib/ui/copyText";
@@ -24,10 +25,12 @@ import type {FocusSelection} from "@/lib/notes/editorTypes";
 import type {WritingDocument, WritingRuntime} from "@/lib/notes/runtime";
 import NoteEditor, {type NoteEditorHandle} from "./NoteEditor";
 import OutlineEditorRows from "./OutlineEditorRow";
+import {useAuthoredPaneRoot} from "./AuthoredPaneRoot";
 
 export interface LocalOutlineHandle {
   append(): Promise<void>;
-  focusRoot(resolve?: (document: WritingDocument) => FocusSelection): Promise<void>;
+  revealRoot(): void;
+  focusRoot(resolve?: (document: WritingDocument) => FocusSelection, mayFocus?: () => boolean): Promise<void>;
   focusNote(ref: string, signal?: AbortSignal): Promise<boolean>;
   focusFirst(): void;
   rootText(): string;
@@ -51,6 +54,9 @@ export type OutlineRootMetadata =
   | {ref: string; known: false; resource: null; store_revision: null}
   | {ref: string; known: true; resource: ResourceProjection | null; store_revision: string};
 export interface LocalOutlineRoot {
+  rootEditor: PaneHeaderEditor | null;
+  rootTitle: string | null;
+  rootReady: boolean;
   rootRead: OutlineRootMetadata;
   error: unknown | null;
   retry(): void;
@@ -101,11 +107,17 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     // Presentation and latent-page props update the mounted session below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, input, rootRef, branch, notify, changed]);
+  const presentation = useAuthoredPaneRoot(current?.controller ?? null, configuredField, setFailure);
+  const wrap = (node: ReactNode) => <SharedOutline value={current?.controller ?? null}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
+  const rootEditor = presentation.rootEditor;
+  const published = rootEditor === null ? null : rootEditor.kind === "Inline"
+    ? {...rootEditor, content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)}
+    : {...rootEditor, control: wrap(rootEditor.control), content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)};
   const view = current ? <MountedOutline key={current.id} controller={current.controller} pending={pending} runtime={current.controller.runtime}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
     rootRead={read} onReady={setEditor}/>
     : <p role="status">opening outline…</p>;
-  return {rootRead, error: read.error, retry: read.retry, ready: current !== null && editor === current.controller, view};
+  return {rootEditor: published, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read.error, retry: read.retry, ready: current !== null && editor === current.controller, view};
 }
 
 function MountedOutline({controller, pending, runtime, rootRef, rootField, filter, occurrencePrefix, failure, setFailure, rootRead, onReady}: {
@@ -146,14 +158,15 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
     else if (before === true && keyboard === false) controller.setTouchCommandsVisible(false);
   }, [controller, keyboard]);
   usePaneOutlineCommands(controller.publication());
-  const error = saved.error ?? failure ?? controller.error ?? pending.value.input.error;
+  const rootFailure = rootField !== undefined && saved.error !== null && saved.error_refs.includes(rootRef);
+  const error = (!rootField || saved.error_refs.some(ref => ref !== rootRef) ? saved.error : null) ?? (rootFailure ? null : failure) ?? controller.error ?? pending.value.input.error;
   const pendingCopyAvailable = error !== null && guard.readCopyText({scopes: [], ownerIds: [pending.owner]}) !== null;
   return <SharedOutline value={controller}>
     <div data-outline-session={pending.value.input.root_id} onFocusCapture={event => {
       if (event.target instanceof Element && event.target.matches('.ProseMirror')) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
-      if (!(next instanceof Element && (event.currentTarget.contains(next) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
+      if (!(next instanceof Element && (next.closest(`[data-outline-session="${pending.value.input.root_id}"]`) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
     }}>
       {error ? <div role="alert"><p>{error instanceof Error ? error.message : "this writing couldn’t be saved on this device."}</p>
         {writingStoreStopped(error) ? <Button onClick={() => window.location.reload()}>restart nexus</Button>
@@ -168,9 +181,9 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
       {rootRead.error ? <div role="alert"><p>couldn’t open these items on this device.</p><Button onClick={rootRead.retry}>retry</Button></div> : null}
       {[...controller.requests.values()].filter(request => request.parent_id !== pending.value.input.root_id).map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
-        projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label={rootField?.label ?? "edit outline"}
-        placeholder={rootField?.placeholder ?? "write or @ to link"} compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
-        onEdit={() => {}} inspection={rootField?.inspection} onEditorReady={editorReady}/>
+        projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items"
+        placeholder="write or @ to link" compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
+        onEdit={() => {}} onEditorReady={editorReady}/>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
     </div>

@@ -65,7 +65,7 @@ class ProcessorChain(_Frozen):
 class SelectionPresentation(_Frozen):
     route_label: str = Field(min_length=1, max_length=128)
     model_label: str = Field(min_length=1, max_length=256)
-    reasoning_label: str = Field(min_length=1, max_length=131)
+    reasoning_label: str = Field(min_length=1, max_length=256)
     billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
     privacy: PrivacyDisclosure
     processor_chain: ProcessorChain

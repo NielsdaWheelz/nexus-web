@@ -3,7 +3,8 @@ import type {FocusSelection} from "./editorTypes";
 import type {WritingDocument} from "./runtime";
 
 export type BlockRange = {anchor_id: string; head_id: string; row_ids: readonly string[]};
-export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: FocusSelection;
+export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: FocusSelection; root?: true;
+  resolveBefore?: (document: WritingDocument) => FocusSelection;
   resolve: ((document: WritingDocument) => FocusSelection) | null} | ({kind: "blocks"} & BlockRange) | null;
 export type Placement = {row_id: string; ref: string; parent_id: string; parent_ref: string; after_id: string | null; before_id: string | null};
 export type PlacementDelta = {before: Placement; after: Placement | null};

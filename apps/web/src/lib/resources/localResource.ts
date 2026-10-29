@@ -1,6 +1,8 @@
 /** local labels and routes. search may supply its selected reading without changing
  * the captured source identity. rows and menus use canonical routes; no server read. */
+import { excerptTextParts } from "@nexus/authored/excerpt";
 import type { ResourceProjection, ResourceRef } from "@nexus/authored/types";
+import { pageTitle } from "@nexus/authored/queries";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
@@ -37,8 +39,11 @@ export function localResourceHref(resource: ResourceProjection,
 export function localResourceLabel(resource: ResourceProjection): string {
   switch (resource.kind) {
     case "note": return resource.body_text?.split("\n")[0]?.trim() || "empty note";
-    case "page": return resource.title?.trim() || resource.local_date || "untitled page";
-    case "highlight": return resource.selection?.quote_exact.trim() || "highlight";
+    case "page": return pageTitle(resource.title ?? "", resource.local_date);
+    case "highlight": {
+      if (resource.excerpt === null) throw new TypeError("Highlight has no excerpt projection");
+      return resource.excerpt.kind === "content" ? excerptTextParts(resource.excerpt.body).exact.trim() || "highlight" : "table excerpt";
+    }
     case "source": return resource.title?.trim() || resource.ref;
   }
 }

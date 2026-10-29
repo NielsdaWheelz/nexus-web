@@ -10,6 +10,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
+import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
@@ -260,8 +261,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     };
     return {
       ...store,
-      send: (request, openIntent, onAcceptance) =>
-        land(() => store.send(request, openIntent, onAcceptance), openIntent, truncateText(request.content, 220)),
+      send: (request, selectionRoute, openIntent, onAcceptance) =>
+        land(() => store.send(request, selectionRoute, openIntent, onAcceptance), openIntent, truncateText(request.content, 220)),
       repeat: (operation, assistantId, explicit, openIntent) =>
         land(() => store.repeat(operation, assistantId, explicit, openIntent), openIntent, null),
       // a retry may move a frozen landing to a new pane, never back
@@ -277,12 +278,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
 
   // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
+  const { enter: enterMemory } = useChatSelection();
   const { seed, draft } = useChatDraft(conversationId ?? "new", runtime.paneId);
   useLayoutEffect(() => {
     if (delivery?.entry.kind !== "ComposeChat") return;
+    enterMemory();
     seed(delivery.entry.text);
     claim(delivery);
-  }, [delivery, claim, seed]);
+  }, [delivery, claim, seed, enterMemory]);
   const feedback = useFeedback();
   const workspace = useLatestWorkspace();
   useEffect(() => {
@@ -480,7 +483,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               (view.activeRun && state.live[view.path.at(-1)!.id]?.execution) ??
               null
             }
-            historyReady={ready}
             onClearBranch={() => setBranch(null)}
             quote={quote}
             onRemoveQuote={() => router.replace(pathOnly)}

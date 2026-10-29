@@ -118,6 +118,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ChatSelection(Base):
+    """The last admitted chat choice for one account."""
+
+    __tablename__ = "chat_selections"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    revision: Mapped[int] = mapped_column(BigInteger)
+    choice: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
 class Page(Base):
     """Projection of one authored page; kept while deleted, hidden by ``authored_visible``."""
 
@@ -233,6 +244,7 @@ class PassageAnchor(Base):
     anchor_key: Mapped[str]
     # the quote identity plus a non-identity locator_hint.
     selector: Mapped[dict[str, object]] = mapped_column(JSONB)
+    excerpt_preview: Mapped[dict[str, object]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
@@ -812,6 +824,7 @@ class Highlight(Base):
     exact: Mapped[str]
     prefix: Mapped[str]
     suffix: Mapped[str]
+    excerpt_preview: Mapped[dict[str, object]] = mapped_column(JSONB)
     authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

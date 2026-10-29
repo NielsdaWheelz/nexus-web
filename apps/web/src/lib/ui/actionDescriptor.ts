@@ -95,6 +95,7 @@ interface ActionBase {
 export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "command";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onSelect: (detail: ActionSelectDetail) => void;
       readonly state?: ActionControlState;
@@ -104,6 +105,7 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly target?: "_blank";
@@ -176,6 +178,8 @@ export type MenuSource = { readonly subjectKey: string; readonly title: string }
   | { readonly kind: "Immediate"; readonly content: MenuContent }
   | {
       readonly kind: "Prepared";
+      /** Known local controls publish without completing preparation. */
+      readonly initial: MenuContent;
       readonly state: PreparationState;
       readonly prepare: (signal: AbortSignal) => void;
       /** Present only when the source has a trailing region; it has no deadline of its own. */

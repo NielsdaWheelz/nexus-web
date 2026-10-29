@@ -43,6 +43,7 @@ import {
   type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import MobileSheet from "./MobileSheet";
@@ -108,13 +109,15 @@ type Invocation = {
   readonly mobile: boolean;
   readonly pathname: string | null;
   readonly viewport: string;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly touch: boolean;
   readonly attempt: Attempt | null;
   readonly visible: boolean;
   readonly feedback: FeedbackContent | null;
   readonly meaning: string | null;
   readonly geometry: readonly number[] | null;
+  readonly preparedMeaning: string | null;
+  readonly preparedGeometry: readonly number[] | null;
   readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
   readonly side: "above" | "below" | null;
 };
@@ -150,7 +153,7 @@ function viewportGeometry(): string {
 }
 
 /** The trailing region may change after publication; only published rows define geometry. */
-function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, published: boolean): readonly number[] {
+function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, selector: string | null): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
   let panelX = box.x;
@@ -166,7 +169,7 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
     panelY = origin.bottom - box.height - parent.scrollTop;
   }
   const position = anchor.getBoundingClientRect();
-  const rows = [...body.querySelectorAll<HTMLElement>(published ? "[data-menu-published] [data-menu-row]" : "[data-menu-row]")].map((row) => {
+  const rows = [...body.querySelectorAll<HTMLElement>(selector ?? "[data-menu-row]")].map((row) => {
     const rect = row.getBoundingClientRect();
     let x = rect.left - box.left;
     let y = rect.top - box.top;
@@ -175,9 +178,9 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
       y += parent.scrollTop;
       if (parent === panel) break;
     }
-    return published ? [panelX + x, panelY + y, rect.width, rect.height] : [x, y, rect.width, rect.height];
+    return selector !== null ? [panelX + x, panelY + y, rect.width, rect.height] : [x, y, rect.width, rect.height];
   });
-  return published ? [position.x, position.y, position.width, position.height, ...rows.flat()] : [
+  return selector !== null ? [position.x, position.y, position.width, position.height, ...rows.flat()] : [
     position.x, position.y, position.width, position.height,
     panelX, panelY, box.width, box.height,
     ...rows.flat(),
@@ -202,11 +205,22 @@ function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
   return available - (panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height) - used;
 }
 
+/** A retry removed by readiness returns only its own lost focus to the menu. */
+function DelayedMenuRegion({ children, returnFocus }: {
+  readonly children: ReactNode;
+  readonly returnFocus: () => HTMLElement | null;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  useActionFocusRecovery(root, returnFocus);
+  return <div ref={root} role="none" data-menu-trailing="" className={`${styles.delayedRegion} ${styles.trailing}`}>{children}</div>;
+}
+
 /**
- * One invocation owns preparation, publication and dismissal. Initial preparation
- * has one hidden transient; publication has one desktop transient or mobile frame.
- * A complete measured result must beat its activation-time deadline. Published
- * meaning and geometry are immutable; callbacks and availability remain current.
+ * One invocation owns initial publication, preparation and dismissal. Known initial
+ * controls publish without completing the preparation deadline. The first ready
+ * prepared snapshot freezes separately; its failure or retry retains the initial
+ * controls and frame. Published meaning and geometry stay fixed while callbacks
+ * and availability remain current.
  */
 export interface ActionMenuProps {
   readonly source: MenuSource;
@@ -237,7 +251,7 @@ export interface ActionMenuSession {
   readonly viewport: string;
   readonly startedAt: number;
   readonly touch: boolean;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly dismiss: () => void;
   readonly announce: (message: string) => void;
   readonly present: (presentation: Presentation) => void;
@@ -298,7 +312,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     window.addEventListener("pointercancel", release, true);
     window.addEventListener("keydown", release, true);
   };
-  const begin = (edge: "first" | "last") => {
+  const begin = (edge: "first" | "last" | null) => {
     const dismiss = () => {
       local.session = null;
       setState(value => ({ ...value, session: null, presentation: { visible: false, busy: false, popup: "menu" } }));
@@ -325,7 +339,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     onClick: event => {
       event.stopPropagation();
       if (triggerDisabled) return;
-      if (local.session) local.session.close.current(false); else begin("first");
+      if (local.session) local.session.close.current(false); else begin(null);
     },
     onKeyDown: event => {
       if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -353,14 +367,14 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
           consumeHeldClick(pending.pointer);
         }
         cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onKeyDown: event => {
         local.touchGesture = false;
         if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
         if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
         event.preventDefault(); event.stopPropagation(); cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onPointerDown: event => {
         cancelHold(); local.heldClick = false;
@@ -372,7 +386,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
             const pending = local.hold;
             if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== local.subjectKey || !local.trigger.current?.isConnected) { cancelHold(); return; }
             consumeHeldClick(pointer); cancelHold();
-            if (!local.session) begin("first");
+            if (!local.session) begin(null);
           }, 500),
         };
         window.addEventListener("scroll", cancelHold, true);
@@ -427,11 +441,13 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   const prepared = source.kind === "Prepared" && invocation?.attempt &&
     !invocation.attempt.controller.signal.aborted &&
     source.state?.request === invocation.attempt.controller.signal ? source.state : null;
-  const trailingRegion = source.kind === "Prepared" && source.trailing !== undefined;
+  const hasInitial = source.kind === "Prepared" && source.initial.sections.some(section => section.options.length > 0);
+  const trailingRegion = source.kind === "Prepared" && (hasInitial || source.trailing !== undefined);
   const trailing = trailingRegion && invocation?.attempt && !invocation.attempt.controller.signal.aborted &&
     source.trailing?.request === invocation.attempt.controller.signal ? source.trailing ?? null : null;
-  const content = invocation && (source.kind === "Immediate" ? source.content :
+  const content = invocation && (source.kind === "Immediate" ? source.content : hasInitial ? source.initial :
     prepared?.kind === "Ready" ? prepared.content : null);
+  const delayedContent = hasInitial && prepared?.kind === "Ready" ? prepared.content : null;
   const feedback = invocation?.feedback ?? null;
   const hasOptions = content?.sections.some((section) => section.options.length > 0) ?? false;
   const requested = invocation !== null;
@@ -478,11 +494,13 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     if (!active || active.attempt !== attempt) return;
     if (attempt.timer) clearTimeout(attempt.timer);
     attempt.timer = null;
-    change({ ...active, attempt: null, feedback: failure, meaning: null, geometry: null });
+    change({ ...active, attempt: null, feedback: failure, preparedMeaning: null, preparedGeometry: null,
+      ...(hasInitial ? {} : { meaning: null, geometry: null }),
+    });
     attempt.controller.abort();
     announce("actions couldn’t load");
   };
-  const begin = (edge: "first" | "last", retry = false) => {
+  const begin = (edge: "first" | "last" | null, retry = false) => {
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
     if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
@@ -490,15 +508,20 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     const attempt: Attempt | null = source.kind === "Prepared" ? {
       controller: new AbortController(), expires: now + PREPARATION_BUDGET_MS, timer: null,
     } : null;
-    skipReturn.current = false;
-    change({
-      subject: session.subjectKey, title: session.title, mobile: session.mobile, pathname: session.pathname, edge,
-      viewport: retry ? viewportGeometry() : session.viewport,
-      touch: retry ? false : session.touch,
-      attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
-      meaning: null, geometry: null, side: null,
-      admission: mobile ? { phase: "Focus", timer: null } : null,
-    });
+    if (retry && previous && hasInitial) {
+      change({ ...previous, attempt, preparedMeaning: null, preparedGeometry: null });
+      previous.attempt?.controller.abort();
+    } else {
+      skipReturn.current = false;
+      change({
+        subject: session.subjectKey, title: session.title, mobile: session.mobile, pathname: session.pathname, edge,
+        viewport: retry ? viewportGeometry() : session.viewport,
+        touch: retry ? false : session.touch,
+        attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
+        meaning: null, geometry: null, preparedMeaning: null, preparedGeometry: null, side: null,
+        admission: mobile ? { phase: "Focus", timer: null } : null,
+      });
+    }
     if (attempt && source.kind === "Prepared") {
       attempt.timer = setTimeout(() => fail(attempt, FAILED), Math.max(0, attempt.expires - performance.now()));
       announce("loading actions…");
@@ -539,20 +562,28 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       active.viewport !== viewportGeometry()) return false;
     if (active.meaning === null) return true;
     const value = latest.current;
-    const ready = value.kind === "Immediate" ? value.content :
+    const ready = value.kind === "Immediate" ? value.content : hasInitial ? value.initial :
       value.state?.kind === "Ready" && value.state.request === active.attempt?.controller.signal
         ? value.state.content : null;
     if (ready === null || active.meaning !== meaning(value.title, ready) ||
       node === null || active.geometry === null) return false;
-    const measured = geometry(trigger.current, node, active.mobile, trailingRegion);
+    const measured = geometry(trigger.current, node, active.mobile, trailingRegion ? "[data-menu-published] [data-menu-row]" : null);
     // Compositor/transform serialization noise can cross rounding boundaries.
     // Compare at 1/64 CSS px precision against the fixed publication snapshot.
-    return active.geometry.length === measured.length && active.geometry.every(
+    if (active.geometry.length !== measured.length || !active.geometry.every(
       (coordinate, index) => Math.abs(coordinate - measured[index]) <= 1 / 64,
+    )) return false;
+    if (active.preparedMeaning === null) return true;
+    if (value.kind !== "Prepared" || value.state?.kind !== "Ready" ||
+      value.state.request !== active.attempt?.controller.signal ||
+      active.preparedMeaning !== meaning(value.title, value.state.content) || active.preparedGeometry === null) return false;
+    const delayed = geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]");
+    return active.preparedGeometry.length === delayed.length && active.preparedGeometry.every(
+      (coordinate, index) => Math.abs(coordinate - delayed[index]) <= 1 / 64,
     );
   };
-  // Render-induced changes retire before paint. Readiness alone cannot publish:
-  // the complete host must be measured and still inside this attempt's budget.
+  // Measure each publication before paint. Only prepared readiness completes the
+  // attempt; its snapshot must still beat the preparation deadline.
   const publish = () => {
     const active = current.current;
     // Initial begin schedules the admitted render; its ref alone cannot publish
@@ -580,18 +611,29 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       return;
     }
     if (active.admission !== null && active.admission.phase !== "Ready") return;
-    if (active.meaning !== null) {
-      if (!stable()) invalidate();
-      return;
-    }
     if (prepared?.kind === "Failed" && active.attempt) {
       fail(active.attempt, prepared.feedback);
+      return;
+    }
+    if (active.meaning !== null) {
+      if (!stable()) { invalidate(); return; }
+      if (delayedContent && active.preparedMeaning === null && active.attempt) {
+        if (performance.now() >= active.attempt.expires) { fail(active.attempt, FAILED); return; }
+        if (active.attempt.timer) clearTimeout(active.attempt.timer);
+        active.attempt.timer = null;
+        const node = surface();
+        if (!node) return;
+        change({ ...active, feedback: null, preparedMeaning: meaning(source.title, delayedContent),
+          preparedGeometry: geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]"),
+        });
+        announce("");
+      }
       return;
     }
     if (!candidate || (!sheet && !menu.placed)) return;
     const node = surface();
     if (!node || !trigger.current) return;
-    if (content && active.attempt && performance.now() >= active.attempt.expires) {
+    if (prepared?.kind === "Ready" && active.attempt && performance.now() >= active.attempt.expires) {
       fail(active.attempt, FAILED);
       return;
     }
@@ -600,7 +642,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       change({ ...active, side: placed });
       return;
     }
-    if (content && active.attempt?.timer) {
+    if (prepared?.kind === "Ready" && active.attempt?.timer) {
       clearTimeout(active.attempt.timer);
       active.attempt.timer = null;
     }
@@ -611,10 +653,12 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     }
     if (content || !active.visible || active.admission !== null) {
       change({
-        ...active, visible: true, feedback: content ? null : active.feedback,
+        ...active, visible: true, feedback: prepared?.kind === "Ready" || !hasInitial && content ? null : active.feedback,
         viewport: viewportGeometry(), admission: null,
         meaning: content ? meaning(source.title, content) : null,
-        geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion) : null,
+        geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion ? "[data-menu-published] [data-menu-row]" : null) : null,
+        preparedMeaning: delayedContent ? meaning(source.title, delayedContent) : null,
+        preparedGeometry: delayedContent ? geometry(trigger.current, node, active.mobile, "[data-menu-prepared] [data-menu-row]") : null,
       });
       if (content && !hasOptions) announce("no actions available");
       else if (content) announce("");
@@ -742,16 +786,25 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     return () => report.current?.(false);
   }, [visible]);
   const focusKey = invocation?.admission ?? invocation?.meaning ?? invocation?.feedback;
-  // Ready focus precedes the removed failure notice's deferred return focus.
-  // Initial content stays hidden until its measured publication commits.
+  // The first publication owns focus; delayed readiness and retry retain its key.
+  // Content stays hidden until its measured publication commits.
   useLayoutEffect(() => {
     if (!visible || sheet || !current.current) return;
     const node = menu.ref.current;
     if (!node) return;
     const items = [...node.querySelectorAll<HTMLElement>(ITEMS)];
     const controls = items.length ? items : focusableElements(node);
-    (controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
+    const location = current.current.edge === null ? node.querySelector<HTMLElement>('[aria-current="location"]') : null;
+    (location ?? controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
   }, [visible, sheet, focusKey, menu.ref]);
+
+  // A touch invocation keeps panel focus; reveal its current place only once.
+  const revealed = useRef(false);
+  useLayoutEffect(() => {
+    if (revealed.current || !visible || !sheet || !current.current?.touch || current.current.edge !== null) return;
+    revealed.current = true;
+    sheetBody.current?.querySelector<HTMLElement>('[aria-current="location"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [visible, sheet]);
 
   const onSurfaceKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229 ||
@@ -819,7 +872,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     const ready = value.kind === "Immediate" ? value.content : value.state?.kind === "Ready" ? value.state.content : null;
     const later = value.kind === "Prepared" && value.state?.kind === "Ready" && value.trailing?.kind === "Ready" &&
       value.trailing.request === value.state.request ? value.trailing.options : [];
-    return [...ready?.sections.flatMap((section) => section.options) ?? [], ...later].find((entry) => entry.id === id);
+    return [...(value.kind === "Prepared" ? value.initial.sections.flatMap(section => section.options) : []), ...(ready?.sections.flatMap((section) => section.options) ?? []), ...later].find((entry) => entry.id === id);
   };
   const item = (option: MenuOption, index: number) => {
     if (option.kind === "choice") {
@@ -909,6 +962,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       ...attributes,
       tabIndex: sheet ? 0 : -1,
       className: collection.row,
+      "aria-current": option.current,
       "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
@@ -918,7 +972,10 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
-      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">{option.icon}</span>
+      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">
+        {option.icon}
+        {option.current === "location" ? <span className={styles.currentMarker} /> : null}
+      </span>
       <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
         {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
@@ -934,8 +991,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   };
   let itemIndex = 0;
   const trailingFirst = sheet || (lockedSide ?? menu.side) === "above";
-  const body = content ? hasOptions ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
-    {content.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
+  const contentView = (value: MenuContent) => value.sections.some(section => section.options.length > 0) ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
+    {value.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
       {sectionIndex > 0 ? <div role="separator" className={styles.separator} /> : null}
       {section.label ? <div className={styles.sectionLabel}>{section.label}</div> : null}
       <ul className={styles.sections} role={sheet ? undefined : "group"} aria-label={section.label ?? undefined}>
@@ -945,11 +1002,16 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         </Fragment>)}
       </ul>
     </li>)}
-  </ul> : <p className={styles.menuStatus}>no actions available</p> : feedback ? <FeedbackNotice
-    content={feedback} announcement="None"
-    actions={[{ label: "retry", busy, onClick: () => { if (!busy) begin(current.current?.edge ?? "first", true); } }]}
-  /> : null;
-  const trailingView = trailingRegion && content && hasOptions ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
+  </ul> : <p className={styles.menuStatus}>no actions available</p>;
+  const retry = () => { if (!busy) begin(current.current?.edge ?? null, true); };
+  const failureView = feedback ? hasInitial ? <>
+    <FeedbackNotice content={feedback} announcement="None" />
+    <button type="button" role={sheet ? undefined : "menuitem"} tabIndex={sheet ? 0 : -1}
+      className={collection.row} aria-disabled={busy || undefined} aria-busy={busy || undefined}
+      onClick={event => { event.stopPropagation(); retry(); }}>retry</button>
+  </> : <FeedbackNotice content={feedback} announcement="None" actions={[{ label: "retry", busy, onClick: retry }]} /> : null;
+  const body = content ? contentView(content) : failureView;
+  const trailingView = trailingRegion && content && hasOptions && (!hasInitial || delayedContent !== null && source.kind === "Prepared" && source.trailing !== undefined) ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
     {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailing?.kind === "Ready" && trailing.options.length > 0
       ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"} aria-label={trailing.label ?? undefined}>
@@ -967,10 +1029,20 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       : <p className={`${styles.menuStatus} ${styles.trailing}`}>{trailing?.kind === "Ready" ? "no other actions" : "loading more actions…"}</p>}
     {trailingFirst ? <div role="separator" className={styles.separator} /> : null}
   </div> : null;
-  const composed = trailingView ? <>
+  const delayedView = hasInitial ? <DelayedMenuRegion returnFocus={() => current.current?.visible
+    ? current.current.mobile ? modalLayer.current?.element ?? null : menu.ref.current : null}>
+    {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailingFirst ? trailingView : null}
-    <div role="none" data-menu-published="">{body}</div>
+    <div role="none" data-menu-prepared="" className={styles.preparedRegion}>
+      {delayedContent ? contentView(delayedContent) : failureView ?? <p className={styles.menuStatus}>loading more actions…</p>}
+    </div>
     {trailingFirst ? null : trailingView}
+    {trailingFirst ? <div role="separator" className={styles.separator} /> : null}
+  </DelayedMenuRegion> : trailingView;
+  const composed = delayedView ? <>
+    {trailingFirst ? delayedView : null}
+    <div role="none" data-menu-published="">{body}</div>
+    {trailingFirst ? null : delayedView}
   </> : body;
   return <>
     {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
@@ -990,7 +1062,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         if (current.current?.touch) return panel;
         if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...(panel.querySelector<HTMLElement>("[data-menu-published]") ?? panel).querySelectorAll<HTMLElement>("[data-menu-row]")];
-        const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
+        const location = current.current?.edge === null ? panel.querySelector<HTMLElement>('[aria-current="location"]') : null;
+        const edge = location ?? items[current.current?.edge === "last" ? items.length - 1 : 0];
         // A choice edge focuses its checked radio, the group's one native tab stop.
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
           ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;

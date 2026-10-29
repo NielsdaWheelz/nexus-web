@@ -54,7 +54,8 @@ function Sections({ reader }: { readonly reader: Reader }) {
   };
   const options: ActionDescriptor[] = sections.map((section, at) => {
     const to = target(at);
-    if (to === null) return { kind: "command", id: section.id, label: section.label, icon: null,
+    const location = section.id === current ? "location" as const : undefined;
+    if (to === null) return { kind: "command", id: section.id, label: section.label, icon: null, current: location,
       disabled: true, disabledReason: "no transcript at this time", onSelect: () => {} };
     const portable=sourceTarget(ready!.doc,to);
     if (portable===null) throw new Error("section point is outside its reading body");
@@ -64,9 +65,9 @@ function Sections({ reader }: { readonly reader: Reader }) {
       void reader.inspect({ target: to });
       reader.focusSource();
     };
-    return href ? { kind: "link", id: section.id, label: section.label, icon: null, href,
+    return href ? { kind: "link", id: section.id, label: section.label, icon: null, current: location, href,
       onActivate: (event) => activateReaderDestination(reader, destination, event, local) }
-      : { kind: "command", id: section.id, label: section.label, icon: null, onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, local) : local() };
+      : { kind: "command", id: section.id, label: section.label, icon: null, current: location, onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, local) : local() };
   });
   const previous = target(index - 1);
   const next = target(index + 1);

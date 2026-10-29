@@ -1,7 +1,8 @@
 /** Read-only search inputs. A revision publishes only after bounded metadata and
  * authorized text pages finish. These facts grant no reader or authored ownership. */
 export type SearchScope = { kind: "all"; id: null } | { kind: "media" | "library" | "conversation"; id: string };
-export type SearchFamily = "notes" | "highlights" | "saved_passages" | "documents" | "conversations" | "people" | "libraries" | "readings";
+export const SEARCH_FAMILIES = ["notes", "highlights", "saved_passages", "documents", "conversations", "people", "libraries", "readings"] as const;
+export type SearchFamily = typeof SEARCH_FAMILIES[number];
 export interface ScopeReading {
   kind: "reading"; reading_ref: string; source_ref: string; source_kind: string;
   body_generation: number | null; source_generation: number | null;
@@ -19,6 +20,7 @@ export type ScopeInput =
   | { kind: "conversation_fact"; conversation_ref: string; target_ref: string }
   | { kind: "source_alias"; reading_ref: string; source_ref: string }
   | { kind: "highlight_member"; highlight_ref: string; reading_ref: string }
+  | { kind: "incomplete_table"; reading_ref: string; fragment_id: string; start_offset: number; end_offset: number }
   | ScopeReading | ScopeInterval;
 export type ScopeInputsRequest =
   | { kind: "status"; revision: string | null; active_refs: string[] }
@@ -64,9 +66,9 @@ export const SCOPE_SQL = {
   scope_begin: `UPDATE scope_state SET staging_revision=?,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1`,
   scope_discard: `UPDATE scope_state SET staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1`,
   scope_metadata_facts: `INSERT OR IGNORE INTO scope_facts(revision,fact_key,kind,owner_ref,target_ref,state_json)
-    SELECT ?,json_array(json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END),
-      json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END,value
-    FROM json_each(?) WHERE json_extract(value,'$.kind') IN ('scope','workspace_member','media_member','library_member','conversation_fact','source_alias','highlight_member')`,
+    SELECT ?,CASE WHEN json_extract(value,'$.kind')='incomplete_table' THEN json_array('incomplete_table',json_extract(value,'$.reading_ref'),json_extract(value,'$.fragment_id'),json_extract(value,'$.start_offset'),json_extract(value,'$.end_offset')) ELSE json_array(json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END) END,
+      json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='incomplete_table' THEN json_extract(value,'$.fragment_id') WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END,value
+    FROM json_each(?) WHERE json_extract(value,'$.kind') IN ('scope','workspace_member','media_member','library_member','conversation_fact','source_alias','highlight_member','incomplete_table')`,
   scope_metadata_readings: `INSERT OR IGNORE INTO scope_readings(revision,reading_ref,source_ref,source_kind,body_generation,source_generation)
     SELECT ?,json_extract(value,'$.reading_ref'),json_extract(value,'$.source_ref'),json_extract(value,'$.source_kind'),json_extract(value,'$.body_generation'),json_extract(value,'$.source_generation') FROM json_each(?) WHERE json_extract(value,'$.kind')='reading'`,
   scope_metadata_intervals: `INSERT OR IGNORE INTO scope_intervals(revision,interval_key,reading_ref,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut)

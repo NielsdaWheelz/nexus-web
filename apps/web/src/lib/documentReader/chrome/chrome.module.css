@@ -211,34 +211,6 @@
   }
 }
 
-.annotationQuote {
-  color: inherit;
-  background: var(--accent-muted);
-  border-radius: var(--radius-xs);
-  box-decoration-break: clone;
-  white-space: pre-wrap;
-}
-
-.annotationQuote[data-color="yellow"] {
-  background: var(--highlight-yellow);
-}
-
-.annotationQuote[data-color="green"] {
-  background: var(--highlight-green);
-}
-
-.annotationQuote[data-color="blue"] {
-  background: var(--highlight-blue);
-}
-
-.annotationQuote[data-color="pink"] {
-  background: var(--highlight-pink);
-}
-
-.annotationQuote[data-color="purple"] {
-  background: var(--highlight-purple);
-}
-
 .attachedNotes {
   display: grid;
   gap: var(--space-2);

@@ -9,6 +9,7 @@ import Dialog from "@/components/ui/Dialog";
 import { Contents, ContentsList } from "@/lib/documentReader/chrome/Contents";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { textSectionLookup, type TocNode, type TextPoint } from "@/lib/documentReader/model";
+import type { ReaderDestination } from "@/lib/documentReader/location";
 import { ReaderLink } from "@/lib/documentReader/navigation";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -31,7 +32,7 @@ type Intent = { kind: "manual"; section: string | null; title: string; selection
 type Command = { kind: "discover"; body: Schema<"PartDiscovery"> }
   | { kind: "restore"; candidate: string; body: Schema<"PartCandidateDecision"> };
 
-export function SourcePieces({ source, reader }: { readonly source: string; readonly reader: Reader }) {
+export function SourcePieces({ source, reader, onNavigate }: { readonly source: string; readonly reader: Reader; readonly onNavigate?: (destination: ReaderDestination) => void }) {
   const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(usePaneIsActive(), 0)}`;
   const contents = usePaneFreeServerValue({ key: `/media/${source}/parts`, stale, load: signal => sourceContents(source, signal) });
   const page = contents.status === "ready" ? contents.data : null;
@@ -152,7 +153,7 @@ export function SourcePieces({ source, reader }: { readonly source: string; read
     const last = sections === null ? null : navigation?.sections.find(section => section.section_id === sections.at(-1))?.label ?? null;
     const rows = attachments.get(placement.anchor_node_id) ?? [];
     rows.push({ id, placement, content: <div className={styles.rangeRow}><div className={styles.rangeTitle}>
-      <ReaderLink reader={reader} disabled={!matched} target={{ kind: "point", point: { kind: "text", unit: placement.extent.start.fragment_id, offset: placement.extent.start.offset } }}>{title}</ReaderLink>
+      <ReaderLink reader={reader} onDefault={onNavigate} disabled={!matched} target={{ kind: "point", point: { kind: "text", unit: placement.extent.start.fragment_id, offset: placement.extent.start.offset } }}>{title}</ReaderLink>
       <small>{first !== null && last !== null ? `from ${first} through ${last}` : "saved range"}{dismissed ? "; dismissed" : ""}</small>
     </div>{action}</div> });
     attachments.set(placement.anchor_node_id, rows);
@@ -185,10 +186,10 @@ export function SourcePieces({ source, reader }: { readonly source: string; read
         if (!blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
       }}>{commands.value.busy ? "starting…" : operation?.status === "dead" || operation?.outcome === "superseded" ? "try again" : "extract independent works"}</Button> : null}
       {operationText ? <p role={operation?.status === "dead" ? "alert" : "status"}>{operationText}</p> : null}
-      {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} /></> : snapshot ? <>
+      {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
         {!matched ? <><p role={mounted.status === "failed" || mounted.status === "ready" && mounted.refreshFailure !== null ? "alert" : "status"}>{mounted.status === "failed" || mounted.status === "ready" && mounted.refreshFailure !== null ? "couldn’t reload the source text" : "loading current source text…"}</p>
           <Button onClick={() => reader.reload(navigation.generation)}>try again</Button></> : null}
-        <nav aria-label="Contents"><ContentsList reader={reader} nodes={snapshot.nodes} current={current} disabled={!matched}
+        <nav aria-label="Contents"><ContentsList reader={reader} nodes={snapshot.nodes} current={current} disabled={!matched} onNavigate={onNavigate}
           target={node => node.at === null ? null : { kind: "point", point: { kind: "text", ...node.at } }} actions={actions}
           detail={node => { const work = node.sectionId === null ? null : exactWork(node.sectionId); const candidate = node.sectionId === null ? null : exactCandidate(node.sectionId);
             return work && work.title !== node.label ? <small className={styles.rowNote}>extracted as {work.title}</small>

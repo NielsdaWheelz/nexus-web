@@ -81,7 +81,7 @@ def lock_account(db: Session, account_id: UUID) -> int:
 
 
 def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> AcceptedChanges:
-    if request.format_revision != 2:
+    if request.format_revision != 3:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
     if request.replica_id in {
         uuid5(account_id, "authored:server"),
@@ -93,7 +93,7 @@ def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> Accep
         db.execute(
             text(
                 "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) "
-                "VALUES (:a,:r,0,2) ON CONFLICT DO NOTHING"
+                "VALUES (:a,:r,0,3) ON CONFLICT DO NOTHING"
             ),
             {"a": account_id, "r": request.replica_id},
         )
@@ -287,7 +287,7 @@ def _require_current_replica(db: Session, account_id: UUID, replica_id: UUID) ->
         text("SELECT format_revision FROM authored_replicas WHERE account_id=:a AND replica_id=:r"),
         {"a": account_id, "r": replica_id},
     )
-    if revision != 2:
+    if revision != 3:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
 
 
@@ -391,7 +391,11 @@ def _touched(merged: MergeResult, changes: list[Change]) -> MergeResult:
         links=[r for r in merged.links if r.link_id in links],
         passages=[r for r in merged.passages if r.anchor_id in passages],
         source_stubs=[r for r in merged.source_stubs if r.source_ref in stubs],
-        projections=[r for r in merged.projections if r.ref in refs],
+        projections=[
+            r
+            for r in merged.projections
+            if r.ref in refs or r.ref in {f"passage_anchor:{p}" for p in passages}
+        ],
     )
 
 
@@ -569,7 +573,7 @@ def server_command(
     replica = uuid5(account_id, "authored:server:2")
     db.execute(
         text(
-            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,2) "
+            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,3) "
             "ON CONFLICT DO NOTHING"
         ),
         {"a": account_id, "r": replica},
@@ -675,6 +679,8 @@ def server_command(
         }
     )
     change = Change.model_validate(prepared["change"])
+    if len(_json(change.model_dump(mode="json")).encode()) > MAX_CHANGE_BYTES:
+        raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "Command exceeds 2 MiB")
     merged = MergeResult.model_validate(prepared["states"])
     result = _touched(merged, [change])
     _persist(db, account_id, result)
@@ -704,16 +710,15 @@ def server_command(
 
 
 def download(db: Session, account_id: UUID, after: int) -> DownloadChanges:
-    watermark = head(db, account_id)
-    floor = (
-        db.scalar(
-            text("SELECT snapshot_floor_seq FROM authored_heads WHERE account_id=:a"),
-            {"a": account_id},
-        )
-        or 0
-    )
+    boundary = db.execute(
+        text("SELECT head_seq,snapshot_floor_seq FROM authored_heads WHERE account_id=:a"),
+        {"a": account_id},
+    ).one_or_none()
+    watermark, floor = boundary if boundary is not None else (0, 0)
     if after < floor:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Cursor requires a new snapshot")
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_CURSOR, "Cursor precedes authored format boundary"
+        )
     if after > watermark:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Cursor exceeds account head")
     changes: list[FeedChange] = []
@@ -751,7 +756,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
     )
     yield (
         _json(
-            {"type": "header", "format_revision": 2, "head_cursor": watermark, "lamport": lamport}
+            {"type": "header", "format_revision": 3, "head_cursor": watermark, "lamport": lamport}
         )
         + "\n"
     )
@@ -777,7 +782,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         _json(
             {
                 "type": "footer",
-                "format_revision": 2,
+                "format_revision": 3,
                 "head_cursor": watermark,
                 "lamport": lamport,
                 "counts": counts,

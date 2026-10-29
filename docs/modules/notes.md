@@ -34,10 +34,9 @@ accepted rows on refresh failure and expose their existing inline error/retry;
 retry clears the displayed error while retaining the accepted same-query prefix.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
-the active note's root read supplies only literal title facts and its revision
-to the existing pane-title map; other authored locators retain their subscriptions.
-older facts cannot replace newer ones, and revision-only advances do not republish
-presentations. unknown or failed active-note reads retain their prior title hint.
+all authored pane locators retain their canonical title subscriptions. the active
+root separately publishes its literal display label through pane chrome; previews
+and unfinished input never become acknowledged workspace hints.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
 picker's page-count wrapper and controlled local search. null disables its read;
 showing more retains the accepted prefix until its replacement lands.
@@ -146,14 +145,44 @@ restore an old body snapshot or overwrite an intervening scalar owner.
 
 ## outline interaction
 
-one outline session owns one persistent prosemirror view and dom editing host.
-its flat, ephemeral rows project the root, disclosed occurrences and pending
-fields; they never become authored storage. an occurrence uuid survives receipt
+one outline session owns its retained root and one persistent descendant
+prosemirror view. authored panes render the root only in their header: pages use
+their native title textarea; notes use one retained rich-body editor. the flat,
+ephemeral descendant rows project disclosed occurrences and pending fields; they
+never become authored storage. an occurrence uuid survives receipt
 adoption and reparenting. resource refs, relationships and placement remain
 separate identities, and repeated appearances of one note have separate
 displayed baselines. titles use plain shared text and admit no marks or atoms.
 the projection reuses the canonical inline grammar without importing row ids or
 placement from clipboard content.
+
+`useLocalOutlineRoot` publishes provider-wrapped header nodes and descendant
+content. `OutlineController` owns the root document, creation prelude, admission,
+shared history and focus requests. the root's independent displayed baseline
+remains charged to that admission budget. native selection is separate across
+root and descendants; their text and structure share undo. root bookmarks carry
+relative selections, and history can reveal a hidden root before restoring it.
+only the attachment committed inside chrome acknowledges root visibility.
+
+note headers preview the literal first logical line with an ellipsis for hidden
+lines, omitted atoms or overflow. disclosure reveals the entire canonical body;
+prose return inserts a hard break, code return a literal newline. root text never
+participates in child split, join, range selection or arrangement. embedded
+descendants retain the same outline session and appear in its flat projection.
+filtering descendants does not disable the root.
+
+focus departure from the editor and its owned controls collapses the note after
+outside pointer activation and native input settlement. hidden content retains
+its document, guarded drafts, selection and history. fresh disclosure starts at
+the beginning; reopening within the mounted visit retains position. return visits
+start collapsed, including restored source inspections; fresh source arrivals may
+reveal without taking focus. local save failure and complete-current-text copy
+remain visible outside the folded editor. opening a latent page writes nothing;
+its first title or child edit commits creation with that edit.
+source-driven expansion requires a fresh open intent. arrival purpose stays
+separate from whether an inspection was already applied.
+`settleNativeInput` reconciles native packets without requiring a query to close;
+`canArrange` still fences guarded drafts. structural commands require both.
 
 item text means an occurrence’s own note body or inline page title.
 item text is entered by pointer or f2, not sequential tab. each occurrence's
@@ -167,7 +196,9 @@ idle editable item text reserves tab/shift-tab and the move chord for outline
 structure; unavailable single-item moves are silently refused. native links and
 buttons keep their own keys.
 shift-click across item text or row background selects the inclusive visible
-range from a fixed occurrence anchor. same-row text selection stays native;
+range from a fixed occurrence anchor. only the descendant view's active text
+selection supplies a text anchor; header and control focus cannot reuse its
+dormant caret. same-row text selection stays native;
 bullet links keep their navigation. selection excludes root/insertion fields,
 keeps embedded scopes separate, refuses paging gaps, and retains exact membership
 across incoming updates. it never identifies occurrences by resource ref.
@@ -181,7 +212,7 @@ entry admits text editing. selection observation never enables editing.
 selection and history announcements use the outline's existing polite status;
 each gesture publishes one event even when its selection count is unchanged.
 the existing focus request owns a plain-tab entry certificate while the host is
-unfocused. actual native focus installs its authorized root/insertion caret
+unfocused. actual native focus installs its authorized insertion caret
 synchronously before selection observation; pointer and later keyboard intent
 revoke it, and explicit focus replaces it. the same selection notifications retry
 an entry held by input ownership; its row, ref, field kind and lease must still
@@ -200,9 +231,10 @@ cannot acquire the moved occurrence's identity. newer user intent cancels delaye
 focus and targeted window changes; programmatic selection does not cancel its
 own operation. append uses the proven absolute tail.
 
-return splits prose at the selection; an empty nested item outdents. an empty
-top-level item stays empty. backward/forward deletion at a boundary joins adjacent
-notes; deleting an empty item unlinks its occurrence. code return remains an
+within the descendant outline, return splits prose at the selection; an empty
+nested item outdents. an empty top-level item stays empty. backward/forward
+deletion at a boundary joins adjacent notes; deleting an empty item unlinks its
+occurrence. code return remains an
 in-note break. its native DOM parser preserves literal newlines; clipboard slices
 retain their separate existing import policy. block commands normalize selected
 ancestors and descendants to topmost occurrences. indent/outdent plans complete
@@ -211,7 +243,8 @@ relationships. resources, internal links and independent relationships survive.
 the relationship menu still names one exact edge. range removal enters the next
 survivor's text start, otherwise the previous survivor's end or empty insertion
 field. read-only survivors receive block selection. the removal press remains
-fenced through keyup across internal focus transfer.
+fenced through keyup across internal focus transfer, including the same session's
+separate root header.
 title return and shift-return enter the root's first item or create the following
 item for a title occurrence. pasting literal title text remains separate from
 that keyboard command.
@@ -417,7 +450,7 @@ introduced. the runtime's unpinned document cache remains a separate owner.
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-1`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-3`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -439,7 +472,7 @@ the service worker; android retains packaged app-router delivery. compatible she
 activation waits for local commit settlement; format changes use coordinated
 release draining rather than automatic database deletion.
 
-v1 firefox boundary: normal browser quit preserves a compatible waiting update
+firefox boundary: normal browser quit preserves a compatible waiting update
 through offline restart. forced quit during that update may require one online
 reopen before the cached shell loads.
 the product does not add a second activation protocol to repair that platform
@@ -483,6 +516,17 @@ peer-highlight membership is metadata only, never peer writing ownership. shared
 query execution applies eligibility and clipped lexical matching before paging;
 its excerpt is separate from canonical content. both sqlite hosts use the same
 fts tokenizer; native compound search rechecks the store revision before returning.
+
+launcher `search_preview` is a compound nonpaged read with at most eight rows and
+null cursors. bounded literal-name reads precede ordinary lexical filling and
+reuse the same scope/evidence admission. exact, prefix and substring names are
+ranked before truncation; prose remains evidence. firefox serializes the whole
+read and android applies its store-revision fence to the entire operation.
+`SEARCH_READ_SQL` owns its finite packaged native statements. ordinary `search`
+retains its cursor and full-search/picker contract.
+`search_admission` reuses that compound admission for at most eight held refs,
+including current query membership and scoped evidence. it returns null cursors
+and avoids a corpus scan; resource existence alone cannot prove scoped admission.
 
 `workspace_member` identifies readings admitted by canonical global search;
 independent retained-source readability does not add workspace membership.

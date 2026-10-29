@@ -73,7 +73,7 @@ every wire key is present and snake_case; absence is null.
 | --- | --- |
 | `named` | title/name, ordered credits and nullable live show artwork |
 | `media` | canonical `MediaSummaryOut`: title, credits, original publication, consumption and time |
-| `passage` | exact words in captured/saved colour with adjacent prefix/suffix |
+| `passage` | frozen excerpt structure with selected runs in saved colour; compact or full view |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
 | `reference` | an embed note's stored label, or `embedded resource` |
@@ -82,7 +82,8 @@ two row families compose the same resource facts. indexes serve collection panes
 search and chat context through native links and applicable bibliography. collection
 and search rows retain consumption facts and resource quick actions; context
 shows literal target content, source provenance and minus/overflow controls. indexes
-never create outline sessions, disclosure or editors. imports/settings retain their
+never create outline sessions or editors. passage previews have an independent
+excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
 type derives from the displayed canonical ref, never its body grammar, action
@@ -153,6 +154,9 @@ navigation; the index never recursively expands matching results. failure marks
 decorate the existing stable more control, whose label names the real recovery
 destination. chat mutation failures retain their supplied commands and use the
 workspace condition owner. static unavailable rows show a bounded reason.
+
+ordinary full passage bodies resolve frozen evidence against the observed capture
+revision and admitted reading. historical bodies use supplied evidence only.
 
 quotations compose supplied evidence without outline state, local resource reads,
 live metadata enrichment, editors or resource menus. passage text is selectable,

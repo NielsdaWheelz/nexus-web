@@ -7,6 +7,7 @@ import {
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { MISSING_SELECTION } from "./selection";
 
 // Chat's names for the generated FastAPI wire (docs/local-rules/typed-wire.md).
 export type Message = Schema<"MessageOut">;
@@ -44,7 +45,6 @@ const AMBIGUOUS = new Set([
   "E_GENERATION_RUNTIME_UNAVAILABLE",
 ]);
 const GONE = "It’s no longer available.";
-const MODELS = "Model availability changed. Choose a current model.";
 const TARGET = "The reply target changed. Choose a response and send again.";
 const UNQUOTABLE = "This passage can’t be quoted. Remove it to continue.";
 // One copy owner for http failures and modeled send rejections alike.
@@ -53,8 +53,8 @@ const DETAIL: Record<string, string> = {
   E_CONVERSATION_NOT_FOUND: GONE,
   E_MESSAGE_NOT_FOUND: GONE,
   E_FORBIDDEN: "You don’t have access to it.",
-  E_GENERATION_SELECTION_UNAVAILABLE: MODELS,
-  E_INVALID_GENERATION_SELECTION: MODELS,
+  E_GENERATION_SELECTION_UNAVAILABLE: "Model availability changed. Choose a current model.",
+  E_INVALID_GENERATION_SELECTION: MISSING_SELECTION,
   E_GENERATION_CONTEXT_TOO_LARGE:
     "This conversation no longer fits the model’s context window. Start a new chat or choose a larger model.",
   E_MESSAGE_TOO_LONG: "The message is too long. Shorten it and send again.",

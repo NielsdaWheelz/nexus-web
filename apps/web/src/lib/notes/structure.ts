@@ -260,12 +260,15 @@ export class OutlineHistory {
       record: (edit, _admission, bookmark) => {
         const current = bookmark ?? this.focus?.capture() ?? null;
         // A resolver captured after an edit cannot describe its numeric before.
-        const raw = current?.kind === "text" ? {...current, resolve: null} : current;
-        const after = raw?.kind === "text" && edit ? {...raw, range: edit.selectionAfter} : raw;
+        const raw: InputBookmark = current?.kind === "text" ? {kind: "text", row_id: current.row_id, ref: current.ref,
+          range: current.range, resolve: null, ...(current.root ? {root: current.root} : {})} : current;
+        const after = raw?.kind === "text" && edit ? {...raw, range: edit.selectionAfter,
+          resolve: current?.kind === "text" && current.root ? current.resolve : null} : raw;
         const item = history.manager.undoStack.at(-1); if (!item) return;
         let group = history.latest === item ? history.latestGroup : null;
         if (!group) {
-          group = this.reserve({before: raw?.kind === "text" && edit ? {...raw, range: edit.selectionBefore} : raw, after});
+          group = this.reserve({before: raw?.kind === "text" && edit ? {...raw, range: edit.selectionBefore,
+            resolve: current?.kind === "text" ? current.resolveBefore ?? null : null} : raw, after});
           this.hold(group, [document]); history.groups++;
           let owned = item;
           const cleanup = group.cleanup;

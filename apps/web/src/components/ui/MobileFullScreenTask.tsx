@@ -14,14 +14,15 @@ export default function MobileFullScreenTask({
   active,
   ariaLabel,
   children,
+  panelId,
   ...modal
-}: Omit<ModalProps, "open" | "onDismissRequest" | "initialFocus"> & {
+}: Omit<ModalProps, "open" | "initialFocus"> & {
   readonly active: boolean;
-  readonly onDismissRequest: NonNullable<ModalProps["onDismissRequest"]>;
+  readonly panelId?: string;
   readonly initialFocus: NonNullable<ModalProps["initialFocus"]>;
   readonly focusKey: unknown;
   readonly ariaLabel: string;
-  readonly children: ReactNode;
+  readonly children: ReactNode | ((requestDismiss: () => void) => ReactNode);
 }) {
   const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   useKeyboardReport(active);
@@ -30,6 +31,8 @@ export default function MobileFullScreenTask({
       {...modal}
       open={active}
       label={ariaLabel}
+      id={panelId}
+      scope={modal.scope ?? panelId}
       keepMounted
       backdropClassName={styles.projection}
       backdropStyle={{
@@ -38,7 +41,9 @@ export default function MobileFullScreenTask({
       }}
       className={styles.frame}
     >
-      <div className={styles.content} style={{ paddingBottom: `max(0px, calc(var(--viewport-safe-bottom) - ${keyboardBottomInsetPx}px))` }}>{children}</div>
+      {(requestDismiss) => <div className={styles.content} style={{ paddingBottom: `max(0px, calc(var(--viewport-safe-bottom) - ${keyboardBottomInsetPx}px))` }}>
+        {typeof children === "function" ? children(requestDismiss) : children}
+      </div>}
     </ModalFrame>
   );
 }
