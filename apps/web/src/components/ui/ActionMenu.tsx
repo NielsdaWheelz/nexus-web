@@ -109,7 +109,7 @@ type Invocation = {
   readonly mobile: boolean;
   readonly pathname: string | null;
   readonly viewport: string;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly touch: boolean;
   readonly attempt: Attempt | null;
   readonly visible: boolean;
@@ -251,7 +251,7 @@ export interface ActionMenuSession {
   readonly viewport: string;
   readonly startedAt: number;
   readonly touch: boolean;
-  readonly edge: "first" | "last";
+  readonly edge: "first" | "last" | null;
   readonly dismiss: () => void;
   readonly announce: (message: string) => void;
   readonly present: (presentation: Presentation) => void;
@@ -312,7 +312,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     window.addEventListener("pointercancel", release, true);
     window.addEventListener("keydown", release, true);
   };
-  const begin = (edge: "first" | "last") => {
+  const begin = (edge: "first" | "last" | null) => {
     const dismiss = () => {
       local.session = null;
       setState(value => ({ ...value, session: null, presentation: { visible: false, busy: false, popup: "menu" } }));
@@ -339,7 +339,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
     onClick: event => {
       event.stopPropagation();
       if (triggerDisabled) return;
-      if (local.session) local.session.close.current(false); else begin("first");
+      if (local.session) local.session.close.current(false); else begin(null);
     },
     onKeyDown: event => {
       if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -367,14 +367,14 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
           consumeHeldClick(pending.pointer);
         }
         cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onKeyDown: event => {
         local.touchGesture = false;
         if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
         if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
         event.preventDefault(); event.stopPropagation(); cancelHold();
-        if (!triggerDisabled && !local.session) begin("first");
+        if (!triggerDisabled && !local.session) begin(null);
       },
       onPointerDown: event => {
         cancelHold(); local.heldClick = false;
@@ -386,7 +386,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
             const pending = local.hold;
             if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== local.subjectKey || !local.trigger.current?.isConnected) { cancelHold(); return; }
             consumeHeldClick(pointer); cancelHold();
-            if (!local.session) begin("first");
+            if (!local.session) begin(null);
           }, 500),
         };
         window.addEventListener("scroll", cancelHold, true);
@@ -500,7 +500,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     attempt.controller.abort();
     announce("actions couldn’t load");
   };
-  const begin = (edge: "first" | "last", retry = false) => {
+  const begin = (edge: "first" | "last" | null, retry = false) => {
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
     if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
@@ -794,8 +794,17 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     if (!node) return;
     const items = [...node.querySelectorAll<HTMLElement>(ITEMS)];
     const controls = items.length ? items : focusableElements(node);
-    (controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
+    const location = current.current.edge === null ? node.querySelector<HTMLElement>('[aria-current="location"]') : null;
+    (location ?? controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
   }, [visible, sheet, focusKey, menu.ref]);
+
+  // A touch invocation keeps panel focus; reveal its current place only once.
+  const revealed = useRef(false);
+  useLayoutEffect(() => {
+    if (revealed.current || !visible || !sheet || !current.current?.touch || current.current.edge !== null) return;
+    revealed.current = true;
+    sheetBody.current?.querySelector<HTMLElement>('[aria-current="location"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [visible, sheet]);
 
   const onSurfaceKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229 ||
@@ -953,6 +962,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       ...attributes,
       tabIndex: sheet ? 0 : -1,
       className: collection.row,
+      "aria-current": option.current,
       "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
@@ -962,7 +972,10 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
-      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">{option.icon}</span>
+      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">
+        {option.icon}
+        {option.current === "location" ? <span className={styles.currentMarker} /> : null}
+      </span>
       <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
         {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
@@ -990,7 +1003,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       </ul>
     </li>)}
   </ul> : <p className={styles.menuStatus}>no actions available</p>;
-  const retry = () => { if (!busy) begin(current.current?.edge ?? "first", true); };
+  const retry = () => { if (!busy) begin(current.current?.edge ?? null, true); };
   const failureView = feedback ? hasInitial ? <>
     <FeedbackNotice content={feedback} announcement="None" />
     <button type="button" role={sheet ? undefined : "menuitem"} tabIndex={sheet ? 0 : -1}
@@ -1049,7 +1062,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         if (current.current?.touch) return panel;
         if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...(panel.querySelector<HTMLElement>("[data-menu-published]") ?? panel).querySelectorAll<HTMLElement>("[data-menu-row]")];
-        const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
+        const location = current.current?.edge === null ? panel.querySelector<HTMLElement>('[aria-current="location"]') : null;
+        const edge = location ?? items[current.current?.edge === "last" ? items.length - 1 : 0];
         // A choice edge focuses its checked radio, the group's one native tab stop.
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
           ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
