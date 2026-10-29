@@ -104,7 +104,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     : `${count(rows.length, "item")} in ${count(controller.groups.length, "section")}`;
   const root = (
     <>
-      <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
+      {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><Button onClick={controller.escape}>cancel</Button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
       <div className={styles.inputRow} onPointerDownCapture={controller.interact}>
         <span className="sr-only">Find anything…</span>
         <Input
@@ -180,7 +180,9 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         <NexusQueryStatus controller={controller} noticeId={NOTICE_ID} />
       </div>
       <span id={HELP_ID} className="sr-only">
-        {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.` : "arrows select results. enter activates; shift plus enter opens in a new pane. tab reaches selected options."}
+        {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.`
+          : controller.rootMode === "NewPane" ? "arrows select results. enter opens in a new pane. tab reaches selected options."
+            : "arrows select results. enter activates; shift plus enter opens in a new pane. tab reaches selected options."}
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
@@ -275,7 +277,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                       {controller.reorder.placement?.kind === "ChoosePosition" && group.id === "Open" ? <span className={styles.panePosition} aria-hidden>{rowIndex + 1}</span> : null}
                       <NexusRowBody row={row} desktop />
                     </div>
-                    {row.secondary?.kind === "ClosePane" ? (
+                    {row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && row.secondary?.kind === "ClosePane" ? (
                       <Button
                         iconOnly
                         tabIndex={selected ? 0 : -1}
@@ -299,10 +301,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId);
                         }}
                         icon={<X size={18} aria-hidden="true" />} />
-                    ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
+                    ) : row.secondary?.kind === "TargetMenu" || (controller.rootMode === "NewPane" && row.matchingPassage) ? <NexusRowMenu
                       row={row}
                       activate={controller.activate}
                       closePane={controller.closePane}
+                      destinationHref={controller.destinationHref}
+                      mobile={false}
+                      picker={controller.rootMode === "NewPane"}
                       menuProps={{
                         label: `options for ${row.label}`,
                         align: "end",
@@ -344,6 +349,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           </Fragment>
         ))}
         </div>
+        {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       </div>
       </NexusPaneDrag>

@@ -122,6 +122,7 @@ export function NexusPaneListHeader({ controller, mobile }: { controller: NexusC
     <div className={styles.paneListHeading}>
       <h3 id={mobile ? "mobile-nexus-group-Open" : "desktop-nexus-section-Open"}>tabs · {controller.panes.length}</h3>
       <div className={styles.paneListActions}>
+        {mobile ? <Button className={styles.paneListAction} data-nexus-control="NewPane" onClick={controller.enterNewPane}>new pane…</Button> : null}
         {controller.reorder.available || placement !== null ? <Button className={styles.paneListAction} data-nexus-control="Reorder"
           onKeyDown={event => { if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)) event.preventDefault(); }}
           onClick={event => { if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { if (placement === null) controller.reorder.start(); else controller.reorder.cancel(); } }}>{placement === null ? "reorder" : "cancel"}</Button> : null}

@@ -283,15 +283,26 @@ live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
 drag. Back and Escape go through the feature's guard. mobile Nexus is its one
-user: nonblank Root clears its query first, a nested page returns to Root, dirty
-work keeps its confirmation, blank Root closes.
+user: native keyboard/nested overlays precede task back; a child returns through
+its guarded origin, search returns to overview, and the new-pane picker cancels
+to overview without clearing its query. visible cancel performs that transition
+directly. dirty work keeps its confirmation; ordinary overview closes.
 
 **ActionMenu**: a "…" or custom trigger. `MenuSource` supplies a known subject key
 and title plus immediate complete content or preparation keyed by the exact abort
-signal. initial preparation retains trigger focus, marks it busy and owns only a
-hidden transient. its five-second budget starts at activation and is checked again
-after measurement; no local subset appears while waiting. cancellation aborts and
-forgets. publication owns one desktop transient or mobile modal, never both.
+signal. a prepared source requires `initial`: known navigation and caller sections
+publish without waiting for resource reads. empty initial retains trigger focus,
+busy state and the hidden transient until preparation settles. the five-second
+budget starts at activation; initial publication does not complete preparation or
+clear its deadline. cancellation aborts and forgets. publication owns one desktop
+transient or mobile modal, never both.
+
+initial meaning and the first ready prepared meaning freeze separately. prepared
+content and its trailing resource verbs share one capped delayed region: below
+initial controls in a below-popup, above them in an above-popup or mobile sheet.
+later labels wrap within the published width. delayed failure, timeout and retry
+retain initial navigation, nodes, geometry, focus and interaction ownership;
+retry replaces only the delayed attempt, signal, deadline and snapshot.
 
 desktop complete choices use menu semantics; failure and successful-empty use a
 named transient dialog. retry retains the failure surface, owner, focus and history

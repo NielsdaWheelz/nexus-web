@@ -75,6 +75,31 @@ opens the keyboard-down overview with heading focus; explicitly entering search
 focuses its query. choose create, choose browse and add replace root inside one
 opaque viewport-fixed dialog. pane expansion and
 recently-closed recovery are inline disclosures, not pages.
+mobile's `new pane…` beside the open-pane heading enters `NewPane` in the same
+root, retaining and selecting the query. its heading and dialog name are
+`open in new pane`; `cancel` replaces account/close. entry and cancellation
+allocate nothing. cancellation retains the query and returns focus to its
+entrance, or the ordinary combobox after desktop handoff. the content-creation
+entrance is `create…`. desktop adds no entrance or ordinary fork menu action,
+but completes an already-active picker after resize.
+
+the picker projects eligible destinations before composition caps, with unchanged
+retrieval budgets. blank order is recent, places, then create and open: quick
+note, page, chat, library. pane candidates become exact current-href destinations;
+management, acquisition and playback commands are excluded. explicit excluded
+input reports `this action isn’t available in this picker` and retains the query.
+row and submission admission share one target contract. accepted picker actions
+request `Fork`; choice/library/capture pages retain that opening intent and their
+root origin. query edits, refresh, shortcut focus and responsive handoff preserve
+purpose. accepted landing/dismissal or fresh programmatic opening retires it.
+
+ordinary mobile destination rows have sibling `more actions for {label}` controls
+with `open in new pane`; primary activation retains `Follow`. only pane-instance
+rows have direct close controls. matching-place close actions belong inside the
+destination menu. picker options contain only factual alternate destinations,
+such as the exact matching passage, which also fork. guarded menu links retain
+the menu on refused navigation. the workspace remains the sole placement,
+writing-loss admission and focus owner.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
 the nexus control opens through native button activation: pointer click,
 keyboard and assistive technology. primary button-0 presses are captured so

@@ -49,7 +49,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     return () => document.removeEventListener("selectionchange", selected);
   }, [controller.open, controller.page.kind, markSearchInteraction]);
   const previousQuery = useRef(controller.query);
-  const searching = controller.rootMode === "Search";
+  const picker = controller.rootMode === "NewPane";
+  const searching = controller.rootMode !== "Overview";
+  useLayoutEffect(() => { if (picker && controller.page.kind === "Root") inputRef.current?.select(); }, [picker, controller.page.kind]);
   useLayoutEffect(() => { taskPointerId.current = null; placementPress.current = null; }, [controller.open]);
   useEffect(() => {
     const release = () => { placementPress.current = null; };
@@ -119,10 +121,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const root = (
     <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { if (event.target instanceof HTMLElement && bodyRef.current?.contains(event.target)) focusedControl.current = event.target; }}>
       <header className={styles.header}>
-        {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
-        <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
+        {searching && !picker ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
+        <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{picker ? "open in new pane" : searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
-          <AccountMenu
+          {picker ? <Button className={styles.iconButton} onClick={controller.escape}>cancel</Button> : <><AccountMenu
             activeId={accountId}
             placement="below"
             align="end"
@@ -138,7 +140,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }}
           />
-          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} />
+          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} /></>}
         </div>
       </header>
       <div className={styles.searchInput}>
@@ -216,13 +218,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       {controller.reorder.placement?.kind === "ChoosePosition" && group.id === "Open" ? <span className={styles.panePosition} aria-hidden>{rowIndex + 1}</span> : null}
                       <NexusRowBody row={row} desktop={false} />
                     </button>
-                    {row.secondary?.kind === "ClosePane" ? (
+                    {row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && row.secondary?.kind === "ClosePane" ? (
                       <Button iconOnly className={styles.rowMenu} data-nexus-control={`ClosePane:${row.secondary.paneId}`} aria-label={`close ${paneRowName(controller, row)}`}
                         onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
                         onClick={event => { event.currentTarget.focus({ preventScroll: true }); if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId); }}
                         icon={<X size={18} aria-hidden="true" />} />
-                    ) : row.secondary?.kind === "ResourceMenu" ? (
-                      <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} menuProps={{
+                    ) : row.secondary?.kind === "TargetMenu" || (picker && row.matchingPassage) ? (
+                      <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} destinationHref={controller.destinationHref} mobile picker={picker} menuProps={{
                         label: `more actions for ${row.label}`,
                         align: "end",
                         onOpenChange: (open) => { if (open) controller.setActive(row.key); },
@@ -237,6 +239,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             {group.id === "Open" ? <NexusClosedPanes controller={controller} mobile /> : null}
           </section>
         ))}
+        {picker && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => searching ? inputRef.current : headingRef.current} />
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>

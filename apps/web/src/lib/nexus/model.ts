@@ -97,7 +97,7 @@ export interface NexusRow {
   readonly matchingPassage?: Schema<"SearchOccurrenceOut"> | null;
   readonly action: NexusAction;
   readonly secondary?:
-    | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
+    | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "ClosePane"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
@@ -121,7 +121,7 @@ export interface NexusPane {
   readonly current: boolean;
 }
 
-export type NexusRootMode = "Overview" | "Search";
+export type NexusRootMode = "Overview" | "Search" | "NewPane";
 export interface NexusRootOrigin {
   readonly mode: NexusRootMode;
   readonly control: string;
@@ -155,6 +155,7 @@ export type NexusPage =
       readonly text: string;
       readonly noteId: string;
       readonly localDate: string;
+      readonly origin: NexusRootOrigin;
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }

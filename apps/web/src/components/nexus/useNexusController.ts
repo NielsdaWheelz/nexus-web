@@ -36,7 +36,7 @@ import {
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, nexusQueryAction, parseNexusQuery } from "@/lib/nexus/query";
-import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, nexusPanePreview, playbackRow, resourceAction } from "@/lib/nexus/rows";
+import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, nexusPanePreview, pickerTarget, playbackRow, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
@@ -137,7 +137,7 @@ export function useNexusController() {
   const handoffPaneId = useRef<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   const rootFocus = useRef<string | null>(null);
-  const rootScroll = useRef({ Overview: 0, Search: 0 });
+  const rootScroll = useRef({ Overview: 0, Search: 0, NewPane: 0 });
   const shell = useRef(viewport.isMobile);
   const transferFocus = useRef<"Field" | "Heading" | "PaneList" | null>(null);
   const wasOpen = useRef(false);
@@ -147,11 +147,12 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
+  const queryAction = nexusQueryAction(parsed);
   const lookupGuidance = parsed.intent.kind === "CommandLookup"
     ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)}. `}choose a command to start empty, or search this text`
     : null;
   const listIdentity = JSON.stringify([accountId, rootMode, viewport.isMobile, query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
-  const finding = open && (!viewport.isMobile || rootMode === "Search");
+  const finding = open && (!viewport.isMobile || rootMode !== "Overview");
   const retainedLocalRefs = list.identity === listIdentity ? list.groups.flatMap(group => group.rows).flatMap(row => row.localMatch ? [row.localMatch.resource.ref] : []) : [];
   const find = useNexusFind({ open: finding && !composing, query: parsed, retainedLocalRefs });
   const panes = useMemo<NexusPane[]>(
@@ -177,6 +178,7 @@ export function useNexusController() {
       handoffPaneId.current = null;
       suppressReturnFocus.current = true;
       setOpen(false);
+      setRootMode("Overview");
     }
     navigationBaseline.current = navigationToken;
   }, [navigationToken, open]);
@@ -197,6 +199,7 @@ export function useNexusController() {
       handoffPaneId.current = null;
       suppressReturnFocus.current = true;
       setOpen(false);
+      setRootMode("Overview");
     });
   }, [latestWorkspace, open, subscribeWorkspace]);
 
@@ -231,12 +234,12 @@ export function useNexusController() {
     setList(previous => {
       const retained = previous.identity === listIdentity ? previous.groups.flatMap(group => group.rows) : [];
       const composed = candidateRows({
-        query: parsed, panes, frecency: find.frecency, preview: find.preview,
+        query: parsed, panes, picker: rootMode === "NewPane", frecency: find.frecency, preview: find.preview,
         reference: find.reference, referenceFailed: find.referenceFailed,
         local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
         retained, missingLocal: find.missingLocal,
       });
-      const incoming = nexusGroups({ desktop: !viewport.isMobile, mobileMode: rootMode, query: parsed,
+      const incoming = nexusGroups({ desktop: !viewport.isMobile, rootMode, query: parsed,
         results: composed.rows, panes, panesExpanded,
         playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
         recent: find.recent, frecency: find.frecency,
@@ -253,7 +256,7 @@ export function useNexusController() {
   const groups = list.identity === listIdentity ? list.groups : [];
   const rows = groups.flatMap((group) => group.rows);
   const paneRows = groups.find((group) => group.id === "Open")?.rows ?? [];
-  const paneListPresented = open && page.kind === "Root" && (viewport.isMobile ? rootMode === "Overview" : parsed.text.length === 0);
+  const paneListPresented = open && page.kind === "Root" && rootMode !== "NewPane" && (viewport.isMobile ? rootMode === "Overview" : parsed.text.length === 0);
   const paneListComplete = paneListPresented && paneRows.length === panes.length && paneRows.every((row, index) => row.key === `Pane:${panes[index]!.id}`);
   const panePreviewCount = nexusPanePreview(panes, viewport.isMobile).length;
   const searchContext = JSON.stringify([accountId, query, rootMode]);
@@ -278,7 +281,8 @@ export function useNexusController() {
   }
   useLayoutEffect(() => {
     if (!transferFocus.current || page.kind !== "Root") return;
-    if (viewport.isMobile) setRootMode(transferFocus.current === "PaneList" ? "Overview" : "Search");
+    const transfer = transferFocus.current;
+    if (viewport.isMobile) setRootMode(mode => transfer === "PaneList" ? "Overview" : mode === "NewPane" ? mode : "Search");
   }, [viewport.isMobile, page.kind]);
   const candidates = reorder.placement === null ? rows : paneRows;
   const admitted = paneListPresented || finding && list.identity === listIdentity;
@@ -293,21 +297,31 @@ export function useNexusController() {
   if (currentActive !== list.active) setList({ ...list, active: currentActive });
   const activeKey = currentActive?.key ?? null;
 
-  function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow) {
+  function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
     if (reorder.placement !== null && action.kind === "Available" && action.target.kind === "PaneOpen") {
-      if (activation.disposition.kind === "Fork") return;
+      if (activation.disposition.kind === "Fork") return null;
       if (reorder.placement.kind === "ChoosePane") reorder.choosePane(action.target.paneId);
       else reorder.place(reorder.placement.paneIds.indexOf(action.target.paneId) + 1);
-      return;
+      return null;
     }
-    if (action.kind === "Unavailable") { setAnnouncement(action.reason); return; }
+    if (action.kind === "Unavailable") { setAnnouncement(action.reason); return null; }
     if (row?.localMatch && (find.missingLocal.has(row.localMatch.resource.ref)
       || !find.local.some(match => match.resource.ref === row.localMatch?.resource.ref) && !find.localValidationReady)) {
       setAnnouncement(find.missingLocal.has(row.localMatch.resource.ref) ? "selection no longer available" : "checking availability…");
-      return;
+      return null;
     }
+    let target = action.target;
     const current = currentPage.current;
-    run(action.target, (current.kind === "UseText" || current.kind === "ChooseCreate" || current.kind === "ChooseBrowse") && current.activation.disposition.kind === "Fork" ? current.activation : activation, row);
+    // The new-pane picker admits only its target contract and always forks.
+    if (rootMode === "NewPane" && current.kind === "Root") {
+      const admitted = pickerTarget(target, panes);
+      if (!admitted) { setAnnouncement("this action isn’t available in this picker"); return null; }
+      target = admitted;
+      activation = { disposition: { kind: "Fork" } };
+    } else if ((current.kind === "UseText" || current.kind === "ChooseCreate" || current.kind === "ChooseBrowse") && current.activation.disposition.kind === "Fork") {
+      activation = current.activation;
+    }
+    return run(target, activation, row);
   }
 
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
@@ -358,6 +372,7 @@ export function useNexusController() {
     suppressReturnFocus.current = true;
     addSession.discard();
     setPage({ kind: "Root" });
+    setRootMode("Overview");
     setOpen(false);
   }
 
@@ -368,12 +383,12 @@ export function useNexusController() {
     return { mode: !open ? "Overview" : rootMode, control };
   }
 
-  function choiceReturn(row: NexusRow | undefined, activation: NexusTargetActivation): ChoiceReturn {
-    return page.kind === "UseText" ? { ...page, activation } : { kind: "Root", origin: rootOrigin(row) };
+  function choiceReturn(row: NexusRow | undefined, activation: NexusTargetActivation, origin: NexusRootOrigin | undefined): ChoiceReturn {
+    return origin ? { kind: "Root", origin } : page.kind === "UseText" ? { ...page, activation } : { kind: "Root", origin: rootOrigin(row) };
   }
 
   /** The one activation core. */
-  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
+  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, origin?: NexusRootOrigin): WorkspaceTargetActivationResult | null {
     reorder.cancel({ silent: true });
     if (target.kind !== "InternalHref" && target.kind !== "PaneOpen" && target.kind !== "OpenDailyPage" &&
       target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" && target.kind !== "CreatePage" &&
@@ -383,7 +398,7 @@ export function useNexusController() {
         let result: WorkspaceTargetActivationResult | null = null;
         activateResource(target.activation, {
           labelHint: target.label, disposition: activation.disposition,
-          activateTarget: ({ target: resource, disposition }) => result = run({ kind: "InternalHref", ...resource }, { disposition }, row),
+          activateTarget: ({ target: resource, disposition }) => result = run({ kind: "InternalHref", ...resource }, { disposition }, row, origin),
         });
         return result;
       }
@@ -395,21 +410,21 @@ export function useNexusController() {
         setOpen(true);
         return null;
       case "CreatePage":
-        return run({ kind: "InternalHref", href: "/pages/new", ...(target.titleDraft ? { entry: { kind: "ComposePage", title: target.titleDraft } as const } : {}) }, activation, row);
+        return run({ kind: "InternalHref", href: "/pages/new", ...(target.titleDraft ? { entry: { kind: "ComposePage", title: target.titleDraft } as const } : {}) }, activation, row, origin);
       case "CreateLibrary":
-        setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : choiceReturn(row, activation) });
+        setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: !origin && page.kind === "ChooseCreate" ? page : choiceReturn(row, activation, origin) });
         setOpen(true);
         return null;
       case "UseText":
-        setPage({ kind: "UseText", text: target.text, origin: rootOrigin(row), activation });
+        setPage({ kind: "UseText", text: target.text, origin: origin ?? rootOrigin(row), activation });
         setOpen(true);
         return null;
       case "ChooseCreate":
-        setPage({ kind: "ChooseCreate", draft: target.initialDraft, returnTo: choiceReturn(row, activation), activation });
+        setPage({ kind: "ChooseCreate", draft: target.initialDraft, returnTo: choiceReturn(row, activation, origin), activation });
         setOpen(true);
         return null;
       case "ChooseBrowse":
-        setPage({ kind: "ChooseBrowse", query: target.query, returnTo: choiceReturn(row, activation), activation });
+        setPage({ kind: "ChooseBrowse", query: target.query, returnTo: choiceReturn(row, activation, origin), activation });
         setOpen(true);
         return null;
       case "ResumeCurrentPlayback":
@@ -421,10 +436,8 @@ export function useNexusController() {
     if (target.kind === "OpenDailyPage" && text) {
       if (!guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
       const localDate = dailyDateFor(target.date, calendarTimeZone);
-      // the launcher waits on the capture; the query and its search are done with.
-      setQueryState("");
-      setList(EMPTY_LIST);
-      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, activation, submit: { kind: "Running", unconfirmed: false } });
+      // Keep the root origin and query for a guarded return.
+      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false } });
       setOpen(true);
       return null;
     }
@@ -585,7 +598,7 @@ export function useNexusController() {
     if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
     addSession.discard();
     setPage({ kind: "Root" });
-    if (exit.kind === "Close") { visible.current = false; setOpen(false); }
+    if (exit.kind === "Close") { visible.current = false; setRootMode("Overview"); setOpen(false); }
     return null;
   }
 
@@ -601,7 +614,7 @@ export function useNexusController() {
     setRecentlyClosedExpanded(false);
     if (!open) {
       opener.current = trigger ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
-      rootScroll.current = { Overview: 0, Search: 0 };
+      rootScroll.current = { Overview: 0, Search: 0, NewPane: 0 };
       suppressReturnFocus.current = false;
       transferFocus.current = null;
     }
@@ -615,15 +628,19 @@ export function useNexusController() {
     setList(EMPTY_LIST);
     setPage(nextPage);
     setOpen(true);
-    if (intent.kind === "QuickAction") activate(NEXUS_COMMANDS[intent.actionId].action(""), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
+    if (intent.kind === "QuickAction") {
+      const action = NEXUS_COMMANDS[intent.actionId].action("");
+      if (action.kind === "Available") run(action.target, PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search" });
+      else setAnnouncement(action.reason);
+    }
   }
 
   function setQuery(next: string) {
     reorder.cancel({ restoreFocus: false });
     if (reorder.placement === null && reorder.draggingPaneId === null) setAnnouncement("");
     setQueryState(next);
-    if (viewport.isMobile) setRootMode("Search");
-    if (next !== query) rootScroll.current.Search = 0;
+    if (viewport.isMobile) setRootMode((mode) => mode === "NewPane" ? mode : "Search");
+    if (next !== query) rootScroll.current[rootMode === "NewPane" ? "NewPane" : "Search"] = 0;
   }
 
   function setActive(key: string) {
@@ -645,7 +662,7 @@ export function useNexusController() {
       return setPage(page.returnTo);
     }
     const destination = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" || page.kind === "CreateLibrary" ? page.returnTo
-      : page.kind === "UseText" ? { kind: "Root" as const, origin: page.origin } : null;
+      : page.kind === "UseText" || page.kind === "CaptureToday" ? { kind: "Root" as const, origin: page.origin } : null;
     if (destination?.kind === "UseText") {
       rootFocus.current = page.kind === "ChooseBrowse" ? "Choice:browse…" : "Choice:create…";
       setPage(destination);
@@ -662,6 +679,10 @@ export function useNexusController() {
   function escape() {
     if (reorder.cancel()) return;
     if (page.kind !== "Root") back();
+    else if (rootMode === "NewPane") {
+      rootFocus.current = viewport.isMobile ? "NewPane" : "Search";
+      setRootMode("Overview");
+    }
     else if (viewport.isMobile && rootMode === "Search") {
       rootFocus.current = null;
       setRootMode("Overview");
@@ -681,9 +702,9 @@ export function useNexusController() {
     if (!latestWorkspace().state.panes.some((pane) => pane.id === paneId)) return null;
     const keys = rows.filter((row) => !paneListPresented || row.key.startsWith("Pane:")).map((row) => row.key);
     const row = rows.find((row) => row.secondary?.kind === "ClosePane" ? row.secondary.paneId === paneId
-      : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
+      : row.secondary?.kind === "TargetMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
     const index = keys.indexOf(row?.key ?? `Pane:${paneId}`);
-    const following = [...(row?.secondary?.kind === "ResourceMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
+    const following = [...(row?.secondary?.kind === "TargetMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
     const selection = workspace.closePane(paneId);
     if (selection === null) return null;
     const selected = keepWorkspaceSelection(selection);
@@ -713,7 +734,7 @@ export function useNexusController() {
       }
     } else if (page.kind === "Root" && viewport.isMobile) {
       rootFocus.current = "Search";
-      setRootMode("Search");
+      setRootMode((mode) => mode === "NewPane" ? mode : "Search");
       setFocusRevision((value) => value + 1);
     }
   };
@@ -762,7 +783,7 @@ export function useNexusController() {
       setSearchRefreshRevision(current => current + 1);
       setList(EMPTY_LIST);
       setFocusRevision(current => current + 1);
-      rootScroll.current.Search = 0;
+      rootScroll.current[rootMode === "NewPane" ? "NewPane" : "Search"] = 0;
     },
     retrySearch: find.retrySearch,
     retryRelated: find.retryRelated,
@@ -770,7 +791,7 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     announcement,
-    dialogLabel: page.kind === "Add" ? "Add content" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
+    dialogLabel: page.kind === "Add" ? "Add content" : page.kind === "Root" && rootMode === "NewPane" ? "open in new pane" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
     addSession,
     openingSources,
@@ -801,8 +822,23 @@ export function useNexusController() {
       presentation: presentations.forVisit(snapshot.pane.current_visit),
     })),
     setQuery,
-    enterSearch: () => { reorder.cancel({ restoreFocus: false }); setRootMode("Search"); },
+    enterSearch: () => { reorder.cancel({ restoreFocus: false }); setRootMode((mode) => mode === "NewPane" ? mode : "Search"); },
+    destinationHref(row: NexusRow): string | null {
+      if (row.action.kind !== "Available") return null;
+      const target = row.action.target;
+      if (target.kind === "InternalHref") return target.href;
+      if (target.kind === "Resource") return target.activation.kind === "route" ? target.activation.href : null;
+      if (target.kind === "OpenDailyPage") return `/daily/${dailyDateFor(target.date, calendarTimeZone)}`;
+      return null;
+    },
+    enterNewPane: () => { reorder.cancel({ restoreFocus: false }); rootFocus.current = "Search"; setRootMode("NewPane"); setFocusRevision((value) => value + 1); },
     submitInput(activation: NexusTargetActivation) {
+      const admission = parsed.intent.kind === "Command" ? NEXUS_COMMANDS[parsed.intent.id].action("") : queryAction;
+      const deliberateSelection = !viewport.isMobile && list.identity === listIdentity && list.moved && currentActive?.key != null;
+      if (rootMode === "NewPane" && !deliberateSelection && admission?.kind === "Available" && parsed.intent.kind !== "Search" && pickerTarget(admission.target, panes) === null) {
+        setAnnouncement("this action isn’t available in this picker");
+        return;
+      }
       if (!viewport.isMobile) {
         if (currentActive?.key == null) { setAnnouncement("selection no longer available"); return; }
         if (!admitted) return;
@@ -815,15 +851,14 @@ export function useNexusController() {
         const local = find.localReference;
         if (local !== null) {
           if (local.href === null) setAnnouncement("source unavailable");
-          else run({ kind: "InternalHref", href: local.href, labelHint: local.label }, activation);
+          else activate({ kind: "Available", target: { kind: "InternalHref", href: local.href, labelHint: local.label } }, activation);
           return;
         }
         if (find.reference === null) return;
         activate(resourceAction(find.reference), activation);
         return;
       }
-      const action = nexusQueryAction(parsed);
-      if (action !== null) activate(action, activation);
+      if (queryAction !== null) activate(queryAction, activation);
     },
     setActive,
     retry: find.retry,
@@ -839,7 +874,7 @@ export function useNexusController() {
     guardClose(): DismissDecision {
       if (reorder.cancel()) return "blocked";
       if (page.kind === "Add") return guardExit({ kind: "Close" });
-      if (viewport.isMobile && page.kind === "Root" && rootMode === "Search") {
+      if (viewport.isMobile && page.kind === "Root" && rootMode !== "Overview") {
         escape();
         return "blocked";
       }
@@ -885,7 +920,7 @@ export function useNexusController() {
           : page.kind !== "Root"
             ? "[data-switchboard-heading]"
             : viewport.isMobile
-              ? rootMode === "Search" ? "[data-mobile-nexus-search]" : "[data-switchboard-heading]"
+              ? rootMode !== "Overview" ? "[data-mobile-nexus-search]" : "[data-switchboard-heading]"
               : '[role="combobox"]',
       );
     },
