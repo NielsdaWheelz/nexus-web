@@ -83,9 +83,11 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
-  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), nameMatch, excerpt: null };
+  const label = localResourceLabel(resource);
+  if (!body || first === Infinity) return { resource, kind, label, href: localResourceHref(resource, { activationRef }), nameMatch, excerpt: null };
   const [literalFirst] = literalRange(body, first, first + 1);
-  const start = Math.max(0, literalFirst - CONTEXT), end = Math.min(body.length, literalFirst + CONTEXT * 2);
+  const named = (resource.kind === "page" || resource.kind === "source") && body === label;
+  const start = named ? 0 : Math.max(0, literalFirst - CONTEXT), end = named ? body.length : Math.min(body.length, literalFirst + CONTEXT * 2);
   const slice = body.slice(start, end);
   const sliceLower = slice.toLowerCase();
   const marks: [number, number][] = [];
@@ -94,7 +96,7 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
   // overlapping token spans keep the earliest; each character renders once.
   const kept: [number, number][] = [];
   for (const mark of marks) if (!kept.length || mark[0] >= kept.at(-1)![1]) kept.push(mark);
-  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), nameMatch,
+  return { resource, kind, label, href: localResourceHref(resource, { activationRef }), nameMatch,
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
