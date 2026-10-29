@@ -54,8 +54,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-compact palette and inline pane list against `480c20a39`: +698 net authored
-runtime lines (1,702 added, 1,004 deleted): web +611, shared authored +74,
+compact palette and inline pane list against `480c20a39`: +699 net authored
+runtime lines (1,704 added, 1,005 deleted): web +612, shared authored +74,
 search python +13. the retained search fixture's format-3 capture update adds
 27 verification lines (37 added, 10 deleted); bounded android lab cleanup adds
 20 helper lines (24 added, 4 deleted). one relevance-ordered list and
