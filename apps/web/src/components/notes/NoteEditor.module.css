@@ -127,3 +127,44 @@
   text-decoration: none;
   color: inherit;
 }
+
+/* Header prose scrolls independently; its owned controls remain outside the
+   scrolling host and inside the shell's usable header space. */
+.shell[data-header-editor="true"] {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--pane-header-editor-max-height, 0px);
+}
+
+.shell[data-header-editor="true"] > * {
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.shell[data-header-editor="true"] .host {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.shell[data-header-editor="true"] .view {
+  max-width: none;
+}
+
+.shell[data-header-editor="true"] .toolbar {
+  position: relative;
+  inset: auto;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+
+.shell[data-header-editor="true"] .linkDialog {
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  inset: auto;
+  max-width: 100%;
+  margin-top: var(--space-1);
+}

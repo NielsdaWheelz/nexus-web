@@ -164,11 +164,11 @@ export class OutlinePendingInput {
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }
-  split(row_id: string, left: NoteBody, right: NoteBody, from: number, to: number, displayed: DisplayedWriting, placement?: {parent_id: string; parent_ref: string; after_id: string | null}): string {
+  split(row_id: string, left: NoteBody, right: NoteBody, from: number, to: number, displayed: DisplayedWriting): string {
     const owner = this.current(), row = this.row(row_id), bound = this.bound.get(row_id);
     if (!bound?.document) throw new Error("split requires its displayed canonical identities");
-    const successor = crypto.randomUUID(), parent = {...row, ...placement};
-    const target: PendingOutlineField = {...parent, row_id: successor, after_id: placement ? placement.after_id : row_id, before_id: undefined,
+    const successor = crypto.randomUUID();
+    const target: PendingOutlineField = {...row, row_id: successor, after_id: row_id, before_id: undefined,
       ref: null, link: null, resource: null, kind: "body", body: right, hidden: false, pending: true, origin: owner.history.typingOrigin(),
       relocating: undefined, previousParent: undefined, previousParentRef: undefined, settledRevision: undefined, receiptOwner: undefined};
     const admitted = owner.history.split({source: bound.document, displayed: {body_state: displayed.body_state, from, to},
