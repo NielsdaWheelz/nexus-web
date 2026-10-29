@@ -2,6 +2,13 @@
 
 open; separate reader performance work, outside the 57 metadata repairs.
 
+2026-10-28 source review at `0f7d6ffa6`: the mounting concern remains.
+`apps/web/src/app/(authenticated)/media/[id]/evidence/EvidencePane.tsx:341`
+maps every placed entry, `evidence/EvidenceRow.tsx:66` hides excluded rows,
+and `apps/web/src/components/resources/ResourceOutlineRow.tsx:427-430` mounts
+expanded children. the measurement below is historical; no current runtime
+benchmark was performed during this review.
+
 still blocks mobile companion release at `da19e2959`: a valid 10,000-reference
 epub exceeded ordinary connections readiness, then browser readback stalled.
 current reproduction and release requirements live in
@@ -24,3 +31,15 @@ a bounded/windowed connections list should retain source identities, selected
 rows, disclosure, focus and source/return behavior. resolved when an ordinary
 large-book source/return journey stays responsive without mounting the entire
 connection corpus. preserve canonical text, saved positions and existing rows.
+
+2026-10-28 source review at `96a3b7bdf`: hiding a group also retains its resource
+reads/child-availability registration (`ResourceOutlineRow.tsx:289-298`). expanded
+source targets (`SourceNote.tsx:103-124`) and loaded remote facts
+(`components/connections/RemoteConnections.tsx`) need bounded rendering too.
+the existing normal-flow restore waits for every remembered source disclosure's
+terminal layout (`EvidencePane.tsx:240-243`); windowing must replace that all-mounted
+premise or offscreen details can prevent restoration from settling. the existing
+measured index primitive requires uniform rows and cannot be applied unchanged.
+these are source findings, not new timing measurements. qualification must also
+account for a single large rich body, downloaded-reader draft retention and
+native find/selection across unmounted content before claiming a complete bound.

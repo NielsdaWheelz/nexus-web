@@ -23,3 +23,8 @@ background work inside unchanged service/host budgets, without recovery. see
 [capacity](production-database-connection-budgets-implicit.md). the exact incident,
 kernel hashes and profiling limits remain privately archived under
 `.nexus-local/search-integration-docs-20261029.private/original-source/docs/issues/production-search-postgres-oom.md`.
+the detailed main-side kernel, request and retained-backend profiling record is
+also preserved in
+`.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-search-postgres-oom.md`.
+its old timer failures remain failures; current capacity/progress acceptance is
+owned by the reliability contract, not those retired latency cutoffs.

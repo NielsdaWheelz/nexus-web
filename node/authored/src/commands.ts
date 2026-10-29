@@ -35,6 +35,10 @@ export function createNoteIntent(ref:string, body:NoteBody): Extract<Intent,{kin
 export function createHighlightIntent(ref:string,source_ref:string,selection:SelectionCapture,color:HighlightColor,body:NoteBody): Extract<Intent,{kind:"create_highlight"}> {
   return {kind:"create_highlight",ref,source_ref,selection:structuredClone(selection),color,body_update:createNote(body)};
 }
+function newSelection(selection:SelectionCapture):SelectionCapture {
+  if(selection.locator.type==="x_capture_offsets" && (selection.publication?.kind!=="x_capture" || selection.publication.capture_id!==selection.locator.capture_id)) throw new TypeError("New x selections require a matching capture publication");
+  return canonicalSelection(selection);
+}
 function patchOf(r:ResourceState):ResourcePatch {
   switch(r.kind) {
     case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null};
@@ -101,11 +105,11 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "create_highlight": {
         const known=knownResource(action.ref);
         if(known){if(known.kind!=="highlight"||known.source_ref!==action.source_ref)throw new TypeError("Highlight kind and source are immutable");return;}
-        change.resources.push({kind:"highlight",ref:action.ref,source_ref:action.source_ref,touch_vv:dot,delete_vv:{},selection:register(canonicalSelection(action.selection)),color:register(action.color),body_update:action.body_update});return;
+        change.resources.push({kind:"highlight",ref:action.ref,source_ref:action.source_ref,touch_vv:dot,delete_vv:{},selection:register(newSelection(action.selection)),color:register(action.color),body_update:action.body_update});return;
       }
       case "update_highlight": {
         const old=resource(action.ref);if(old.kind!=="highlight")throw new TypeError("Highlight edit addresses a highlight");
-        change.resources.push({kind:"highlight",ref:old.ref,source_ref:old.source_ref,body_update:null,touch_vv:dot,delete_vv:{},selection:action.selection===null?old.selection:register(canonicalSelection(action.selection)),color:action.color===null?old.color:register(action.color)});return;
+        change.resources.push({kind:"highlight",ref:old.ref,source_ref:old.source_ref,body_update:null,touch_vv:dot,delete_vv:{},selection:action.selection===null?old.selection:register(newSelection(action.selection)),color:action.color===null?old.color:register(action.color)});return;
       }
     }
   };

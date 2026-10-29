@@ -181,6 +181,13 @@ article slot's `target_x_post_capture_id`. primary thread order and placement id
 remain stable. quoted/context posts create no independent media, placement,
 source attempt or metadata-naming job. ordinary non-x embeds keep their owners.
 
+`x_post_captures.captured_at` is the original body observation time, null when
+historical evidence did not retain it. `created_at` records capture-row creation.
+new acquisitions require capture and check times; reusing identical evidence
+preserves the existing capture's time, including null. standalone readers omit
+an unknown saved date while retaining the post count. thread summaries retain
+their publication time.
+
 article publication retains its literal attributed excerpt before enrichment.
 `capture_x_quote` acquires outside transactions and binds complete evidence only
 under the live claim, current slot job and matching published source provenance.

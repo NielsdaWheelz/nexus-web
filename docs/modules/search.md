@@ -39,8 +39,10 @@ the caller's original deadline covers provider transport, admission and database
 work. cancellation stops subsequent local requests and retries and joins cleanup;
 cleanup may finish after the response deadline. running synchronous provider work
 in a thread does not give it the awaiting task's cancellation lifetime. strict
-retrieval's remaining [embedding gap](../issues/tool-search-embedding-outlives-deadline.md)
-must retain its own declared fallback semantics when repaired.
+retrieval now awaits native async embedding inside its caller's deadline, with
+explicit requested-semantic failure; its
+[delayed-provider cancellation proof](../issues/tool-search-embedding-outlives-deadline.md)
+remains required. background indexing keeps its separate provider policy.
 
 [production composition](../../deployment.md#capacity-contract) owns aggregate
 capacity. query qualification uses representative data and warmed connections;
@@ -51,6 +53,13 @@ slower background refresh is an explicit cost of foreground progress; useful
 background completion remains required.
 the [reliability spec](../search-reliability-spec.md) owns current qualification
 and release gates; historical timing verdicts retain their recorded scope.
+the [capacity spec](../database-capacity-spec.md) owns physical topology and
+accounting; its current pool/listener allocation remains provisional until the
+complete reachable workload fits. mechanisms are justified by ownership and
+control progress, not by a prescribed pr split.
+production host swap stays enabled while postgres and service leaves disallow
+swap; host ram reserve and swap pressure are accounted separately. no swapless
+host condition follows from the leaf limits.
 
 ## browser discovery
 
@@ -224,6 +233,11 @@ wait. control checkout keeps an independent 250-millisecond wait. physical role
 quotas and zero overflow retain their bounds. these waits are operational
 safeguards; they neither promise end-to-end latency nor extend a caller's
 transport allowance. exhausted checkout still returns `E_DATABASE_BUSY`.
+native engine connection setup has a separate two-second timeout per resolved
+address. the single local postgres endpoint has no multi-primary failover
+requirement; DNS, pool queueing and SQL remain distinct stages. control SQL is
+bounded at one second, and async readiness/search keep their original aggregate
+deadline plus joined cleanup. a pool wait limit does not bound native setup.
 
 authored scope-input and scope-text hydration share one api-process permit,
 acquired before their repeatable-read session and held through inline cleanup.

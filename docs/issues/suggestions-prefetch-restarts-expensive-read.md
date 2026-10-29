@@ -1,6 +1,10 @@
 # suggestions prefetch starts work its deadline cannot accommodate
 
-status: open (two attempts source-confirmed; database overlap unmeasured)
+status: historical duplicate-attempt diagnosis; its exact database overlap remains
+unmeasured. current suggestions use a completed published read model and a
+separate observed refresh job, as owned by
+[the suggestion contract](../modules/suggestions.md). the historical 500 ms seed
+allowance below is not a current latency requirement.
 origin: 2026-10-14 lectern latency diagnosis, source `367da80e0`
 area: workspace / suggestions acquisition
 
@@ -17,10 +21,12 @@ the seed therefore spends its budget on a recomputation it cannot deliver.
 database work can outlive cancellation, but overlapping execution from this
 specific seed/client pair has not been observed.
 
-prerequisite: decide the suggestions serving contract. seed a bounded,
-published read model if adopted; otherwise stop launching the expensive
-ranker as a speculative seed. do not lengthen shell blocking to fit ranking.
+the serving decision is now made: ordinary reads/refresh never run ranking inline.
+retain this historical failure; do not restore its removed online-first bootstrap
+owner or duplicate recomputation merely to reproduce it.
 
-acceptance: one lectern entry has a documented request trace, bounded first
-paint and no discarded full recomputation followed by a duplicate. verify
-database lifetime separately from transport abort. no implementation here.
+resolve the remaining historical overlap question only with attributable evidence;
+do not repeat runs to manufacture it. current qualification instead traces one
+normal lectern visit through useful publication reads, with no discarded full
+recomputation followed by a duplicate, and verifies database lifetime separately
+from transport abort under the common reliability contract.

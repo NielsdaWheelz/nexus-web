@@ -40,4 +40,7 @@ workload within a justified unchanged envelope, then the required
 [actual 2 gib qualification](search-whole-host-qualification-environment.md).
 this larger-host failure does not establish failure of a physical 2 gib topology:
 the 1280 mib budget includes declared outside-system/connector/reserve deductions.
+its no-swap parent was a component experiment boundary, not a requirement that
+the production 2 gib ram host disable its provisioned swap. service-leaf no-swap
+limits and host ram/swap accounting remain separate.
 no silent budget increase, counter clearing or failed-job reset can produce a pass.

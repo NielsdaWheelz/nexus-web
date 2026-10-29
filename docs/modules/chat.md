@@ -371,6 +371,11 @@ and source arrival remain resource-owned.
     automatic context additions only while the admitted context version is current.
 13. a quote is written once from the locked highlight; every later read derives from the
     snapshot; its revision is the sha256 of the canonical json.
+    schema conversion preserves its literal words and source attribution. an unknown
+    original `source_identity` stays null; a separately proved retained locator may
+    still support navigation. attribution is a fallback destination only when the
+    captured target has no owner. conversion never rewrites accepted run inputs to
+    match the snapshot's new derived revision.
 14. the frozen prompt: the fixed system prompt; then the quote, selection and resources
     context, contiguous newest-first history within the token and 512 KiB budgets, and the
     turn; mandatory context never drops (`E_GENERATION_CONTEXT_TOO_LARGE`).

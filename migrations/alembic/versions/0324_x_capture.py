@@ -1,6 +1,7 @@
 """Move retained x bodies to immutable captures.
 
 Writers must stop. Existing fragment, highlight and causal identities are retained;
+historically unknown body observation times remain null.
 unknown source bindings abort rather than inventing a body. The authored feed is
 not rewritten. Downgrade requires a matched backup and client restore.
 """
@@ -49,7 +50,7 @@ def upgrade() -> None:
     op.execute("""CREATE TABLE x_post_captures (
         id uuid PRIMARY KEY, post_id uuid NOT NULL REFERENCES x_post_sources(id),
         source_revision_id text NOT NULL, payload jsonb NOT NULL,
-        captured_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+        captured_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
         asset_job_id uuid REFERENCES background_jobs(id))""")
     op.execute("""CREATE TABLE x_post_capture_contexts (
         id uuid PRIMARY KEY, capture_id uuid NOT NULL REFERENCES x_post_captures(id),
@@ -142,13 +143,9 @@ def upgrade() -> None:
                     f"0324 x source {row['id']} has a body with no provider evidence"
                 )
             continue
-        if (
-            row["fragment_count"] != 1
-            or row["fragment_id"] is None
-            or row["body_captured_at"] is None
-        ):
+        if row["fragment_count"] != 1 or row["fragment_id"] is None:
             raise RuntimeError(
-                f"0324 x source {row['id']} lacks one dated original fragment"
+                f"0324 x source {row['id']} lacks one original fragment"
             )
         payload = row["payload"]
         if not isinstance(payload, dict) or not isinstance(
@@ -288,10 +285,22 @@ def _convert_workspace(db: sa.Connection) -> None:
         WHERE target_x_post_capture_id IS NOT NULL""")
         )
     }
-    uncaptured = {
+    retiring_uncaptured = {
         str(value)
-        for value in db.scalars(sa.text("SELECT media_id FROM x_uncaptured_media"))
+        for value in db.scalars(
+            sa.text("""SELECT u.media_id FROM x_uncaptured_media u
+        WHERE NOT EXISTS (SELECT 1 FROM library_entries WHERE media_id=u.media_id)
+          AND NOT EXISTS (SELECT 1 FROM resource_grants WHERE subject_scheme='media' AND subject_id=u.media_id)
+          AND NOT EXISTS (SELECT 1 FROM authored_links WHERE state->>'endpoint_a'='media:'||u.media_id::text
+            OR state->>'endpoint_b'='media:'||u.media_id::text)
+          AND NOT EXISTS (SELECT 1 FROM document_embeds WHERE target_media_id=u.media_id)
+          AND NOT EXISTS (SELECT 1 FROM note_blocks n CROSS JOIN LATERAL
+            jsonb_array_elements(COALESCE(n.body_pm_json->'content','[]'::jsonb)) item
+            WHERE item->>'type'='resource_embed' AND item->'attrs'->>'resource_ref'='media:'||u.media_id::text)""")
+        )
     }
+    surviving = {str(value) for value in db.scalars(sa.text("SELECT id FROM media"))}
+    surviving -= (mappings.keys() - retained) | retiring_uncaptured
 
     def old_occurrence(
         reading: object,
@@ -552,23 +561,38 @@ def _convert_workspace(db: sa.Connection) -> None:
                 media = pieces[2]
                 mapping = mappings.get(media)
                 retired = mapping is not None and media not in retained
-                if media in uncaptured and not db.scalar(
-                    sa.text("""SELECT EXISTS(
-                    SELECT 1 FROM library_entries WHERE media_id=CAST(:id AS uuid) UNION ALL
-                    SELECT 1 FROM resource_grants WHERE subject_scheme='media' AND subject_id=CAST(:id AS uuid)
-                    UNION ALL SELECT 1 FROM authored_links WHERE state->>'endpoint_a'='media:'||:id OR state->>'endpoint_b'='media:'||:id
-                    UNION ALL SELECT 1 FROM document_embeds WHERE target_media_id=CAST(:id AS uuid)
-                    UNION ALL SELECT 1 FROM note_blocks n CROSS JOIN LATERAL
-                        jsonb_array_elements(COALESCE(n.body_pm_json->'content','[]'::jsonb)) item
-                        WHERE item->>'type'='resource_embed' AND item->'attrs'->>'resource_ref'='media:'||:id)"""),
-                    {"id": media},
-                ):
+                if media in retiring_uncaptured:
                     raise RuntimeError(
                         f"0324 workspace {row['id']} names an uncaptured retiring source"
                     )
                 if not retired and media not in affected:
                     continue
                 query = parse_qsl(url.query, keep_blank_values=True)
+                if len(query) == 1 and query[0][0] == "source_attempt_id":
+                    try:
+                        attempt_id = UUID(query[0][1])
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            f"0324 workspace {row['id']} has invalid source handoff"
+                        ) from exc
+                    destination = db.scalar(
+                        sa.text("""SELECT COALESCE(
+                        (SELECT media_id FROM media_source_supersessions WHERE source_attempt_id=:id),
+                        (SELECT media_id FROM media_source_attempts WHERE id=:id))::text"""),
+                        {"id": attempt_id},
+                    )
+                    if (
+                        str(attempt_id) != query[0][1]
+                        or url.fragment
+                        or media not in surviving
+                        or destination not in surviving
+                    ):
+                        raise RuntimeError(
+                            f"0324 workspace {row['id']} has unproved source handoff"
+                        )
+                    # Acceptance resolves its own destination; preserve the receipt
+                    # and href exactly, without inventing a reader position.
+                    continue
                 if any(key != "loc" for key, _ in query) or len(query) > 1:
                     raise RuntimeError(
                         f"0324 workspace {row['id']} has unknown reader query"
@@ -837,16 +861,21 @@ def _retire_context_media(db: sa.Connection) -> None:
             raise RuntimeError(
                 f"0324 uncaptured media {media_id} has a retained destination requiring repair"
             )
+        # Frozen attribution is not a destination when a target owner exists.
+        # Without one, the evidence reader falls back to source.ref.
         if db.scalar(
             sa.text("""SELECT EXISTS(
             SELECT 1 FROM messages m WHERE m.reader_selection_snapshot #>> '{evidence,target,owner_ref}'='media:'||CAST(:media AS text)
-              OR m.reader_selection_snapshot #>> '{evidence,source,ref}'='media:'||CAST(:media AS text)
+              OR (NULLIF(m.reader_selection_snapshot #>> '{evidence,target,owner_ref}', '') IS NULL
+                AND m.reader_selection_snapshot #>> '{evidence,source,ref}'='media:'||CAST(:media AS text))
             UNION ALL SELECT 1 FROM resource_edges e WHERE e.origin='citation' AND
               (e.snapshot #>> '{evidence,target,owner_ref}'='media:'||CAST(:media AS text)
-               OR e.snapshot #>> '{evidence,source,ref}'='media:'||CAST(:media AS text))
+               OR (NULLIF(e.snapshot #>> '{evidence,target,owner_ref}', '') IS NULL
+                 AND e.snapshot #>> '{evidence,source,ref}'='media:'||CAST(:media AS text)))
             UNION ALL SELECT 1 FROM message_retrievals r WHERE
               r.captured_evidence #>> '{target,owner_ref}'='media:'||CAST(:media AS text)
-              OR r.captured_evidence #>> '{source,ref}'='media:'||CAST(:media AS text)
+              OR (NULLIF(r.captured_evidence #>> '{target,owner_ref}', '') IS NULL
+                AND r.captured_evidence #>> '{source,ref}'='media:'||CAST(:media AS text))
               OR r.locator->>'media_id'=CAST(:media AS text)
               OR r.context_ref #>> '{passage_target,owner_ref}'='media:'||CAST(:media AS text)
               OR r.result_ref->>'deep_link'='/media/'||CAST(:media AS text))"""),
@@ -1376,7 +1405,7 @@ def _convert_evidence(db: sa.Connection) -> None:
             target.get("owner_ref")
         )
 
-    def passage(target: object, identity: str) -> object:
+    def passage(target: object, identity: str, quote_exact: object) -> object:
         if not isinstance(target, dict) or target.get("kind") != "passage":
             return target
         mapping = passage_mapping(target)
@@ -1385,45 +1414,48 @@ def _convert_evidence(db: sa.Connection) -> None:
         owner = target.get("owner_ref")
         if not isinstance(owner, str) or not owner.startswith("media:"):
             raise RuntimeError(f"0324 {identity} has an unknown reading owner")
-        generation = db.scalar(
-            sa.text(
-                "SELECT generation FROM reader_publications WHERE media_id::text=:id"
-            ),
-            {"id": owner.removeprefix("media:")},
-        )
-        if generation is None or target.get("source_identity") != f"g{generation}":
-            raise RuntimeError(
-                f"0324 {identity} refers to a different or unknown publication"
+        if "source_identity" not in target:
+            raise RuntimeError(f"0324 {identity} lacks source publication evidence")
+        source_identity = target["source_identity"]
+        if source_identity is None:
+            if owner != f"media:{mapping['media_id']}":
+                raise RuntimeError(f"0324 {identity} has conflicting retained owner")
+        else:
+            generation = db.scalar(
+                sa.text(
+                    "SELECT generation FROM reader_publications WHERE media_id::text=:id"
+                ),
+                {"id": owner.removeprefix("media:")},
             )
-        target["locator"] = _convert_locator(target.get("locator"), mapping, identity)
+            if generation is None or source_identity != f"g{generation}":
+                raise RuntimeError(
+                    f"0324 {identity} refers to a different or unknown publication"
+                )
+        converted = _convert_locator(target.get("locator"), mapping, identity)
+        if (
+            not isinstance(quote_exact, str)
+            or quote_exact
+            != mapping["canonical_text"][
+                converted["start_offset"] : converted["end_offset"]
+            ]
+        ):
+            raise RuntimeError(
+                f"0324 {identity} quote differs from retained text"
+            )
+        target["locator"] = converted
         target["owner_ref"] = f"fragment:{mapping['fragment_id']}"
-        target["source_identity"] = str(mapping["capture_id"])
+        if source_identity is not None:
+            target["source_identity"] = str(mapping["capture_id"])
         return target
 
     def evidence(value: object, identity: str) -> object:
         if not isinstance(value, dict):
             return value
         target = value.get("target")
-        mapping = passage_mapping(target)
-        value["target"] = passage(target, identity)
-        if mapping is not None:
-            converted = value["target"]["locator"]
-            quote = value.get("quote")
-            if (
-                not isinstance(quote, dict)
-                or quote.get("exact")
-                != mapping["canonical_text"][
-                    converted["start_offset"] : converted["end_offset"]
-                ]
-            ):
-                raise RuntimeError(f"0324 {identity} quote differs from retained text")
-        source = value.get("source")
-        if (
-            mapping is not None
-            and isinstance(source, dict)
-            and source.get("ref") == f"media:{mapping['media_id']}"
-        ):
-            source["ref"] = f"fragment:{mapping['fragment_id']}"
+        quote = value.get("quote")
+        value["target"] = passage(
+            target, identity, quote.get("exact") if isinstance(quote, dict) else None
+        )
         return value
 
     rows = list(
@@ -1447,6 +1479,10 @@ def _convert_evidence(db: sa.Connection) -> None:
         target = snapshot.get("evidence", {}).get("target")
         mapping = passage_mapping(target)
         if mapping is not None:
+            if f"media:{key['media_id']}" != target.get("owner_ref"):
+                raise RuntimeError(
+                    f"0324 message {row['id']} has conflicting frozen reader key"
+                )
             key["media_id"] = None
             key["capture_id"] = str(mapping["capture_id"])
         elif mappings.get(f"media:{key['media_id']}") is not None:
@@ -1528,9 +1564,18 @@ def _convert_evidence(db: sa.Connection) -> None:
             raise RuntimeError(
                 f"0324 retrieval {row['id']} has conflicting result locator"
             )
+        captured_quote = (
+            row["captured_evidence"].get("quote")
+            if isinstance(row["captured_evidence"], dict)
+            else None
+        )
         if isinstance(context, dict):
             context["passage_target"] = passage(
-                context.get("passage_target"), f"retrieval {row['id']}"
+                context.get("passage_target"),
+                f"retrieval {row['id']}",
+                captured_quote.get("exact")
+                if isinstance(captured_quote, dict)
+                else None,
             )
         result = row["result_ref"]
         if isinstance(result, dict):
@@ -1907,7 +1952,9 @@ def _convert_authored(db: sa.Connection) -> None:
                 raise RuntimeError(f"0324 {identity} lacks a capture register")
             publication = capture.get("publication")
             if publication is None:
-                if mapping["generation"] != 1:
+                # Highlight anchors prove a retained location, not the original
+                # publication. Keep that provenance unknown after conversion.
+                if table == "authored_passages" and mapping["generation"] != 1:
                     raise RuntimeError(
                         f"0324 {identity} has no proof of its original publication"
                     )
@@ -1961,10 +2008,11 @@ def _convert_authored(db: sa.Connection) -> None:
                             f"0324 {identity} conflicts with its anchor projection"
                         )
                 capture["locator"] = converted
-            capture["publication"] = {
-                "kind": "x_capture",
-                "capture_id": str(mapping["capture_id"]),
-            }
+            if publication is not None or table == "authored_passages":
+                capture["publication"] = {
+                    "kind": "x_capture",
+                    "capture_id": str(mapping["capture_id"]),
+                }
             state["source_ref"] = f"fragment:{mapping['fragment_id']}"
             db.execute(
                 sa.text(

@@ -27,6 +27,7 @@ from nexus.schemas.authored import (
     FeedChange,
     MergeResult,
     ProvisionReplica,
+    SelectionCapture,
     UploadChanges,
 )
 from nexus.services.authored import helper
@@ -331,9 +332,14 @@ def _validate_capture_sources(db: Session, account_id: UUID, changes: list[Chang
                 continue
             if (
                 source_ref != f"fragment:{locator.fragment_id}"
-                or capture.publication is None
-                or capture.publication.kind != "x_capture"
-                or capture.publication.capture_id != locator.capture_id
+                or (capture.publication is None and not isinstance(capture, SelectionCapture))
+                or (
+                    capture.publication is not None
+                    and (
+                        capture.publication.kind != "x_capture"
+                        or capture.publication.capture_id != locator.capture_id
+                    )
+                )
             ):
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, "Capture identity mismatch"

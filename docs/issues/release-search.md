@@ -27,10 +27,18 @@ historical timing targets and waivers remain historical under the
   source/image/schema/wire/client identities and continuation of locally
   committed writing across paired restart. executed 0319/0320/0321 candidate
   receipts describe a different lineage; never relabel them as 0329 proof.
+  include main `e2192e593`'s historical x conversion: unknown capture timestamps
+  and unknown original highlight publication remain null; frozen saved attribution and
+  valid source handoff remain intact. new commands still require proved current
+  capture identity. prior `ff83a5318` receipts do not qualify this revised 0324.
+  wire 17 and authored format 4 remain unchanged absent an actual contract need.
 
 - qualify current-source useful retrieval, foreground/background progress,
   due-feed convergence, authored writing/retry and stop controls under unchanged
-  service limits. the 7173 e8 run completed the full functional recheck, including
+  service limits, on 2 gib ram with the provisioned host swap enabled. service
+  leaves retain equal memory/memswap limits; measure host swap use/pressure and
+  preserve physical ram reserves without requiring zero host swap. the 7173 e8
+  run completed the full functional recheck, including
   both publications at input 1212, foreground overlap, ordinary writing/reload,
   prefix 2, ui stop and strict/index work, but FAILED on an invalid backup filename
   before backup creation. the next 1b run used the valid key and suffered a parent
@@ -52,6 +60,12 @@ historical timing targets and waivers remain historical under the
   a reviewed value. control remains independently 0.25s; physical quotas/overflow
   stay fixed. this operational allowance neither extends caller deadlines nor
   establishes a search latency promise.
+  native engine connects now use the driver's two-second minimum per resolved
+  address, separately from queueing and the one-second control SQL deadline.
+  qualify stalled-connect heartbeat/startup/shutdown and joined readiness under
+  the actual single postgres endpoint; this setting is not a DNS or total
+  checkout deadline. align captured production overrides with the reviewed
+  ordinary five-second wait; the example now uses that default.
 
 - real import/metadata qualification remains blocked by the authorized brave
   account's [payment refusal](live-search-qualification-brave-payment-required.md).
@@ -59,6 +73,10 @@ historical timing targets and waivers remain historical under the
   success does not waive it. keep the [verse defect](oracle-verse-anchors-cross-content-chunks.md)
   and [unavailable blake locator](oracle-resolved-blake-anchor-has-no-captured-location.md)
   distinct from async oracle qualification with unchanged prose works.
+  personal x-capture retrieval has a separate pre-existing
+  [membership/attribution omission](oracle-personal-search-omits-x-captures.md).
+  earlier oracle/vector proofs do not establish that lane's coverage; adding a
+  fragment kind alone is not a lawful repair or a qualification substitute.
 
 - take `POSTGRES_IMAGE` from the accepted release artifact, review its full
   package proof and publish through `deploy/hetzner/sync-env.sh`. selected exact

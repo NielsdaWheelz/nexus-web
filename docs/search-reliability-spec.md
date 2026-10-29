@@ -4,7 +4,9 @@ contract revised 2026-10-28; implementation status reconciled 2026-10-29.
 historical evidence retains its recorded source and migration identity. the isolated
 integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
 migration 0329/down 0328 and passed the sole static gate. that closes the source/head
-collision. current disposable functional composition also passed as scoped below;
+collision. that frozen integration's disposable functional composition passed as
+scoped below. integration of main `e2192e593` preserves its historical x-data
+contracts; earlier static/manual receipts do not qualify this newer tree.
 integrated migration, full native runtime and release qualification remain open.
 the previous spec is preserved at
 `.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
@@ -22,14 +24,23 @@ latency/phase-cutoff requirements. **no replacement numeric deadline is approved
 their values are safeguards, not acceptance targets. qualification remains
 required as specified below.
 
+this document owns common acceptance. [database capacity](database-capacity-spec.md)
+owns physical topology/accounting; [suggestion admission](suggestion-admission-spec.md)
+owns exact domains, ranking, admission and publication. these are cohesive owner
+boundaries, not prescribed separate prs or duplicated acceptance contracts.
 this target supersedes conflicting timing requirements in
 [search](modules/search.md), [suggestions](modules/suggestions.md),
 [release-search](issues/release-search.md) and linked issue resolution clauses.
 it does not change historical verdicts or turn old failures into passes.
 
-retain the 2 gib host, postgres 512 mib/no-swap, api 384 mib and other existing
+retain the 2 gib ram host, postgres 512 mib/no-swap leaf, api 384 mib and other existing
 service limits. retain the established 64 mib database and 128 mib workload host
 reserves; deployment's separate 256 mib available-memory preflight stays intact.
+production host swap remains enabled: cloud-init provisions at least 1 gib.
+the no-swap condition applies to service leaves, whose `memswap_limit` equals
+`mem_limit`, not to the host. record host ram headroom, swap use and pressure
+alongside service charges; swap capacity is not physical ram reserve. nonzero
+host swap use is not itself a failed gate or permission to raise leaf limits.
 no larger host, external search service/pooler, new scheduler, persistent partial
 rankings or local corpus replica. no semantic feature is cut by this revision.
 
@@ -147,10 +158,14 @@ remove feeds from acceptance.
 keep the current owners; change policy at those owners rather than adding layers.
 
 1. `db/engine.py`, `db/session.py`, `db/listen.py` and deployment composition own
-   finite role pools, zero overflow, separate short control transactions, shared
-   listeners and loop-scoped async lifetimes. count every process, worker child,
-   listener, maintenance and backup/operator connection. pool quotas remain
-   provisional until the reachable concurrent topology fits the memory envelope.
+   finite physical checkout, transaction/loop lifetime and total accounting.
+   the candidate uses role pools with zero overflow, short reserved control
+   transactions and a shared api listener to preserve bounded ownership and
+   progress. those mechanisms are justified by their callers and demonstrated
+   failure modes, not a mandatory pool matrix or listener rewrite. count every
+   process, child, listener, maintenance and backup/operator connection. quotas
+   and retained-backend costs remain provisional until the reachable concurrent
+   topology fits the envelope under the capacity specification.
 2. `search/admission.py` retains one database-wide expensive-read gate and a
    physical search lease through confirmed backend retirement. provider waits and
    unrelated ordinary/control work remain outside it. a snapshot covers complete
@@ -269,7 +284,7 @@ approximate access can lose candidates; a dependency patch incurs ongoing releas
 ownership. no trade permits inaccessible evidence, silent semantic loss, lost
 writing, permanent hidden failure or memory-limit increases.
 
-## non-overlapping implementation slices
+## implementation responsibilities
 
 | owner | exclusive responsibility | prerequisite |
 | --- | --- | --- |
@@ -279,7 +294,9 @@ writing, permanent hidden failure or memory-limit increases.
 | d: client/write outcomes | browser search policy/loaders, bff deadlines, existing pending/error presentation and busy/uncertainty consumers; consume main's authored contract | c's reviewed end-to-end allowance; no authored-owner rewrite |
 | e: integration | reconcile module/release docs, coordinate migration identity, temporary qualification and release evidence; no duplicate edits to a–d | their reviewed interfaces and acceptance below |
 
-these are implementation responsibilities, not a request to redo completed repairs.
+these are implementation responsibilities, not separate delivery prs or a request
+to redo completed repairs. the implemented change crosses these boundaries and
+must be qualified as one composition.
 assign one editor per file for remaining work. source-only old-policy drafts
 remain historical until deliberately revised; do not execute them as new acceptance.
 
@@ -298,13 +315,16 @@ before tuning; record actual waits without manufacturing latency percentiles.
 | useful coexistence | full five-anchor, both-family refresh and strict discovery finish through real job/claim/publication owners. overlapping foreground lexical and hybrid requests succeed independently; reading, local writing, sync and stop controls remain usable. after finite competing jobs/mutations drain, every active due feed publishes the settled revision within the predeclared observation window. timed-out reads and old publications fail this gate |
 | lifecycle/failure | supersession/disconnect and owned timeout retire real backends before reuse; subsequent work succeeds. contention alone refunds; compute expiry consumes attempts. failed/lost-claim work preserves the old publication; authority withdrawal removes access; revised inputs converge; listener reconnect rereads truth. unknown retirement never publishes or releases its physical allowance |
 | writing | local authored commits survive busy/disconnect and retry original sequence/bytes. server-owned writes preserve their own identity and uncertainty before dispatch and after a committed write whose response fails; no false refusal or lost intent |
-| actual capacity | current candidate on actual 2 gib topology, postgres512mib/no-swap and real service limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. preserve reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
+| actual capacity | current candidate on actual 2 gib ram topology with production host swap enabled, postgres512mib and all service leaves no-swap at their real limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. account for host swap use/pressure and preserve physical ram reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
 | integration/release | qualify 0329 after main 0328 plus the real deployed 0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing. historical 0321 receipts do not qualify this 0329 lineage |
 
 brave import/metadata remains blocked until entitlement permits real completion;
 no fake-provider pass or unrelated oracle success closes it. review the known
 blake locator and separate verse issue without silently dropping affected citation
-semantics; generation success does not prove navigable citations. existing explicit
+semantics; generation success does not prove navigable citations. personal
+x-capture eligibility/attribution is also
+[unqualified](issues/oracle-personal-search-omits-x-captures.md); a common exact
+vector reader does not establish that oracle lane's coverage. existing explicit
 screen-reader/unrestricted-worker deferrals remain named in
 [release-search](issues/release-search.md), not broadened by this revision.
 

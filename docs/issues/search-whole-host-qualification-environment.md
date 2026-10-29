@@ -25,7 +25,11 @@ passed with fake providers; full native runtime remains unqualified.
 resolve the [capacity gate](production-database-connection-budgets-implicit.md)
 on the actual 2 gib topology with all included leaves/reserves, cold and warm work,
 both worker lanes, writing, maintenance/autoanalyze and verified online-backup
-overlap. keep the existing private codex account/run volumes and existing release
+overlap. production has 2 gib ram and at least 1 gib enabled host swap; postgres
+and other service leaves retain `memswap_limit == mem_limit`. measure host ram
+headroom and swap use/pressure, without crediting swap as ram reserve or requiring
+a swapless host. any outer no-swap cgroup for an emulator's backing memory is
+only an experiment constraint. keep the existing private codex account/run volumes and existing release
 transport ownership. no new full backup is a prerequisite to a bounded disposable
 fixture mutation. historical environment/primitive/fixture receipts remain in the
 privately archived original of this issue under

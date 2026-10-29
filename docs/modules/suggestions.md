@@ -7,6 +7,10 @@ owns admission, publication, reads and the queue handler.
 `services/suggestion_changes.py` owns the input revision, the engagement gate and
 feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 `components/collections/SuggestionsSection.tsx`, `QuickReadsSection.tsx`.
+the [suggestion admission spec](../suggestion-admission-spec.md) owns the exact
+retrieval/admission contract; the [reliability spec](../search-reliability-spec.md)
+owns common quality, progress and release acceptance. fixed scheduling intervals
+are not latency guarantees.
 
 ## product contract
 

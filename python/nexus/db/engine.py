@@ -11,6 +11,10 @@ runtime repair. Ordinary/control sessions have no lifetime semaphore.
 Ordinary checkout uses the configured finite wait (five seconds by default);
 control checkout keeps its independent 250 ms wait. These are operational queue
 safeguards, not successful latency targets.
+Native connection setup uses a two-second timeout per resolved address for the
+single local Postgres endpoint, separately from pool queue waits and SQL limits.
+Async callers retain their original aggregate deadline; this is not a total
+checkout or DNS-resolution deadline.
 Connections disable prepared statements and JIT. Control has a short independent
 statement deadline, never the worker's long domain-query allowance. Bound parameters
 are hidden in SQLAlchemy exception rendering and logs.
@@ -32,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from nexus.config import CONNECTION_CAPACITIES, DatabaseRole, get_settings
 
 _CONTROL_POOL_TIMEOUT_SECONDS = 0.25
+_CONNECT_TIMEOUT_SECONDS = 2
 _role: DatabaseRole | None = None
 _sync_engines: dict[bool, Engine] = {}
 _sync_engine_lock = Lock()
@@ -130,6 +135,7 @@ def _connect_args(kind: str) -> dict[str, object]:
     )
     options = "-c jit=off " + " ".join(f"-c {key}={value}" for key, value in timeouts if value)
     return {
+        "connect_timeout": _CONNECT_TIMEOUT_SECONDS,
         "prepare_threshold": None,
         "options": options,
         "application_name": f"nexus:{_role}:{kind}",

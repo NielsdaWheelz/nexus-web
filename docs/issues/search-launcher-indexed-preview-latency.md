@@ -1,7 +1,9 @@
 # launcher lexical requests can expire despite usable results
 
-status: open reliability follow-up; the owner accepts the measured visible-result
-release gate without a new speed campaign.
+status: open reliability follow-up. the historical release accepted measured
+visible results; current [reliability acceptance](../search-reliability-spec.md)
+requires useful lexical and hybrid completion independently, without a new speed
+target or a campaign to erase the old failures.
 
 raw229/browser225 completes22 full-search and20 launcher interactions without a
 native crash. declared visible p95 passes: full keyword1149.6/related2575.2ms;

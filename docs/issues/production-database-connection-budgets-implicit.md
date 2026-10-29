@@ -39,3 +39,10 @@ count all processes and operator connections, preserve the 64 mib conservative
 postgres reserve and 128 mib host reserve, and require useful completion, zero new
 oom/recovery/lost claims and confirmed owned cleanup. freeze numeric quotas only
 after that proof. [the spec](../search-reliability-spec.md) owns the full gates.
+the actual host keeps its provisioned swap enabled; no-swap remains a service-leaf
+constraint. include host swap use/pressure and physical ram headroom in that proof,
+without treating swap capacity as the host reserve.
+the [capacity specification](../database-capacity-spec.md) owns the reachable
+topology and accounting, not a separate delivery pr. the detailed main-side
+profiling record is preserved in
+`.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-database-connection-budgets-implicit.md`.

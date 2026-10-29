@@ -10,7 +10,7 @@ gate for minutes. that observed blocker neither identifies the earlier phone
 holder nor proves a leaked lock. the confirmed postgres memory kills are a
 separate [incident](production-search-postgres-oom.md).
 
-current source `7173b6a91484c14f6fe3944b9834763c0fb6ac19` retains one shared gate,
+selected search source `7173b6a91484c14f6fe3944b9834763c0fb6ac19` retains one shared gate,
 finite physical pools and retirement before reuse. contention alone refunds an
 attempt; admitted expiry spends its existing failure budget. prior c6 native
 component evidence includes useful global publication and overlapping lexical/
@@ -39,3 +39,7 @@ holder/waiter pid, container and admitted lifetime before choosing its repair.
 
 historical measurements and receipt pointers are preserved verbatim in
 `.nexus-local/search-takeover-20261028.private/docs-before-final/production-search-admission-contention.md`.
+the additional main-side live holder and emulated query-plan measurements remain
+in `.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-search-admission-contention.md`.
+their failed/censored outcomes remain historical; they do not impose the retired
+occupancy or quiet-period acceptance on the integrated candidate.

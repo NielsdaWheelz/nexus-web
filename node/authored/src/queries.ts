@@ -453,7 +453,8 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
   const containsTable = hasTable(capture.excerpt.content);
   if (capture.locator?.type === "x_capture_offsets") {
     const locator = capture.locator, extent = capture.excerpt.source_extent;
-    if (resource.source_ref !== `fragment:${locator.fragment_id}` || capture.publication?.kind !== "x_capture" || capture.publication.capture_id !== locator.capture_id ||
+    if (resource.source_ref !== `fragment:${locator.fragment_id}` ||
+      (capture.publication === null ? !("kind" in state && state.kind === "highlight") : capture.publication.kind !== "x_capture" || capture.publication.capture_id !== locator.capture_id) ||
       extent !== null && (extent.reading_ref !== resource.source_ref || extent.document_identity !== `capture:${locator.capture_id}` || extent.fragment_id !== locator.fragment_id))
       return {...result,scope_available:false};
     if (query.reading_ref !== null && query.reading_ref !== resource.source_ref) return {...result,scope_available:false};
