@@ -27,7 +27,17 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
   const anchor = useRef<Anchor | null>(null);
   const correction = useRef<Anchor | null>(null);
   const previous = useRef(slots);
-  const held = new Set([...pins.values(), ...selection, ...[focused, demand, sticky, ...(aligned ? [] : [anchor.current?.key ?? null])].filter(key => key !== null)]);
+  const previousDemand = useRef(demand);
+  const available = new Set(slots.map(slot => slot.key));
+  let preserved = geometry.current.scope === scope ? anchor.current : null;
+  if (preserved && !available.has(preserved.key)) {
+    const index = previous.current.findIndex(slot => slot.key === preserved!.key);
+    const successor = previous.current.slice(index + 1).find(slot => available.has(slot.key));
+    preserved = successor ? {...preserved, key: successor.key} : null;
+  }
+  // Admit a surviving filter anchor in this render, before correcting its box.
+  const held = new Set([...pins.values(), ...selection, ...[focused, demand, sticky,
+    ...(aligned ? [] : [preserved?.key ?? null, correction.current?.key ?? null])].filter(key => key !== null)]);
   const heights = geometry.current.scope === scope ? geometry.current.heights : new Map<string, number>();
   const offsets = [0];
   for (const slot of slots) offsets.push(offsets.at(-1)! + (slot.estimate === 0 ? 0 : heights.get(slot.key) ?? slot.estimate));
@@ -67,19 +77,19 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
       anchor.current = null;
       correction.current = null;
     }
-    const available = new Set(slots.map(slot => slot.key));
-    if (anchor.current && !available.has(anchor.current.key)) {
-      const index = previous.current.findIndex(slot => slot.key === anchor.current!.key);
-      const successor = previous.current.slice(index + 1).find(slot => available.has(slot.key));
-      anchor.current = successor ? {...anchor.current, key: successor.key} : null;
-    }
-    if (previous.current !== slots && !aligned) correction.current = anchor.current;
+    anchor.current = preserved;
+    const navigating = demand !== null || previousDemand.current !== null;
+    previousDemand.current = demand;
+    if (navigating) {correction.current = null; capture();}
+    if (previous.current !== slots && !aligned && !navigating) correction.current = anchor.current;
     previous.current = slots;
     if (correction.current && !aligned && demand === null) {
       const saved = correction.current;
       const row = list.querySelector<HTMLElement>(`[data-window-key="${CSS.escape(saved.key)}"]`);
-      if (row) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
-      correction.current = null;
+      if (row) {
+        scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
+        correction.current = null;
+      }
     }
     let animation: number | null = null;
     const measure = () => {
@@ -93,8 +103,8 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
         const key = row.dataset.windowKey!;
         if (height > 0 && measured.heights.get(key) !== height) {measured.heights.set(key, height); changed = true;}
       }
-      if (changed && !aligned) correction.current = anchor.current;
-      if (!changed) capture();
+      if (changed && !aligned && !navigating) correction.current = anchor.current;
+      if (!changed && correction.current === null) capture();
       const box = scroll.getBoundingClientRect(), bounds = outside.getBoundingClientRect();
       const origin = list.getBoundingClientRect().top;
       const top = Math.max(box.top, bounds.top) - origin;
@@ -105,7 +115,7 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
     const resize = new ResizeObserver(schedule);
     resize.observe(scroll); resize.observe(outside); resize.observe(list);
     for (const row of list.querySelectorAll("[data-window-key]")) resize.observe(row);
-    const scrollChanged = () => {capture(); flushSync(measure);};
+    const scrollChanged = () => {correction.current = null; capture(); flushSync(measure);};
     scroll.addEventListener("scroll", scrollChanged, {passive: true});
     outside.addEventListener("scroll", scrollChanged, {passive: true});
     if (anchor.current === null) capture();
