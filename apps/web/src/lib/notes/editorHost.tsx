@@ -2,7 +2,8 @@
 /** Host capabilities for the same content editor. Reader documents own local
  * drafts and writing only; workspace attachments retain their actual visit and
  * account lifetime. No fake workspace or account authority enters the reader. */
-import { createContext, useContext, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard, type WorkRisk } from "@/lib/unsavedWork";
@@ -30,7 +31,25 @@ export function useNoteEditorHost(): NoteEditorHost {
 export function useEditorDraft<T>(name: string, initial: () => T, risk?: (value: T) => WorkRisk, readCopyText?: (value: T) => string | null): Draft<T> {
   const host = useContext(Context);
   const useDraft = host?.useDraft ?? useResourceDraft;
-  return useDraft(name, initial, risk, readCopyText);
+  const draft = useDraft(name, initial, risk, readCopyText);
+  const row = useIndexRowWindow();
+  const latestRisk = useRef(risk); latestRisk.current = risk;
+  const refresh = useRef<(() => void) | null>(null);
+  const {owner, read, subscribe} = draft;
+  useLayoutEffect(() => {
+    if (!row) return;
+    let release: (() => void) | null = null;
+    const update = () => {
+      const value = latestRisk.current?.(read());
+      if (value && (value.changed || value.unconfirmed || value.stopsBrowserWork)) release ??= row.pin();
+      else {release?.(); release = null;}
+    };
+    refresh.current = update;
+    const unsubscribe = subscribe(update); update();
+    return () => {refresh.current = null; unsubscribe(); release?.();};
+  }, [row, owner, read, subscribe]);
+  useLayoutEffect(() => {refresh.current?.();});
+  return draft;
 }
 export function WorkspaceNoteEditorHost({ children }: { children: ReactNode }) {
   const identity = usePaneVisitIdentity();

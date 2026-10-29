@@ -7,7 +7,7 @@ const RowWindow = createContext<{ interact(): void; pin(): () => void } | null>(
 
 /** Only an actual row invocation retains extra mounted demand. */
 export function IndexRowWindow({ window, id, children }: {
-  readonly window: MeasuredIndexWindow;
+  readonly window: Pick<MeasuredIndexWindow, "interact" | "pin">;
   readonly id: string;
   readonly children: ReactNode;
 }) {
