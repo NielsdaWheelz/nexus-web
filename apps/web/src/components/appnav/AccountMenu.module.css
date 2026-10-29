@@ -7,16 +7,29 @@
   margin: 0 0 var(--space-1);
 }
 
-/* Hidden attention keeps the mobile trigger's geometry and focus stable. */
+.mark {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.mark,
+.mark > svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+/* Hidden attention keeps the trigger's geometry and focus stable. */
 .attention {
-  display: inline-block;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: calc(-1 * var(--space-1));
   box-sizing: border-box;
   inline-size: var(--space-2);
   block-size: var(--space-2);
   border: 1px solid var(--surface-2);
   border-radius: var(--radius-full);
   background: var(--warning);
-  vertical-align: middle;
   pointer-events: none;
 }
 
