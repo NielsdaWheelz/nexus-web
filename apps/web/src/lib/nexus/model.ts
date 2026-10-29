@@ -64,8 +64,7 @@ export type NexusTarget =
   | { readonly kind: "CreatePage"; readonly titleDraft: string }
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
-  | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManagePanes" };
+  | { readonly kind: "ChooseBrowse"; readonly query: string };
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
@@ -91,7 +90,7 @@ export interface NexusRow {
   readonly icon: NexusIcon;
   readonly type?: string;
   readonly detail?: string;
-  readonly state?: "Current" | "Open" | "Minimized";
+  readonly state?: "Current" | "Minimized";
   readonly item?: Schema<"ResourceItemOut">;
   readonly match?: Schema<"SearchMatchOut"> | null;
   readonly matchMethod?: "lexical" | "semantic" | null;
@@ -158,8 +157,7 @@ export type NexusPage =
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }
-  | { readonly kind: "Add"; readonly sessionId: string }
-  | { readonly kind: "ManagePanes" };
+  | { readonly kind: "Add"; readonly sessionId: string };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

@@ -29,7 +29,7 @@ there are no global shift-letter commands.
 
 `lib/workspace/paneControls.ts` projects ordered slots, commands, icons, accessible
 names, help and disabled reasons from live workspace state, the resolved title,
-desktop mode and viewport composition. strip and manage-panes render shared
+desktop mode. the strip renders shared
 `Button` controls and dispatch through their command owners. keys and refs use
 stable slots; a glyph change retains the focused node.
 
@@ -45,11 +45,6 @@ companion sheet takes modal focus. accepted close focuses the next surviving
 title, else the previous or replacement; refused close retains the initiator.
 focused chips reveal only inside the strip, never under a held pointer.
 
-manage-panes uses ordinary tab order. mobile visible rows offer minimize/close;
-minimized titles restore through ordinary activation, alongside close. minimizing
-focuses that same row's title and keeps nexus open. mobile has no layout control
-or reorder. desktop management adopts returned selections without dismissing nexus.
-
 reorder uses the existing dnd-kit mouse and touch sensors from the title alone:
 8 px mouse activation, or 250 ms touch hold with 8 px tolerance. unactivated
 touch keeps native strip scrolling. the drag overlay is decorative; only the
@@ -62,6 +57,10 @@ without overriding another interaction owner.
 `@dnd-kit/core` is pinned to `6.3.1` with an install-applied bun patch: a fresh
 pointer press retires the previous sensor's document blockers and cleanup timer.
 window blur cancels pending and active pointer sensors through their normal cancel path.
+each sensor exposes cancellation; the creating drag context cancels its sensor
+on unmount, including pending activation and delayed keyboard listener attachment.
+`useDndContext().cancel()` retires the same sensor without remounting rows or
+their scrollport. nexus uses this for task-owned cancellation.
 drag end retires keydown and selectionchange synchronously; an expired drag
 cannot clear the textarea selection react restored after keyed placement.
 the library retains its ordinary release suppression. the strip separately
@@ -73,8 +72,8 @@ keep it until the library supplies the same listener-lifetime guarantees.
 `store.movePane({paneId, beforePaneId})` is the only reorder writer; null appends.
 it preserves pane objects, activation, visits and histories, returns false for
 missing/self/unchanged moves, and commits one changed array. a changed move
-announces its position. desktop reorder is drag-only: there is no keyboard or
-click/tap alternative. this deliberately gives up accessible dragging parity.
+announces its position. the strip offers drag; nexus supplies the equivalent
+keyboard and click/tap placement operation over that same complete pane order.
 
 ## history
 
@@ -162,21 +161,36 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-mobile nexus opens to a keyboard-down workspace overview. its pane preview is
-a contiguous window of up to three visible panes around the current pane, in
-workspace order. `all panes` always exposes the manager and counts every open
-pane, including minimized panes. search is entered explicitly and retains its
-query when returning to the overview within the same opening. desktop nexus
-keeps its compact open-pane preview and direct `Manage panes…` row.
+mobile nexus opens to a keyboard-down workspace overview with up to three visible
+panes around current. desktop previews the first five panes. `expand` reveals all
+panes, including minimized, in workspace order inside the existing scrollport;
+`collapse` restores the preview. omit disclosure when nothing is hidden. disclosure
+state lasts through same-opening search/page visits and responsive handoff, and
+resets on explicit reopening. mobile search retains its query on return to overview;
+the presented collection, not query emptiness, determines reorder eligibility.
 
-the manager renders all primary panes and delegates activation, minimize and
-close to the shared workspace commands. desktop adds maximize/restore-canvas;
-mobile restores through title activation. closing a pane
-keeps nexus open and adopts the exact committed close selection, including the
-replacement when the final pane closes. focus moves to the next pane, otherwise
-the previous pane or replacement; a root close returns to the surviving row or
-search/all-panes control. recently closed panes use the workspace provider's
-five-entry session-local stack. pane count has no cap or recovery workflow;
-history and recently-closed bounds remain owned by
-[workspace](workspace.md#persisted-workspace-sessions). mobile never recreates
-the desktop pane strip or mounts inactive pane columns.
+the row body opens/restores its exact pane; only the independent × closes it.
+closing keeps nexus open and adopts the store's committed successor, including
+final-pane replacement. focus follows the next displayed row, else previous or
+replacement, independently of workspace activation; refused close retains its
+initiator. recently closed is a separate inline disclosure over the store's five
+session-local records. reopening restores navigation and activates; it does not
+recover discarded writing. its native controls use tab order, outside query candidates.
+
+complete pane projections with at least two panes permit whole-body drag, excluding
+×. truncated/ranked search projections cannot reorder. the nexus gesture owner
+shares one snapshot-checked commit for drag and numbered placement, calling
+`movePane` once. mouse uses 8px; touch uses 250ms hold/8px tolerance and keeps native
+scrolling before activation. only the nexus scrollport autoscrolls. the preview
+is decorative and modal-contained; the release guard prevents subsequent activation.
+
+`reorder` chooses a source, then a final numbered position; each placement returns
+to normal opening behavior, including no-op placement. keyboard navigation uses
+the existing desktop combobox/grid or mobile native buttons. current pane,
+keyboard highlight and moving source remain distinct. query editing/composition,
+ineligible presentation, changed captured ids/order, shell replacement, window
+focus loss or ownership loss cancels; element blur/tab traversal does not.
+the first task-owned escape/back/scrim dismissal cancels; explicit close/done
+cancels then dismisses. only changed moves announce success. no new persistence
+or order revision is introduced. mobile offers no minimize/layout command and
+never mounts a desktop strip or inactive columns.
