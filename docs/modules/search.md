@@ -236,8 +236,12 @@ transport allowance. exhausted checkout still returns `E_DATABASE_BUSY`.
 native engine connection setup has a separate two-second timeout per resolved
 address. the single local postgres endpoint has no multi-primary failover
 requirement; DNS, pool queueing and SQL remain distinct stages. control SQL is
-bounded at one second, and async readiness/search keep their original aggregate
-deadline plus joined cleanup. a pool wait limit does not bound native setup.
+bounded at one second. async readiness/search keep their original logical work
+deadlines; cancellation joins native startup and closes any returned connection
+before releasing its pool capacity. readiness's 1.9-second work deadline and a
+shorter caller deadline are not cleanup or response bounds. native setup's two
+seconds apply per resolved address after DNS, not to total checkout. this creator
+ownership fix awaits [native retirement proof](../issues/db-async-connect-cancellation-socket.md).
 
 authored scope-input and scope-text hydration share one api-process permit,
 acquired before their repeatable-read session and held through inline cleanup.

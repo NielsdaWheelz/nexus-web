@@ -1,9 +1,9 @@
 """Which build is serving, and whether its database is the one it expects.
 
-Readiness reserves 100 ms of its two-second aggregate allowance for joined cleanup.
-Checkout, native connect and query share the preceding 1.9 seconds; cancellation
-closes the owned session outside that timer. Cleanup is never abandoned to claim
-an artificial bound: disposable/native qualification measures actual completion.
+Readiness starts cancellation after 1.9 seconds of checkout, native setup and query
+work. Its nominal two-second allowance reserves 100 ms for cleanup, not a response
+bound. Native startup join, returned-connection close and session cleanup can outlast
+that allowance; capacity is retained until cleanup finishes.
 """
 
 import asyncio
@@ -33,7 +33,7 @@ def get_runtime_identity() -> RuntimeIdentity:
 
 
 async def is_database_ready(*, expected_revision: str) -> bool:
-    """One aggregate two-second deadline includes control checkout and joined cleanup."""
+    """Check schema under a 1.9-second work deadline, then join owned cleanup."""
     try:
         database = open_control_async_session()
         try:

@@ -14,7 +14,8 @@ safeguards, not successful latency targets.
 Native connection setup uses a two-second timeout per resolved address for the
 single local Postgres endpoint, separately from pool queue waits and SQL limits.
 Async callers retain their original aggregate deadline; this is not a total
-checkout or DNS-resolution deadline.
+checkout or DNS-resolution deadline. Cancelled async startup is joined and any
+returned connection closed before checkout releases its pool capacity.
 Connections disable prepared statements and JIT. Control has a short independent
 statement deadline, never the worker's long domain-query allowance. Bound parameters
 are hidden in SQLAlchemy exception rendering and logs.
@@ -27,13 +28,16 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from importlib import import_module
 from threading import Lock
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from anyio import CancelScope
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.config import CONNECTION_CAPACITIES, DatabaseRole, get_settings
+
+if TYPE_CHECKING:
+    from psycopg import AsyncConnection
 
 _CONTROL_POOL_TIMEOUT_SECONDS = 0.25
 _CONNECT_TIMEOUT_SECONDS = 2
@@ -180,13 +184,44 @@ def require_async_database_scope() -> None:
         raise RuntimeError("async database access requires its owning loop scope")
 
 
+async def _connect_async(*args: Any, **kwargs: Any) -> AsyncConnection:
+    """Own native startup through cancellation, without cancelling its generator."""
+    from psycopg import AsyncConnection
+
+    startup = asyncio.create_task(AsyncConnection.connect(*args, **kwargs))
+    try:
+        return await asyncio.shield(startup)
+    except asyncio.CancelledError as cancelled:
+
+        async def retire() -> None:
+            connection = await startup
+            await connection.close()
+
+        cleanup = asyncio.create_task(retire())
+        try:
+            with CancelScope(shield=True):
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup.result()
+        finally:
+            # Startup/close failure cannot replace the caller's cancellation.
+            raise cancelled
+
+
 def _async_engine(kind: Literal["ordinary_async", "control_async", "search_async"]) -> AsyncEngine:
     count = _allowance(kind)
     require_async_database_scope()
     scope = _scope
     assert scope is not None
     if kind not in scope.engines:
-        scope.engines[kind] = create_async_engine(
+
+        async def creator() -> AsyncConnection:
+            return await _connect_async(*args, **kwargs)
+
+        engine = create_async_engine(
             get_settings().database_url,
             pool_size=count,
             max_overflow=0,
@@ -197,8 +232,11 @@ def _async_engine(kind: Literal["ordinary_async", "control_async", "search_async
             else get_settings().database_pool_timeout_seconds,
             pool_pre_ping=True,
             hide_parameters=True,
-            connect_args=_connect_args(kind),
+            async_creator=creator,
         )
+        args, kwargs = engine.sync_engine.dialect.create_connect_args(engine.url)
+        kwargs.update(_connect_args(kind))
+        scope.engines[kind] = engine
     return scope.engines[kind]
 
 

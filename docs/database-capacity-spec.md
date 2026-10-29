@@ -48,7 +48,7 @@ connections. entrypoints own process roles and event-loop lifetimes.
 | background child | fresh process with its own engines and pools, concurrent with the supervisor and interactive lane |
 | stream hints | the shared api notification connection plus ordinary authoritative rereads; subscriber count is not backend count |
 | worker idle wait | ordinary pooled `LISTEN nexus_background_jobs`; counted in that pool, not concurrently with the same worker's handler |
-| readiness | bounded short control checkout within its existing two-second aggregate contract, including overlapping probes |
+| readiness | short control work under its existing 1.9-second logical deadline; joined startup/session cleanup may outlast the nominal two-second allowance, including overlapping probes |
 | maintenance/operators | real backup, physical maintenance/autoanalyze, migration and cli/oracle work; identify which coexist and which stop runtime writers |
 
 count the maximum reachable coexistence, not the sum of mutually exclusive peaks.
@@ -88,17 +88,22 @@ duplicated deployment defaults is required. the table is a candidate allocation,
 not proof that every pool should be warmed simultaneously or that its values fit.
 
 ordinary checkout currently waits up to 5 seconds, control checkout independently
-up to 250 milliseconds; readiness retains its enclosing two-second bound.
-search checkout consumes its caller's original absolute allowance. these are
-operational watchdogs, not product latency acceptance or permission to exceed a
+up to 250 milliseconds; readiness starts cancellation at its existing 1.9-second
+work deadline. search checkout consumes its caller's original absolute allowance.
+these are operational watchdogs, not product latency acceptance or permission to exceed a
 caller/hosting ceiling.
 engine-owned native setup separately uses a two-second connect timeout per
 resolved address, the locked driver's minimum, for the single local postgres
 endpoint. it does not time DNS resolution or make total checkout two seconds;
 queue wait, address attempts and SQL have distinct costs. control SQL remains
-bounded at one second; async callers retain their aggregate deadline and joined
-cleanup. qualify a stalled connection's heartbeat/startup/shutdown behavior before
-release instead of assuming the queue timeout also bounds native setup.
+bounded at one second. async callers retain their original logical deadlines;
+these do not bound cleanup completion or response time. the engine's async creator
+joins native startup without cancelling it and closes any returned connection
+before releasing the pool slot, including under repeated caller cancellation.
+readiness's nominal two-second allowance is not a physical retirement bound.
+[native qualification is pending](issues/db-async-connect-cancellation-socket.md);
+qualify stalled-connect startup/shutdown and joined retirement rather than
+assuming the queue timeout or outer cancellation also closes native resources.
 
 authored scope-input and scope-text preparation share one api-process permit
 before session checkout, held through inline rollback/close. this bulk family

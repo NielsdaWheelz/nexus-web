@@ -62,18 +62,18 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-search reliability against exact main `96a3b7bdf`: +1,233 net authored runtime
-lines (2,231 added, 998 deleted): python +1,196, web +25, worker +12, api entrypoint
-unchanged. exact original-float windows, scoped batches and owned async reads
+search reliability against exact main `e2192e593`: +1,277 net authored runtime
+lines (2,275 added, 998 deleted): `python/nexus` 2,210 added, 970 deleted,
+net +1,240; `apps/web/src` 47 added, 22 deleted, net +25;
+`apps/worker` 18 added, 6 deleted, net +12; api entrypoint unchanged.
+exact original-float windows, scoped batches and owned async reads
 replace ann/count routing, repeated source reads and subsecond verdicts. finite
-role pools, control reserves, joined retirement and one bulk-hydration permit
-retain bounded resource ownership. generated output, migrations, configuration,
+role pools, control reserves, owned async startup/retirement and one bulk-hydration
+permit retain bounded resource ownership. generated output, migrations, configuration,
 manifests, locks, docs and lab tooling are excluded; executable runtime settings
-in `python/nexus/config.py` are counted. integrated ff83 passed the sole static
-gate, three canonical lab scenarios and a temporary semantic extension with fake
-providers and confirmed cleanup. migration 0329 from deployed 0317, full native
-mixed-workload qualification, new immutable images, actual 2 gib, paired phone and
-live-provider gates remain open; historical 0321 components do not qualify them.
+in `python/nexus/config.py` are counted. qualification limits remain with
+[release-search](issues/release-search.md); this accounting establishes no runtime
+or release acceptance.
 existing area totals retain their stated bases.
 
 recent resources against `10aa3df7b`: +915 net authored runtime lines

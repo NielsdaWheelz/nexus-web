@@ -19,7 +19,8 @@ historical timing targets and waivers remain historical under the
   scenarios and temporary semantic extension passed with complete cleanup
   (`20261029-042930-e7ded121bbd8`). this fake-provider composition proof does not
   qualify live quality, full native runtime or release behavior. preserve main's
-  capture/annotation contracts; the integrated migration rehearsal remains open.
+  capture/annotation contracts. the full-corpus ea918/0329 migration rehearsal is
+  now accepted under that exact source; production release remains separate.
 
 - rehearse the real deployed 0317 upgrade through the complete integrated main
   chain to 0328 and selected 0329 from a verified backup. prove original-vector,
@@ -47,12 +48,15 @@ historical timing targets and waivers remain historical under the
   [backup/capacity](search-backup-overlap-oom.md),
   [watchdog/transport](search-request-watchdog-coexistence.md) and
   [whole-host](search-whole-host-qualification-environment.md) ownership.
+  the approved bounded guest experiment reserves the connector's full cap and
+  host reserve as specified there; it can prove backend/os fit only. connector
+  transport remains UNRUN and the all-production/live-connector gate stays OPEN.
 
 - the bulk permit and normal online writing are functionally exercised on 7173;
   the earlier missing notes control was instrumentation-only. no actual failed
   upload `POST` was captured, so injected original-change retry is not newly proved.
-  current integrated full native workload/writing, migration, actual 2 gib, paired
-  phone and live-provider gates remain open; prior proofs retain their source and
+  current integrated full native workload/writing, production migration, actual
+  2 gib, paired phone and live-provider gates remain open; prior proofs retain their source and
   lineage. build and qualify new immutable integrated images before release.
 
 - review the captured `DATABASE_POOL_TIMEOUT_SECONDS`: ordinary checkout now
@@ -66,6 +70,16 @@ historical timing targets and waivers remain historical under the
   the actual single postgres endpoint; this setting is not a DNS or total
   checkout deadline. align captured production overrides with the reviewed
   ordinary five-second wait; the example now uses that default.
+  linux ea918 sync/heartbeat setup bounds passed, but the shorter async deadline
+  left its startup socket unretired after scope exit in the isolated peer case.
+  [async connection cancellation](db-async-connect-cancellation-socket.md) remains
+  an open release-proof limit. the engine now owns shielded startup and joins
+  startup/returned-connection close before pool reuse, but native proof is PENDING.
+  the 0.5-second diagnostic and 1.9-second readiness work deadlines do not bound
+  cleanup or response time; native two seconds per address after DNS is not a
+  total connect bound. neither returning on deadline nor implementing cleanup
+  proves physical retirement. preserve accepted full-corpus ea918/0329 migration
+  evidence under its actual source identity; it does not qualify this creator fix.
 
 - real import/metadata qualification remains blocked by the authorized brave
   account's [payment refusal](live-search-qualification-brave-payment-required.md).
