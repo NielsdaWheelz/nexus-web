@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import { useRecent } from "@/lib/recent/store";
-import type { RecentEntry } from "@/lib/recent/model";
+import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -25,12 +23,6 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { destinationTarget, targetOfLocator, targetOfResolution, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { PostActions } from "@/app/(authenticated)/media/[id]/Embeds";
 
-function isMissingCapture(document: ReturnType<Reader["getState"]>["document"]): boolean {
-  const error = document.status === "failed" && !document.retrying ? document.error
-    : document.status === "ready" && !document.refreshing ? document.refreshFailure?.error : null;
-  return isApiError(error) && error.status === 404;
-}
-
 export default function CapturePaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("capture route requires an id");
@@ -39,7 +31,6 @@ export default function CapturePaneBody() {
 
 function CaptureReader({ id }: { readonly id: string }) {
   const recent = useRecent();
-  const { confirmRecentRemoved } = useWorkspacePresentations();
   const runtime = requirePaneRuntime(usePaneRuntime(), "CaptureReader");
   const store = useAuthoredStore();
   const { profile } = useReaderContext();
@@ -68,15 +59,8 @@ function CaptureReader({ id }: { readonly id: string }) {
   } }), [source, savedView, id, runtime]));
   readerRef.current = reader;
   const state = useReaderState(reader, value => value);
-  const retriedSequence = useRef<string | null>(null);
-  const retryEvidence = useRef<RecentEntry | null>(null);
-  const lastRecentEntry = useRef<RecentEntry | null>(null);
-  const missingEvidence = useRef<RecentEntry | null>(null);
-  const attemptedRevision = useRef<string | null>(null);
-  const recentSnapshot = recent.snapshot;
-  const recentRef = useRef(recent);
-  recentRef.current = recent;
-  const missing = isMissingCapture(state.document);
+  const retriedSequence = useRef("0");
+  const missing = state.document.status === "failed" && !state.document.retrying && isApiError(state.document.error) && state.document.error.status === 404;
   useEffect(() => {
     if (!missing) return;
     const controller = new AbortController();
@@ -87,31 +71,12 @@ function CaptureReader({ id }: { readonly id: string }) {
       checking = true;
       try {
         const { command_seq } = await store.readReplica();
-        if (retriedSequence.current !== null && BigInt(command_seq) <= BigInt(retriedSequence.current)) {
-          const current = reader.getState().document;
-          if (!isMissingCapture(current)) return;
-          const evidence = retryEvidence.current;
-          retryEvidence.current = null;
-          const entry = recentRef.current.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
-          if (evidence && (!entry || entry.used_revision === evidence.used_revision)) {
-            confirmRecentRemoved(evidence);
-            if (missingEvidence.current && missingEvidence.current.used_revision !== evidence.used_revision) confirmRecentRemoved(missingEvidence.current);
-            missingEvidence.current = null;
-            recentRef.current.reconcile({ target: evidence.target, expected_used_revision: evidence.used_revision, replacement: null });
-          } else if (entry && entry.used_revision !== attemptedRevision.current) {
-            retryEvidence.current = entry;
-            attemptedRevision.current = entry.used_revision;
-            reader.retryLoad();
-          }
-          return;
-        }
+        if (BigInt(command_seq) <= BigInt(retriedSequence.current)) return;
         await store.whenUploaded(command_seq, controller.signal);
         if (controller.signal.aborted) return;
         const current = reader.getState().document;
-        if (isMissingCapture(current)) {
+        if (current.status === "failed" && !current.retrying) {
           retriedSequence.current = command_seq;
-          retryEvidence.current = recentRef.current.snapshot?.entries.find(entry => entry.target.kind === "x_capture" && entry.target.capture_id === id) ?? missingEvidence.current;
-          attemptedRevision.current = retryEvidence.current?.used_revision ?? null;
           reader.retryLoad();
         }
       } catch {
@@ -125,24 +90,14 @@ function CaptureReader({ id }: { readonly id: string }) {
       if (status === "syncing" || status === "current") void check();
     });
     return () => { controller.abort(); stop(); };
-  }, [confirmRecentRemoved, id, missing, reader, recentSnapshot, store]);
+  }, [missing, reader, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
-  useEffect(() => {
-    if (!recentSnapshot) return;
-    const entry = recentSnapshot.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
-    if (entry) { lastRecentEntry.current = entry; return; }
-    if (lastRecentEntry.current && reader.getState().document.status === "ready") {
-      missingEvidence.current = lastRecentEntry.current;
-      lastRecentEntry.current = null;
-      reader.retryLoad();
-    }
-  }, [id, reader, recentSnapshot]);
-  useEffect(() => { if (doc) { retryEvidence.current = null; missingEvidence.current = null; attemptedRevision.current = null; retriedSequence.current = null; } }, [doc]);
   useEffect(() => {
     if (!doc) return;
     const entry = recent.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
-    if (!entry || entry.title_hint === normalizeVisitTitleHint(doc.title)) return;
-    recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: normalizeVisitTitleHint(doc.title), detail_hint: "post" } });
+    const title = normalizeVisitTitleHint(doc.title);
+    if (!entry || entry.title_hint === title && entry.detail_hint === "post") return;
+    recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: title, detail_hint: "post" } });
   }, [doc, id, recent]);
   const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true);
   const stamp = useChangeStamp("Notes", "NoteBodies", "Chats", "Entries");

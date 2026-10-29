@@ -13782,6 +13782,19 @@ export interface components {
              */
             kind: "resource";
         };
+        /** WorkspaceCaptureLocator */
+        WorkspaceCaptureLocator: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_capture";
+        };
         /** WorkspaceContributorLocator */
         WorkspaceContributorLocator: {
             /** Handle */
@@ -13838,7 +13851,7 @@ export interface components {
         /** WorkspacePresentationItemOut */
         WorkspacePresentationItemOut: {
             /** Locator */
-            locator: components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"];
+            locator: components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"] | components["schemas"]["WorkspaceCaptureLocator"];
             presentation: components["schemas"]["WorkspacePresentationOut"] | null;
         };
         /** WorkspacePresentationOut */
@@ -13861,7 +13874,7 @@ export interface components {
         /** WorkspacePresentationsRequest */
         WorkspacePresentationsRequest: {
             /** Locators */
-            locators: (components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"])[];
+            locators: (components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"] | components["schemas"]["WorkspaceCaptureLocator"])[];
         };
         /** WorkspaceResourceLocator */
         WorkspaceResourceLocator: {

@@ -154,6 +154,7 @@ export function useNexusController() {
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) { presentations.retryTitles(); readRecent(); heldRecent.current = null; heldRemoved.current.clear(); }
+    if (!open && wasOpen.current) presentations.holdRecent([]);
     wasOpen.current = open;
   }, [open, presentations, readRecent]);
 
@@ -196,7 +197,10 @@ export function useNexusController() {
   });
   const interact = () => {
     find.interact();
-    if (!parsed.text && heldRecent.current === null) heldRecent.current = recentItems.slice(0, 8);
+    if (!parsed.text && heldRecent.current === null) {
+      heldRecent.current = recentItems.slice(0, 8);
+      presentations.holdRecent(heldRecent.current.map(item => item.entry));
+    }
   };
   useLayoutEffect(() => {
     if (!finding) return;
@@ -587,7 +591,7 @@ export function useNexusController() {
     setAnnouncement("");
     setQueryState(next);
     if (viewport.isMobile) setRootMode("Search");
-    if (next !== query) { rootScroll.current.Search = 0; heldRecent.current = null; heldRemoved.current.clear(); }
+    if (next !== query) { rootScroll.current.Search = 0; heldRecent.current = null; heldRemoved.current.clear(); presentations.holdRecent([]); }
   }
 
   function setActive(key: string, deliberate = true) {
@@ -709,6 +713,7 @@ export function useNexusController() {
       find.refresh();
       heldRecent.current = null;
       heldRemoved.current.clear();
+      presentations.holdRecent([]);
       setSearchRefreshRevision(current => current + 1);
       setList(EMPTY_LIST);
       setFocusRevision(current => current + 1);

@@ -288,8 +288,8 @@ export function paneResourceLocatorKey(
 }
 
 export function panePresentationLocatorKey(locator: PanePresentationLocator): string {
-  return locator.kind === "daily_date"
-    ? `daily_date:${locator.local_date}`
+  return locator.kind === "daily_date" ? `daily_date:${locator.local_date}`
+    : locator.kind === "x_capture" ? `x_capture:${locator.capture_id}`
     : paneResourceLocatorKey(locator)!;
 }
 
