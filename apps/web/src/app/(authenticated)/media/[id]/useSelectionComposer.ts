@@ -147,9 +147,9 @@ export function useSelectionComposer(input: {
   }, [show]);
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
-  const copyRead = useAuthoredQuery(draft?.highlightId ? { kind: "excerpt", ref: `highlight:${draft.highlightId}`, reading_ref: `media:${mediaId}` } : null);
-  const copyResource = copyRead.data?.rows[0]?.resource;
   const copyAnnotation = draft?.highlightId ? annotations.annotation(draft.highlightId) : null;
+  const copyRead = useAuthoredQuery(copyAnnotation ? { kind: "excerpt", ref: copyAnnotation.ref, reading_ref: copyAnnotation.readingRef } : null);
+  const copyResource = copyRead.data?.rows[0]?.resource;
   const fullCopyText = useMemo(() => copyResource?.excerpt?.kind === "content" ? excerptTextParts(copyResource.excerpt.body).exact : null, [copyResource]);
   const copyQuote = draft?.highlightId ? copyResource?.capture_revision === copyAnnotation?.projection.capture_revision && copyResource?.excerpt?.kind === "content" ? fullCopyText : null : draft?.passage.quote ?? null;
   const copyUnavailable = draft?.highlightId && copyQuote === null ? copyRead.error ? "couldn’t load this passage" : copyRead.data ? "passage unavailable in this reading" : "loading passage…" : copyQuote?.trim() ? null : "this highlight has no text to copy";

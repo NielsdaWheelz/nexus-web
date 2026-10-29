@@ -351,7 +351,7 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
         if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, excerpt: resource.excerpt, projection: resource, readingRef: doc?.kind === "text" && doc.xCapture !== null ? source : mediaRef(mediaId), notes: notes.get(resource.ref) ?? [] });
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, excerpt: resource.excerpt, projection: resource, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), notes: notes.get(resource.ref) ?? [] });
       }
     }
     if (current !== generation) return;

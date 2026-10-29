@@ -35,18 +35,20 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-highlight excerpts against `f50007bce`: +3,402 net authored runtime lines
-(4,160 added, 758 deleted): web +284, shared authored kernel +1,013,
-semantic-helper transport +104, python +1,997, android +4. the self-contained
-conversion adds 332 authored migration lines; existing disposable-runtime backup
-composition adds 70 verification-infrastructure lines. generated wire/bundles,
+highlight excerpts against `aac38e09a`: +3,343 net authored runtime lines
+(4,172 added, 829 deleted): web +284, shared authored kernel +1,013,
+semantic-helper transport +104, python +1,938, android +4. the self-contained
+conversion adds 332 authored migration lines; disposable-runtime backup
+composition and browser lifecycle fixes add 88 net verification-infrastructure
+lines (121 added, 33 deleted). generated wire/bundles,
 locks, build configuration, docs and disposable scenarios are excluded.
 removes normalized quotation display, live-source context substitution, duplicate
 canonical normalization and quote styles, whole-character source provenance
 graphs, full-source helper transfers, and old authored-format readers. frozen
 captures and bounded projections share one grammar and literal-text owner.
 format 3 composes immutable x captures with excerpts; explicit upload format
-fences retain device identity across the drained cutover.
+fences retain device identity across the drained cutover. passage materialization
+requires captured evidence; unused direct capture and locator-hint validation are removed.
 
 mobile nexus header icons against `492d01595`: +5 authored runtime lines
 (32 added, 27 deleted), all workspace/navigation web source. one account-owned

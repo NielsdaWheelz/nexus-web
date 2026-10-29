@@ -71,7 +71,7 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json

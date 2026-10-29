@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.authored import PassageCapture
+from nexus.schemas.authored import PassageCapture, XCapturePublication
 from nexus.schemas.resource_evidence import CapturedPassageTarget, LocationQuote
 from nexus.schemas.resource_search import (
     ResourceTargetOut,
@@ -163,7 +163,11 @@ def _targets(
                 target=captured.target,
                 capture=PassageCapture(
                     quote_exact=quote[1].exact,
-                    publication=None,
+                    publication=XCapturePublication(
+                        kind="x_capture", capture_id=captured.target.locator.capture_id
+                    )
+                    if captured.target.locator.type == "x_capture_offsets"
+                    else None,
                     locator=captured.target.locator,
                     excerpt=quote[1].excerpt,
                 ),
