@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import codex_cli_bin
+from apps.codex_agent.binary import codex_command
 
 
 def main() -> None:
@@ -24,7 +24,7 @@ def main() -> None:
             "PATH": "/usr/bin:/bin",
             "LANG": "C.UTF-8",
         }
-        login = (codex_cli_bin.bundled_codex_path(), "login", "--device-auth")
+        login = (*codex_command(), "login", "--device-auth")
         subprocess.run(login, env=environment, check=True)
         payload = (Path(home) / "auth.json").read_bytes()
     with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:

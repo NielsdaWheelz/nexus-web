@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-import codex_cli_bin
+from apps.codex_agent.binary import codex_command
 from provider_runtime.agent_runtime import materialize_codex_containment_catalog
 
 
@@ -64,7 +64,7 @@ def main() -> None:
     ) as native_stderr:
         process = subprocess.Popen(
             (
-                codex_cli_bin.bundled_codex_path(),
+                *codex_command(),
                 "-c",
                 f"model_catalog_json={json.dumps(str(catalog))}",
                 "app-server",
@@ -74,6 +74,7 @@ def main() -> None:
                 "--strict-config",
             ),
             cwd=cwd,
+            start_new_session=True,
             # Explicit, so no inherited *_API_KEY or CODEX_HOME can redirect subscription work.
             env={
                 "CODEX_HOME": str(account),
@@ -90,15 +91,21 @@ def main() -> None:
         )
     stopping = False
 
+    def send_signal(signum: int) -> None:
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+
     def stop(signum: int, frame: object) -> None:
         nonlocal stopping
         stopping = True
-        process.terminate()
+        send_signal(signal.SIGTERM)
         # codex drains running turns for up to 45 s, the same as docker's grace period,
         # so cut the drain short and still exit 0 before docker kills the container.
         signal.alarm(30)
 
-    signal.signal(signal.SIGALRM, lambda signum, frame: process.kill())
+    signal.signal(signal.SIGALRM, lambda signum, frame: send_signal(signal.SIGKILL))
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     status = process.wait()

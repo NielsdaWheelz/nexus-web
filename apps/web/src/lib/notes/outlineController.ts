@@ -1193,7 +1193,7 @@ export class OutlineController {
     else if (this.selectionRow) this.arrange(this.selectionRow, command); this.notify();
   }} : null;}
   chrome(): ReadonlyMap<string, OutlineRowChrome> {
-    return new Map([...this.rows.values()].filter(row => !row.root && !row.tail && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, kind: row.kind === "body" ? "note" : row.kind,
+    return new Map([...this.rows.values()].filter(row => !row.root && !row.tail && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
       depth: row.depth, parent_id: row.parent_id, label: this.label(row),
       href: row.resource ? localResourceHref(row.resource) : row.ref ? `/${row.kind === "title" ? "pages" : "notes"}/${row.ref.split(":")[1]}` : null,
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
@@ -1262,9 +1262,9 @@ export class OutlineController {
         if (row.gap === "after") {const append = document.createElement("button"); append.type = "button"; append.className = buttonClassName({size: "comfortable"}); append.textContent = "write at end"; append.onclick = () => {void this.append(row.parent_id!);}; content.replaceChildren(button, append);}
         else content.replaceChildren(button);
       }
-      else if (row.kind === "reference" && !row.gap) {content.contentEditable = "false"; const text = row.resource ? localResourceLabel(row.resource) : "resource"; if (content.textContent !== text) content.textContent = text;}
+      else if (row.kind === "reference" && !row.gap) content.contentEditable = "false";
     };
-    const mount = {row_id: id, leading, trailing, sync};
+    const mount = {row_id: id, leading, trailing, content, sync};
     sync(); this.mounts.set(id, mount); this.notify();
     return {dom, ...(node.type.name !== "reference_row" ? {contentDOM: content} : {}), update: next => {if (next.type !== node.type || next.attrs.row_id !== id) return false; node = next; sync(); return true;},
       stopEvent: event => event.target instanceof Node && (leading.contains(event.target) || trailing.contains(event.target) || this.rows.get(id)?.kind === "reference"),

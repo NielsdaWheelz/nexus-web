@@ -405,7 +405,7 @@ introduced. the runtime's unpinned document cache remains a separate owner.
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-1`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-3`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -427,7 +427,7 @@ the service worker; android retains packaged app-router delivery. compatible she
 activation waits for local commit settlement; format changes use coordinated
 release draining rather than automatic database deletion.
 
-v1 firefox boundary: normal browser quit preserves a compatible waiting update
+firefox boundary: normal browser quit preserves a compatible waiting update
 through offline restart. forced quit during that update may require one online
 reopen before the cached shell loads.
 the product does not add a second activation protocol to repair that platform

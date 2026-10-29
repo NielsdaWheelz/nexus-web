@@ -1,8 +1,11 @@
 "use client";
 
-/** Native row controls live outside ProseMirror's contentDOM. Portals publish
- * chrome into the view's stable slots; no control creates an editing host. */
+/** React owns native controls and passive reference bodies in stable node-view
+ * slots. Editable prose remains ProseMirror's contentDOM. */
 import {createPortal} from "react-dom";
+import type {ResourceProjection} from "@nexus/authored/types";
+import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
+import {authoredItem} from "@/lib/notes/presentation";
 import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, Unlink} from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
@@ -15,6 +18,7 @@ import styles from "./OutlineEditorRow.module.css";
 export interface OutlineRowChrome {
   row_id: string;
   ref: string | null;
+  resource: ResourceProjection | null;
   kind: "note" | "title" | "reference";
   depth: number;
   parent_id: string | null;
@@ -30,7 +34,7 @@ export interface OutlineRowChrome {
   unlink(): void;
   reveal(): void;
 }
-export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement}
+export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
@@ -66,6 +70,8 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}>
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
       </button> : null;
-    return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`)];
+    return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+        mount.content, `${row.row_id}:content`)] : [])];
   });
 }

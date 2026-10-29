@@ -1,8 +1,10 @@
 /** Causal observed-delete graph plus Yjs text. Applying identical changes is
  * idempotent. Merging never invents a touch, repairs text, or removes neighbors. */
 import type { Change, Corpus, HighlightPatch, LinkState, MergeResult, PassageState, Register, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
+import { canonicalSerialization } from "./canonical.ts";
+import { captureRevision, excerptView, excerptTextParts } from "./excerpt.ts";
 import { validateChange } from "./validate.ts";
-import { MAX_COMMAND_BYTES } from "./types.ts";
+import { MAX_COMMAND_BYTES, CommandTooLargeError } from "./types.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
 import { isResourceRef, sortedEndpoints } from "./identity.ts";
 export function counter(value:string):bigint {
@@ -30,23 +32,16 @@ export function advanceCoverage(covered: Vector, before: { touch: Vector; remove
   return next;
 }
 export function isVisible(touch:Vector,deleted:Vector):boolean { return Object.entries(touch).some(([replica,n])=>counter(n)>counter(deleted[replica]??"0")); }
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) =>
-    item !== null && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
-      : item,
-  );
-}
 export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register<T>|null {
   if(a===null) return b;
   if(b===null) return a;
   const first=counter(a.stamp.lamport),second=counter(b.stamp.lamport);
-  if(first===second && a.stamp.replica_id===b.stamp.replica_id && canonical(a.value)!==canonical(b.value)) throw new TypeError("One register stamp identifies conflicting values");
+  if(first===second && a.stamp.replica_id===b.stamp.replica_id && canonicalSerialization(a.value)!==canonicalSerialization(b.value)) throw new TypeError("One register stamp identifies conflicting values");
   return first>second || (first===second && a.stamp.replica_id>b.stamp.replica_id)?a:b;
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[]};
+  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[]};
   switch(state.kind) {
     case "note": {
       const {body}=mergeNote(state.body_state,null);
@@ -56,8 +51,16 @@ export function projectResource(state:ResourceState):ResourceProjection {
       return {...common,...body,embedded_refs:[...new Set(embedded_refs)]};
     }
     case "page": return {...common,title:mergeTitle(state.title_state,null).title,local_date:state.local_date};
-    case "highlight": return {...common,source_ref:state.source_ref,selection:state.selection.value,color:state.color.value};
+    case "highlight": {
+      const {excerpt, ...selection} = state.selection.value;
+      return {...common,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
+    }
   }
+}
+export function projectPassage(state: PassageState): ResourceProjection {
+  const excerpt = excerptView(state.capture.value.excerpt, "compact", {kind:"capture"});
+  const text = excerpt.kind === "content" ? excerptTextParts(excerpt.body).exact : "table excerpt";
+  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value})};
 }
 function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState {
   if(!isResourceRef(patch.ref)) throw new TypeError("Invalid resource reference");
@@ -86,7 +89,7 @@ export function mergeChanges(states:Corpus,changes:readonly Change[]):MergeResul
   const stubs=new Map(states.source_stubs.map(s=>[s.source_ref,s]));
   for(const change of changes) {
     validateChange(change);
-    if(new TextEncoder().encode(JSON.stringify(change)).length>MAX_COMMAND_BYTES) throw new TypeError("Authored command exceeds 2 MiB");
+    if(new TextEncoder().encode(JSON.stringify(change)).length>MAX_COMMAND_BYTES) throw new CommandTooLargeError();
     for(const patch of change.resources) resources.set(patch.ref,resourceMerge(resources.get(patch.ref)??null,patch));
     for(const patch of change.links) {
       const [a,b]=sortedEndpoints(patch.endpoint_a,patch.endpoint_b);
@@ -124,5 +127,5 @@ export function mergeChanges(states:Corpus,changes:readonly Change[]):MergeResul
     passageKeys.set(key,p.anchor_id);
   }
   const values=[...resources.values()];
-  return {resources:values,links:[...links.values()],passages:[...passages.values()],source_stubs:[...stubs.values()],projections:values.map(projectResource)};
+  return {resources:values,links:[...links.values()],passages:[...passages.values()],source_stubs:[...stubs.values()],projections:[...values.map(projectResource),...[...passages.values()].map(projectPassage)]};
 }

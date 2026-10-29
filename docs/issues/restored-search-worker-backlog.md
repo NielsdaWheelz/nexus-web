@@ -24,8 +24,9 @@ do not cancel them or call them failed imports.
 
 ordinary draining also queues media-summary work under the existing codex personal
 policy. this needs an authenticated codex socket; the embedding key cannot replace
-it. the selected local work2 socket is reachable but fails the pinned host-version
-check; see [the separate upgrade](codex-containment-host-upgrade.md). the owner
+it. the selected local work2 socket failed the pinned host-version check. the
+[current catalog cutover](release-model-catalog.md) provides a qualified host
+cohort; it does not qualify this restored backlog. the owner
 explicitly leaves unrestricted ordinary-worker acceptance open. a bounded reindex-only
 claim/execution can prove publication fences through existing queue primitives,
 but does not establish unrestricted ordinary-worker overlap or completed summary

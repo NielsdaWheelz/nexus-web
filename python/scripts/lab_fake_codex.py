@@ -15,7 +15,7 @@ import secrets
 import time
 from pathlib import Path
 
-import codex_cli_bin
+from apps.codex_agent.binary import codex_command
 from provider_runtime.agent_runtime import materialize_codex_containment_catalog
 
 
@@ -62,12 +62,12 @@ def main() -> None:
     cwd = args.socket.parent / "cwds/host"
     cwd.mkdir(mode=0o500, parents=True, exist_ok=True)
     args.socket.unlink(missing_ok=True)
-    executable = str(codex_cli_bin.bundled_codex_path())
+    command = codex_command()
     os.chdir(cwd)
     os.execve(
-        executable,
+        command[0],
         [
-            executable,
+            *command,
             "-c",
             f"model_catalog_json={json.dumps(str(catalog))}",
             "-c",

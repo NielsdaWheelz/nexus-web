@@ -7,6 +7,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
+import { truncateText } from "@/lib/display/format";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
 import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
@@ -33,7 +34,7 @@ import {
   type NexusTarget,
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
-import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
+import { NEXUS_COMMANDS, nexusQueryAction, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
@@ -151,6 +152,9 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
+  const lookupGuidance = parsed.intent.kind === "CommandLookup"
+    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)} — `}choose a command to start empty, or search this text`
+    : null;
   const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
   const find = useNexusFind({ open: finding && !composing, query: parsed });
@@ -173,7 +177,7 @@ export function useNexusController() {
       reference: find.reference, referenceFailed: find.referenceFailed,
       local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
       retained: previous.identity === listIdentity ? previous.rows : [],
-    })));
+    }), parsed.intent));
   }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision]);
 
   // Navigation from outside the launcher's own pane commands (such as a resource
@@ -251,11 +255,19 @@ export function useNexusController() {
   const currentActive = reconcileSearchActive({
     context: searchContext, admitted,
     options: rows.map(row => ({ key: row.key, disabledReason: row.action.kind === "Unavailable" ? row.action.reason : null })),
-    firstExistingKey: rows.find(row => row.existing && row.action.kind === "Available")?.key ?? null,
+    initialKey: parsed.intent.kind === "CommandLookup" ? null
+      : (rows.find(row => row.rank.tier === "ExplicitIntent" && row.action.kind === "Available")
+        ?? rows.find(row => row.existing && row.action.kind === "Available"))?.key ?? null,
     active: list.active,
   });
   if (currentActive !== list.active) setList({ ...list, active: currentActive });
   const activeKey = admitted ? currentActive?.key ?? null : null;
+
+  function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow) {
+    if (action.kind === "Unavailable") { setAnnouncement(action.reason); return; }
+    const current = currentPage.current;
+    run(action.target, (current.kind === "ChooseCreate" || current.kind === "ChooseBrowse") && current.activation.disposition.kind === "Fork" ? current.activation : activation, row);
+  }
 
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
@@ -553,7 +565,7 @@ export function useNexusController() {
     setList(EMPTY_LIST);
     setPage(nextPage);
     setOpen(true);
-    if (intent.kind === "QuickAction") run(NEXUS_COMMANDS[intent.actionId].target(""), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
+    if (intent.kind === "QuickAction") activate(NEXUS_COMMANDS[intent.actionId].action(""), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
   }
 
   function setQuery(next: string) {
@@ -668,9 +680,11 @@ export function useNexusController() {
     rootScroll,
     groups,
     activeKey,
-    choices: choiceRows(page, viewport.isMobile),
-    textActions: queryActions(parsed, false).slice(0, 4),
+    choices: choiceRows(page),
+    textActions: parsed.intent.kind === "Command" || parsed.intent.kind === "CommandLookup" ? []
+      : queryActions(parsed, false).filter(row => row.key !== "Continuation:SeeAll"),
     explicitIntent: parsed.intent.kind !== "Search",
+    lookupGuidance,
     failures: find.failures,
     searchProgress: find.progress,
     searchUnavailable: find.searchUnavailable,
@@ -706,7 +720,15 @@ export function useNexusController() {
     })),
     setQuery,
     enterSearch: () => setRootMode("Search"),
-    submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
+    submitInput(activation: NexusTargetActivation) {
+      if (!viewport.isMobile && currentActive !== null) {
+        if (currentActive.key === null) { setAnnouncement("selection no longer available"); return; }
+        if (!admitted) return;
+        const selected = rows.find(row => row.key === currentActive.key);
+        if (selected) activate(selected.action, activation, selected);
+        return;
+      }
+      if (lookupGuidance !== null) { setAnnouncement(lookupGuidance); return; }
       if (parsed.intent.kind === "Resource") {
         const local = find.localReference;
         if (local !== null) {
@@ -715,20 +737,15 @@ export function useNexusController() {
           return;
         }
         if (find.reference === null) return;
-        const action = resourceAction(find.reference);
-        if (action.kind === "Unavailable") setAnnouncement(action.reason);
-        else run(action.target, activation);
+        activate(resourceAction(find.reference), activation);
         return;
       }
-      const target = nexusQueryTarget(parsed);
-      if (target) run(target, activation);
+      const action = nexusQueryAction(parsed);
+      if (action !== null) activate(action, activation);
     },
     setActive,
     retry: find.retry,
-    activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow) {
-      if (action.kind === "Unavailable") setAnnouncement(action.reason);
-      else run(action.target, (page.kind === "ChooseCreate" || page.kind === "ChooseBrowse") && page.activation.disposition.kind === "Fork" ? page.activation : activation, row);
-    },
+    activate,
     /** Explicit destination controls capture their own gesture, through the Add guard. */
     openTarget: (target: NexusTarget, activation: NexusTargetActivation = PROGRAMMATIC_NEXUS_TARGET_ACTIVATION) => requestExit({ kind: "Navigate", target, activation }),
     openAddTarget: (target: NexusTarget, intent: OpenIntent) => requestExit({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : PROGRAMMATIC_NEXUS_TARGET_ACTIVATION }),

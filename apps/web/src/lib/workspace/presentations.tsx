@@ -2,6 +2,7 @@
 /** Authored titles come from the local graph, even online. Other resource labels
  * retain their server/catalog owner. Saved visit hints are display evidence only. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { apiFetch } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -24,7 +25,7 @@ interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resource
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
-  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
+  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? (resource.kind === "highlight" ? localResourceLabel(resource) : ""), local_date: resource.local_date} : null;
 }
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */

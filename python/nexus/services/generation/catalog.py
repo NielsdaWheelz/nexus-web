@@ -66,7 +66,7 @@ from nexus.schemas.llm import (
 from nexus.services.generation.policy import (
     CHAT_CONTEXT_BUDGET_TOKENS,
     CHAT_OUTPUT_BUDGET_TOKENS,
-    chat_effort_exception,
+    chat_effort_default,
     chat_model_default,
     policy,
 )
@@ -261,21 +261,23 @@ class _Model:
     max_output_tokens: int | None
     input_modalities: tuple[Literal["text", "image"], ...]
     reasoning: tuple[AgentReasoningFacts | ApiReasoningFacts, ...]
-    default_reasoning: str | None
     target: CodexTarget | ProviderTarget
     chat_capable: bool
 
 
-def _chat_defaults(model: _Model) -> set[str]:
+def _chat_defaults(provider: GenerationApiProvider | None, model: _Model) -> set[str]:
     defaults: set[str] = set()
     for mode in dict.fromkeys(row.mode for row in model.reasoning):
         choices = [row for row in model.reasoning if row.mode == mode]
-        default = next((row for row in choices if row.key == model.default_reasoning), None)
-        if default is None and len(choices) == 1:
-            default = choices[0]
-        if default is None:
-            effort = chat_effort_exception(model.key, mode)
+        effort = chat_effort_default(provider, model.key, mode)
+        if effort is not None:
             default = next((row for row in choices if row.effort == effort), None)
+        elif len(choices) == 1:
+            default = choices[0]
+        elif len(choices) == 2:
+            default = max(choices, key=lambda row: row.effort_order)
+        else:
+            default = None
         if default is not None:
             defaults.add(default.key)
     return defaults
@@ -284,11 +286,14 @@ def _chat_defaults(model: _Model) -> set[str]:
 def _reasoning_labels(
     row: AgentReasoningFacts | ApiReasoningFacts,
 ) -> tuple[str | None, str, str]:
+    if row.mode is None and row.effort == "default":
+        return None, "default", row.label
     mode = (
         {
             "standard": "Standard",
             "pro": "Pro",
             "adaptive": "Adaptive",
+            "between_tools": "Between tools",
             "disabled": "Thinking Off",
         }.get(row.mode, row.mode)
         if row.mode is not None
@@ -296,6 +301,7 @@ def _reasoning_labels(
     )
     effort = {
         "none": "None",
+        "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
         "high": "High",
@@ -329,10 +335,16 @@ def _compose(
         (
             None,
             codex_readiness,
-            [] if codex is None else [_codex_model(codex, row) for row in codex.models],
+            []
+            if codex is None
+            else [_codex_model(codex, row) for row in codex.models if row.offered],
         ),
         *(
-            (provider, Ready(last_checked=now), [_api_model(row) for row in api.models])
+            (
+                provider,
+                Ready(last_checked=now),
+                [_api_model(row) for row in api.models if row.offered and row.provider == provider],
+            )
             for provider in providers
         ),
     ]
@@ -342,8 +354,6 @@ def _compose(
         label, billing, privacy, chain = _disclosure(provider)
         model_rows: list[GenerationModelRow] = []
         for model in models:
-            if isinstance(model.target, ProviderTarget) and model.target.provider != provider:
-                continue
             state: SelectionState = Selectable()
             if not model.chat_capable:
                 state = Ineligible(
@@ -354,7 +364,7 @@ def _compose(
                 state = readiness
             elif tool_block is not None:
                 state = tool_block
-            defaults = _chat_defaults(model)
+            defaults = _chat_defaults(provider, model)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in model.reasoning:
                 mode_label, effort_label, reasoning_label = _reasoning_labels(reasoning)
@@ -456,7 +466,6 @@ def _codex_model(catalog: AgentModelCatalog, row: AgentModelFacts) -> _Model:
         max_output_tokens=_value(row.source_max_output_tokens),
         input_modalities=row.input_modalities,
         reasoning=row.reasoning,
-        default_reasoning=_value(row.source_default_reasoning),
         target=CodexTarget(
             model_key=row.key,
             definition_revision=catalog.definition_revision,
@@ -477,7 +486,6 @@ def _api_model(row: ApiModelFacts) -> _Model:
         max_output_tokens=_value(row.max_output_tokens),
         input_modalities=row.input_modalities,
         reasoning=row.reasoning,
-        default_reasoning=_value(row.source_default_reasoning),
         target=ProviderTarget(
             provider=row.provider, model_id=row.dispatch.model_id, supports_tools=capable
         ),
