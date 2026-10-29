@@ -365,7 +365,7 @@ export function useNexusController() {
     const control = row?.key === "QuickAction:New" ? "New"
       : row?.key === "Continuation:UseText" ? "Continuation:UseText"
         : row?.key ?? "Search";
-    return { mode: !open ? "Overview" : viewport.isMobile ? rootMode : "Search", control };
+    return { mode: !open ? "Overview" : rootMode, control };
   }
 
   function choiceReturn(row: NexusRow | undefined, activation: NexusTargetActivation): ChoiceReturn {

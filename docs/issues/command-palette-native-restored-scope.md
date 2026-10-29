@@ -6,11 +6,14 @@ when eight stronger matches omitted it, then removed it after canonical scope
 detachment. normal `edges.create_link` restoration returned success, but a new
 specific scoped query stayed empty for 60 seconds while sync reported up to date.
 
-impact: restored membership may not reach native search, or the fixture may not
-have restored the intended canonical relation. no causal claim yet. investigate
-server context/full-search membership and the stopped disposable package's sqlite
-snapshot before changing product code. native driver and private artifacts remain
-in the compact-palette-native-proof checkout; no personal device was used.
+follow-up run `20261028-185003-8cc7a19d8283` proves restoration in server context
+and full search. stopped native sqlite has the visible relation (add 6/remove 3),
+visible page/index and complete scope facts at store revision 5/server cursor 6.
+executing the captured parsed query against that snapshot returns the page in
+both preview and admission. the display/publication failure remains unattributed;
+zero preview requests suggest composition may still be active. capture passive
+native composition/input events before assigning a cause or changing code.
+private artifacts remain in compact-palette-native-proof; no personal device used.
 
 resolved when canonical server membership and native authored/scope projections
 agree after restoration and the fresh query returns the target. remove this
