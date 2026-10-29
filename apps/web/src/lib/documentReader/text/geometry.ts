@@ -1,6 +1,6 @@
 import { isCanonicalWhitespace } from "@nexus/authored/canonical";
 import { captureNativeExcerpt, excerptSourceRoot, excerptSourceRange, UnsupportedExcerpt } from "./excerpt";
-import { excerptTextParts, excerptCanonicalMap, excerptPointOffsets, type ExcerptBody } from "@nexus/authored/excerpt";
+import { excerptTextParts, excerptCanonicalProof, type ExcerptBody } from "@nexus/authored/excerpt";
 // Text geometry over the mounted units: canonical cursors per unit (built
 // lazily, the eight most recent kept), viewport capture and positioning.
 // Positioning realizes its destination unit before measuring: skipped content
@@ -360,21 +360,14 @@ export function createTextGeometry(
       let excerpt: ExcerptBody;
       try { excerpt = captureNativeExcerpt(sourceRoot, range, sourceRoot !== text(id)); }
       catch (error) { if (error instanceof UnsupportedExcerpt) return { kind: "Rejected", reason: "UnsupportedExcerpt" }; throw error; }
-      const canonical = excerptCanonicalMap(excerpt);
+      const canonical = excerptCanonicalProof(excerpt);
       const sourceText = Array.from(units.get(id)!.text);
       while (extent.startOffset < extent.endOffset && isCanonicalWhitespace(sourceText[extent.startOffset]!)) extent.startOffset++;
       while (extent.endOffset > extent.startOffset && isCanonicalWhitespace(sourceText[extent.endOffset - 1]!)) extent.endOffset--;
       if (canonical.emitted !== sourceText.slice(extent.startOffset, extent.endOffset).join("")) return { kind: "Rejected", reason: "UnsupportedExcerpt" };
-      const at = excerptPointOffsets(excerpt.content);
-      const selectedStart = at(excerpt.selection.start);
-      const selectedEnd = at(excerpt.selection.end);
-      let first: (typeof canonical.provenance)[number] | null = null;
-      let last: (typeof canonical.provenance)[number] | null = null;
-      for (const token of canonical.provenance) if (token.spans.some(span => at(span.end) > selectedStart && at(span.start) < selectedEnd)) {
-        first ??= token; last = token;
-      }
-      if (!first || !last ||
-        extent.startOffset + first.start !== offsets.startOffset || extent.startOffset + last.end !== offsets.endOffset) return { kind: "Rejected", reason: "UnsupportedExcerpt" };
+      if (canonical.selection===null ||
+        extent.startOffset+canonical.selection.start_offset!==offsets.startOffset ||
+        extent.startOffset+canonical.selection.end_offset!==offsets.endOffset) return {kind:"Rejected",reason:"UnsupportedExcerpt"};
       const quote = excerptTextParts(excerpt).exact;
       return {
         kind: "Captured",

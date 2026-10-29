@@ -27,3 +27,16 @@ acceptance: a near-limit mixed ascii/astral epub publishes exact text and
 structure within the unchanged worker envelope; oversized input returns the
 typed resource failure within that envelope. record manual memory and
 source/export checks for the affected ingestion path.
+
+2026-10-28 actual qualification: normal epub upload/confirm of one paragraph
+containing 1,800 modest spans, each `('a😀 ').repeat(1000)`, failed before source
+capture. the repeated text is 10,800,000 utf-8 bytes before markup, below the per-xhtml
+16 mib decoded cap; normal word boundaries avoid the oversized atomic indexing
+unit issue. `ingest_media_source` settled dead with `E_RESOURCE_LIMIT` for media
+`01a184f2-6a49-7d5a-93b8-68f821dbaa61`, job
+`01a184f2-b48e-7356-a60e-d30bcae4c153` at `2026-10-28T23:57:45.924839Z`.
+private evidence: `nexus-highlight-excerpts-v1-capacity/.nexus-local/lab/20261028-165442-d8e549709020/containers.log:202`;
+fixture: that checkout's ignored `highlight-excerpts-source-capacity.spec.ts`,
+`unicode-stride` variant. the canonical lab completed teardown. this confirms
+normal-ingestion refusal, not its exact allocation site or peak resident usage;
+it is not a source-window helper failure or an admitted-source capacity proof.

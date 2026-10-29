@@ -3,7 +3,9 @@
  * validation and Python's closed result decoder admit their published effects.
  * Exit 2 rejects input, 3 exceeds the input budget, and 1 reports an unexpected
  * failure. Stderr is diagnostic only. The platform owns SQL publication. */
-import { ExcerptCaptureError, captureExcerpt, scopeExcerpt, captureRevision, excerptSourceSelection, excerptTextParts, excerptView, validateExcerpt, validateExcerptBody, type ExcerptCapture, type ExcerptScope } from "./src/excerpt.ts";
+import { readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+import { excerptSourceWindows, type ExcerptSourceEvent, ExcerptCaptureError, captureExcerpt, scopeExcerpt, captureRevision, excerptSourceSelection, excerptTextParts, excerptView, validateExcerpt, validateExcerptBody, type ExcerptCapture, type ExcerptScope } from "./src/excerpt.ts";
 import { mergeChanges, isVisible } from "./src/merge.ts";
 import { createNoteIntent, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
 import { parseBody } from "./src/body.ts";
@@ -110,7 +112,43 @@ function excerptScope(value: unknown): ExcerptScope {
   if (typeof scope.start_offset !== "number" || typeof scope.end_offset !== "number" || !Number.isSafeInteger(scope.start_offset) || !Number.isSafeInteger(scope.end_offset)) throw new TypeError("Invalid excerpt interval");
   return {kind:"interval",start_offset:scope.start_offset,end_offset:scope.end_offset};
 }
+/** Python supplies a seekable temporary stdin file; frames never retain a source tree. */
+function* sourceFrames(): Generator<unknown> {
+  const buffer = Buffer.allocUnsafe(65536), decoder = new StringDecoder("utf8");
+  let position = 0, pending = "";
+  for (;;) {
+    const count = readSync(0, buffer, 0, buffer.length, position);
+    if (!count) { pending += decoder.end(); break; }
+    position += count;
+    pending += decoder.write(buffer.subarray(0, count));
+    let newline: number;
+    while ((newline = pending.indexOf("\n")) !== -1) {
+      yield JSON.parse(pending.slice(0, newline));
+      pending = pending.slice(newline + 1);
+    }
+  }
+  if (pending) throw new TypeError("Incomplete source event frame");
+}
+function* sourceInputEvents(): Generator<ExcerptSourceEvent> {
+  const frames = sourceFrames();
+  frames.next();
+  for (const frame of frames) {
+    // justify-type-assertion: this private operation consumes only the same-deploy Python source owner's event file.
+    yield frame as ExcerptSourceEvent;
+  }
+}
 async function main(): Promise<void> {
+  if (process.argv[2] === "--source-window") {
+    const header = closed(sourceFrames().next().value, "items");
+    if (!Array.isArray(header.items)) throw new TypeError("Invalid source selections");
+    const selections = header.items.map(raw => {
+      const selection = closed(raw, "start end");
+      if (typeof selection.start !== "number" || typeof selection.end !== "number" || !Number.isSafeInteger(selection.start) || !Number.isSafeInteger(selection.end) || selection.start < 0 || selection.end < selection.start) throw new TypeError("Invalid source selection");
+      return {start: selection.start, end: selection.end};
+    });
+    process.stdout.write(JSON.stringify({items: excerptSourceWindows(sourceInputEvents, selections)}));
+    return;
+  }
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) {

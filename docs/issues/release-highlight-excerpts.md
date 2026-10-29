@@ -1,7 +1,8 @@
 # release highlight excerpts
 
-implementation in progress; release pending. binding cutover for
-[highlight excerpts](../highlight-excerpts-spec.md); one user, all devices paired.
+implementation and disposable qualification complete; paired release pending.
+binding cutover for
+[highlight excerpts](../modules/highlight.md#frozen-excerpts); one user, all devices paired.
 no release or data mutation is authorized by creating this record.
 
 problem: adding the frozen excerpt changes authored grammar and historical

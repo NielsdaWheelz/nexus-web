@@ -39,6 +39,22 @@ the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.
 
+server capture scans source provenance before materializing an excerpt. the
+existing canonicalizer locates original text contributors; the shared literal
+policy chooses context boundaries from source events. only the bounded candidate
+becomes an excerpt tree. source length does not become a new capture-admission
+limit. optional context has a combined 64 kib raw-text allowance as well as its
+display budget. exceeding it ends context earlier with a marked omission; it
+never shortens selected text or substitutes whitespace. the complete command's
+existing limit remains authoritative. the source owner groups selections by
+admitted reading, fragment and bounds, keeping one source tree live at a time.
+its canonical inverse uses compact runs and resolves only requested endpoints.
+the helper's private `--source-window` operation reads framed source events from
+stdin and returns context cuts; frame boundaries never define text boundaries.
+private utf-16 census coordinates keep mixed unicode text affine. only sparse
+endpoints convert back to public codepoint coordinates. the ordinary bounded
+helper protocol validates and captures the resulting excerpt trees.
+
 capture includes the selected blocks with at most 600 optional display codepoints
 per side. containing tables are atomic, including their outer tables. media stops
 optional context; intervening media has a nontext marker. unsupported selected
@@ -59,7 +75,9 @@ visible quotation bodies and the active copy command load full evidence.
 full queries read the exact canonical capture and
 its revision together. revisions hash source identity and the complete capture,
 independently of scope and mutable metadata. reading scope may remove context,
-never replace it with current source words. historical evidence owns its frozen
+never replace it with current source words. uncaptured discovery uses bounded
+admitted preview text, reports clipping and exposes no capture revision; full
+matching and capture authority remain separate. historical evidence owns its frozen
 capture and never loads a live authored resource to replace it.
 
 ## local interaction
@@ -104,6 +122,13 @@ reflowable locations use canonical codepoint offsets. dom provenance maps source
 spans to canonical codepoints for selection and paint; normalization can compose
 or expand source characters. mixed-atom note locations use the shared canonical
 text projection, never an independent editor-text approximation.
+
+dom and frozen-tree adapters share one canonical normalization policy. excerpt
+proof exposes text, length and the selected canonical interval; source adapters
+receive only proved endpoints and unsupported intervals. internal source runs and
+streamed contributors avoid retaining a whole per-character endpoint graph.
+complete graphemes preserve nfc composition across inline leaves. this projection
+proves location; the separate literal projection owns display and copy.
 
 pdf locations use canonical page-space quads. viewport transforms are derived
 presentation; geometry normalization belongs to the shared semantic owner and

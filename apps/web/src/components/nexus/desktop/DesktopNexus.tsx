@@ -345,7 +345,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         triggerAttributes: { tabIndex: selected ? 0 : -1,
                           onFocus: event => { focusedSecondary.current = event.currentTarget; select(row); },
                           onBlur: () => { focusedSecondary.current = null; } },
-                        returnFocus: () => inputRef.current,
                       }} />
                     </div>
                     {row.secondary?.kind === "ClosePane" ? (

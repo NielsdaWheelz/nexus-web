@@ -1,6 +1,6 @@
 /** Frozen source structure owns literal evidence. Canonical coordinates only locate it. */
 import { sha256 } from "@noble/hashes/sha2.js";
-import { canonicalSerialization, canonicalTokens, CANONICAL_BLOCKS, isCanonicalWhitespace, type CanonicalToken } from "./canonical.ts";
+import { canonicalSerialization, canonicalProjection, CANONICAL_BLOCKS, isCanonicalWhitespace, type CanonicalToken } from "./canonical.ts";
 import type { SelectionCapture, PassageCapture } from "./types.ts";
 
 /** A well-formed native capture cannot retain/prove the requested selected evidence. */
@@ -125,6 +125,26 @@ function* sourceTokens(body: ExcerptBody): Generator<LiteralToken> {
     for (const text of node.text) { yield {text, spans: [{start: offset, end: offset + 1}], synthetic: false, boundary: null}; offset++; }
     return;
   }
+  yield* literalTokens(sourceEvents(body.content));
+}
+export type ExcerptSourceEvent =
+  | {kind: "enter"; node_kind: string; index: number; start: number}
+  | {kind: "exit"; node_kind: string; end: number}
+  | {kind: "text"; text: string; start: number}
+  | {kind: "leaf"; node_kind: "br" | "hr" | "media_gap"; flow: "inline" | "block"; start: number};
+function* sourceEvents(content: ExcerptNode[]): Generator<ExcerptSourceEvent> {
+  function* walk(node: ExcerptNode, index: number, start: number): Generator<ExcerptSourceEvent> {
+    if (node.kind === "text") { yield {kind: "text", text: node.text, start}; return; }
+    if (!("children" in node)) { yield {kind: "leaf", node_kind: node.kind, flow: node.kind === "media_gap" ? node.flow : "inline", start}; return; }
+    yield {kind: "enter", node_kind: node.kind, index, start};
+    let cursor = start;
+    for (const [index, child] of node.children.entries()) { yield* walk(child, index, cursor); cursor += nodeSize(child); }
+    yield {kind: "exit", node_kind: node.kind, end: cursor};
+  }
+  let cursor = 0;
+  for (const [index, node] of content.entries()) { yield* walk(node, index, cursor); cursor += nodeSize(node); }
+}
+function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Generator<LiteralToken> {
   let pending = 0, pendingBoundary = 0, emitted = false;
   let previous: LiteralToken | null = null, previousCollapsible = false;
   const separator = (count: number, boundary: number) => { pending = Math.max(pending, count); pendingBoundary = boundary; };
@@ -147,34 +167,31 @@ function* sourceTokens(body: ExcerptBody): Generator<LiteralToken> {
     }
     previousCollapsible = collapsible;
   }
-  function* walk(node: ExcerptNode, path: number[], base: number, pre: boolean): Generator<LiteralToken> {
-    const size = nodeSize(node);
-    if (node.kind === "text") {
-      let offset = 0;
-      for (const ch of node.text) {
+  let pre = 0;
+  for (const event of events) {
+    if (event.kind === "text") {
+      let offset = event.start;
+      for (const ch of event.text) {
         const text = !pre && /^[\t\n\f\r ]$/u.test(ch) ? " " : ch;
-        if (!(pending && text === " " && !pre)) yield* emit({text, spans: [{start: base + offset, end: base + offset + 1}], synthetic: false, boundary: null}, text === " " && !pre);
-        offset++;
+        const width = utf16 ? ch.length : 1;
+        if (!(pending && text === " " && !pre)) yield* emit({text, spans: [{start: offset, end: offset + width}], synthetic: false, boundary: null}, text === " " && !pre);
+        offset += width;
       }
-      return;
+    } else if (event.kind === "leaf") {
+      if (event.node_kind === "br") yield* emit({text: "\n", spans: [{start: event.start, end: event.start + 1}], synthetic: false, boundary: null});
+      else if (event.node_kind === "hr" || event.flow === "block") separator(1, event.start);
+    } else if (event.kind === "enter") {
+      if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.start);
+      if ((event.node_kind === "td" || event.node_kind === "th") && event.index > 0) { pending = 0; yield* emit({text: "\t", spans: [], synthetic: true, boundary: event.start}); }
+      if (event.node_kind === "pre") pre++;
+    } else {
+      if (event.node_kind === "pre") pre--;
+      if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.end);
     }
-    const index = path.at(-1)!;
-    if (node.kind === "br") { yield* emit({text: "\n", spans: [{start: base, end: base + 1}], synthetic: false, boundary: null}); return; }
-    if (node.kind === "hr" || node.kind === "media_gap" && node.flow === "block") { separator(1, base); return; }
-    if (!("children" in node)) return;
-    const block = BLOCKS.has(node.kind), count = node.kind === "p" ? 2 : 1;
-    if (block) separator(count, base);
-    if (node.kind === "td" || node.kind === "th") {
-      if (index > 0) { pending = 0; yield* emit({text: "\t", spans: [], synthetic: true, boundary: base}); }
-    }
-    let childBase = base;
-    for (const [index, child] of node.children.entries()) { yield* walk(child, [...path, index], childBase, pre || node.kind === "pre"); childBase += nodeSize(child); }
-    if (block) separator(count, base + size);
   }
-  let base = 0;
-  for (const [index, node] of body.content.entries()) { yield* walk(node, [index], base, false); base += nodeSize(node); }
   if (previous !== null) yield previous;
 }
+
 /** Partition one literal stream; collapsing spans retain every contributing source boundary. */
 export function excerptTextParts(body: ExcerptBody): ExcerptTextParts {
   const at = excerptPointOffsets(body.content), start = at(body.selection.start), end = at(body.selection.end);
@@ -184,45 +201,115 @@ export function excerptTextParts(body: ExcerptBody): ExcerptTextParts {
     const chars = Array.from(node.text);
     return {prefix: chars.slice(0, start).join(""), exact: chars.slice(start, end).join(""), suffix: chars.slice(end).join("")};
   }
-  const parts: ExcerptTextParts = {prefix: "", exact: "", suffix: ""};
+  const parts = {prefix: textBuffer(), exact: textBuffer(), suffix: textBuffer()};
   for (const token of sourceTokens(body)) {
     const spans = token.spans;
     const exact = token.synthetic ? token.boundary !== null && start < token.boundary && token.boundary < end : spans.some(span => span.start < end && span.end > start);
     const before = token.synthetic ? token.boundary! <= start : spans.every(span => span.end <= start);
-    parts[exact ? "exact" : before ? "prefix" : "suffix"] += token.text;
+    parts[exact ? "exact" : before ? "prefix" : "suffix"].append(token.text);
   }
-  return parts;
+  return {prefix: parts.prefix.finish(), exact: parts.exact.finish(), suffix: parts.suffix.finish()};
 }
 
-function canonicalSource(body: ExcerptBody): { emitted: string; tokens: CanonicalToken<number>[] } {
-  const at = excerptPointOffsets(body.content);
-  const tokens: CanonicalToken<number>[] = [];
-  const last = () => tokens.at(-1)?.ch ?? "";
-  const boundary = () => { if (last() !== "\n" && last() !== "") tokens.push({ch: "\n", spans: []}); };
+type CanonicalSourceSpan = {start: number; end: number};
+function textBuffer(): {append(text: string): void; finish(): string} {
+  const chunks: string[] = [], pending: string[] = [];
+  return {
+    append(text) {
+      pending.push(text);
+      if (pending.length === 4096) {
+        chunks.push(pending.join(""));
+        pending.length = 0;
+      }
+    },
+    finish() {
+      if (pending.length) chunks.push(pending.join(""));
+      const result = chunks.join("");
+      chunks.length = 0;
+      pending.length = 0;
+      return result;
+    },
+  };
+}
+function* canonicalSource(body: ExcerptBody): Generator<CanonicalToken<CanonicalSourceSpan>> {
+  const at = excerptPointOffsets(body.content), buffer = textBuffer();
+  // Four dense local coordinates per run: raw start/end, source start/end.
+  // An empty source interval denotes a synthetic separator. These are bounded
+  // input-tree coordinates, never potentially larger publication offsets.
+  let runs = new Uint32Array(4096 * 4), runCount = 0;
+  let length = 0, last = "";
+  const append = (ch: string, span: CanonicalSourceSpan | null) => {
+    const previous = (runCount - 1) * 4;
+    const previousLength = runCount ? runs[previous + 1]! - runs[previous]! : 0;
+    const sourceLength = runCount ? runs[previous + 3]! - runs[previous + 2]! : 0;
+    if (span !== null && sourceLength > 0 && previousLength === sourceLength
+      && span.end - span.start === 1 && runs[previous + 3] === span.start) {
+      runs[previous + 1] = length + 1;
+      runs[previous + 3] = span.end;
+    } else if (span === null && runCount && sourceLength === 0) {
+      runs[previous + 1] = length + 1;
+    } else {
+      if ((runCount + 1) * 4 > runs.length) {
+        const expanded = new Uint32Array(runs.length * 2);
+        expanded.set(runs);
+        runs = expanded;
+      }
+      const offset = runCount++ * 4;
+      runs[offset] = length;
+      runs[offset + 1] = length + 1;
+      runs[offset + 2] = span?.start ?? 0;
+      runs[offset + 3] = span?.end ?? 0;
+    }
+    buffer.append(ch);
+    length++;
+    last = ch;
+  };
+  const boundary = () => {
+    if (last !== "\n" && last !== "") append("\n", null);
+  };
   const walk = (node: ExcerptNode, path: number[]) => {
     if (node.kind === "text") {
-      const base = at({path, offset: 0});
-      let offset = base;
+      let offset = at({path, offset: 0}), whitespace: number | null = null;
       for (const ch of node.text) {
-        const span = offset;
-        if (isCanonicalWhitespace(ch)) {
-          const prior = tokens.at(-1);
-          if (prior?.ch === " " && prior.spans.length && prior.spans.at(-1)! >= base) prior.spans.push(span);
-          else tokens.push({ch: " ", spans: [span]});
-        } else tokens.push({ch, spans: [span]});
+        if (isCanonicalWhitespace(ch)) whitespace ??= offset;
+        else {
+          if (whitespace !== null) {
+            append(" ", {start: whitespace, end: offset});
+            whitespace = null;
+          }
+          append(ch, {start: offset, end: offset + 1});
+        }
         offset++;
       }
+      if (whitespace !== null) append(" ", {start: whitespace, end: offset});
       return;
     }
-    if (node.kind === "br") { tokens.push({ch: "\n", spans: []}); return; }
+    if (node.kind === "br") {
+      append("\n", null);
+      return;
+    }
     const block = CANONICAL_BLOCKS.has(node.kind);
     if (block) boundary();
     if ("children" in node) for (const [index, child] of node.children.entries()) walk(child, [...path, index]);
     if (block) boundary();
   };
   for (const [index, node] of body.content.entries()) walk(node, [index]);
-  const normalized = canonicalTokens(tokens, spans => [...new Set(spans)].sort((a,b) => a-b));
-  return {emitted: normalized.map(token => token.ch).join(""), tokens: normalized};
+  yield* canonicalProjection(buffer.finish(), index => {
+    let lo = 0, hi = runCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (runs[mid * 4 + 1]! <= index) lo = mid + 1;
+      else hi = mid;
+    }
+    const run = lo * 4;
+    if (lo === runCount || index < runs[run]!) throw new Error("Canonical source run is absent");
+    const sourceStart = runs[run + 2]!, sourceEnd = runs[run + 3]!;
+    if (sourceStart === sourceEnd) return [];
+    const affine = runs[run + 1]! - runs[run]! === sourceEnd - sourceStart;
+    const start = affine ? sourceStart + index - runs[run]! : sourceStart;
+    return [{start, end: affine ? start + 1 : sourceEnd}];
+  }, spans => [...new Map(spans.map(span => [`${span.start}:${span.end}`, span])).values()]
+    .sort((a, b) => a.start - b.start || a.end - b.end));
 }
 
 /** Scalar provenance stays internal; only a requested endpoint needs a tree path. */
@@ -236,15 +323,22 @@ function sourceRange(content: ExcerptNode[]): (offset: number) => ExcerptRange {
     return {start: {path: leaf.path, offset: offset-leaf.start}, end: {path: leaf.path, offset: offset-leaf.start+1}};
   };
 }
-export function excerptCanonicalMap(body: ExcerptBody): { emitted: string; length: number; provenance: {start: number; end: number; spans: ExcerptRange[]}[] } {
-  const map = canonicalSource(body), range = sourceRange(body.content);
-  return {emitted:map.emitted, length:map.tokens.length, provenance:map.tokens.map((token,index) => ({start:index,end:index+1,spans:token.spans.map(range)}))};
+/** Canonical correspondence and native selected endpoints, without a source graph. */
+export function excerptCanonicalProof(body: ExcerptBody): {emitted:string;length:number;selection:{start_offset:number;end_offset:number}|null} {
+  const at=excerptPointOffsets(body.content), start=at(body.selection.start), end=at(body.selection.end), buffer=textBuffer();
+  let length=0,first:number|null=null,last:number|null=null;
+  for(const token of canonicalSource(body)) {
+    buffer.append(token.ch);
+    if(token.spans.some(span=>span.end>start&&span.start<end)){first??=length;last=length+1;}
+    length++;
+  }
+  return {emitted:buffer.finish(),length,selection:first===null||last===null?null:{start_offset:first,end_offset:last}};
 }
+
 /** Prove canonical publication text, returning only selected endpoints and refusals. */
 export function excerptSourceSelection(body: ExcerptBody, start: number, end: number, unsupportedPaths: number[][]): {emitted: string; length: number; selection: ExcerptRange | null; unsupported_intervals: {start_offset:number; end_offset:number}[]} {
   integer(start,0); integer(end,start);
-  const map = canonicalSource(body), range = sourceRange(body.content), at = excerptPointOffsets(body.content);
-  if (end > map.tokens.length) throw new TypeError("Source selection exceeds canonical publication");
+  const range = sourceRange(body.content), at = excerptPointOffsets(body.content), buffer=textBuffer();
   const unsupported = unsupportedPaths.map(path => {
     let nodes=body.content, node: ExcerptNode | null=null;
     for (const [depth,index] of path.entries()) {
@@ -257,13 +351,17 @@ export function excerptSourceSelection(body: ExcerptBody, start: number, end: nu
   });
   let first = Infinity, last = -Infinity;
   const intervals: {start_offset:number;end_offset:number}[] = [];
-  for (const [index,token] of map.tokens.entries()) {
-    if (index < end && index+1 > start) for (const span of token.spans) {first=Math.min(first,span);last=Math.max(last,span);}
-    if (token.spans.some(span => unsupported.some(bounds => bounds.lo <= span && span < bounds.hi))) {
+  let index=0;
+  for (const token of canonicalSource(body)) {
+    buffer.append(token.ch);
+    if (index < end && index+1 > start) for (const span of token.spans) {first=Math.min(first,span.start);last=Math.max(last,span.end);}
+    if (token.spans.some(span => unsupported.some(bounds => bounds.lo < span.end && span.start < bounds.hi))) {
       const previous=intervals.at(-1); if (previous?.end_offset===index) previous.end_offset=index+1; else intervals.push({start_offset:index,end_offset:index+1});
     }
+    index++;
   }
-  return {emitted:map.emitted,length:map.tokens.length,selection:Number.isFinite(first)?{start:range(first).start,end:range(last).end}:null,unsupported_intervals:intervals};
+  if(end>index)throw new TypeError("Source selection exceeds canonical publication");
+  return {emitted:buffer.finish(),length:index,selection:Number.isFinite(first)?{start:range(first).start,end:range(last-1).end}:null,unsupported_intervals:intervals};
 }
 
 export function captureRevision(source_ref: string | null, capture: ExcerptCapture): string {
@@ -407,13 +505,14 @@ function literalWindow(body: ExcerptBody, lo: number, hi: number, before: number
     if (key === "suffix") return bounds.start >= end;
     return bounds.start < end && bounds.end > start;
   };
-  const text = {prefix: "", exact: "", suffix: ""};
+  const buffers = {prefix: textBuffer(), exact: textBuffer(), suffix: textBuffer()};
   for (const token of sourceTokens(body)) {
     const bounds = tokenBounds(token);
-    if (includes("prefix", bounds)) text.prefix += token.text;
-    if (includes("exact", bounds)) text.exact += token.text;
-    if (includes("suffix", bounds)) text.suffix += token.text;
+    if (includes("prefix", bounds)) buffers.prefix.append(token.text);
+    if (includes("exact", bounds)) buffers.exact.append(token.text);
+    if (includes("suffix", bounds)) buffers.suffix.append(token.text);
   }
+  const text = {prefix: buffers.prefix.finish(), exact: buffers.exact.finish(), suffix: buffers.suffix.finish()};
   const beforeCut = contextCut(text.prefix, before, "before"), exactCut = contextCut(text.exact, selected, "after"), afterCut = contextCut(text.suffix, after, "after");
   const bound = (key: "prefix" | "exact" | "suffix", offset: number, fallback: number, endBoundary: boolean) => {
     let consumed = 0;
@@ -439,12 +538,14 @@ function intervalBounds(full: FrozenExcerpt, scope: ExcerptScope): {lo: number; 
   if (full.source_extent === null) throw new TypeError("Excerpt interval lacks proved source coordinates");
   integer(scope.start_offset, 0); integer(scope.end_offset, 0);
   if (scope.end_offset < scope.start_offset) throw new TypeError("Reversed excerpt scope");
-  const map = canonicalSource(full), offset = full.source_extent.start_offset;
-  let lo = scope.start_offset <= offset ? 0 : Infinity;
-  let hi = scope.end_offset >= offset+map.tokens.length ? size : -Infinity;
-  for (const [index,token] of map.tokens.entries()) if (index+offset >= scope.start_offset && index+offset+1 <= scope.end_offset) {
-    for (const span of token.spans) {lo=Math.min(lo,span);hi=Math.max(hi,span+1);}
+  const offset=full.source_extent.start_offset;
+  let lo=scope.start_offset<=offset?0:Infinity, hi=-Infinity, index=0;
+  for(const token of canonicalSource(full)) {
+    if(index+offset>=scope.start_offset && index+offset+1<=scope.end_offset)
+      for(const span of token.spans){lo=Math.min(lo,span.start);hi=Math.max(hi,span.end);}
+    index++;
   }
+  if(scope.end_offset>=offset+index)hi=size;
   if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo > start || hi < end) throw new TypeError("Excerpt scope does not admit the complete selection");
   return {lo, hi};
 }
@@ -458,12 +559,17 @@ export function excerptView(full: FrozenExcerpt, mode: "compact" | "full", scope
 }
 function clippedExtent(full: FrozenExcerpt, body: ExcerptBody, lo: number, hi: number): ExcerptExtent | null {
   if (full.source_extent === null) return null;
-  const canonical = canonicalSource(full), projected = canonicalSource(body);
-  const first = canonical.tokens.findIndex(token => token.spans.some(span => span+1 > lo && span < hi));
-  if (first < 0) return null;
-  const original = Array.from(canonical.emitted).slice(first, first + projected.tokens.length).join("");
-  if (original !== projected.emitted) return null;
-  return {...full.source_extent, start_offset: full.source_extent.start_offset + first, end_offset: full.source_extent.start_offset + first + projected.tokens.length};
+  const projected=textBuffer();let length=0;
+  for(const token of canonicalSource(body)){projected.append(token.ch);length++;}
+  const original=textBuffer();let first:number|null=null,index=0,matched=0;
+  for(const token of canonicalSource(full)) {
+    if(first===null && token.spans.some(span=>span.end>lo && span.start<hi))first=index;
+    if(first!==null && matched<length){original.append(token.ch);matched++;}
+    if(first!==null && matched===length)break;
+    index++;
+  }
+  if(first===null || original.finish()!==projected.finish())return null;
+  return {...full.source_extent,start_offset:full.source_extent.start_offset+first,end_offset:full.source_extent.start_offset+first+length};
 }
 /** Persist only admitted historical words. A partial atomic table is unavailable. */
 export function scopeExcerpt(full: FrozenExcerpt, scope: ExcerptScope): FrozenExcerpt | null {
@@ -479,6 +585,171 @@ export function scopeExcerpt(full: FrozenExcerpt, scope: ExcerptScope): FrozenEx
   const body = clipBody(bodyOf(full), lo, hi);
   return {...body, source_extent: clippedExtent(full, body, lo, hi), truncated_before: full.structure === "captured" ? lo > 0 ? true : full.truncated_before : null, truncated_after: full.structure === "captured" ? hi < contentSize(full.content) ? true : full.truncated_after : null};
 }
+const AFFINE = 0, ATOMIC = 1, SYNTHETIC = 2;
+/** Dense affine/atomic source runs; chunks avoid a second full allocation on growth. */
+class SourceRuns {
+  private readonly chunks: Uint32Array[] = [];
+  length = 0;
+  get(index: number, column: number): number { return this.chunks[Math.floor(index / 4096)]![(index % 4096) * 5 + column]!; }
+  add(from: number, to: number, start: number, end: number, kind: number): void {
+    const last = this.length - 1;
+    if (last >= 0 && kind === AFFINE && this.get(last, 4) === kind && this.get(last, 1) === from && this.get(last, 3) === start) {
+      const chunk = this.chunks[Math.floor(last / 4096)]!, offset = (last % 4096) * 5;
+      chunk[offset + 1] = to; chunk[offset + 3] = end;
+      return;
+    }
+    if (this.length % 4096 === 0) this.chunks.push(new Uint32Array(4096 * 5));
+    this.chunks.at(-1)!.set([from, to, start, end, kind], (this.length % 4096) * 5);
+    this.length++;
+  }
+  /** Literal UTF-16 interval of complete tokens inside a native interval. */
+  range(start: number, end: number): {from: number; to: number} {
+    let lo = 0, hi = this.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1, right = this.get(mid, 3); if (right < start || right === start && this.get(mid, 4) !== SYNTHETIC) lo = mid + 1; else hi = mid; }
+    let first = lo;
+    if (first < this.length && this.get(first, 4) === ATOMIC && this.get(first, 2) < start) first++;
+    lo = 0; hi = this.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1, left = this.get(mid, 2); if (left < end || left === end && this.get(mid, 4) === SYNTHETIC) lo = mid + 1; else hi = mid; }
+    let last = lo - 1;
+    if (last >= 0 && this.get(last, 4) === ATOMIC && this.get(last, 3) > end) last--;
+    if (first > last || first === this.length) return {from: first < this.length ? this.get(first, 0) : this.length ? this.get(this.length - 1, 1) : 0, to: first < this.length ? this.get(first, 0) : this.length ? this.get(this.length - 1, 1) : 0};
+    const firstKind = this.get(first, 4), lastKind = this.get(last, 4);
+    return {
+      from: this.get(first, 0) + (firstKind === AFFINE ? Math.max(0, start - this.get(first, 2)) : 0),
+      to: this.get(last, 1) - (lastKind === AFFINE ? Math.max(0, this.get(last, 3) - end) : 0),
+    };
+  }
+  native(offset: number, endBoundary: boolean): number {
+    let lo = 0, hi = this.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1, right = this.get(mid, 1); if (right < offset || right === offset && !endBoundary) lo = mid + 1; else hi = mid; }
+    if (lo === this.length) return this.length ? this.get(this.length - 1, 3) : 0;
+    const kind = this.get(lo, 4);
+    if (kind === AFFINE) return this.get(lo, 2) + (offset - this.get(lo, 0));
+    return endBoundary && offset === this.get(lo, 1) ? this.get(lo, 3) : this.get(lo, 2);
+  }
+  position(native: number): number {
+    let lo = 0, hi = this.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (this.get(mid, 3) < native) lo = mid + 1; else hi = mid; }
+    while (lo < this.length && this.get(lo, 4) === SYNTHETIC) lo++;
+    if (lo === this.length) return this.length ? this.get(this.length - 1, 1) : 0;
+    return this.get(lo, 0) + (native - this.get(lo, 2));
+  }
+  atoms(start: number, end: number): {start: number; end: number}[] {
+    const range = this.range(start, end), output = [];
+    let lo = 0, hi = this.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (this.get(mid, 1) <= range.from) lo = mid + 1; else hi = mid; }
+    for (let index = lo; index < this.length && this.get(index, 0) < range.to; index++) if (this.get(index, 4) === ATOMIC) output.push({start: this.get(index, 2), end: this.get(index, 3)});
+    return output;
+  }
+}
+function utf16Offset(text: string, codepoints: number): number {
+  let offset = 0;
+  while (codepoints-- > 0) offset += text.codePointAt(offset)! > 0xffff ? 2 : 1;
+  return offset;
+}
+/** Prepare a source once. This private source boundary uses UTF-16 coordinates;
+ * public excerpt points and publication offsets remain codepoints. */
+export function excerptSourceWindows(events: () => Iterable<ExcerptSourceEvent>, selections: {start: number; end: number}[]): {start: number; end: number; truncated_before: boolean; truncated_after: boolean}[] {
+  type Container = {kind: string; start: number; end: number};
+  const stack: Container[] = [], first: (Container | null)[] = selections.map(() => null), last: (Container | null)[] = selections.map(() => null);
+  const found = selections.map(() => false), mediaBefore = selections.map(() => 0), mediaAfter = selections.map(() => Infinity);
+  const endpoints = selections.flatMap((selection, index) => [{point: selection.start, index, end: false}, {point: selection.end, index, end: true}]).sort((a, b) => a.point - b.point || Number(b.end) - Number(a.end));
+  let endpoint = 0, size = 0, rawOffset = 0;
+  const rawBuffer = textBuffer(), rawRuns = new SourceRuns(), tableStarts: number[] = [], tables: number[] = [], media: number[] = [];
+  const raw = (text: string, native: number, synthetic = false) => {
+    rawBuffer.append(text);
+    if (synthetic) { rawRuns.add(rawOffset, rawOffset + text.length, native, native, SYNTHETIC); rawOffset += text.length; return; }
+    rawRuns.add(rawOffset, rawOffset + text.length, native, native + text.length, AFFINE); rawOffset += text.length;
+  };
+  for (const event of events()) {
+    if (event.kind === "enter") {
+      stack.push({kind: event.node_kind, start: event.start, end: event.start});
+      if (BLOCKS.has(event.node_kind)) raw("\n", event.start, true);
+      if (event.node_kind === "table") tableStarts.push(event.start);
+    } else if (event.kind === "exit") {
+      const container = stack.pop(); if (!container || container.kind !== event.node_kind) throw new TypeError("Unbalanced source events");
+      container.end = event.end; size = event.end;
+      if (BLOCKS.has(event.node_kind)) raw("\n", event.end, true);
+      if (event.node_kind === "table") { const start = tableStarts.pop(); if (start === undefined) throw new TypeError("Unbalanced source table"); tables.push(start, event.end); }
+    } else {
+      const finish = event.start + (event.kind === "text" ? event.text.length : 1);
+      size = finish;
+      if (event.kind === "leaf" && event.node_kind === "media_gap") media.push(event.start, finish);
+      while (endpoint < endpoints.length && (endpoints[endpoint]!.end ? endpoints[endpoint]!.point <= finish : endpoints[endpoint]!.point < finish)) {
+        const point = endpoints[endpoint++]!;
+        if (point.point < event.start || point.end && point.point === event.start) continue;
+        const containing = stack.find(value => value.kind === "table") ?? [...stack].reverse().find(value => BLOCKS.has(value.kind)) ?? null;
+        if (point.end) last[point.index] = containing;
+        else { first[point.index] = containing; found[point.index] = true; }
+      }
+      raw(event.kind === "text" ? event.text : "\n", event.start);
+    }
+  }
+  if (stack.length || found.some(value => !value)) throw new TypeError("Source selection has no native contributors");
+  const rawText = rawBuffer.finish(), literalBuffer = textBuffer(), runs = new SourceRuns();
+  let literalOffset = 0;
+  for (const token of literalTokens(events(), true)) {
+    const bounds = tokenBounds(token), kind = token.synthetic ? SYNTHETIC : bounds.end - bounds.start > token.text.length ? ATOMIC : AFFINE;
+    literalBuffer.append(token.text);
+    runs.add(literalOffset, literalOffset + token.text.length, bounds.start, bounds.end, kind);
+    literalOffset += token.text.length;
+  }
+  const literal = literalBuffer.finish(), encoder = new TextEncoder();
+  const output = selections.map((selection, index) => {
+    const containingStart = first[index]?.start ?? 0, containingEnd = last[index]?.end ?? size;
+    for (let at = 0; at < media.length; at += 2) {
+      if (media[at + 1]! <= selection.start) mediaBefore[index] = Math.max(mediaBefore[index]!, media[at + 1]!);
+      if (media[at]! >= selection.end) mediaAfter[index] = Math.min(mediaAfter[index]!, media[at]!);
+    }
+    let lo = Math.max(containingStart, mediaBefore[index]!), hi = Math.min(containingEnd, mediaAfter[index]!);
+    const prefixRange = runs.range(lo, selection.start), suffixRange = runs.range(selection.end, hi);
+    const prefix = literal.slice(prefixRange.from, prefixRange.to), suffix = literal.slice(suffixRange.from, suffixRange.to);
+    const beforeCut = contextCut(prefix, 600, "before"), afterCut = contextCut(suffix, 600, "after");
+    if (beforeCut) lo = Math.max(lo, runs.native(prefixRange.from + utf16Offset(prefix, beforeCut), false));
+    if (afterCut < codepointLength(suffix)) hi = Math.min(hi, runs.native(suffixRange.from + utf16Offset(suffix, afterCut), true));
+    // A combined 64 KiB allowance sizes OPTIONAL raw context. It never caps
+    // admitted source bytes or shortens selected contributors/whole tables.
+    const before = runs.range(lo, selection.start), after = runs.range(selection.end, hi);
+    let used = encoder.encode(literal.slice(before.from, before.to)).length + encoder.encode(literal.slice(after.from, after.to)).length;
+    const firstNative = runs.native(runs.range(lo, hi).from, false), lastNative = runs.native(runs.range(lo, hi).to, true);
+    if (firstNative - lo > 65536 - used) lo = firstNative; else used += firstNative - lo;
+    if (hi - lastNative > 65536 - used) hi = lastNative; else used += hi - lastNative;
+    for (const [side, atoms] of [runs.atoms(lo, selection.start).reverse(), runs.atoms(selection.end, hi)].entries()) {
+      for (const bounds of atoms) {
+        const extra = bounds.end - bounds.start - 1;
+        if (used + extra <= 65536) { used += extra; continue; }
+        // This is only a provisional raw cut. Original-stream graphemes snap
+        // it inward below, retaining any cluster that contains selected text.
+        if (side === 0) lo = Math.max(lo, bounds.end - 1); else hi = Math.min(hi, bounds.start + 1);
+        break;
+      }
+    }
+    return {start: lo, end: hi, truncated_before: false, truncated_after: false};
+  });
+  const cuts = output.flatMap((window, index) => [{offset: rawRuns.position(window.start), index, end: false}, {offset: rawRuns.position(window.end), index, end: true}]).sort((a, b) => a.offset - b.offset);
+  const graphemes = new Intl.Segmenter(undefined, {granularity: "grapheme"}).segment(rawText);
+  for (const point of cuts) {
+    if (point.offset === rawText.length) continue;
+    const segment = graphemes.containing(point.offset);
+    if (!segment || point.offset === segment.index) continue;
+    const before = rawRuns.native(segment.index, false), after = rawRuns.native(segment.index + segment.segment.length, true), selected = selections[point.index]!, window = output[point.index]!;
+    if (point.end) window.end = before >= selected.end ? before : selected.end;
+    else window.start = after <= selected.start ? after : selected.start;
+  }
+  for (const [index, window] of output.entries()) {
+    const selected = selections[index]!;
+    for (let at = 0; at < tables.length; at += 2) {
+      const left = tables[at]!, right = tables[at + 1]!;
+      if (left < selected.end && right > selected.start) { window.start = Math.min(window.start, left); window.end = Math.max(window.end, right); }
+      else if (right <= selected.start && left < window.start && window.start < right) window.start = right;
+      else if (left >= selected.end && left < window.end && window.end < right) window.end = left;
+    }
+    window.truncated_before = window.start > (first[index]?.start ?? 0);
+    window.truncated_after = window.end < (last[index]?.end ?? size);
+  }
+  return output;
+}
+
 /** Source adapters prove and freeze endpoints; this owner alone bounds optional literal context. */
 export function captureExcerpt(full: FrozenExcerpt): FrozenExcerpt {
   validateExcerpt(full);
@@ -487,7 +758,8 @@ export function captureExcerpt(full: FrozenExcerpt): FrozenExcerpt {
   const selected = entries.filter(entry => !("children" in entry.node) && entry.start < end && entry.end > start);
   const first = selected[0], last = selected.at(-1);
   if (!first || !last || !selected.some(entry => entry.node.kind === "text" && entry.end > entry.start)) throw new ExcerptCaptureError("Reflowable capture requires selected source text");
-  if (canonicalSource(full).tokens.length !== full.source_extent.end_offset - full.source_extent.start_offset) throw new TypeError("Excerpt source extent disagrees with canonical projection");
+  let canonicalLength=0;for(const _token of canonicalSource(full))canonicalLength++;
+  if (canonicalLength !== full.source_extent.end_offset - full.source_extent.start_offset) throw new TypeError("Excerpt source extent disagrees with canonical projection");
   const containing = (entry: LocatedNode): LocatedNode | null => entry.ancestors.find(ancestor => ancestor.node.kind === "table") ?? [...entry.ancestors].reverse().find(ancestor => BLOCKS.has(ancestor.node.kind)) ?? null;
   let lo = containing(first)?.start ?? 0, hi = containing(last)?.end ?? contentSize(full.content);
   for (const entry of entries) if (entry.node.kind === "media_gap") {

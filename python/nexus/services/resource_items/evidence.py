@@ -311,36 +311,35 @@ def _admitted_evidence(
     quote = evidence.quote
     if quote is None:
         return None
+    owner_kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": owner.id})
+    if (
+        owner_kind is not None
+        and owner_kind != "text_part"
+        and reading_media_id in (None, owner.id)
+        and can_read_media(db, viewer_id, owner.id)
+    ):
+        # Whole-source authority admits the saved evidence independently of
+        # current fragments. Placement is resolved separately for activation.
+        return evidence, {"kind": "capture"}, ()
     reads = location_reads(db, viewer_id, [target])
     current = current_locator(target, quote, reads)
-    incomplete_tables: tuple[tuple[int, int], ...] = ()
-    if reads.passages.canonical_media.get(owner.id) == owner.id and reading_media_id in (
-        None,
-        owner.id,
-    ):
-        if not can_read_media(db, viewer_id, owner.id):
-            return None
-        chosen_owner = owner
-        chosen_locator = current
-        scope = {"kind": "capture"}
-    else:
-        if current is None:
-            return None
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
-            source_media_id=owner.id,
-            quote=quote,
-            locator=current or target.locator.model_dump(mode="json"),
-            reading_media_id=reading_media_id,
-        )
-        if scoped is None:
-            return None
-        chosen_owner, chosen_locator = scoped.owner, scoped.locator
-        scope = scoped.excerpt_scope or {"kind": "capture"}
-        incomplete_tables = scoped.incomplete_tables
+    if current is None:
+        return None
+    scoped = scoped_media_passage(
+        db,
+        viewer_id=viewer_id,
+        source_media_id=owner.id,
+        quote=quote,
+        locator=current,
+        reading_media_id=reading_media_id,
+    )
+    if scoped is None:
+        return None
+    chosen_owner, chosen_locator = scoped.owner, scoped.locator
+    scope = scoped.excerpt_scope or {"kind": "capture"}
+    incomplete_tables = scoped.incomplete_tables
     selector = (chosen_locator or {}).get("text_quote_selector") or {}
-    if current is not None and selector:
+    if selector:
         prefix_limit = len(selector.get("prefix") or "")
         suffix_limit = len(selector.get("suffix") or "")
         quote = quote.model_copy(
@@ -440,17 +439,19 @@ def evidence_items(
             if value is not None and isinstance(value.target, CapturedPassageTarget)
         ],
     )
-    quoted = [value for value in admitted if value is not None and value.quote is not None]
     projected = iter(
         project_excerpts(
             [
                 {
-                    "source_ref": value.source.ref,
-                    "capture": {"kind": "evidence", "value": value.model_dump(mode="json")},
+                    "source_ref": original.source.ref,
+                    "capture": {"kind": "evidence", "value": original.model_dump(mode="json")},
                     "mode": "full",
-                    "scope": {"kind": "capture"},
+                    "scope": admission[1],
                 }
-                for value in quoted
+                for (_, original, _), admission, value in zip(
+                    occurrences, admissions, admitted, strict=True
+                )
+                if admission is not None and value is not None and value.quote is not None
             ]
         )
     )

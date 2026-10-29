@@ -7,10 +7,12 @@ diagnostic text, never a failure discriminator. Other exits remain defects.
 """
 
 import json
+import shutil
 import subprocess
+import tempfile
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 from uuid import UUID
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
@@ -65,6 +67,31 @@ def call(value: dict[str, Any]) -> Any:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid authored change")
     result.check_returncode()
     return json.loads(result.stdout)
+
+
+def source_windows(events: BinaryIO, selections: list[tuple[int, int]]) -> list[dict[str, Any]]:
+    """Scan source events through a seekable stdin file, never whole-tree JSON."""
+    with tempfile.TemporaryFile() as source:
+        source.write(
+            json.dumps(
+                {"items": [{"start": start, "end": end} for start, end in selections]}
+            ).encode()
+            + b"\n"
+        )
+        events.seek(0)
+        shutil.copyfileobj(events, source)
+        source.seek(0)
+        result = subprocess.run(
+            [node_binary(), "--max-old-space-size=128", str(SCRIPT), "--source-window"],
+            stdin=source,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+            env={"NODE_ENV": "production", "PATH": "/usr/local/bin:/usr/bin:/bin"},
+        )
+    result.check_returncode()
+    return json.loads(result.stdout)["items"]
 
 
 def call_items(

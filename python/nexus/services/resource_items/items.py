@@ -506,7 +506,10 @@ def _rows(
             out[ref.uri] = {
                 "id": ref.id,
                 "body_kind": "passage",
-                "exact": passage.quote.exact,
+                # Full matching/capture authority remains in passages. These rows
+                # carry bounded display evidence, as their SQL producers do.
+                "exact": passage.quote.exact[:601],
+                "preview_omitted_after": len(passage.quote.exact) > 601,
                 "prefix": passage.quote.prefix,
                 "suffix": passage.quote.suffix,
                 "color": passage.quote.color,
@@ -561,10 +564,10 @@ def _rows(
                     "Canonical authored capture is missing"
                 )  # justify-defect: v2 authored identities always retain their canonical capture.
 
-            frozen = (
-                plain_excerpt(passage.quote.exact, passage.quote.prefix, passage.quote.suffix)
-                if passage is not None
-                else plain_excerpt(row.get("exact") or "", row.get("prefix"), row.get("suffix"))
+            frozen = plain_excerpt(
+                row.get("exact") or "",
+                row.get("prefix"),
+                None if row.get("preview_omitted_after") else row.get("suffix"),
             )
             captured = {
                 "source_ref": row.get("owner_ref"),
@@ -590,6 +593,18 @@ def _rows(
         requests.append({**captured, "mode": excerpt_mode, "scope": scope})
         subjects.append(row)
     for row, projection in zip(subjects, project_excerpts(requests), strict=True):
+        if (
+            not row["captured"]
+            and row.get("preview_omitted_after")
+            and projection.view.kind == "content"
+        ):
+            projection = projection.model_copy(
+                update={
+                    "view": projection.view.model_copy(
+                        update={"selected_truncated_after": True, "omitted_after": True}
+                    )
+                }
+            )
         row["excerpt_projection"] = projection
     bounded = [
         row

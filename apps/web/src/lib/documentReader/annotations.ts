@@ -10,7 +10,7 @@
 // saved offsets places a mark; otherwise a unique literal occurrence places a derived
 // mark; otherwise the annotation stays unlocated beside its literal quote. A host
 // without source text still lists every annotation with editable notes.
-import { captureExcerpt, createPlainExcerpt, excerptCanonicalMap, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
+import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
 import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import type { NoteBody } from "@nexus/authored/body";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
@@ -149,7 +149,7 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const offsets = { media_id: owner.mediaId, fragment_id: owner.fragment, start_offset: anchor.start + unit.sourceStartOffset,
     end_offset: anchor.end + unit.sourceStartOffset, media_kind: null, text_quote_selector: { exact, prefix, suffix } };
   const locator: Locator = doc.format === "epub" ? { type: "epub_fragment_offsets", section_id: null, ...offsets } : { type: "web_text_offsets", ...offsets };
-  if (excerptCanonicalMap(body).emitted !== text.slice(excerptStart, excerptEnd).join("")) return null;
+  if (excerptCanonicalProof(body).emitted !== text.slice(excerptStart, excerptEnd).join("")) return null;
   const excerpt = captureExcerpt({ ...body, source_extent: { reading_ref: mediaRef(mediaId), document_identity: doc.identity, fragment_id: owner.fragment, start_offset: unit.sourceStartOffset + excerptStart, end_offset: unit.sourceStartOffset + excerptEnd }, truncated_before: false, truncated_after: false });
   const passage = passageOf(unit.text, anchor.start, anchor.end);
   return { sourceRef: mediaRef(owner.mediaId), passage: passage && { ...passage, source_ref: doc.part ? mediaRef(mediaId) : mediaRef(owner.mediaId) },

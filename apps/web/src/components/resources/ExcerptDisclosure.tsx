@@ -79,7 +79,7 @@ export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes
   const trigger = useRef<HTMLButtonElement>(null);
   const candidate = item?.preview.body.kind === "passage" && item.preview.body.capture_revision !== null ? item : null;
   if (candidate === null && opened === null) return null;
-  return <span onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+  return <span onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
     <Button {...triggerAttributes} ref={trigger} type="button" aria-expanded={opened !== null} onKeyDown={event => { if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault(); }} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setOpened(value => value ? null : candidate); }}>
       {opened ? "hide excerpt" : "show excerpt"}
     </Button>
