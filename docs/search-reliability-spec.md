@@ -1,6 +1,6 @@
 # search reliability: revised implementation and acceptance spec
 
-contract revised 2026-10-28; implementation status reconciled 2026-10-29.
+contract revised 2026-10-29; implementation status reconciled 2026-10-29.
 historical evidence retains its recorded source and migration identity. the isolated
 integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
 migration 0329/down 0328 and passed the sole static gate. that closes the source/head
@@ -16,6 +16,22 @@ the previous spec is preserved at
 useful retrieval and a surviving database take precedence over speed. preserve
 semantics and writing; bound concurrency and physical resources; let complete
 work finish. a safe timeout is a failure outcome, not a working search.
+
+the user's 2026-10-29 decision permits deliberate serialization of heavy search,
+suggestion ranking, indexing and backup. their simultaneous peaks need not fit.
+normal services must fit while present, including idle workers and retained
+connections. a backup may have an enforced window before queued heavy work
+resumes. useful search must eventually complete; ordinary reading, local writing
+and cancellation remain usable, and finite queued work must drain. serialization
+is a scheduling choice, not permission for starvation, lost work or hidden failure.
+capacity waiting must remain visibly and honestly pending; generic waiting copy
+is sufficient. it never spends the execution allowance, which begins at admitted
+execution. existing request/presentation owners must resume deferred work under
+the current intent, preserve stable completed results and honor cancellation.
+browser requests use nonblocking admission before embedding; their existing
+client intent owns capacity waiting and natural retry. execution and transport
+safeguards remain finite. actual deployment ceilings and capacity remain with
+[release acceptance](issues/release-search.md).
 
 retire the former 400 ms background computation, 500 ms hold/retirement and
 60-second quiet-publication acceptance gates, plus the former foreground
@@ -36,6 +52,9 @@ it does not change historical verdicts or turn old failures into passes.
 retain the 2 gib ram host, postgres 512 mib/no-swap leaf, api 384 mib and other existing
 service limits. retain the established 64 mib database and 128 mib workload host
 reserves; deployment's separate 256 mib available-memory preflight stays intact.
+where the connector is omitted from a backend qualification, its full 128 mib cap
+is reserved alongside the 128 mib host reserve: 256 mib available physical memory,
+with the 64 mib postgres reserve independent.
 production host swap remains enabled: cloud-init provisions at least 1 gib.
 the no-swap condition applies to service leaves, whose `memswap_limit` equals
 `mem_limit`, not to the host. record host ram headroom, swap use and pressure
@@ -115,7 +134,8 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   database/volume/network/parent. the protected original database and shared daemon
   were unchanged. the original failed verdict is unchanged. these historical
   0321 components do not qualify integrated 0329 or the actual 2 gib topology.
-- **open:** full mixed-workload progress, cold and actual 2 gib topology,
+- **open:** useful progress and queue drain under the chosen serialization policy,
+  cold and actual 2 gib topology,
   integrated migration/full native runtime and phone acceptance. brave
   import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
   no search-repair production deployment has occurred.
@@ -167,11 +187,13 @@ keep the current owners; change policy at those owners rather than adding layers
    and retained-backend costs remain provisional until the reachable concurrent
    topology fits the envelope under the capacity specification.
 2. `search/admission.py` retains one database-wide expensive-read gate and a
-   physical search lease through confirmed backend retirement. provider waits and
-   unrelated ordinary/control work remain outside it. a snapshot covers complete
+   physical search lease through confirmed backend retirement. browser requests
+   reserve it before embedding; background provider work and unrelated
+   ordinary/control work retain their existing owners. a snapshot covers complete
    permission/ranking/hydration facts; publication uses a later short transaction.
    no ordinary transaction waits for a provider or the search gate.
-3. foreground requests wait for an admitted background read to finish; do not
+3. browser intent waits at its existing client owner for admitted work to finish;
+   requests refuse occupied capacity without a server-side queue. do not
    repeatedly preempt that read to make the foreground appear fast. background
    refuses observed local physical-capacity or shared-gate contention without
    waiting. the shared-gate try-lock cannot bypass foreground waiters already
@@ -179,11 +201,16 @@ keep the current owners; change policy at those owners rather than adding layers
    that gate. existing query owners cancel superseded/disconnected requests;
    cancelled waiters never execute later. no extra durable queue or priority service.
 4. `api/search_operation.run_search_operation` remains the http deadline,
-   disconnect and cancel/join owner. routes supply a finite absolute allowance;
-   embedding, checkout, gate waiting, reads and result construction consume it
-   without timer resets. tool/oracle owners retain their enclosing cancellation
-   scope. web `lib/search/policy.ts`, browser request owners and `api/proxy.ts`
-   must agree with the server and actual hosting limits.
+   disconnect and cancel/join owner. capacity queue waiting must not spend the
+   finite execution allowance; that allowance starts at admitted execution and
+   is not reset during the read/result construction. provider work retains its
+   owned finite guards; tool/oracle owners retain their enclosing cancellation
+   scope. transport ceilings are separate constraints, not execution allowances.
+   api115/bff120/browser125 safeguards remain unchanged. an unadmitted busy
+   response leaves the current client intent pending, with cancellable backoff
+   outside its execution clock. a prefix retains completed pages and its remaining
+   allowance; capacity deferral retries the current page, never the prefix.
+   real/provider/network failures settle rather than reset that allowance.
 5. shortlist/discovery handlers retain a finite attempt read watchdog through
    `search_session_async` and `read_snapshot`'s remaining statement-timeout
    backstop. provider work has its existing finite provider/job owner outside
@@ -197,21 +224,26 @@ keep the current owners; change policy at those owners rather than adding layers
    request cancellation/expiry still wins. cleanup is never abandoned to meet a
    stopwatch. preserve original failure classification during rollback.
 
-**foreground coexistence is a release gate, not an assumption.** the reviewed
-watchdog table must cover the longest admitted background read and retirement,
-queued foreground work allowed by the finite client/topology workload, and the
-request's own provider/read/transport work. client/bff/platform ceilings must
-permit that wait. verify actual lexical and hybrid success while a full background
-read is already holding the gate, not only when it is idle or timing out.
+**useful completion and queue drain are release gates.** lexical and hybrid
+search may wait behind admitted work; simultaneous peak execution is not required.
+the chosen admission policy must let both complete usefully while ordinary
+reading, local writing and cancellation remain usable. the reviewed watchdog
+table must distinguish visible queue waiting from admitted execution and retirement,
+plus provider/transport guards. client/bff/platform ceilings must permit useful
+completion under that policy without spending execution time on capacity waiting.
+no blind timer reset, new protocol, phase telemetry or scheduler is prescribed.
+timed-out requests
+and retained earlier results do not substitute for useful completion.
 
 choose and record finite watchdog values and a finite qualification observation
 window before executing qualification, from measured complete-work costs and
 cleanup margin. they are operational safeguards, not new latency targets. do not
 silently inherit the old phase caps, borrow the general worker wall limit, restart
 clocks, or use infinite waits. if measured background cost cannot coexist with
-successful foreground requests inside actual transport ceilings, this synchronous
-baseline fails: return the concrete conflict for a design decision before adding
-preemption, incremental snapshots, an async search protocol or a feature cut.
+successful foreground requests under the chosen serialization policy inside
+actual transport ceilings, this synchronous baseline fails: return the concrete
+conflict for a design decision before adding preemption, incremental snapshots,
+an async search protocol or a feature cut.
 preliminary cost measurements also declare a finite diagnostic watchdog before
 execution. expiry is censored noncompletion, not a successful latency measurement
 or qualification; diagnostic limits do not become product allowances.
@@ -312,10 +344,10 @@ before tuning; record actual waits without manufacturing latency percentiles.
 | gate | required outcome |
 | --- | --- |
 | retrieval quality | frozen name/body/semantic-only/empty cases, global and restrictive library/source/piece scopes, active-model/readiness changes and exclusions. exact baseline matches reference windows/order; ann meets the retained floors. preserve literal evidence, full reading boundaries and real activation. include 401 equal-distance chunks and overlapping readings for suggestion cutoff ties |
-| useful coexistence | full five-anchor, both-family refresh and strict discovery finish through real job/claim/publication owners. overlapping foreground lexical and hybrid requests succeed independently; reading, local writing, sync and stop controls remain usable. after finite competing jobs/mutations drain, every active due feed publishes the settled revision within the predeclared observation window. timed-out reads and old publications fail this gate |
+| useful progress | full five-anchor, both-family refresh, strict discovery and foreground lexical/hybrid search complete through their real owners. heavy work may queue and serialize; reading, local writing, sync and stop controls remain usable. the finite queue drains, and every active due feed publishes the settled revision within the predeclared observation window after competing jobs/mutations drain. timed-out reads, perpetual deferral and old publications fail this gate |
 | lifecycle/failure | supersession/disconnect and owned timeout retire real backends before reuse; subsequent work succeeds. contention alone refunds; compute expiry consumes attempts. failed/lost-claim work preserves the old publication; authority withdrawal removes access; revised inputs converge; listener reconnect rereads truth. unknown retirement never publishes or releases its physical allowance |
 | writing | local authored commits survive busy/disconnect and retry original sequence/bytes. server-owned writes preserve their own identity and uncertainty before dispatch and after a committed write whose response fails; no false refusal or lost intent |
-| actual capacity | current candidate on actual 2 gib ram topology with production host swap enabled, postgres512mib and all service leaves no-swap at their real limits; cold then warmed readers/listeners, two clients, both worker lanes, authored buffers, physical maintenance/autoanalyze and online-backup overlap. account for host swap use/pressure and preserve physical ram reserves; zero new oom/kill, database recovery, process crash or lost claims; finite workload completes and owned resources retire. a larger-host/component pass does not close this gate |
+| actual capacity | current candidate on actual 2 gib ram topology with production host swap enabled, postgres512mib and all service leaves no-swap at their real limits; cold then warmed readers/listeners, two clients, all normal services present even idle, authored buffers, reachable maintenance/autoanalyze and verified backup under the declared serialization policy. count retained memory and host swap use/pressure; preserve physical reserves. zero new oom/kill, database recovery, process crash or lost claims; useful work completes, the finite queue drains and owned resources retire. a larger-host/component pass does not close this gate |
 | integration/release | qualify 0329 after main 0328 plus the real deployed 0317 upgrade route, verified backup/value preservation, exact source/image/schema/wire/client identities, paired actual phone search/reader and successful continuation of writing. historical 0321 receipts do not qualify this 0329 lineage |
 
 brave import/metadata remains blocked until entitlement permits real completion;

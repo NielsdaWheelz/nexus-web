@@ -62,12 +62,17 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-search reliability against exact main `e2192e593`: +1,277 net authored runtime
-lines (2,275 added, 998 deleted): `python/nexus` 2,210 added, 970 deleted,
-net +1,240; `apps/web/src` 47 added, 22 deleted, net +25;
+search reliability against exact main `e2192e593`: +1,332 net authored runtime
+lines (2,360 added, 1,028 deleted): `python/nexus` 2,244 added, 980 deleted,
+net +1,264; `apps/web/src` 98 added, 42 deleted, net +56;
 `apps/worker` 18 added, 6 deleted, net +12; api entrypoint unchanged.
+migrations add 73 and delete 1 separately: 0329 adds 62; the bounded 0327
+publication read adds 11 and deletes 1. runtime plus migrations total +1,404
+net authored lines (2,433 added, 1,029 deleted).
 exact original-float windows, scoped batches and owned async reads
-replace ann/count routing, repeated source reads and subsecond verdicts. finite
+replace ann/count routing, repeated source reads and subsecond verdicts. current
+client intent replaces server capacity waits and manual capacity retry; completed
+pages and remaining execution allowance survive deferral. finite
 role pools, control reserves, owned async startup/retirement and one bulk-hydration
 permit retain bounded resource ownership. generated output, migrations, configuration,
 manifests, locks, docs and lab tooling are excluded; executable runtime settings

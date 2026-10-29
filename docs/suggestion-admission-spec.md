@@ -8,9 +8,11 @@ there is one integrated repair, not a required database-pr/search-pr split.
 
 ## outcome and evidence
 
-background refresh must complete useful work while foreground reads, writing and
-control work remain usable inside the fixed envelope. the selected baseline is
-exact original-float retrieval. no approximate path is required merely because
+background refresh and foreground search must complete useful work inside the
+fixed envelope. heavy work may queue and serialize, including an enforced backup
+window; ordinary reading, local writing and control work remain usable, and
+finite queued work must drain. normal services count even when idle. the selected
+baseline is exact original-float retrieval. no approximate path is required merely because
 an earlier plan permitted it, and no faster graph-only result substitutes for a
 working semantic lane.
 
@@ -80,13 +82,20 @@ runtime fallback, adaptive recall, dropped anchors/families or hidden underfill.
 all expensive callers use the native async admission owner: browser discovery,
 strict tools, pickers, oracle, connection discovery and shortlist ranking.
 preserve each caller's direct/short-query bypass, embedding failure semantics,
-outer deadline and cancellation ownership. providers run outside admission and
-outside ordinary transactions held while waiting for search.
+outer deadline and cancellation ownership. browser requests admit before
+embedding; background/tool provider work keeps its existing owner outside
+admission. no ordinary transaction is held while waiting for search/providers.
 
 physical checkout precedes the one database-wide session advisory gate and is
-charged to the capacity owner's finite allowance. one original absolute deadline
-covers checkout, gate wait, complete read and result construction, without resets;
-the remaining statement timeout backs it after admission-transaction rollback.
+charged to the capacity owner's finite allowance. browser requests refuse
+occupied capacity instead of waiting inside their request clock; current client
+intent owns waiting and automatic retry outside execution time. background
+admission also refuses contention, using normal durable job deferral.
+the required execution allowance begins at admitted execution and is never spent
+on capacity queue waiting or reset during the read/result construction. waiting
+remains honestly pending and resumes under the current intent; generic copy is
+sufficient. remaining statement timeout must back the admitted read after
+admission-transaction rollback.
 the foreground waits for admitted background work; background refuses observed
 local physical-permit or advisory-gate contention without waiting. the try-lock
 cannot jump foreground waiters already queued in postgres. there is no additional
@@ -105,9 +114,10 @@ expiry is not observed contention; arbitrary `57014`, shutdown, lost claims and
 database/invariant errors keep their existing classifications. no retry-to-green,
 new queue or hidden perpetual rescheduling.
 
-finite watchdog values must permit complete work and foreground coexistence
-inside actual browser/bff/platform ceilings, as required by the reliability
-contract. the former 400 ms computation, 500 ms occupancy/retirement and
+finite watchdog values must permit complete work and finite queued foreground
+completion under the chosen serialization policy inside actual browser/bff/platform
+ceilings, as required by the reliability contract. the former 400 ms computation,
+500 ms occupancy/retirement and
 60-second quiet-publication acceptance gates are retired. no replacement numeric
 latency deadline is approved. diagnostic expiry is censored noncompletion.
 
@@ -140,8 +150,10 @@ semantic work, both families, global/library/source/piece/capture scopes,
 semantic-positive restrictive cases, genuine empty results, active-model changes
 and deterministic cutoff ties. preserve literal evidence and real activation.
 qualify normal claim/heartbeat/result/publication, contention, cancellation,
-withdrawal, lost claims and failure budgets alongside successful overlapping
-lexical/hybrid requests, writing and controls.
+withdrawal, lost claims and failure budgets alongside useful lexical/hybrid
+completion, writing, controls and finite queue drain. simultaneous heavy peaks
+and backup overlap are not required; retained memory and reachable maintenance
+demand remain inside the unchanged envelope.
 
 account for repeated eligibility work, longer snapshots/gate holds and retained
 physical waiters under the same native resource envelope. no larger host or

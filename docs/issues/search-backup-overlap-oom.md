@@ -1,6 +1,8 @@
 # online backup overlap exhausted the component budget
 
-status: open; actual memory failure, incomplete process attribution.
+status: open; actual memory failure, incomplete process attribution. the user's
+2026-10-29 acceptance revision permits deliberate heavy/backup serialization;
+this recorded overlap failure remains FAILED.
 
 source `7173b6a91`, run `mac-search-7173b6a91-1b9ec08d05a6`, recorded oom 1/kill 1
 in its 1280 mib/no-swap parent during backup and mixed work. strict-scan job
@@ -35,9 +37,13 @@ the original failed verdict is unchanged. failed raw monitor/run receipts remain
 private under
 `.nexus-local/native-capacity-7173b6a91/oom-online-qualified-actual.private/`.
 
-resolve by attributing memory ownership and proving a successful current-source
-workload within a justified unchanged envelope, then the required
+resolve by accounting for memory ownership and proving a successful current-source
+workload under the chosen enforced serialization policy, with normal services
+present, unchanged caps/reserves and finite queue drain, then the required
 [actual 2 gib qualification](search-whole-host-qualification-environment.md).
+backup may own a window before queued heavy work resumes; another simultaneous
+peak-overlap pass is not required. this change supplies no passing waiver for the
+historical oom, and its precise killed-pid attribution remains incomplete.
 this larger-host failure does not establish failure of a physical 2 gib topology:
 the 1280 mib budget includes declared outside-system/connector/reserve deductions.
 its no-swap parent was a component experiment boundary, not a requirement that

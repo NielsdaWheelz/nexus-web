@@ -33,8 +33,12 @@ deployment, the API and worker image digests, and the expected Alembic revision.
 production composition owns the aggregate physical connection and memory budget:
 api pools, both worker lanes and their children, asynchronous sessions, stream
 listeners and probes all count. per-process pool limits do not establish that
-budget. qualification includes warmed retained backends and query peaks together,
-with foreground writes, cancellation and worker lease renewal still progressing.
+budget. all normal services count while present, including idle workers and warmed
+retained backends. heavy search, suggestion ranking, indexing and backup may queue
+and serialize; an enforced backup window is permitted. count peaks that remain
+reachable under that policy and retain maintenance headroom. ordinary reading,
+local writing, cancellation and worker lease renewal must progress, useful search
+must complete, and finite queued work must drain.
 exact allocations remain in the deployment configuration and its declared inputs.
 
 query work belongs to the [search owner](docs/modules/search.md#work-bounds).

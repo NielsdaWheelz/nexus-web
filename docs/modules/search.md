@@ -35,8 +35,11 @@ rules when changing execution. an early candidate cap that changes winners is
 a ranking decision, not a transparent optimization. hydrate selected results
 without broadening the ranked work or copying full bodies into candidate sets.
 
-the caller's original deadline covers provider transport, admission and database
-work. cancellation stops subsequent local requests and retries and joins cleanup;
+capacity waiting must remain honestly pending and must not spend the execution
+allowance, which starts at admitted execution. provider and transport work retain
+their finite owning guards. frozen `4ceb03555` instead shares one pre-admission
+clock; [clock separation](../issues/search-request-watchdog-coexistence.md) remains
+an implementation gap. cancellation stops subsequent local requests and retries and joins cleanup;
 cleanup may finish after the response deadline. running synchronous provider work
 in a thread does not give it the awaiting task's cancellation lifetime. strict
 retrieval now awaits native async embedding inside its caller's deadline, with
@@ -49,8 +52,9 @@ capacity. query qualification uses representative data and warmed connections;
 fewer simultaneous queries or longer timeouts alone do not establish bounded
 work. current gaps are [aggregate memory qualification](../issues/production-database-connection-budgets-implicit.md)
 and [background admission occupancy](../issues/production-search-admission-contention.md).
-slower background refresh is an explicit cost of foreground progress; useful
-background completion remains required.
+heavy search, refresh, indexing and backup may queue and serialize at their
+existing owners. normal services and retained connections still count when idle;
+useful foreground/background completion and finite queue drain remain required.
 the [reliability spec](../search-reliability-spec.md) owns current qualification
 and release gates; historical timing verdicts retain their recorded scope.
 the [capacity spec](../database-capacity-spec.md) owns physical topology and
@@ -220,9 +224,11 @@ fresh short control transactions. publication waits for that confirmation; there
 is no explicit unlock that lets another read precede backend cleanup. this needs
 session-affine database connections.
 
-checkout, admission and reading consume the caller's original finite absolute
-deadline. the dedicated search pool has no shorter ordinary checkout timeout;
-its scope-owned capacity lease shares that deadline and stays held through actual
+frozen `4ceb03555` checkout, admission and reading consume the caller's original
+finite absolute deadline. this shared-clock implementation does not satisfy the
+required execution allowance beginning at admission, excluding capacity waiting.
+the dedicated search pool has no shorter ordinary checkout timeout;
+its scope-owned capacity lease stays held through actual
 retirement, even if sqlalchemy returns its pool record earlier. expired or
 cancelled waiters never dispatch later. known but unconfirmed retirement fails
 closed for search in that process's owning scope until live repair; it cannot
@@ -240,8 +246,7 @@ bounded at one second. async readiness/search keep their original logical work
 deadlines; cancellation joins native startup and closes any returned connection
 before releasing its pool capacity. readiness's 1.9-second work deadline and a
 shorter caller deadline are not cleanup or response bounds. native setup's two
-seconds apply per resolved address after DNS, not to total checkout. this creator
-ownership fix awaits [native retirement proof](../issues/db-async-connect-cancellation-socket.md).
+seconds apply per resolved address after DNS, not to total checkout.
 
 authored scope-input and scope-text hydration share one api-process permit,
 acquired before their repeatable-read session and held through inline cleanup.
@@ -250,21 +255,35 @@ other ordinary work can use the remaining capacity; it has no exclusive chat
 priority. a competing hydration request may return `E_DATABASE_BUSY`; its client
 retains staged inputs and retries. authorization and revision fences are unchanged.
 
-foreground waits for admission within its remaining deadline. background refuses
-observed local physical-permit or database-gate contention without waiting.
-checkout, admission and the complete read share one finite absolute allowance;
-retirement remains joined. arbitrary cancellation and database errors are not
+browser search, preview and target-picker requests try local physical capacity
+and the database gate before embedding. contention returns `E_DATABASE_BUSY`
+without waiting in a request; the keyed client intent remains pending and retries
+that page with cancellable backoff. pool failure after expensive admission
+returns `E_APP_SEARCH_FAILED`, not a capacity deferral; ordinary/pre-execution
+checkout exhaustion retains `E_DATABASE_BUSY`. tool foreground
+reads retain their enclosing bounded scope; background refuses observed
+local physical-permit or database-gate contention without waiting.
+required queue waiting never spends execution allowance; admitted execution owns
+one finite allowance without read-time resets. retirement remains joined.
+arbitrary cancellation and database errors are not
 owned budget expiry. the import-light `search/policy.py` owns the foreground and
 background computation allowances. confirmed retirement does not fail an otherwise
 live result because cleanup was slow; original expiry/cancellation still wins.
 [request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
 native and hosting qualification.
 
-provider waits, direct lookups, primary-only browse and branches without retrieval
-stay outside admission. embedding still consumes the original foreground operation
-deadline; background discovery starts its computation allowance after embedding.
-async picker, oracle and tool consumers retain their enclosing deadlines through
-embedding, checkout and reading. sql executes through `AsyncSession.run_sync`;
+browser provider work runs after admission, before its snapshot; no ordinary
+transaction is retained while waiting for a provider. direct lookups, primary-only
+browse and branches without retrieval stay outside admission. background discovery
+starts its computation allowance after embedding. oracle and tool consumers retain
+their enclosing deadlines through embedding, checkout and reading.
+the client capacity policy retries only database-busy answers, outside each
+attempt's existing timer. list traversal retains the current cursor, completed
+pages and remaining prefix execution allowance. cursor recovery is independent:
+the search pane requires explicit fresh search after cursor refusal; the target
+picker retains its single fresh-prefix recovery and retry action. available local
+picker choices stay selectable while remote work is pending. real/provider/network/timeout
+failures settle; capacity deferral does not restart a prefix. sql executes through `AsyncSession.run_sync`;
 there is no synchronous public search path continuing after an async owner ends.
 
 hybrid computes at most one embedding before opening its search transaction.
@@ -328,7 +347,7 @@ credential; oracle embedding failure remains typed at its own boundary.
 browser cursors contain `{offset, query_fingerprint, phase}`. the fingerprint
 binds viewer, canonical text, kinds, formats, authors, roles, scope, view and phase,
 excluding page size. old/mismatched cursors are invalid. continuations keep the
-accepted phase; failure retains the loaded prefix and offers manual retry.
+accepted phase; real failure retains the loaded prefix and offers manual retry.
 cursor rejection requires explicit page-one refresh, never an automatic restart.
 
 browser routes own one native async operation/session, raced against disconnect
@@ -336,15 +355,20 @@ and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-on
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
 deadline. cancellation joins cleanup. api and bff allowances cover one request
 through its complete body. the browser list resolves one allowance for the
-requested prefix walk. search disables the shared list owner's automatic
-transport retries and cursor repair; retry and rejected-cursor page-one refresh
-require explicit user action and start a new read allowance. later automatic
+requested prefix walk. capacity deferral leaves the current page pending and
+retries it automatically without restarting the prefix. successful and non-busy
+failed fetches spend its remaining execution allowance; busy responses and their
+backoff do not. real failures and rejected-cursor page-one refresh keep explicit
+search-pane recovery. old results and current-intent cancellation remain intact,
+without phase telemetry or a new protocol. later automatic
 picker continuations are separate reads. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
-cancellation; cleanup may outlast it, while the browser cap bounds waiting.
-release qualification must prove that finite allowances cover complete admitted
-background work and queued foreground work inside actual transport ceilings,
-with useful overlapping lexical and hybrid completion. retained earlier results
+cancellation; cleanup may outlast it. the browser cap bounds one execution
+attempt; client-owned capacity waiting remains outside it.
+release qualification must prove that finite allowances cover admitted work and
+queued foreground work reachable under the chosen serialization policy inside
+actual transport ceilings, with useful lexical and hybrid completion and finite
+queue drain. simultaneous heavy peaks are not required. retained earlier results
 and retry do not replace it. the synthetic held-gate check does not close native,
 job-publication or hosting qualification. operational watchdogs are safeguards,
 not latency acceptance targets.

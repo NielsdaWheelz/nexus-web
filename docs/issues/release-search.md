@@ -2,6 +2,17 @@
 
 status: open; no search-repair production deployment is claimed.
 
+the user explicitly separates merge from deployment: pr866's product
+merge qualification is the queue/execution and natural-resume correction, the sole static gate
+and one focused canonical local check of waiting, completion, cancellation and
+local writing. actual 2 gib capacity qualification is a deployment gate, not a
+merge prerequisite. the user accepts less infrastructure evidence before merge;
+caps, reserves, exact retrieval and eventual progress requirements are unchanged.
+capacity apparatus work is stopped. accepted migration/connection proofs and
+failed receipts remain valid at their recorded scope; do not repeat them.
+the pr body owns current source/proof/ci identities. pagination retention has
+bounded source review only, with no runtime qualification or further test project.
+
 historical production release `3d81ef45ef28f637a4de07c66ab172bbab9e22c2`
 used schema 0317/wire 16. its stopped-writer backup, pinned postgres package,
 api/workers/hosted-web pairing and android 0.3.8/code 29 phone operation were
@@ -22,9 +33,12 @@ historical timing targets and waivers remain historical under the
   capture/annotation contracts. the full-corpus ea918/0329 migration rehearsal is
   now accepted under that exact source; production release remains separate.
 
-- rehearse the real deployed 0317 upgrade through the complete integrated main
-  chain to 0328 and selected 0329 from a verified backup. prove original-vector,
-  lawful authored, capture and annotation value preservation, matching
+- retain accepted preservation: untouched ea918 0317→0329 passed its 49 original
+  and 33 yjs comparisons. the narrow 6bbb 0327 filter repair passed canonical
+  512 mib migration, selected publication comparisons and reviewed predicate
+  equivalence. migration/body/helper paths are unchanged in the product queue
+  repair; do not repeat those accepted proofs. production still requires its
+  normal verified-backup/stopped-writer upgrade, matching
   source/image/schema/wire/client identities and continuation of locally
   committed writing across paired restart. executed 0319/0320/0321 candidate
   receipts describe a different lineage; never relabel them as 0329 proof.
@@ -38,7 +52,13 @@ historical timing targets and waivers remain historical under the
   due-feed convergence, authored writing/retry and stop controls under unchanged
   service limits, on 2 gib ram with the provisioned host swap enabled. service
   leaves retain equal memory/memswap limits; measure host swap use/pressure and
-  preserve physical ram reserves without requiring zero host swap. the 7173 e8
+  preserve physical ram reserves without requiring zero host swap. the user's
+  revised acceptance permits heavy search, suggestions, indexing and backup to
+  queue and serialize, including an enforced backup window. all normal services
+  must fit while present, including idle workers; ordinary reading, local writing
+  and cancellation stay usable, useful search completes and the finite queue
+  drains. retain headroom for reachable maintenance/autoanalyze. simultaneous
+  heavy peaks and backup overlap are no longer required. the 7173 e8
   run completed the full functional recheck, including
   both publications at input 1212, foreground overlap, ordinary writing/reload,
   prefix 2, ui stop and strict/index work, but FAILED on an invalid backup filename
@@ -51,6 +71,8 @@ historical timing targets and waivers remain historical under the
   the approved bounded guest experiment reserves the connector's full cap and
   host reserve as specified there; it can prove backend/os fit only. connector
   transport remains UNRUN and the all-production/live-connector gate stays OPEN.
+  the changed acceptance is a user decision; it does not turn either historical
+  failed run into a pass.
 
 - the bulk permit and normal online writing are functionally exercised on 7173;
   the earlier missing notes control was instrumentation-only. no actual failed
@@ -66,20 +88,21 @@ historical timing targets and waivers remain historical under the
   establishes a search latency promise.
   native engine connects now use the driver's two-second minimum per resolved
   address, separately from queueing and the one-second control SQL deadline.
-  qualify stalled-connect heartbeat/startup/shutdown and joined readiness under
-  the actual single postgres endpoint; this setting is not a DNS or total
+  retain accepted stalled-connect heartbeat/startup/shutdown and joined-readiness
+  evidence. verify captured policy for the actual single postgres endpoint
+  without repeating those probes; this setting is not a DNS or total
   checkout deadline. align captured production overrides with the reviewed
   ordinary five-second wait; the example now uses that default.
-  linux ea918 sync/heartbeat setup bounds passed, but the shorter async deadline
-  left its startup socket unretired after scope exit in the isolated peer case.
-  [async connection cancellation](db-async-connect-cancellation-socket.md) remains
-  an open release-proof limit. the engine now owns shielded startup and joins
-  startup/returned-connection close before pool reuse, but native proof is PENDING.
+  targeted async creator retirement is resolved by accepted `4ceb03555` native
+  proof; the historical failed ea918 socket observation remains preserved.
+  the engine owns shielded startup and joins startup/returned-connection close
+  before pool reuse, including repeated cancellation.
   the 0.5-second diagnostic and 1.9-second readiness work deadlines do not bound
   cleanup or response time; native two seconds per address after DNS is not a
   total connect bound. neither returning on deadline nor implementing cleanup
   proves physical retirement. preserve accepted full-corpus ea918/0329 migration
-  evidence under its actual source identity; it does not qualify this creator fix.
+  evidence under its actual source identity; neither targeted creator proof nor
+  migration preservation qualifies full-topology capacity or release behavior.
 
 - real import/metadata qualification remains blocked by the authorized brave
   account's [payment refusal](live-search-qualification-brave-payment-required.md).

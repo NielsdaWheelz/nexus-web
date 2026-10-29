@@ -12,6 +12,11 @@ ordinary reading, durable writing, search, worker control and maintenance must
 make useful progress inside the existing 2 gib ram host and postgres 512 mib/no-swap leaf
 envelope, with the reserves defined by the reliability contract. zero oom alone
 is insufficient: retain cold/warmed measurements, useful completion and cleanup.
+normal services must fit while present, including idle workers and their retained
+connections. heavy search, suggestions, indexing and backup may queue and
+serialize at their existing owners; an enforced backup window is permitted.
+finite queued work must resume and drain while reading, local writing and
+cancellation remain usable. simultaneous heavy peaks are not an acceptance gate.
 production enables at least 1 gib host swap; service leaves retain
 `memswap_limit == mem_limit`. qualification records host ram headroom and swap
 use/pressure without treating swap capacity as ram reserve. it neither requires
@@ -40,7 +45,7 @@ deployment composition owns the aggregate envelope; `db/engine.py` owns physical
 checkout, `db/session.py` transaction adapters and `db/listen.py` notification
 connections. entrypoints own process roles and event-loop lifetimes.
 
-| owner | simultaneous demand to account for |
+| owner | reachable demand to account for |
 | --- | --- |
 | api | ordinary sync/async work, search holders and physical waiters, control reads and one notification backend; one uvicorn process |
 | interactive worker | one in-process handler, tools/provider orchestration, event-frame writes and independent heartbeat/claim/stop checks; its event loop ends only after owned work joins |
@@ -52,6 +57,9 @@ connections. entrypoints own process roles and event-loop lifetimes.
 | maintenance/operators | real backup, physical maintenance/autoanalyze, migration and cli/oracle work; identify which coexist and which stop runtime writers |
 
 count the maximum reachable coexistence, not the sum of mutually exclusive peaks.
+an exclusion counts only when the admission or operator owner enforces it; quiet
+workload choreography alone does not exclude reachable demand. idle workers and
+retained backends still count during serialized work and backup windows.
 search serialization does not remove memory held by physical waiting backends.
 postgres utilities and raw connections outside application engines need explicit
 headroom. a container ceiling or `work_mem` sum does not prove resident headroom.
@@ -89,7 +97,9 @@ not proof that every pool should be warmed simultaneously or that its values fit
 
 ordinary checkout currently waits up to 5 seconds, control checkout independently
 up to 250 milliseconds; readiness starts cancellation at its existing 1.9-second
-work deadline. search checkout consumes its caller's original absolute allowance.
+work deadline. frozen `4ceb03555` search checkout consumes its caller's original
+absolute allowance; [separating queue wait from admitted execution](issues/search-request-watchdog-coexistence.md)
+is an open implementation gap under the reliability contract.
 these are operational watchdogs, not product latency acceptance or permission to exceed a
 caller/hosting ceiling.
 engine-owned native setup separately uses a two-second connect timeout per
@@ -101,9 +111,9 @@ these do not bound cleanup completion or response time. the engine's async creat
 joins native startup without cancelling it and closes any returned connection
 before releasing the pool slot, including under repeated caller cancellation.
 readiness's nominal two-second allowance is not a physical retirement bound.
-[native qualification is pending](issues/db-async-connect-cancellation-socket.md);
-qualify stalled-connect startup/shutdown and joined retirement rather than
-assuming the queue timeout or outer cancellation also closes native resources.
+the targeted async startup-retirement defect is resolved at `4ceb03555`; this
+does not qualify aggregate capacity or release behavior. outer cancellation alone
+never proves native resource closure.
 
 authored scope-input and scope-text preparation share one api-process permit
 before session checkout, held through inline rollback/close. this bulk family
@@ -122,9 +132,11 @@ under cold then warmed native workload. distinguish emulation and larger-host
 components from the required actual topology.
 
 qualify admitted readers/listeners, two clients, both worker lanes, writing,
-generation stop, import/discovery/publication and real maintenance/backup overlap.
-preserve the database and host reserves, complete the finite workload, and observe
-oom/recovery/restart/lost-claim deltas and physical retirement. operational
+generation stop, import/discovery/publication, reachable physical maintenance and
+verified backup under the chosen serialization policy. backup need not overlap
+heavy work; preserve headroom for maintenance/autoanalyze that can still coexist.
+preserve the database and host reserves, complete and drain the finite workload,
+and observe oom/recovery/restart/lost-claim deltas and physical retirement. operational
 watchdogs and a diagnostic observation window are declared before execution;
 expiry is noncompletion, not a passing memory or progress result. the
 [common acceptance table](search-reliability-spec.md#meaningful-acceptance-and-release-gates)

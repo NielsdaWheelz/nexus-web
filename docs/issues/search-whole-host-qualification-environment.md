@@ -2,6 +2,14 @@
 
 status: open; a docker component on a larger host is a different proof.
 
+the user stopped capacity qualification and made actual 2 gib fit a separate
+deployment gate. it does not block merging the product queue repair; see
+[release acceptance](release-search.md). the last owned attempt terminated with
+cleanup confirmed before any browser workload or monitor started. the guest,
+corpus and account/run volumes remain retained; no apparatus restart, repair or
+new probe is selected. valid migration/connection evidence and failed receipts
+are preserved. unfinished private setup is not a memory failure or capacity pass.
+
 the native host has roughly 7.57 gib memory. its passed transient-parent primitive
 proved rootless cgroup placement, limits and owned cleanup, not whole-host fit.
 the historical 1280 mib component budget subtracts 128 mib host reserve, 128 mib for omitted
@@ -32,9 +40,13 @@ UNRUN; the literal all-production/live-connector release gate stays OPEN.
 
 resolve the [capacity gate](production-database-connection-budgets-implicit.md)
 on the actual 2 gib topology with all included leaves/reserves, cold and warm work,
-both worker lanes, writing, maintenance/autoanalyze and verified online-backup
-overlap. production has 2 gib ram and at least 1 gib enabled host swap; postgres
-and other service leaves retain `memswap_limit == mem_limit`. measure host ram
+all normal services present including idle worker lanes, writing and headroom for
+reachable maintenance/autoanalyze. under the user's revised acceptance, heavy
+search, suggestions, indexing and verified backup may queue and serialize,
+including an enforced backup window; useful search and finite queue drain remain
+required. simultaneous peaks/backup overlap are not required, and the historical
+failed verdict is unchanged. production has 2 gib ram and at least 1 gib enabled
+host swap; postgres and other service leaves retain `memswap_limit == mem_limit`. measure host ram
 headroom and swap use/pressure, without crediting swap as ram reserve or requiring
 a swapless host. any outer no-swap cgroup for an emulator's backing memory is
 only an experiment constraint. keep the existing private codex account/run volumes and existing release

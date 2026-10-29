@@ -34,7 +34,12 @@ source, frozen cases and operational receipts remain private under
 
 resolve with the current candidate on the actual 2 gib topology and unchanged
 service caps: cold then warmed readers/listeners, both worker lanes, authored
-buffers, representative physical maintenance/autoanalyze and online backup.
+buffers, reachable physical maintenance/autoanalyze and verified backup. all normal
+services count while present, including idle workers and retained connections.
+the user's revised acceptance permits heavy work and backup to queue and serialize,
+including an enforced backup window; useful search and finite queue drain remain
+required. simultaneous peak/backup overlap is not required, and the historical
+failed verdict is unchanged.
 count all processes and operator connections, preserve the 64 mib conservative
 postgres reserve and 128 mib host reserve, and require useful completion, zero new
 oom/recovery/lost claims and confirmed owned cleanup. freeze numeric quotas only

@@ -93,8 +93,11 @@ project canonical reading/chunk rows before ordering by distance, reading id and
 chunk id and taking 400 per anchor/family; only then are rows grouped by media.
 vectors and eligibility stay in postgres. there is no shared ann traversal or
 all-anchor cross-product.
-ranking uses the native async search gate with one finite absolute allowance
-for checkout, nonblocking admission and the complete snapshot.
+ranking uses the native async search gate with one finite
+absolute allowance for checkout, nonblocking admission and the complete snapshot.
+the [required contract](../search-reliability-spec.md) separates capacity waiting
+from the execution allowance. background contention defers through the existing
+job owner; browser capacity waiting belongs to the current client intent.
 retirement confirms the search pid is absent before any publication transaction;
 a known-unconfirmed backend prevents publication and fails that scope's search
 capacity closed. there is no retained partial ranking across attempts.
@@ -128,6 +131,9 @@ before work begins. every due feed must publish the settled input within that
 window after competing work drains. pre-existing suspended failures are identified
 at the start; failures created by the workload are not exempt. there is no
 quiet-period latency target or promise of freshness during sustained activity.
+heavy work may queue behind other work or an enforced backup window, then must
+resume and drain; simultaneous peak execution is not required. idle normal
+services and retained memory remain part of capacity accounting.
 backend retirement, useful publication and the resource envelope remain separate
 obligations under the [reliability spec](../search-reliability-spec.md).
 

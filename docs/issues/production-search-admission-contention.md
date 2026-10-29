@@ -29,11 +29,13 @@ newly proved; the earlier missing notes input was instrumentation-only.
 
 resolve under [the spec](../search-reliability-spec.md): complete five-anchor,
 both-family refreshes and strict discovery through normal claims/publication;
-successful overlapping foreground lexical/hybrid reads; usable reading, local
+useful foreground lexical/hybrid completion; usable reading, local
 authored writing/sync and stop controls; and every frozen active due feed converged
 to the settled input revision after finite competing work drains. declare finite
 watchdogs and the observation window before execution. preserve actual failure
-budgets and old publications. capacity, retrieval quality and release remain
+budgets and old publications. heavy work/backup may deliberately serialize at
+their existing owners; the finite queue must resume and drain. simultaneous peaks
+are not required. capacity, retrieval quality and release remain
 separate gates. any recurring production contention needs a correlated exact-key
 holder/waiter pid, container and admitted lifetime before choosing its repair.
 
