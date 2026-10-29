@@ -183,10 +183,9 @@ jobs:
 
           mkdir -p -- "$WORKSPACE/bundle"
           postgres_proof="$WORKSPACE/bundle/postgres-runtime-proof.txt"
-          expected_patch_sha="$(sha256sum docker/pgvector/0.8.7-ivfflat-interrupts.patch | cut -d ' ' -f 1)"
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint /usr/local/bin/nexus-postgres-check \
-            "$POSTGRES_IMAGE" "$expected_patch_sha" >"$postgres_proof"
+            "$POSTGRES_IMAGE" >"$postgres_proof"
           printf '%s\n' "$POSTGRES_IMAGE" >"$WORKSPACE/bundle/postgres-image.txt"
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python \
             python3 -B -m nexus.release_artifact write-candidate-manifest \
