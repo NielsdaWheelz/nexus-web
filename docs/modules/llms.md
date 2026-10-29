@@ -70,26 +70,31 @@ order applies only within that model/mode. the browser groups actual rows and
 never parses execution keys or manufactures model/mode/effort combinations.
 each route also names its product `default_model` (model key and mode), even when
 that target is absent. each reasoning row carries `chat_default`, `mode_label`
-and `effort_label`. the catalog resolves source default within mode, sole advertised
-row, then the explicit policy exception; otherwise there is no automatic default.
+and `effort_label`. policy declares exact provider/model/mode efforts; a missing
+declared effort leaves no default. only undeclared tuples use the sole advertised
+row or the higher `effort_order` of exactly two rows; larger sets require choice.
+existing-family effort declarations survive model replacements. new families use
+literal declarations matching their approved native defaults; nondefault modes
+without a declaration still follow the undeclared-tuple rule. source default
+metadata is never a fallback. the first-use seed is codex / `gpt-6.1-sol` / `xhigh`.
 readiness never selects an alternative or erases a default. default policy does
-not grant or withdraw execution eligibility. source defaults remain internal;
+not grant or withdraw execution eligibility. source defaults choose nothing;
 the old combined reasoning-row label is removed from the wire.
 
 the browser uses these projected labels and default markers. provider/model changes
 are complete when facts permit; `DefaultUnavailable` retains an unresolved target
 and allows explicit effort choice. recovery completes only that same unresolved
-intent. exact selections, inherited choices and frozen requests never follow later
+intent. exact selections, account memory and frozen requests never follow later
 defaults. discovery is event-driven and quiet over retained usable data; cold-load
 failure keeps retry. one advertised effort is static only when it is the selected
 identity; other unavailable identities retain explicit recovery choices.
 
 new saved reasoning presentation uses the same mode/effort labels. history reads
 its saved presentation verbatim, including older descriptive labels. the combined
-label bound is 131 characters, accommodating two 64-character labels and the
-separator. the controls use unreleased wire 17. catalog publication adds no wire
-change or database migration; provider, kernel and native host contracts must
-remain compatible through their exact dependency pins.
+label bound is 256 characters. controls and selection memory use unreleased wire
+17. catalog publication adds no further wire change or database migration;
+provider, kernel and native host contracts remain compatible through their exact
+dependency pins.
 
 The strict Chat selection is one tagged value:
 
@@ -102,8 +107,8 @@ The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection, validated against the current catalog at
 admission, and never submits dispatch strings, credentials, capabilities,
 defaults, or fallback order. The developer-owned Codex Personal / GPT-6.1-Sol / xhigh
-seed initializes a new composer only; it is not a saved user preference and
-does not override a causal or explicit per-run selection.
+seed initializes a composer only when the account has no remembered choice; it
+does not override remembered or explicit per-run selections.
 
 Background operations resolve their exact Codex selection only from the total
 source-controlled policy. Users can inspect the effective selection but cannot

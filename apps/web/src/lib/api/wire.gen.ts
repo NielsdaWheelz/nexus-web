@@ -1547,6 +1547,23 @@ export interface paths {
         patch: operations["patch_me_me_patch"];
         trace?: never;
     };
+    "/me/chat-selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat Selection */
+        get: operations["get_chat_selection_me_chat_selection_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/nexus-history": {
         parameters: {
             query?: never;
@@ -4267,6 +4284,10 @@ export interface components {
             /** State */
             state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
         };
+        /** ChatSelectionOut */
+        ChatSelectionOut: {
+            last_used: components["schemas"]["RememberedChatSelection"] | null;
+        };
         /** CitationOut */
         CitationOut: {
             /**
@@ -5167,6 +5188,10 @@ export interface components {
         /** Data[ChatRunResponse] */
         Data_ChatRunResponse_: {
             data: components["schemas"]["ChatRunResponse"];
+        };
+        /** Data[ChatSelectionOut] */
+        Data_ChatSelectionOut_: {
+            data: components["schemas"]["ChatSelectionOut"];
         };
         /** Data[CollectionConsumptionOut] */
         Data_CollectionConsumptionOut_: {
@@ -11558,6 +11583,14 @@ export interface components {
              */
             relation: "article" | "thread";
         };
+        /** RememberedChatSelection */
+        RememberedChatSelection: {
+            revision: components["schemas"]["OrderRevision"];
+            /** Route */
+            route: components["schemas"]["CodexPersonalRoute"] | components["schemas"]["ProviderApiRoute"];
+            /** Selection */
+            selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
+        };
         /** RemoteChildrenItem */
         RemoteChildrenItem: {
             /** Has Children */
@@ -17131,6 +17164,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_selection_me_chat_selection_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ChatSelectionOut_"];
                 };
             };
         };

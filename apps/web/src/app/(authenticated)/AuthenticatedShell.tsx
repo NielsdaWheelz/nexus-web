@@ -35,6 +35,7 @@ import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import { ChatSelectionProvider } from "@/lib/chat/selectionMemory";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
@@ -159,17 +160,19 @@ function Workspace(props: {
                       <WorkspacePlayer accountId={accountId}>
                         <ResourceActionsProvider>
                           <AuthenticatedWorkspaceErrorBoundary>
-                            <ResourceActionPresentation />
-                            <MediaAdmissionsHost />
-                            <ImportsProvider>
-                              <MediaContinuationHost />
-                              <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
-                                <WorkspaceNavigation>
-                                  <Nexus />
-                                  <WorkspaceCanvas />
-                                </WorkspaceNavigation>
-                              </WorkspacePresentationsProvider>
-                            </ImportsProvider>
+                            <ChatSelectionProvider>
+                              <ResourceActionPresentation />
+                              <MediaAdmissionsHost />
+                              <ImportsProvider>
+                                <MediaContinuationHost />
+                                <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                                  <WorkspaceNavigation>
+                                    <Nexus />
+                                    <WorkspaceCanvas />
+                                  </WorkspaceNavigation>
+                                </WorkspacePresentationsProvider>
+                              </ImportsProvider>
+                            </ChatSelectionProvider>
                           </AuthenticatedWorkspaceErrorBoundary>
                         </ResourceActionsProvider>
                       </WorkspacePlayer>

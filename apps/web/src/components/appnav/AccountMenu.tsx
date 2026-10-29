@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { Download, LogOut } from "lucide-react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
@@ -128,7 +128,7 @@ export default function AccountMenu(props: {
   align: "start" | "center" | "end";
   renderTrigger: (
     trigger: Parameters<NonNullable<ComponentProps<typeof ActionMenu>["renderTrigger"]>>[0],
-    attention: ReactNode,
+    accountMark: ReactElement,
   ) => ReactNode;
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
@@ -241,7 +241,10 @@ export default function AccountMenu(props: {
         renderTrigger={(trigger) => props.renderTrigger({
           ...trigger,
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
-        }, <span className={accountStyles.attention} data-visible={description !== null} aria-hidden="true" />)}
+        }, <span className={accountStyles.mark} aria-hidden="true">
+          <CircleUser size={20} />
+          <span className={accountStyles.attention} data-visible={description !== null} />
+        </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
       />
       <span id={descriptionId} className="sr-only">{description === null ? syncStatusText(status, cause) : `${syncStatusText(status, cause)}; ${description}`}</span>

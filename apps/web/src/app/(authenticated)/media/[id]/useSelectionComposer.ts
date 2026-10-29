@@ -23,12 +23,13 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
 import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
-import { isSelectable } from "@/lib/chat/selection";
+import { isSelectable, type SelectionEditor } from "@/lib/chat/selection";
+import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { chatView } from "@/lib/chat/tree";
 import { assertNever } from "@/lib/assertNever";
 import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
-import { chatFailure, type Catalog, type Selection } from "@/lib/chat/wire";
+import { chatFailure, type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -74,14 +75,16 @@ export function useSelectionComposer(input: {
 }) {
   const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError } = input;
   const feedback = useFeedback();
+  const memory = useChatSelection();
+  const { fresh: freshMemory, read: memoryRead } = memory;
   const guard = useWorkGuard();
   const visitId = usePaneVisitIdentity();
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
   const writing = useWritingRuntime();
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
-  const catalog = catalogRead.status === "ready" && catalogRead.error === null ? catalogRead.data : null;
-  const refreshCatalog = catalogRead.refetch;
+  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? catalogRead.revalidate : catalogRead.refetch;
   const [store] = useState(createSelectionDrafts);
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
@@ -212,10 +215,17 @@ export function useSelectionComposer(input: {
     if (draft?.chatIssue?.kind === "Catalog" && catalogRead.status === "ready" && !catalogRead.error)
       store.update(draft.id, entry => ({ ...entry, chatIssue: null }));
   }, [catalogRead, draft, store]);
+  useEffect(() => {
+    if (draft?.chatIssue?.kind !== "Recall") return;
+    if (freshMemory(catalog)) store.update(draft.id, entry => ({ ...entry, chatIssue: null }));
+    else if (memoryRead.status === "failed" || (memoryRead.status === "ready" && memoryRead.error))
+      store.update(draft.id, entry => entry.chatIssue?.kind === "Recall" && entry.chatIssue.state !== "Failed"
+        ? { ...entry, chatIssue: { ...entry.chatIssue, state: "Failed" } } : entry);
+  }, [draft, freshMemory, catalog, memoryRead, store]);
   const observedTree = destination?.kind === "Selected" && destination.snapshot.kind === "Ready" ? destination.snapshot.tree : null;
   const chat = observedTree ? chatView({ messages: new Map(observedTree.messages.map(message => [message.id, message])),
     leafId: observedTree.active_leaf_message_id, history: "Ready" }, observedTree.conversation.id, null) : null;
-  // Target and model come from the canonical stored leaf, never another pane's endpoint.
+  // Target and branch come from the canonical stored leaf, never another pane's endpoint.
   const branchCue = chat && [...chat.children.values()].some(children => children.filter(message => message.role === "user").length > 1)
     ? `branch · response ${chat.path.at(-1)?.seq ?? "empty"}` : null;
   // A highlight deleted on this or another device closes its composer; typed input is the guard's.
@@ -263,7 +273,7 @@ export function useSelectionComposer(input: {
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Source", message: "this passage can’t be annotated here." },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
+      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatAttempt: null, chatIssue: null,
     };
     store.put(entry);
     return entry;
@@ -272,6 +282,8 @@ export function useSelectionComposer(input: {
     const previous = current.current && get(current.current.draftId);
     const replacing = previous && (carried !== null || !(highlightId ? previous.highlightId === highlightId : samePassage(previous.passage, passage)));
     if (replacing && !canAbandon()) return;
+    memory.enter();
+    refreshCatalog();
     const prepared = prepare(passage, highlightId, carried);
     setPickerDraftId(null);
     show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: true, serial: ++serial.current, mode });
@@ -417,7 +429,7 @@ export function useSelectionComposer(input: {
           : outcome.rejection === "E_CONVERSATION_NOT_FOUND"
             ? { kind: "Missing", message: "this chat is no longer available" }
             : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
-              ? { kind: "Model", message: "this chat’s model is unavailable", destination: attempt?.destination ?? target, selection: attempt?.selection ?? null }
+              ? { kind: "Model", message: "this chat’s model is unavailable", destination: attempt?.destination ?? target, selection: attempt?.selection ?? { kind: "Uninitialized" } }
               : { kind: "Failed", message: `${outcome.feedback.title}${outcome.feedback.message ? ` ${outcome.feedback.message}` : ""}` };
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held,
           destination: target === "Existing" && outcome.rejection === "E_CONVERSATION_NOT_FOUND" && value.destination.kind === "Selected"
@@ -432,7 +444,7 @@ export function useSelectionComposer(input: {
       default: return assertNever(outcome);
     }
   };
-  const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: Selection | null } | null = null) => {
+  const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: SelectionEditor } | null = null) => {
     const opened = current.current;
     const entry = opened && get(opened.draftId);
     if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
@@ -466,14 +478,17 @@ export function useSelectionComposer(input: {
           ? "this chat is still responding" : "this chat can’t accept a reply here" } })); return;
       }
     }
-    const selection = recovery ? recovery.selection : target === "Existing" && view?.target.kind !== "Empty" ? view?.inherited ?? null
-      : catalogRead.status === "ready" ? catalogRead.data.chat_seed.selection : null;
+    const selection = recovery?.selection ?? (entry.chatSelection.kind === "Uninitialized" ? memory.fresh(catalog) : entry.chatSelection);
     if (question.kind === "Text" && recovery === null) {
+      if (!selection) {
+        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Recall", state: memoryRead.status === "loading" || (memoryRead.status === "ready" && !memoryRead.error) ? "Pending" : "Failed", destination: target, selection: { kind: "Uninitialized" } } })); return;
+      }
+      store.update(entry.id, value => ({ ...value, chatSelection: selection }));
       if (!catalog) {
         store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Catalog", message: "couldn’t load model availability", destination: target, selection } })); return;
       }
-      if (selection === null || !isSelectable(catalog, selection)) {
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Model", message: "this chat’s model is unavailable", destination: target, selection } })); return;
+      if (selection.kind !== "Selected" || !isSelectable(catalog, selection.selection, selection.route)) {
+        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Model", message: "model unavailable", destination: target, selection } })); return;
       }
     }
     const runId = createRandomId();
@@ -544,9 +559,9 @@ export function useSelectionComposer(input: {
       if (question.kind === "Blank" || recovery !== null) {
         store.update(entry.id, value => ({ ...value, operation: null }));
         return { target: { href, labelHint: "chat" }, title: "quoted chat ready", openLabel: "open chat",
-          ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection } } : {}) };
+          ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection: recovery.selection } } : {}) };
       }
-      if (!selection) throw new Error("Reader send without an observed selection");
+      if (!selection || selection.kind !== "Selected") throw new Error("Reader send without an observed selection");
       if (owner.getSnapshot().kind !== "Idle") {
         store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", message: "another chat change is still in progress" } })); return null;
       }
@@ -556,15 +571,15 @@ export function useSelectionComposer(input: {
       const request = { destination: observed && insertion && (insertion.kind === "Empty" || insertion.kind === "Reply")
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
-        : { kind: "New" as const }, content: question.content, selection, reader_selection: { key: preview.key, revision: preview.revision } };
+        : { kind: "New" as const }, content: question.content, selection: selection.selection, reader_selection: { key: preview.key, revision: preview.revision } };
       stopSend = owner.subscribe(inspectSend);
-      const result = await owner.execute({ kind: "Send", request, runId, viewId: pane.paneId, openIntent }, () => {
+      const result = await owner.execute({ kind: "Send", request, selectionRoute: selection.route, runId, viewId: pane.paneId, openIntent }, () => {
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
           const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
           if (consume) submittedInput.consumedRevision = value.revision + 1;
           return { ...value, chatIssue: null,
-            ...(consume ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
+            ...(consume ? { chatSelection: { kind: "Uninitialized" as const }, body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
@@ -658,9 +673,10 @@ export function useSelectionComposer(input: {
     retryDefault() { if (draft && draft.destination.kind === "LookupFailed") store.update(draft.id, entry => ({ ...entry, destination: { kind: "Resolving" } })); },
     refreshChat, retryChat,
     retryCatalog: refreshCatalog,
+    retryRecall: memory.enter,
     recoverModel() {
       const issue = draft?.chatIssue;
-      if (issue?.kind === "Model" || issue?.kind === "Catalog") void sendChat(issue.destination, "default", { selection: issue.selection });
+      if (issue?.kind === "Model" || issue?.kind === "Catalog" || issue?.kind === "Recall") void sendChat(issue.destination, "default", { selection: issue.selection });
     },
     openChat(intent: OpenIntent) {
       if (!draft || draft.destination.kind !== "Selected") return;

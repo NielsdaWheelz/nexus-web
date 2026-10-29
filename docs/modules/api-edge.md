@@ -27,8 +27,13 @@ server components: callFastAPI ────────────────�
   retired-account answers become cancellation and cannot change admission. demand
   requests may test unavailable browser reachability; checking, sign-in and update
   fences remain closed, and native admission remains native-owned. background
-  readiness stays separate. parsed current-account success can restore browser
-  readiness; a transport failure cannot downgrade terminal admission. a 426 reloads
+  readiness stays separate. parsed current-account success restores browser
+  readiness without advancing the shared read generation: an unrelated successful
+  endpoint must not restart every read after a transport failure. failed reads keep
+  their bounded retry and explicit recovery; native admission and explicit browser
+  unavailable-to-ready transitions retain the global wake. ordinary foreground
+  freshness remains each domain's policy. a transport failure cannot downgrade
+  terminal admission. a 426 reloads
   the tab once per (tab, build), unless uncommitted writing or incompatible/sealed
   submitted work holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it

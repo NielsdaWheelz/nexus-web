@@ -48,7 +48,7 @@ from nexus.schemas.llm import (
     InvalidGenerationSelection,
 )
 from nexus.services import authored
-from nexus.services.chat import citations, context, events, quotes, reads
+from nexus.services.chat import citations, context, events, quotes, reads, selection
 from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
     Catalog,
@@ -541,4 +541,5 @@ def _start_run(
         {"assistant": assistant.id, "user": user.id},
     ):
         projection.refresh_viewer_contributors(db, [viewer_id])
+    selection.remember(db, user_id=viewer_id, admitted=row)
     return run
