@@ -8,7 +8,7 @@
 // once its marks load. Resizing and relocation replace one highlight's whole
 // selection capture locally; its identity, colour and notes stay.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type FeedbackContent } from "@/components/feedback/Feedback";
+import { type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -57,6 +57,7 @@ interface BoundsSession {
 
 export interface AnnotationVerbs {
   readonly notice: FeedbackContent | null;
+  readonly noticeActions: FeedbackActions | undefined;
   readonly menu: Extract<MarkEvent, { kind: "activate" }> | null;
   readonly composer: SelectionComposer;
   readonly focused: string | null;
@@ -107,7 +108,8 @@ export function useAnnotationVerbs(input: {
 }): AnnotationVerbs {
   const { reader, mediaId, sourceLabel, active, isMobile, store, marks, openEvidence } = input;
   const writing = useWritingRuntime();
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [notice, setNotice] = useState<{content: FeedbackContent; actions?: FeedbackActions} | null>(null);
+  const showNotice = useCallback((content: FeedbackContent | null) => setNotice(content === null ? null : {content}), []);
   const { closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
@@ -176,14 +178,13 @@ export function useAnnotationVerbs(input: {
       if (handleUnauthenticatedApiError(error)) return;
       // an uncommitted local frame is retried from the pane's writing error notice.
       if (error instanceof LocalCommitError) return;
-      if (isApiError(error) && isSameSystemApiDefect(error)) return setDefect({ error });
-      // any other local failure committed nothing: say so and keep the reader usable.
-      setNotice(isApiError(error) ? { tone: "Danger", title, requestId: error.requestId } : { tone: "Danger", title, message: "nothing was saved. try again." });
+      if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
+      showNotice({ tone: "Danger", title, requestId: error.requestId });
     },
-    [],
+    [showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail, onFailure: (content, actions) => setNotice({content, actions}) });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 
@@ -266,11 +267,11 @@ export function useAnnotationVerbs(input: {
   }, [composer, publication, reader, retireSelection, showBounds]);
   const editBounds = useCallback((id: string) => {
     const annotation = store.annotation(id);
-    if (annotation?.placement.kind !== "placed") { setNotice({ tone: "Neutral", title: "this highlight isn’t shown in this version" }); return; }
+    if (annotation?.placement.kind !== "placed") { showNotice({ tone: "Neutral", title: "this highlight isn’t shown in this version" }); return; }
     const chosen = activatedMark.current;
     const anchor = chosen?.id === id && marks?.some(mark => mark.id === id && sameAnchor(mark.anchor, chosen.anchor)) ? chosen.anchor : annotation.placement.anchor;
     startBounds(id, anchor.kind === "text" ? { kind: "unit", unit: anchor.unit } : { kind: "page", page: anchor.page });
-  }, [marks, startBounds, store]);
+  }, [marks, startBounds, store, showNotice]);
   const remove = useCallback((id: string) => {
     const annotation = store.annotation(id);
     if (!annotation || !writing) return;
@@ -287,9 +288,9 @@ export function useAnnotationVerbs(input: {
     if (!claim(delivery)) return;
     const { entry } = delivery;
     const id = entry.highlightId;
-    if (!store.annotation(id)) return setNotice({ tone: "Neutral", title: "this highlight is no longer available" });
+    if (!store.annotation(id)) return showNotice({ tone: "Neutral", title: "this highlight is no longer available" });
     retireSelection();
-    setNotice(null);
+    showNotice(null);
     setColour(null);
     showBounds(null);
     setSelectionIssue(null);
@@ -305,13 +306,14 @@ export function useAnnotationVerbs(input: {
       case "DeleteHighlight":
         return remove(id);
     }
-  }, [claim, delivery, editBounds, marks, openEvidence, remove, retireSelection, showBounds, store]);
+  }, [claim, delivery, editBounds, marks, openEvidence, remove, retireSelection, showBounds, store, showNotice]);
 
   const closeNoteEdit = useCallback(() => setNoteEdit(null), []);
 
   if (defect) throw defect.error;
   return {
-    notice,
+    notice: notice?.content ?? null,
+    noticeActions: notice?.actions,
     menu,
     composer,
     focused,
@@ -378,7 +380,7 @@ export function useAnnotationVerbs(input: {
       const document = reader.getState().document;
       const annotation = store.annotation(id);
       if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" || annotation?.placement.kind !== "unlocated") {
-        setNotice({ tone: "Neutral", title: "open this highlight’s source text before relocating it." });
+        showNotice({ tone: "Neutral", title: "open this highlight’s source text before relocating it." });
         return;
       }
       startBounds(id, { kind: "quote" });

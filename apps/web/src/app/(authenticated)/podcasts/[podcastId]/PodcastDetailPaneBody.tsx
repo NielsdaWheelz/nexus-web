@@ -19,7 +19,7 @@ import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, pro
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
@@ -166,6 +166,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const episodeItems = episodes.status === "ready" ? episodes.data.items : [];
   const source = episodes.status === "ready" ? episodes.source : LIVE_SOURCE;
   const episodeFailure = episodes.status === "loading" ? null : episodes.error;
+  const episodeOccurrence = useFeedbackOccurrence(episodeFailure !== null, podcastId);
   const busy = indexReading(episodes);
   const retry = () => { void episodes.refetch().catch(() => {}); };
   const head: ServerValue<PodcastDetail> = episodes.status === "ready" ? { ...episodes, data: episodes.data.podcast } : episodes;
@@ -308,6 +309,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const known = STATES.find(option => option.value === state)?.value;
   const podcast = ready?.data.podcast;
   const paneFallback = () => findPaneLandmarkFocusTarget(librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+  const commandOccurrence = useFeedbackOccurrence(command.failure !== null, podcastId);
   const blocked = !live || !remoteReady() || head.status !== "ready" || head.error !== null || head.refreshing || !head.fresh
     ? "TemporarilyUnavailable" : null;
   const bulkActions = known === undefined || known === "all" || podcast === undefined ? [] : [
@@ -369,7 +371,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       {readFeedback.announcement}
       <PaneSurface>
           {head.status === "loading" ? (
-            <PaneLoadingState label="loading episodes…" announcement="Polite" />
+            <PaneLoadingState />
           ) : null}
           {ready && podcast ? (
             <PaneSection className={styles.overview}>
@@ -435,14 +437,14 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 </span>} />;
               } : undefined} /> : null}
           </PaneSection> : null}
-          {live && ready && podcast && (history.length > 0 || command.running !== null || recurring?.state === "pending" || recurring?.state === "running" || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode checks and additions">
-            {command.running !== null || recurring?.state === "pending" || recurring?.state === "running" ? <p>checking for episodes…</p> : null}
+          {live && ready && podcast && (history.length > 0 || recurring?.state === "pending" || recurring?.state === "running" || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode checks and additions">
+            {recurring?.state === "pending" || recurring?.state === "running" ? <p>checking for episodes…</p> : null}
             {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: following ? "subscribed shows are checked automatically. you can retry now." : "retry this check to look for more episodes." }} announcement="Polite" actions={[{ label: "check for new episodes", onClick: checkAgain, busy: command.running !== null }]} /> : null}
             {history.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={podcast.title} />)}
           </PaneSection> : null}
-        {command.failure ? <FeedbackNotice content={command.failure} announcement="Assertive" actions={[{ label: "retry episode check", onClick: checkAgain, busy: command.running !== null }]} /> : null}
+        {command.failure ? <FeedbackFailure scope="Local" occurrence={commandOccurrence} content={command.failure} announcement="Assertive" actions={[{ label: "retry episode check", onClick: checkAgain, busy: command.running !== null }]} /> : null}
           {episodes.status === "failed" && episodeFailure !== null ? (
-            <FeedbackNotice
+            <FeedbackFailure scope="Local" occurrence={episodeOccurrence}
               content={podcastErrorMessage(
                 episodeFailure,
                 "couldn’t load episodes",
@@ -480,7 +482,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               collectionBusy={busy}
               anchorKey={text}
               notice={<>
-                {episodes.status === "ready" && episodeFailure !== null ? <FeedbackNotice
+                {episodes.status === "ready" && episodeFailure !== null ? <FeedbackFailure scope="Local" occurrence={episodeOccurrence}
                   content={podcastErrorMessage(episodeFailure, "couldn’t refresh episodes")}
                   announcement="None" actions={[{ label: "try again", onClick: retry, busy }]} returnFocus={() => inputRef.current} /> : null}
                 <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />

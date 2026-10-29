@@ -3,7 +3,10 @@
 /** Native row controls live outside ProseMirror's contentDOM. Portals publish
  * chrome into the view's stable slots; no control creates an editing host. */
 import {createPortal} from "react-dom";
-import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, Unlink} from "lucide-react";
+import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, TriangleAlert, Unlink} from "lucide-react";
+import Button from "@/components/ui/Button";
+import type {BranchRead} from "@/lib/notes/outlineController";
+import AuthoredReadFailure from "./AuthoredReadFailure";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
@@ -22,6 +25,7 @@ export interface OutlineRowChrome {
   href: string | null;
   parentLabel: string;
   childrenAvailable: boolean;
+  read: BranchRead;
   open: boolean;
   terminal: boolean;
   root: boolean;
@@ -62,11 +66,14 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"
       aria-label={`show earlier occurrence of ${row.label}`} onKeyDown={event => event.stopPropagation()}
       onClick={event => {event.stopPropagation(); row.reveal();}}><CornerLeftUp size={14}/></button>
-      : row.childrenAvailable ? <button type="button" className={styles.control} data-row-focusable="true"
-        aria-label={`${row.open ? "collapse" : "expand"} linked resources for ${row.label}`} aria-expanded={row.open}
-        onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}>
-        <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
-      </button> : null;
+      : row.childrenAvailable ? <>
+        <Button iconOnly type="button" className={styles.control} data-row-focusable="true"
+          aria-label={`${row.open ? "collapse" : "expand"} linked resources for ${row.label}`}
+          aria-expanded={row.open} aria-busy={row.read.pending}
+          onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}
+          icon={row.read.error !== null ? <TriangleAlert size={14}/> : <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>}/>
+        <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
+      </> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`)];
   });
 }

@@ -33,7 +33,8 @@
 }
 
 .inputRow {
-  display: block;
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--edge-subtle);
@@ -76,9 +77,6 @@
 .candidateCell > .actionsButton,
 .candidateCell > .rowMenu { flex: 0 0 auto; margin-inline-end: var(--space-2); }
 
-/* Source failures: under the input on desktop, atop the list on mobile. */
-.failures { display: grid; gap: var(--space-2); }
-.surface > .failures { padding: var(--space-2) var(--space-4) 0; }
 
 
 /* Row body, shared. The mobile row is the base; the desktop cell is denser and single-line. */
@@ -423,7 +421,7 @@
 }
 
 .mobile .searchField input::-webkit-search-cancel-button { display: none; }
-.searchStatus { min-height: 24px; padding-block-start: var(--space-1); color: var(--ink-muted); font-size: var(--text-sm); }
+.searchStatus { padding-block-start: var(--space-1); color: var(--ink-muted); font-size: var(--text-sm); }
 .mobile .searchScroll { gap: var(--space-5); padding-block-start: var(--space-3); padding-block-end: var(--space-5); }
 .mobile .section { gap: var(--space-2); }
 .mobile .section h3,
@@ -485,7 +483,6 @@
 .mobile [data-mode="Overview"] [data-group="QuickActions"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.5rem), 1fr)); gap: var(--space-2); }
 .mobile [data-mode="Overview"] [data-group="QuickActions"] .rowMain { min-height: 52px; gap: var(--space-2); padding: var(--space-2); }
 .mobile [data-mode="Overview"] [data-group="Continue"] .rowMain { min-height: 56px; }
-.mobile .failures { --control-min-size: 48px; gap: var(--space-1); }
 .mobile .empty { font-size: var(--text-sm); line-height: 1.5; }
 .mobile .choices { gap: var(--space-1); }
 .mobile .choices button { min-height: 64px; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; font-size: var(--text-md); }

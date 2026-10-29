@@ -2,7 +2,8 @@
 /** Authored titles come from the local graph, even online. Other resource labels
  * retain their server/catalog owner. Saved visit hints are display evidence only. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
+import { apiFetch, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -21,7 +22,7 @@ type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
-interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void; titleFailure: {error: ApiError; occurrence: object; pending: boolean} | null }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
 const PublisherContext = createContext<PublishTitle | null>(null);
@@ -79,8 +80,8 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     });
   }, []);
   const remoteLocators = locators.filter(locator => !authored(locator));
-  const remoteKey = JSON.stringify([accountId, remoteLocators, changes, observation, foreground, attempt]);
-  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: "", load: async signal => {
+  const remoteKey = JSON.stringify([accountId, remoteLocators]);
+  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: JSON.stringify([changes, observation, foreground, attempt]), load: async signal => {
     const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
     for (let offset = 0; offset < remoteLocators.length; offset += 100) {
       const result = await apiFetch<ApiJson<"/me/workspace-presentations", "post">>("/api/me/workspace-presentations", { method: "POST", body: JSON.stringify({ locators: remoteLocators.slice(offset, offset + 100) }), signal });
@@ -90,7 +91,10 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   } });
   const remoteFacts = remote.status === "ready" ? remote.data : null;
   const remoteStatus = remote.status;
-  const remoteFailed = remote.status === "failed" || remote.status === "ready" && Boolean(remote.error);
+  const titleError = remote.status === "loading" ? null : remote.error;
+  const remoteFailed = titleError !== null;
+  const titleOccurrence = useFeedbackOccurrence(remoteFailed, remoteKey);
+  const titlePending = remote.status === "failed" ? remote.retrying : remote.status === "ready" && remote.refreshing;
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, name:route.defaultLabel, detail: null, status: "Ready" };
@@ -100,7 +104,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     const key = panePresentationLocatorKey(locator);
     if (authored(locator)) {
       const resource = local.entries.get(key)?.facts;
-      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
+      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: kind, status: "Loading" };
       if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate"?route.defaultLabel:visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
       const title = resource.title;
       const name = title.trim() ? title : resource.local_date !== null ? route.defaultLabel : null;
@@ -125,8 +129,8 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, status: "Ready" };
     }
     if (saved !== null) return { title, name, detail: kind, status: "Ready" };
-    if (remoteFailed) return { title, name, detail: "couldn’t refresh title", status: "Failed" };
-    if (remoteStatus !== "ready") return { title, name, detail: "loading title…", status: "Loading" };
+    if (remoteFailed) return { title, name, detail: kind, status: "Failed" };
+    if (remoteStatus !== "ready") return { title, name, detail: kind, status: "Loading" };
     return { title, name, detail: "removed or no longer accessible", status: "Unavailable" };
     // Facts change only with semanticRevision; newer watermarks keep this callback's facts equivalent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,7 +144,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [local.semanticRevision, remoteFacts]);
   const retryTitles = useCallback(() => retry(value => value + 1), []);
-  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }), [forVisit, resourceRefForVisit, retryTitles]);
+  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles, titleFailure: titleError !== null ? {error: titleError, occurrence: titleOccurrence, pending: titlePending} : null }), [forVisit, resourceRefForVisit, retryTitles, titleError, titleOccurrence, titlePending]);
   useEffect(() => {
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);

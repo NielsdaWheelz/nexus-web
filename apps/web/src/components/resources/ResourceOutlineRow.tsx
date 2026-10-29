@@ -10,12 +10,13 @@
 // Their prepared projection owns first-render identity and navigation; browsing rows read theirs.
 // Browsing rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
-import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
+import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp, History, SquareDashedMousePointer, Unlink} from "lucide-react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
-import {FeedbackNotice, FeedbackStatus, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import {FeedbackFailure, useFeedbackOccurrence, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
@@ -53,9 +54,6 @@ import factualStyles from "./ResourceContent.module.css";
 
 type Item = Schema<"ResourceItemOut">;
 const EMPTY_EDGE_IDS: readonly string[] = [];
-const NO_SUBSCRIPTION = () => () => {};
-const IDLE = {saving: false, error: null as unknown, error_refs: [] as string[], revision: 0};
-const IDLE_SAVE = () => IDLE;
 type PlacementBranch = {expanded: boolean; toggle(): void; children: ReactNode};
 /** How the occurrence entered its branch: a local user link, a server fact, or a root.
  * The outline rendering a local link owns its unlink: execution, undo, focus, and any
@@ -144,7 +142,7 @@ function LocalRow(props:Shared&{subject:string}){
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
   if(read.data)return <ReferenceRow {...props}/>;
-  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:read.error?<FeedbackNotice content={{tone:"Warning",title:"couldn’t read this on this device"}} announcement="Polite" actions={[{label:"retry",onClick:read.retry}]}/>:null}}/>;
+  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:<AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>}}/>;
 }
 
 /** A server item's presentation; shared so a by-ref row keeps one Occurrence while its item arrives. */
@@ -194,8 +192,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
     ref: props.subject, label,
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
     primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
-    status: local.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
-      announcement="Polite" actions={[{label: "retry", onClick: local.retry}]}/>
+    status: local.error ? <AuthoredReadFailure {...local} title="couldn’t refresh this resource"/>
       : !stub && local.data && settled ? <p className={styles.status}>not available on this device</p> : null,
   }}/>;
 }
@@ -206,8 +203,6 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
   const resource = props.writing ? props.projection : read.data?.rows[0]?.resource ?? null;
   const source = useAuthoredQuery(resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const runtime = usePaneRuntime();
-  const writing = useWritingRuntime();
-  const saving = useSyncExternalStore(writing?.subscribe ?? NO_SUBSCRIPTION, writing?.snapshot ?? IDLE_SAVE, IDLE_SAVE);
   const branch = useContext(ResourceBranch);
   const parsed = parseResourceRef(props.subject)!;
   const label = resource ? localResourceLabel(resource) : parsed.scheme === "note_block" ? "unavailable note"
@@ -220,7 +215,7 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
     onClick={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}
     onKeyDown={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}>{children}</a> : children;
   const sourceLabel = source.data?.rows[0]?.resource;
-  const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : "opening…"}</span>
+  const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : ""}</span>
     : resource.kind === "note" ? editable ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable/>
       : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
     : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
@@ -236,12 +231,7 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
     ref: props.subject, label, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
     status: <>
-      {read.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
-        announcement="Polite" actions={[{label: "retry", onClick: read.retry}]}/> : null}
-      {/* a note's own editor shows its failed commit; pages and highlights show theirs here. */}
-      {resource?.kind !== "note" && saving.error !== null && saving.error_refs.includes(props.subject) ?
-        <FeedbackNotice content={{tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving."}}
-          announcement="Assertive" actions={[{label: "retry saving", onClick: () => void writing?.retry().catch(() => undefined)}]}/> : null}
+      <AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>
     </>,
   }}/>;
 }
@@ -276,6 +266,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [failure, setFailure] = useState<{content: FeedbackContent; action: FeedbackAction | null} | null>(null);
+  const failureOccurrence = useFeedbackOccurrence(failure !== null, occurrenceKey);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {
     element.current = node;
@@ -339,7 +330,6 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     if (busyRef.current || commandDisabledReason) return;
     busyRef.current = true;
     setBusy(true);
-    setFailure(null);
     const row = element.current;
     const fallback = row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
     // A nested fact may retire its whole ancestor once its list refreshes.
@@ -368,6 +358,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       setBusy(false);
     }
     const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
+    setFailure(null);
     onChanged?.();
     outline?.refreshChildren();
     if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
@@ -423,9 +414,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
           {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
             {connection.snapshot.rationale}</MachineText></div> : null}
           {details}
-          {busy ? <FeedbackStatus content={{tone: "Neutral", title: "removing…"}} announcement="None"/> : null}
-          {failure ? <FeedbackNotice content={failure.content} announcement="Assertive"
-            actions={failure.action ? [failure.action] : undefined}/> : null}
+          {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure.content} announcement="Assertive"
+            actions={failure.action ? [{...failure.action, busy}] : undefined}/> : null}
         </div>
         {writingRow ? disclosure : <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}

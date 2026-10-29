@@ -5,8 +5,8 @@
 // which may fail without hiding local writing.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { FeedbackFailure, FeedbackStatus, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import LocalOutline from "@/components/notes/LocalOutline";
 import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -45,15 +45,11 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   const remote = useRemoteConnections(selfRef, `connections:${selfRef}`, `${refreshKey}:${refreshTick}:${metadata}`);
-  const readFeedback = useCollectionReadFeedback({
-    list: remote, unit: { singular: "connection", plural: "connections" }, waiting: false, outcome: null,
-    returnFocus: () => section.current,
-  });
   const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
   const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
-  const localError = self.error ?? linked.error ?? mentions.error;
+  const localRead = self.error !== null ? self : linked.error !== null ? linked : mentions;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
@@ -73,11 +69,8 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         </div>
       </div>
 
-      {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
-      {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
-      {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
-      {localError ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t read connections on this device" }} announcement="Polite"
-        actions={[{ label: "retry", onClick: () => { self.retry(); linked.retry(); mentions.retry(); } }]} /> : null}
+      {scan.feedback ? <FeedbackFailure scope="Local" occurrence={scan.occurrence} content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
+      <AuthoredReadFailure {...localRead} title="couldn’t refresh connections" retry={() => {self.retry(); linked.retry(); mentions.retry();}}/>
       {empty ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" /> : null}
       <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
@@ -95,8 +88,6 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         </ResourceOutlineList>
       </section> : null}
       <RemoteConnections ownerRef={selfRef} occurrencePrefix={`connections:${selfRef}`} list={remote} onChanged={reload} />
-      {readFeedback.notice}
-      {readFeedback.announcement}
     </section>
   );
 }
@@ -173,5 +164,6 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
       setPhase("polling");
     } catch (error) { failed(error, operation); }
   }, [failed, phase, selfRef, settle]);
-  return { phase, feedback, canRetry: failureOperation !== null, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
+  const occurrence = useFeedbackOccurrence(feedback !== null, selfRef);
+  return { phase, feedback, occurrence, canRetry: failureOperation !== null, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
 }

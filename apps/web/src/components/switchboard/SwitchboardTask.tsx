@@ -3,6 +3,7 @@
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
 import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
@@ -17,7 +18,6 @@ import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
-import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import styles from "@/components/nexus/Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
 
@@ -89,6 +89,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
+          <FeedbackRecoveryControl />
           <AccountMenu
             activeId={accountId}
             placement="below"
@@ -147,7 +148,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} /> : null}
       </div>
       <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
-        <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
+        <NexusTitleFailure returnFocus={() => searching ? inputRef.current : headingRef.current} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
             {group.label ? <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3> : null}
@@ -203,7 +204,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.titlesFailed ? PANE_TITLES_FAILED : null, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {[controller.announcement, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
       </div>
     </div>
   );

@@ -5,7 +5,7 @@
 // local and never read here. This section fails on its own; it never hides or
 // replaces local results beside it.
 import { useContext } from "react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -50,13 +50,18 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   onChanged: () => void;
 }) {
   const branch = useContext(ResourceBranch);
-  const loading = list.running === "Load" || list.running === "Refetch";
-  const error = list.failure?.op === "More" ? null : list.failure?.error ?? null;
+  const error = list.failure?.error ?? null;
+  const occurrence = useFeedbackOccurrence(error !== null, list.requestedKey);
+  const continuation = list.failure?.op === "More";
+  const rejected = continuation && error?.code === "E_INVALID_CURSOR";
   // The fact this branch entered through comes back from a both-directions read; it is not another connection.
   const items = list.items.filter((connection) => !branch.traversedEdgeIds.has(connection.edge_id));
   return <>
-    {loading && error === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
-    {error ? <FeedbackNotice content={remoteConnectionsError(error)} announcement="Polite" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
+    <FeedbackBusy subject={list.requestedKey} pending={list.status === "loading"}/>
+    {error ? <FeedbackFailure scope="Local" occurrence={occurrence} content={continuation
+      ? {tone: "Warning", title: "couldn’t load remaining connections", requestId: error.requestId}
+      : remoteConnectionsError(error)} announcement="Polite"
+      actions={[{ label: rejected ? "refresh list" : "retry", onClick: list.retry, busy: list.running !== null }]} /> : null}
     {items.length ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
       <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}>

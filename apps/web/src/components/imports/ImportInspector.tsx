@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
@@ -164,9 +164,10 @@ export default function ImportInspector({
   // A direct match admits the initial history; later observations never reopen it.
   const [historyOpen, setHistoryOpen] = useState(matched !== null);
   const historySummary = useRef<HTMLElement>(null);
+  const readOccurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, importRef);
   if (detail.status === "loading") {
     return (
-      <PaneLoadingState label="Loading this import" announcement="Polite" />
+      <PaneLoadingState />
     );
   }
   if (gone(detail.error)) {
@@ -174,7 +175,7 @@ export default function ImportInspector({
   }
   if (detail.status === "failed") {
     return (
-      <FeedbackState
+      <FeedbackFailure scope="Local" occurrence={readOccurrence}
         content={loadFailure(detail.error)}
         announcement="Assertive"
         actions={[{ label: "try again", onClick: detail.refetch, busy: detail.retrying }]}
@@ -193,7 +194,7 @@ export default function ImportInspector({
   return (
     <div className={styles.inspector}>
       {detail.error === null ? null : (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={{
             ...loadFailure(detail.error),
             tone: "Warning",
@@ -469,6 +470,7 @@ function Attempts({
     if (observation !== "" && (previous.restored || previous.value !== observation)) revalidate();
   }, [observation, revalidate]);
   const error = history.failure?.error ?? null;
+  const readOccurrence = useFeedbackOccurrence(error !== null, importRef);
   const entries = history.items;
   const feedback = useCollectionReadFeedback({
     list: history, unit: HISTORY_UNIT, waiting: false, outcome: null, returnFocus,
@@ -485,11 +487,11 @@ function Attempts({
   );
   let content: ReactNode;
   if (history.status === "loading") {
-    content = <PaneLoadingState label="Loading history" announcement="None" />;
+    content = <PaneLoadingState />;
   } else if (gone(error)) {
     content = <FeedbackStatus content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
   } else if (history.status === "failed") {
-    content = <FeedbackNotice
+    content = <FeedbackFailure scope="Local" occurrence={readOccurrence}
       content={loadFailure(error)}
       announcement="Polite"
       actions={[{ label: "try again", onClick: history.retry, busy: history.running !== null }]}
@@ -498,7 +500,7 @@ function Attempts({
   } else {
     content = <>
       {error === null || history.failure?.op === "More" ? null : (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={{
             ...loadFailure(error),
             tone: "Warning",

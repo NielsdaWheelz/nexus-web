@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { recoveryOf } from "@/lib/chat/commands";
@@ -152,21 +152,21 @@ function Repeat({ message, operation, openIntent, onClose }: {
     else if (outcome?.kind === "Failed") setFailure(outcome.feedback);
   };
   const shown = own?.feedback ?? failure;
+  const occurrence = useFeedbackOccurrence(shown !== null || own?.kind === "Busy", own?.command);
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
       {reason ? <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" /> : null}
-      {shown ? <FeedbackNotice content={shown} announcement="Polite" /> : null}
-      {!shown && own?.kind === "Busy" ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: operation === "rerun" ? "rerunning…" : "regenerating…" }} announcement="Polite" />
-      ) : null}
+      {shown ? <FeedbackFailure scope="Local" occurrence={occurrence} content={shown} announcement="Polite" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button
+          reserveIcon
           emphasis="strong"
           disabled={own ? own.kind === "Busy" : command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
+          busyKey={own?.command}
           aria-busy={own?.kind === "Busy"}
         >
           {caption}

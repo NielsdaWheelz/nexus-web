@@ -8,8 +8,8 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
 import RadioGroup from "@/components/ui/RadioGroup";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { podcastPendingNotice } from "@/lib/podcasts/commands";
+import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { PodcastCommandFailure } from "@/lib/podcasts/commands";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -49,9 +49,11 @@ export default function PodcastStopDialog(props: StopProps) {
       return (await getLibrary(libraryId, signal)).data;
     },
   });
+  const libraryOccurrence = useFeedbackOccurrence(library.status !== "loading" && library.error !== null);
   const scopes = usePaneFreeServerValue({ key: cleanup ? `podcast-cleanup-scopes:${props.podcastId}` : null, stale: stamp,
     load: signal => getPodcastRemovalPreview(props.podcastId, "all", "remove", null, signal),
   });
+  const scopesOccurrence = useFeedbackOccurrence(scopes.status !== "loading" && scopes.error !== null);
   const namedScopes = scopes.status === "ready"
     ? scopes.data.destinations.filter(destination => !destination.is_default).map(destination => ({ id: destination.library_id, name: destination.name })) : [];
   if (scope !== null && !namedScopes.some(destination => destination.id === scope.id)) namedScopes.push(scope);
@@ -70,10 +72,10 @@ export default function PodcastStopDialog(props: StopProps) {
         if (value !== "keep" && value !== "remove") throw new Error("unknown unsubscribe mode");
         setEpisodes(value);
       }} /> : null}
-      {local && library.status === "loading" ? <PaneLoadingState label="checking library…" announcement="Polite" /> : null}
-      {local && (library.status === "failed" || library.status === "ready" && library.error !== null) ? <FeedbackNotice content={podcastErrorMessage(library.error, "couldn’t load the library.")} announcement="Polite" actions={[{ label: "retry library", onClick: library.refetch }]} /> : null}
-      {cleanup ? scopes.status === "loading" ? <PaneLoadingState label="checking removal scopes…" announcement="Polite" />
-        : scopes.status === "failed" ? <FeedbackNotice content={podcastErrorMessage(scopes.error, "couldn’t check removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} />
+      {local && library.status === "loading" ? <PaneLoadingState /> : null}
+      {local && (library.status === "failed" || library.status === "ready" && library.error !== null) ? <FeedbackFailure scope="Local" occurrence={libraryOccurrence} content={podcastErrorMessage(library.error, "couldn’t load the library.")} announcement="Polite" actions={[{ label: "retry library", onClick: library.refetch }]} /> : null}
+      {cleanup ? scopes.status === "loading" ? <PaneLoadingState />
+        : scopes.status === "failed" ? <FeedbackFailure scope="Local" occurrence={scopesOccurrence} content={podcastErrorMessage(scopes.error, "couldn’t check removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} />
           : <>
             <div className={styles.scope}>
               <label htmlFor={scopeId}>scope</label>
@@ -85,7 +87,7 @@ export default function PodcastStopDialog(props: StopProps) {
                 {namedScopes.map(destination => <option key={destination.id} value={destination.id} label={destination.name}>{destination.name}</option>)}
               </Select>
             </div>
-            {scopes.error !== null ? <FeedbackNotice content={podcastErrorMessage(scopes.error, "couldn’t refresh removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} /> : null}
+            {scopes.error !== null ? <FeedbackFailure scope="Local" occurrence={scopesOccurrence} content={podcastErrorMessage(scopes.error, "couldn’t refresh removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} /> : null}
           </> : null}
       {localReady && (!cleanup || scopes.status === "ready") ? <StopReview key={`${libraryId ?? "all"}:${reviewedEpisodes}`} {...props} libraryId={libraryId} episodes={reviewedEpisodes} cleanup={cleanup}
         onSaved={() => { accepted.current = true; props.onClose(); }} /> : <div className={styles.actions}><Button onClick={props.onClose}>cancel</Button></div>}
@@ -102,12 +104,14 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, c
   const source = usePaneFreeServerValue({ key: `podcast-stop-preview:${ctx.accountId}:${podcastId}:${libraryId ?? "all"}:${episodes}`, stale: stamp,
     load: signal => getPodcastRemovalPreview(podcastId, libraryId === null ? "all" : "library", episodes, libraryId, signal),
   });
+  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
   const subject = `stop:${podcastId}`;
   const pending = ctx.podcasts.pending(subject);
-  const notice = pending === null ? null : podcastPendingNotice(pending);
+  const commandFailure = <PodcastCommandFailure subject={subject} />;
   if (source.status !== "ready") return <>
-    {source.status === "loading" ? <PaneLoadingState label="checking affected libraries and episodes…" announcement="Polite" />
-      : <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check affected libraries.")} announcement="Polite" actions={[{ label: "retry preview", onClick: source.refetch }]} />}
+    {commandFailure}
+    {source.status === "loading" ? <PaneLoadingState />
+      : <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check affected libraries.")} announcement="Polite" actions={[{ label: "retry preview", onClick: source.refetch }]} />}
     <div className={styles.actions}><Button onClick={onClose}>cancel</Button></div>
   </>;
   const preview = source.data;
@@ -129,6 +133,7 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, c
     if (!accepted && live.current) setStale(true);
   };
   return <>
+    {commandFailure}
     <p>{all ? "affected libraries:" : "library:"}</p>
     <ul className={styles.destinations}>{preview.destinations.map(destination => <li key={destination.library_id}>{libraryDisplayName(destination)}{destination.is_shared ? " · shared library; other members’ access may change" : ""}</li>)}</ul>
     {episodes === "remove" ? <>
@@ -138,12 +143,10 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, c
     {hasRules ? <p>stop automatic delivery and this subscription’s unfinished initial history{all ? " in the affected libraries." : " in this library."}</p> : null}
     <p>catalogue access, transcripts, notes, highlights, listening history, playback settings, queue, lectern and device downloads stay.</p>
     {preview.blocked.length > 0 ? <FeedbackNotice content={{ tone: "Warning", title: "this change needs a library admin.", message: preview.blocked.map(item => item.name).join(", ") }} announcement="Polite" /> : null}
-    {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
-    {pending?.phase === "Unknown" && notice !== null ? <FeedbackNotice content={notice} announcement="Polite"
-      actions={[{ label: "check change", onClick: () => { void ctx.podcasts.check(pending.key); } }, { label: "stop tracking", onClick: () => ctx.podcasts.review(pending.key) }]} />
-      : stale || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "the affected libraries changed. review them before confirming.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
+    {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
+    {stale || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "the affected libraries changed. review them before confirming.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
     <div className={styles.actions}>
-      <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
+      <Button reserveIcon emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
         {cleanup ? `remove ${count} episodes` : episodes === "remove" ? "unsubscribe and remove episodes" : "unsubscribe"}
       </Button>
       <Button onClick={onClose}>cancel</Button>

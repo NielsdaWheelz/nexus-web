@@ -30,8 +30,8 @@ operation after a lost reply.
 authored query subscriptions require success and failure callbacks and return one
 unsubscribe function. one initial read and subsequent invalidations use those same
 owners; adapters do not report failures behind the caller. read surfaces retain
-accepted rows on refresh failure and expose their existing inline error/retry;
-retry clears the displayed error while retaining the accepted same-query prefix.
+accepted rows on refresh failure and publish recovery outside the content flow;
+retry retains the incident, action and accepted same-query prefix until settlement.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
 the active note's root read supplies only literal title facts and its revision
@@ -53,7 +53,25 @@ including absence, and survives paging or refresh failure without retiring the
 editing host. arrivals and inspection use that exact canonical text; edit-note
 delivery waits for the actual editor handle. unknown and unavailable notes do
 not admit writing documents. android's existing aggregate window cap also bounds
-this canonical note-route read; failures retain the owned inline retry.
+this canonical note-route read; failures retain their owned read retry.
+
+an accepted `WritingDocument` owns its refresh snapshot and subscription. a failed
+refresh retains the same yjs document, undo and text; `retryRead` rearms that read.
+account, cached-document and attempt identity fence both success and failure.
+modeled local storage errors retain recovery; invariant defects reach the existing
+defect boundary. only current successful adoption clears a read incident.
+
+`WritingRuntime` save errors describe uncommitted commands only. their inert
+occurrence identity survives retries and presentation changes. one account adapter
+offers the exact retry and exports only actual endangered writing, never clean
+text from a failed graph operation. locally committed pending synchronization is
+already saved and acquires no loss guard. pending outline input remains its own
+buffer, export and recovery owner.
+
+branch collectors publish read and admission state into their existing controller
+request. row chrome consumes that projection without starting another read. the
+existing disclosure slot carries foreground waiting; root waiting uses pane
+chrome. selection and routine autosave produce no narration or success notice.
 
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.

@@ -3,7 +3,7 @@
 import { ArrowLeft } from "lucide-react";
 import type { FormEvent } from "react";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackRecoveryControl, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "@/components/nexus/Nexus.module.css";
@@ -24,7 +24,8 @@ export default function CreateLibraryPanel({
   mobile: boolean;
 }) {
   const running = submit.kind === "Running";
-  const failure = submit.kind === "Ready" ? null : submit.content ?? null;
+  const failure = submit.kind === "Ready" || submit.kind === "Acknowledged" ? null : submit.content ?? null;
+  const occurrence = useFeedbackOccurrence(failure !== null, name);
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (name.trim() && !running) onSubmit("default");
@@ -44,6 +45,7 @@ export default function CreateLibraryPanel({
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>
+        <FeedbackRecoveryControl />
       </header>
       <form className={styles.form} onSubmit={handleSubmit} onKeyDown={submitGesture}>
         <label>
@@ -56,15 +58,11 @@ export default function CreateLibraryPanel({
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {failure ? (
-          <FeedbackNotice
-            content={failure}
-            announcement="Assertive"
-            actions={submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]}
-          />
-        ) : <Button emphasis="strong" type="submit" aria-busy={running || undefined} disabled={!name.trim() || running} onClick={submitGesture}>
-          {mobile ? running ? "creating…" : "create" : running ? "Creating…" : "Create"}
-        </Button>}
+        {failure ? <FeedbackFailure scope="Local" occurrence={occurrence}
+          content={failure} announcement="Assertive"
+          actions={[{ label: "retry same request", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]} /> : null}
+        <Button reserveIcon busyKey={occurrence} emphasis="strong" type="submit" aria-busy={running || undefined}
+          disabled={!name.trim() || running} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
       </form>
     </div>
   );

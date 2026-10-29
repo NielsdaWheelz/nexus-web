@@ -7,7 +7,10 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { ComponentProps } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import {FeedbackFailure, FeedbackBusy} from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
+import Button from "@/components/ui/Button";
+import {apiTransportFeedback} from "@/lib/api/client";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -18,7 +21,7 @@ import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
+import { PANE_TITLES_FAILED, useWorkspacePresentations } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
@@ -111,35 +114,29 @@ export function NexusSearchStatus({ controller, returnFocus }: {
   returnFocus: () => HTMLElement | null;
 }) {
   const admission = useRemoteAdmission();
-  const { text, action } = controller.searchProgress;
-  if (admission !== "Ready" && (controller.failures.size > 0 || controller.searchUnavailable)) return <FeedbackNotice
-    content={{ tone: "Warning", title: "search needs a connection" }} announcement="None"
-    actions={[{ label: "try again", onClick: checkSession }]} returnFocus={returnFocus}
-  />;
-  return <div className={styles.searchStatus}>
-    {text ? <FeedbackNotice content={{ tone: controller.searchUnavailable ? "Warning" : "Info", title: text }} announcement="None"
-      actions={action === null ? undefined : [{
-        label: action === "refresh" ? "refresh results" : action === "related" ? "retry related matches" : "retry search",
-        onClick: () => {
-          if (action === "refresh") controller.refreshResults();
-          else if (action === "related") controller.retryRelated();
-          else controller.retrySearch();
-          returnFocus()?.focus({ preventScroll: true });
-        },
-        busy: controller.retrying.size > 0,
-      }]} /> : null}
-  </div>;
+  const {text,action} = controller.searchProgress;
+  return <>
+    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending}/>
+    <AuthoredReadFailure {...controller.localSearchFailure} title="couldn’t search this device"/>
+    {[...controller.searchFailures].map(([source,failure]) => {
+      const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
+        : source === "Hybrid" ? "related matches aren’t available" : source === "Direct" ? "couldn’t find this destination" : "couldn’t search your content";
+      const blocked = ["E_INVALID_REQUEST","E_NOT_FOUND","E_CONVERSATION_NOT_FOUND"].includes(failure.error.code);
+      return <FeedbackFailure key={source} scope="Local" occurrence={failure.occurrence}
+        content={apiTransportFeedback(failure.error,title) ?? {tone:"Warning",title,requestId:failure.error.requestId}}
+        announcement="Polite" returnFocus={returnFocus}
+        actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
+          onClick: () => {if (admission !== "Ready") void checkSession(); else controller.retry(source);}, busy:controller.retrying.has(source)}]}/>;
+    })}
+    {text ? <p className={styles.searchStatus}>{text}</p> : null}
+    {action === "refresh" ? <Button reserveIcon onClick={() => {controller.refreshResults(); returnFocus()?.focus({preventScroll:true});}}>refresh results</Button> : null}
+  </>;
 }
 
-export function NexusTitleFailure({ failed, retry, returnFocus, announce = true }: { failed: boolean; retry(): void; returnFocus?: () => HTMLElement | null; announce?: boolean }) {
-  return failed ? (
-    <div className={styles.failures}>
-      <FeedbackNotice
-        content={{ tone: "Warning", title: PANE_TITLES_FAILED }}
-        announcement={announce ? "Polite" : "None"}
-        actions={[{ label: "retry", onClick: retry }]}
-        returnFocus={returnFocus}
-      />
-    </div>
-  ) : null;
+export function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
+  const presentations = useWorkspacePresentations();
+  const failure = presentations.titleFailure;
+  return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence}
+    content={apiTransportFeedback(failure.error,PANE_TITLES_FAILED) ?? {tone:"Warning",title:PANE_TITLES_FAILED}} announcement="Polite"
+    actions={[{label:"retry",onClick:presentations.retryTitles,busy:failure.pending}]} returnFocus={returnFocus}/> : null;
 }

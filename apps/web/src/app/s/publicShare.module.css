@@ -120,3 +120,6 @@
     border-radius: var(--radius-md);
   }
 }
+
+.header { position: relative; padding-inline-end: var(--size-xl); }
+.recoverySlot { position: absolute; inset-inline-end: 0; inset-block-start: var(--space-5); }

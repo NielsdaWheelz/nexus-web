@@ -2,6 +2,7 @@
 
 // The query edits text or browses candidates; native secondary buttons own their actions.
 // A browsing-space press belongs to its initial menu trigger until release or cancellation.
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -15,7 +16,6 @@ import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
-import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
@@ -142,7 +142,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const root = (
     <>
       <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
-      <label className={styles.inputRow}>
+      <div className={styles.inputRow} data-feedback-controls="true">
         <span className="sr-only">Find anything…</span>
         <Input
           ref={inputRef}
@@ -251,7 +251,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               && document.activeElement === event.currentTarget && isTopmostInteractionOwner("Nexus")) target.button.click();
           }}
         />
-      </label>
+      <FeedbackRecoveryControl />
+      </div>
       <div className={styles.help} aria-hidden="true">{help}</div>
       <span id={HELP_ID} className="sr-only">
         {rows.length > 0 ? "up and down arrows browse results. " : ""}
@@ -261,7 +262,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
       <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
+      <NexusTitleFailure returnFocus={() => inputRef.current} />
       <div
         ref={node => { gridRef.current = node; surfaceRef.current = node?.parentElement ?? null; }}
         id={GRID_ID}
@@ -404,7 +405,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         ))}
       </div>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, [controller.searchProgress.text, controller.titlesFailed ? PANE_TITLES_FAILED : null, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
+        {[controller.announcement, [controller.searchProgress.text, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
       </div>
     </>
   );

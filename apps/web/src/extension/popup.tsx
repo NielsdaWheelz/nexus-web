@@ -9,13 +9,17 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FeedbackNotice,
+  FeedbackProvider,
+  FeedbackRecoveryControl,
   FeedbackStatus,
+  useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
@@ -85,6 +89,8 @@ function Popup() {
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const frame = useRef<HTMLElement>(null);
+  const [bounds, setBounds] = useState<HTMLElement | null>(null);
+  const bindFrame = useCallback((element: HTMLElement | null) => { frame.current = element; setBounds(element); }, []);
   const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
@@ -187,12 +193,16 @@ function Popup() {
 
   if (state === null) {
     return (
-      <main className={styles.popup} aria-busy="true">
+      <main className={styles.popup} ref={bindFrame} aria-busy="true">
+        <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
+          protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
+          <FeedbackRecoveryControl className={styles.recovery} />
         {notice ? (
           <FeedbackNotice content={notice} announcement="Assertive" />
         ) : (
           <FeedbackStatus content={{ tone: "Neutral", title: "opening capture…" }} announcement="Polite" />
         )}
+      </FeedbackSurface>
       </main>
     );
   }
@@ -225,7 +235,10 @@ function Popup() {
           : draft.target.documentKind.toUpperCase();
 
   return (
-    <main className={styles.popup} ref={frame} tabIndex={-1}>
+    <main className={styles.popup} ref={bindFrame} tabIndex={-1}>
+      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
+        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
+        <FeedbackRecoveryControl className={styles.recovery} />
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
@@ -427,7 +440,8 @@ function Popup() {
           ) : null}
         </div>
       ) : null}
-    </main>
+    </FeedbackSurface>
+      </main>
   );
 }
 
@@ -498,6 +512,7 @@ function Destinations({
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
   const [retry, setRetry] = useState(0);
+  const occurrence = useFeedbackOccurrence(failure !== null || loading, context);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
@@ -555,7 +570,7 @@ function Destinations({
       {open ? <div id={regionId} ref={regionRef} className={styles.chooser} data-collection-body>
         <LibraryChooser context={context} membershipKind="Chosen" rows={rows} loading={loading} create={null}
           summary={null}
-          error={failure === null ? null : { content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
+          error={failure === null ? null : { occurrence, content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
           empty="no libraries you can add to"
           onToggle={({ id, included }) => {
             const destination = all.get(id);
@@ -577,7 +592,7 @@ createRoot(document.getElementById("root")!).render(
       currentInstant: new Date().toISOString(),
       navCollapsed: false,
     }}>
-      <MobileViewportProvider><Popup /></MobileViewportProvider>
+      <MobileViewportProvider><FeedbackProvider><Popup /></FeedbackProvider></MobileViewportProvider>
     </RenderEnvironmentProvider>
   </StrictMode>,
 );

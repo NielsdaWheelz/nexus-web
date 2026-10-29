@@ -80,6 +80,8 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
 export function useLocalSearch(text: string | null, kinds: SearchQuery["requestedKinds"], pages: number, scope: string): {
   readonly matches: readonly LocalMatch[] | null;
   readonly complete: boolean;
+  readonly pending: boolean;
+  readonly occurrence: object | null;
   readonly scopeAvailable: boolean | null;
   readonly error: unknown;
   readonly retry: () => void;
@@ -96,7 +98,7 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
     const kind = kindOf(resource);
     return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref })] : [];
   }), [prefix.data, kinds, text]);
-  if (text !== null && invalidScope) return { matches: [], complete: true, scopeAvailable: false, error: null, retry: prefix.retry };
-  return { matches, complete: prefix.data?.next_cursor === null, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,
+  if (text !== null && invalidScope) return { matches: [], complete: true, pending: false, occurrence: null, scopeAvailable: false, error: null, retry: prefix.retry };
+  return { matches, complete: prefix.data?.next_cursor === null, pending: prefix.pending, occurrence: prefix.occurrence, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,
     error: prefix.error, retry: prefix.retry };
 }

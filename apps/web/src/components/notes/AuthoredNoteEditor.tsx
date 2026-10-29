@@ -3,6 +3,7 @@
  * UI. Each surface's Yjs origin keeps its undo separate from other appearances. */
 import { useEffect, useState } from "react";
 import * as Y from "yjs";
+import {FeedbackBusy} from "@/components/feedback/Feedback";
 import { bodyInline, readBody } from "@nexus/authored/documents";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
@@ -29,7 +30,7 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
     document.doc.on("update", update); update();
     return () => document.doc.off("update", update);
   }, [document]);
-  if(!history && own?.document!==document)return <p>opening note…</p>;
+  if(!history && own?.document!==document)return <FeedbackBusy subject={document} pending/>;
   return <NoteEditor focus={focus} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable} compact
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}

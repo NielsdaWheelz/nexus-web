@@ -1,13 +1,14 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Toggle from "@/components/ui/Toggle";
 import { READER_FONT_STACKS } from "@/lib/documentReader/DocumentReader";
 import {
+  ReaderSettingsFailure,
   useReaderContext,
   type ReaderProfile,
 } from "@/lib/reader/ReaderContext";
@@ -33,6 +34,7 @@ export default function SettingsReaderPaneBody() {
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
+        <ReaderSettingsFailure />
         {!reader.editable ? (
           <FeedbackNotice content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" />
         ) : null}
@@ -105,9 +107,6 @@ export default function SettingsReaderPaneBody() {
             onCheckedChange={(on) => reader.setHyphenation(on ? "auto" : "off")}
             label="Hyphenation on narrow screens"
           />
-          {reader.persistence.state === "Pending" ? (
-            <FeedbackStatus content={{ tone: "Neutral", title: "saving reader settings…" }} announcement="Polite" />
-          ) : null}
         </fieldset>
       </PaneSection>
     </PaneSurface>

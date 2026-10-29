@@ -3,9 +3,10 @@
 /** Episode removal reviews physical destinations and retains exact guards in the
  * account owner. Closing the dialog never retires an uncertain request. */
 import { useLayoutEffect, useRef, useState } from "react";
+import { PodcastCommandFailure } from "@/lib/podcasts/commands";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -32,8 +33,10 @@ export default function EpisodeRemovalDialog({ mediaId, title, returnFocusTo, re
   const source = usePaneFreeServerValue({ key: `episode-removal:${ctx.accountId}:${mediaId}`, stale: stamp,
     load: signal => getEpisodeRemovalPreview(mediaId, signal),
   });
+  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
   const subject = `episode-remove:${mediaId}`;
   const pending = ctx.podcasts.pending(subject);
+  const commandFailure = <PodcastCommandFailure subject={subject} />;
   const submit = async () => {
     if (source.status !== "ready" || source.error !== null || source.refreshing || stale || sending || pending !== null || !source.data.can_execute) return;
     const preview = source.data;
@@ -49,9 +52,10 @@ export default function EpisodeRemovalDialog({ mediaId, title, returnFocusTo, re
   };
   return <Dialog open title="remove from all?" onClose={onClose} returnFocusTo={returnFocusTo} returnFocusFallback={returnFocusFallback}>
     <div className={styles.form}>
+      {commandFailure}
       <p>{title}</p>
-      {source.status === "loading" ? <PaneLoadingState label="checking episode placements…" announcement="Polite" /> : source.status === "failed"
-        ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check episode placements.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch }]} /> : <>
+      {source.status === "loading" ? <PaneLoadingState /> : source.status === "failed"
+        ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check episode placements.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch }]} /> : <>
           <p>remove this episode from every affected library:</p>
           <ul className={styles.destinations}>{source.data.destinations.map(destination => <li key={destination.library_id}>{libraryDisplayName(destination)}{destination.is_shared ? " · shared library" : ""}</li>)}</ul>
           <p>transcripts, notes, highlights, listening history, queue, lectern and device downloads stay.</p>
@@ -59,13 +63,13 @@ export default function EpisodeRemovalDialog({ mediaId, title, returnFocusTo, re
             ? "included by a podcast subscription" : "a library admin must remove this episode.",
             message: source.data.blocked.some(item => item.reason === "subscription_active") ? "unsubscribe from every contributing library before removing this episode from all." : source.data.blocked.map(item => item.name).join(", "),
           }} announcement="Polite" /> : null}
-          {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh episode placements.")} announcement="Polite" /> : null}
+          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t refresh episode placements.")} announcement="Polite" /> : null}
         </>}
-      {stale || pending !== null && pending.phase !== "Sending" ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "episode placements changed. review them before confirming.",
-        message: pending?.phase === "Unknown" ? "the request may have succeeded. exact-request recovery remains in workspace feedback." : "this confirmation is disarmed.",
+      {(stale || pending?.phase === "Refused") && pending?.phase !== "Unknown" ? <FeedbackNotice content={{ tone: "Warning", title: "episode placements changed. review them before confirming.",
+        message: "this confirmation is disarmed.",
       }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review placements", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" tone="danger" disabled={source.status !== "ready" || source.error !== null || source.refreshing || !source.data.can_execute || stale || sending || pending !== null}
+        <Button reserveIcon emphasis="strong" tone="danger" disabled={source.status !== "ready" || source.error !== null || source.refreshing || !source.data.can_execute || stale || sending || pending !== null}
           aria-busy={sending || pending?.phase === "Sending" || undefined} onClick={() => void submit()}>remove from all</Button>
         <Button onClick={onClose}>cancel</Button>
       </div>

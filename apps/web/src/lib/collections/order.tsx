@@ -18,7 +18,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, type FeedbackContent } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
 import { isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
@@ -41,12 +41,13 @@ export interface Move {
 }
 export type MoveOutcome = "Acknowledged" | "Unconfirmed" | "Superseded" | "Rejected";
 export interface PendingMove {
+  readonly occurrence: object;
   readonly command: Move;
   readonly phase: "Sending" | "Unconfirmed" | "Checking";
 }
 export type OrderNoticeState =
-  | { readonly kind: "Conflict" | "Checked" }
-  | { readonly kind: "Rejected"; readonly content: FeedbackContent };
+  | { readonly kind: "Conflict"; readonly occurrence: object }
+  | { readonly kind: "Rejected"; readonly content: FeedbackContent; readonly occurrence: object };
 /** What a pane renders for one collection's order. */
 interface OrderState {
   readonly scopeKey: string;
@@ -175,22 +176,22 @@ export async function runMove(
       signal: io.signal,
     });
   } catch (error) {
-    if (entry.pending?.command === command) entry.pending = { command, phase: "Unconfirmed" };
+    if (entry.pending?.command === command) entry.pending = { ...pending, phase: "Unconfirmed" };
     io.emit();
     throw error;
   }
   if (io.signal.aborted || entry.pending?.command !== command) return "Superseded";
-  entry.pending = result.kind === "Unknown" ? { command, phase: "Unconfirmed" } : null;
+  entry.pending = result.kind === "Unknown" ? { ...pending, phase: "Unconfirmed" } : null;
   if (result.kind === "Acknowledged") {
     entry.acked = result.value;
     entry.notice = null;
-  } else if (result.kind === "Moved") entry.notice = { kind: "Checked" };
+  } else if (result.kind === "Moved") entry.notice = null;
   else if (result.kind === "Refused") {
     const content =
       result.error.code === "E_RESOURCE_CONFLICT"
         ? null
         : libraryErrorFeedback(result.error, "order was not changed", io.fail);
-    entry.notice = content === null ? { kind: "Conflict" } : { kind: "Rejected", content };
+    entry.notice = content === null ? { kind: "Conflict", occurrence: pending.occurrence } : { kind: "Rejected", content, occurrence: pending.occurrence };
   }
   io.emit();
   if (result.kind === "Unknown") return "Unconfirmed";
@@ -230,18 +231,16 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
     case "Filtered":
       return "clear filters to reorder.";
     case "Saving":
-      return "saving order…";
     case "Checking":
-      return "checking order…";
     case "Unconfirmed":
-      return "order not confirmed";
+      return null;
   }
 }
 
 /** The order's notice, announced in the pane the move came from while that pane
  * shows it, else in the active pane. Returns null when no notice is needed so
  * the surface does not reserve an empty state slot. */
-export function renderOrderNotice({
+export function OrderNotice({
   order,
   active,
   paneId,
@@ -260,16 +259,14 @@ export function renderOrderNotice({
       }
     : notice?.kind === "Rejected"
       ? notice.content
-      : notice?.kind === "Checked"
-        ? { tone: "Neutral", title: "order check complete", message: "showing the current order." }
-        : notice?.kind === "Conflict"
+      : notice?.kind === "Conflict"
           ? {
               tone: "Warning",
               title: "review current order",
               message: "review the current order before making another move.",
             }
           : null;
-  if (content === null) return null;
+  if (content === null) return <FeedbackBusy subject={pending?.occurrence ?? order.scopeKey} pending={pending?.phase === "Sending"}/>;
   const origin =
     typeof document === "undefined" || order.originPaneId === null
       ? null
@@ -289,8 +286,7 @@ export function renderOrderNotice({
     rect.left < window.innerWidth;
   const announce = originVisible ? paneId === order.originPaneId : active;
   return (
-    <FeedbackNotice
-      key={recover ? "Recovery" : notice?.kind}
+    <FeedbackFailure scope="Local" occurrence={pending?.occurrence ?? notice!.occurrence}
       content={content}
       announcement={announce ? "Polite" : "None"}
       actions={
@@ -370,7 +366,7 @@ function createLibraryOrders(
       if (entry.pending !== null) return Promise.resolve("Rejected");
       entry.originPaneId = origin();
       entry.notice = null;
-      return run(libraryId, { command: Object.freeze({ ...command }), phase: "Sending" });
+      return run(libraryId, { command: Object.freeze({ ...command }), occurrence: {}, phase: "Sending" });
     },
     check(libraryId: string) {
       const pending = get(libraryId).pending;
@@ -385,7 +381,7 @@ function createLibraryOrders(
       if (pending?.phase !== "Unconfirmed") return;
       if (compareRevision(revision, pending.command.expectedRevision) <= 0) return;
       entry.pending = null;
-      entry.notice = { kind: "Checked" };
+      entry.notice = null;
       emit();
     },
   };

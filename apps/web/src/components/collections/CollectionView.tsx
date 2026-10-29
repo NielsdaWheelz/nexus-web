@@ -177,10 +177,7 @@ export default function CollectionView({
   });
   const body =
     status === "loading" ? (
-      <PaneLoadingState
-        label={`Loading ${ariaLabel}…`}
-        announcement="Polite"
-      />
+      <PaneLoadingState />
     ) : status === "error" ? (
       error
     ) : rows.length === 0 ? (
@@ -198,7 +195,7 @@ export default function CollectionView({
       />
     ) : (
       <>
-      {window.plan.kind === "Measure" ? <PaneLoadingState label={`Loading ${ariaLabel}…`} announcement="None" /> : null}
+      {window.plan.kind === "Measure" ? <PaneLoadingState /> : null}
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
         {(window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots).map(slot => {
           const row = rows[slot.index];

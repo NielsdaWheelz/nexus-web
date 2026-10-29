@@ -111,7 +111,7 @@ function LazyPaneBody({ id }: { readonly id: LazyPaneRouteId }) {
   // retry's minimum fallback delay. No initial value: SSR must keep its ready body.
   const snapshot = useDeferredValue(current);
   if (current.kind === "Failed") throw current.error;
-  if (snapshot.kind === "Pending") return <PaneLoadingState label="Loading pane…" announcement="None" />;
+  if (snapshot.kind === "Pending") return <PaneLoadingState />;
   if (snapshot.kind === "Failed") throw snapshot.error;
   const Body = snapshot.Body;
   return <><Body /><ServerSeedsSpent /></>;
@@ -121,7 +121,7 @@ export function renderPane(id: PaneRouteId): ReactNode {
   if (id === "pageNew") id = "page";
   return (
     <Suspense
-      fallback={<PaneLoadingState label="Loading pane…" announcement="None" />}
+      fallback={<PaneLoadingState />}
     >
       <PaneBody key={id} id={id} />
     </Suspense>

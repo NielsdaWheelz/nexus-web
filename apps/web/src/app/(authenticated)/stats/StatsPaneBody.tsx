@@ -16,7 +16,7 @@ import Input from "@/components/ui/Input";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
-import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackState, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
@@ -126,8 +126,6 @@ const shortDate = (instant: string) =>
   new Date(instant).toLocaleString(undefined, SHORT_DATE);
 const movement = (words: number, mediaMs: number) =>
   words > 0 ? `${count(words)} words` : duration(mediaMs);
-const periodName = (view: StatsView) =>
-  view.view === "year" ? (view.year ?? "This year") : PERIOD_LABEL[view.period];
 
 function duration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
@@ -489,6 +487,7 @@ function Sessions(props: {
         ] }] } }}
       />
     );
+  const sessionsOccurrence = useFeedbackOccurrence(sessions.failure !== null, sessions.requestedKey);
   return (
     <Section
       title="Sessions"
@@ -511,7 +510,7 @@ function Sessions(props: {
           ])}
         />
         {sessions.failure !== null && sessions.failure.op !== "More" ? (
-          <FeedbackNotice
+          <FeedbackFailure scope="Local" occurrence={sessionsOccurrence}
             content={{ tone: "Warning", title: sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
             announcement="Polite"
             actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
@@ -979,6 +978,7 @@ export default function StatsPaneBody() {
     kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
     data.activity.active_exclusions.length === 0;
   const failure = stats.status === "failed" || stats.status === "ready" ? stats.error : null;
+  const readOccurrence = useFeedbackOccurrence(failure !== null);
   const retryActions = [{
     label: "retry statistics", onClick: stats.refetch,
     busy: stats.status === "failed" ? stats.retrying : stats.status === "ready" && stats.refreshing,
@@ -1002,17 +1002,15 @@ export default function StatsPaneBody() {
           chipLabel={chipLabel}
         />
       </header>
-      {updating && shown.current ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: `updating ${periodName(view)}`, message: `showing the prior ${periodName(shown.current.view)} result until it arrives.` }} announcement="Polite" />
-      ) : null}
+
       {initialLoading ? (
-        <div className={styles.loading} aria-label="Loading statistics" />
+        <FeedbackBusy subject={query} pending/>
       ) : null}
       {failure !== null && data === null ? (
         <FeedbackState content={{ tone: "Warning", title: "statistics couldn’t load", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
       {failure !== null && data !== null ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
+        <FeedbackFailure scope="Local" occurrence={readOccurrence} content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
       {totals?.recorded_active_ms === 0 ? (
         <FeedbackState content={data!.activity.applied_filters.length > 1

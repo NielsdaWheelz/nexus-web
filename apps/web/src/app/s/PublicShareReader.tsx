@@ -6,9 +6,10 @@
 // in-document link) leaves the reading alone.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  FeedbackNotice,
+  FeedbackBusy,
+  FeedbackProvider,
+  FeedbackRecoveryControl,
   FeedbackState,
-  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
@@ -16,6 +17,7 @@ import {
   isApiError,
   readResponse,
 } from "@/lib/api/client";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Dialog from "@/components/ui/Dialog";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -53,7 +55,10 @@ const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
 export default function PublicShareReader() {
   const [state, setState] = useState<State>("Resolving");
   const [attempt, setAttempt] = useState(0);
+  const [readOccurrence, setReadOccurrence] = useState(() => ({}));
   const shell = useRef<HTMLDivElement>(null);
+  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
+  const bindShell = useCallback((element: HTMLDivElement | null) => { shell.current = element; setBounds(element); }, []);
   const reloadedToken = useRef<string | null>(null);
   const contentChanged = useCallback((token: string) => {
     if (reloadedToken.current === token) {
@@ -71,6 +76,7 @@ export default function PublicShareReader() {
       controller.abort();
       controller = new AbortController();
       const { signal } = controller;
+      setReadOccurrence({});
       const token = TOKEN.exec(window.location.hash)?.[1];
       setState((current) => token && typeof current === "object" && "failure" in current && current.token === token
         ? { ...current, retrying: true }
@@ -118,7 +124,10 @@ export default function PublicShareReader() {
     ready?.share.title ??
     (state === "Unavailable" ? "Share unavailable" : "Shared reading");
   return (
-    <div className={styles.shell} ref={shell} tabIndex={-1}>
+    <FeedbackProvider><div className={styles.shell} ref={bindShell} tabIndex={-1}>
+      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
+        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header, main." + styles.header)] : []}
+        returnFocus={() => shell.current}>
       {/* The route emits no metadata title, so this is the document's only one. */}
       <title>{`${title} · Nexus`}</title>
       {ready ? (
@@ -133,13 +142,14 @@ export default function PublicShareReader() {
           className={styles.header}
           tabIndex={-1}
         >
+          <span className={styles.recoverySlot}><FeedbackRecoveryControl /></span>
           <div className={styles.brand}>Nexus</div>
           {state === "Resolving" ? (
-            <FeedbackStatus content={{ tone: "Neutral", title: "opening shared reading…" }} announcement="Polite" />
+            <FeedbackBusy pending subject={readOccurrence} />
           ) : state === "Unavailable" ? (
             <FeedbackState content={{ tone: "Neutral", title: "share unavailable", message: "this link is invalid, revoked, or no longer readable." }} announcement="Polite" />
           ) : failure ? (
-            <FeedbackNotice
+            <FeedbackState
               content={failure.failure}
               announcement="Assertive"
               returnFocus={() => shell.current?.querySelector<HTMLElement>("main") ?? shell.current}
@@ -158,7 +168,8 @@ export default function PublicShareReader() {
           ) : null}
         </main>
       )}
-    </div>
+      </FeedbackSurface>
+    </div></FeedbackProvider>
   );
 }
 
@@ -261,6 +272,7 @@ function SharedDocument({
   return (
     <>
       <header className={styles.header}>
+        <span className={styles.recoverySlot}><FeedbackRecoveryControl /></span>
         <div className={styles.brand}>Nexus</div>
         <h1>{share.title}</h1>
         {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}

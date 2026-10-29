@@ -16,7 +16,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
 type ReadState =
   | null
-  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal }
+  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal; readonly failure: {readonly feedback: FeedbackContent; readonly connectionRequired: boolean} | null }
   | { readonly kind: "Ready"; readonly ref: string; readonly request: AbortSignal; readonly facts: ResourceActions; readonly generation: number; readonly source: PlaybackSource | null }
   | { readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly connectionRequired: boolean };
 
@@ -39,8 +39,10 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
   const flight = useRef<{ readonly ref: string; readonly request: AbortSignal; cancel(): void } | null>(null);
 
   const prepare = useCallback((request: AbortSignal) => {
-    flight.current?.cancel();
-    if (ref === null || request.aborted) return;
+    const replaced = flight.current;
+    flight.current = null;
+    replaced?.cancel();
+    if (ref === null || request.aborted) {setLoad(null); return;}
     if (!remoteReady()) {
       setLoad({ kind: "Failed", ref, request, connectionRequired: true, feedback: { tone: "Neutral", title: "requires a connection" } });
       return;
@@ -60,7 +62,9 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     };
     flight.current = attempt;
     request.addEventListener("abort", attempt.cancel, { once: true });
-    setLoad({ kind: "Loading", ref, request });
+    setLoad(previous => ({kind: "Loading", ref, request, failure: previous?.ref === ref && previous.request === request && !request.aborted
+      ? previous.kind === "Failed" ? {feedback: previous.feedback, connectionRequired: previous.connectionRequired}
+        : previous.kind === "Loading" ? previous.failure : null : null}));
     apiFetch<ApiJson<"/resource-items/{resource_ref}/actions", "get">>(
       `/api/resource-items/${encodeURIComponent(ref)}/actions`,
       { signal: controller.signal, cache: "no-store" },

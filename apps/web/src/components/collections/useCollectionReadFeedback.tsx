@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { ServerList } from "@/lib/api/useServerList";
 import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
@@ -24,8 +24,9 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
   const announcement = useReadOutcome({ requestedKey, active, current, failed: failure !== null, waiting, outcome });
 
   const continuationFailure = failure?.op === "More" ? failure : null;
+  const occurrence = useFeedbackOccurrence(continuationFailure !== null, requestedKey);
   const rejected = continuationFailure?.error.code === "E_INVALID_CURSOR";
-  const notice = continuationFailure === null ? null : <FeedbackNotice
+  const notice = continuationFailure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
     content={{
       tone: "Warning",
       title: rejected ? `couldn’t continue loading ${unit.plural}` : `couldn’t load remaining ${unit.plural}`,
@@ -101,7 +102,8 @@ export function useIndexReadFeedback({ value, requestedKey, active, unit, waitin
 }): { notice: ReactNode | null; announcement: ReactNode } {
   const error = value.status === "loading" ? null : value.error;
   const announcement = useReadOutcome({ requestedKey, active, current: value.status === "ready", failed: error !== null, waiting, outcome });
-  const notice = value.status !== "ready" || error === null ? null : <FeedbackNotice
+  const occurrence = useFeedbackOccurrence(value.status === "ready" && error !== null, requestedKey);
+  const notice = value.status !== "ready" || error === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
     content={{ tone: "Warning", title: `couldn’t refresh ${unit.plural}`, requestId: error.requestId }}
     announcement="None"
     actions={[{ label: "try again", busy: value.refreshing, onClick: () => { void value.refetch().catch(() => {}); } }]}

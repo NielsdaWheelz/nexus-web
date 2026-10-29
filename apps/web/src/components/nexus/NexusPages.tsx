@@ -3,7 +3,7 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
@@ -30,6 +30,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
+      <FeedbackRecoveryControl />
     </header>
   );
 }
@@ -61,7 +62,7 @@ function ManagePanes({ controller, mobile }: { controller: NexusController; mobi
         title={mobile ? "all panes" : "Manage panes"}
         onBack={controller.back}
       />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
+      <NexusTitleFailure />
       <section className={styles.panes} aria-labelledby="nexus-open-panes">
         <h3 id="nexus-open-panes">{mobile ? "open" : "Open"}</h3>
         <ul>
@@ -191,15 +192,10 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title={mobile ? "add to today" : "Add to Today"} onBack={controller.back} />
-          {page.submit.kind !== "Ready" && page.submit.content ? (
-            <FeedbackNotice
-              content={page.submit.content}
-              announcement="Assertive"
-              actions={page.submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
-            />
-          ) : (
-            <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
-          )}
+          <p>{page.text}</p>
+          <FeedbackBusy pending={page.submit.kind === "Running"} />
+          <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}
+            aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={() => controller.retryCapture("default")}>retry saving</Button>
         </section>
       );
     case "CreateLibrary":

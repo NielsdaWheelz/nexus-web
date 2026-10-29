@@ -12,7 +12,8 @@ how nexus says something happened. owners, under `apps/web/src/`:
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
 - `components/feedback/Feedback.tsx`: shared status, notice, surface and field
-  presentation; `workspaceSignals.ts` owns account-scoped workspace presentation.
+  presentation; `scope.ts` composes mounted contributions and `FeedbackLayer.tsx`
+  owns passive placement.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
@@ -83,60 +84,55 @@ uses the same restrained anatomy in every room.
 
 ## signals
 
-each real failure needs a surviving presentation owner. an unresolved writing
-failure after pane closure must identify its document and offer a route back;
-reopening must reach the same unresolved writing owner. dismissing a notice
-cannot discard a command, its retry identity or authored text. the loss
-guard must expose the affected work rather than leave recovery unreachable.
-outline undo and imports keep their own surfaces. this gives up a central recovery
-inbox and routine success history; it does not replace them with badges or let a
-disappearing toast own unfinished work.
+ordinary selection, autosave, synchronization and successful refresh are silent.
+foreground waiting occupies an existing fixed control slot, with immediate
+`aria-busy` and a spinner after 200 ms. settlement removes the spinner immediately;
+subject changes cancel its timer. root reads use pane chrome, without skeletons or
+status paragraphs. otherwise invisible success uses a 1.2-second checkmark in the
+same slot; copy also announces `copied` once. `useCopyFeedback` owns that timing,
+never the caller's command or clipboard recovery.
 
-`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` share
-plain-text content and tone tokens. no severity label, coloured card or custom
-feature renderer. the complete fact and first action are visible; detail,
-diagnostics and a second action expand on demand. navigation remains a link.
-inline disclosure pushes layout; the reader opts into the existing anchored
-surface. native menu and player controls retain their widget semantics.
+`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` retain real
+task facts, empty/unavailable content, fatal entry failure and field validation.
+recoverable operational failures use `FeedbackFailure`: content, at most two real
+actions and an owner-supplied incident identity. retry preserves the incident and
+its mounted controls. dismissal acknowledges presentation only; it never discards
+a command, draft, uncertainty or loss guard.
 
-workspace feedback has one shared presentation: a passive transient card for one
-discrete action's outcome. it is not a list, inbox, undo inventory or history, and
-it owns no state. `FeedbackProvider` owns it above the document's writing owner and
-workspace failure containment; `transient.ts` holds the visible card and at most one
-pending outcome. durable failure and uncertainty stay with their command owner and
-render on the subject's own surface (its dialog, row, menu action or pane) with
-`FeedbackNotice`/`FeedbackStatus` and their recovery actions; the onset of such a
-failure may also report once through `receipt`. ordinary success is not announced:
-the resulting state speaks. the account's sync status is the account menu's first
-row, never a pane header.
+`FeedbackScope` composes mounted local contributors, with token-checked cleanup
+and occurrence deduplication. the provider has one authored-account projection;
+domain commands remain in their existing owners. weak acknowledgement and
+last-published speech metadata survive host relocation without retaining command
+payloads or failure history. a deliberate retry outcome may announce once with a
+new speech token. rerenders, background retries and relocation remain silent.
 
-`receipt(content, action?)` takes full content and at most one action. an actionless
-card lasts five visible seconds, one with an action eight. clocks start after
-eligible placement, use monotonic time and pause while hovered, focused, pressed or
-hidden. a newer outcome replaces the visible one and any waiting one. a card larger
-than its area scrolls inside it; only a missing area retires it. a non-success outcome that cannot show yet (hidden tab, open
-menu/picker/modal, phone text entry, held card), or that one of those blockers
-displaces, waits as the single pending outcome and shows when the workspace is
-unblocked; a success that cannot show is skipped. `receipt` returns a retraction:
-an owner withdraws its report, waiting or shown, once that state retries or resolves,
-so a deferred card never shows stale. a returning card does not announce again. activating the
-card's action closes it; the action's owner reports what follows. `commandKey` on
-any action names its exact command, so a held control never silently changes
-meaning.
+one passive `FeedbackLayer` belongs to each real pane, modal, picker or standalone
+surface. modal portals inherit the actual overlay context. only the existing
+topmost interaction owner is eligible; without one, the active pane or standalone
+surface is eligible. inactive scopes retain contributions without displaying or
+speaking. source-owned feedback disclosures retain their source's eligibility;
+a newer unrelated interaction wins.
 
-`WorkspaceFeedback.tsx` owns passive placement: desktop upper-right inside the
-active pane content/workspace/visual-viewport intersection; phone below the
-stationary header/control endpoints at `--mobile-feedback-top`. it never registers
-as chrome or an interaction-owning overlay. the card is bounded by that area and
-scrolls within it; with no area it retires. it uses shared surface, edge, shadow, radius and
-control tokens, with no severity ornament or countdown. it sits above chrome and
-below popovers. escape closes only from within the card.
+cards stack in that single layer, bounded by the host and visual viewport. the
+preferred placement protects whole focused editables, controls and modal control
+regions. inability to fit minimizes to a permanently reserved recovery slot;
+there is no corner search, forced scroll, chrome reveal or caret tracking. explicit
+recovery opens the existing anchored surface. feedback's own controls and
+disclosures do not obstruct themselves; an engaged card stays bounded and
+scrollable as space shrinks. appearance never takes focus. withdrawal may restore
+only removed owned focus, when no surviving control has acquired it and the host
+remains eligible.
 
-short facts use separate live regions with semantic occurrence identity; identical
-deliberate events announce once each. controls never enter live regions. unrelated
-interaction owners suppress peripheral speech. local `FeedbackScope` continues to
-supply pane focus destinations and inactive-pane silence. all rooms, forced colours,
-reduced motion and coarse targets retain the same contracts.
+`receipt(content, action?)` remains disposable, never the sole recovery path. it
+uses the same host layer. one current outcome and at most one waiting outcome
+retain the existing five/eight visible-second expiry, hold, suppression and
+retraction rules. a returning receipt does not announce again. action
+`commandKey` prevents a held control silently changing its command.
+
+`Signal` shares content, tone, diagnostics and actions across these presentations.
+controls never enter live regions. details and diagnostics open on demand;
+recovery stays outside document and list flow. all rooms, forced colours, reduced
+motion and coarse targets retain the same contracts.
 
 ## ownership
 
@@ -316,8 +312,9 @@ command/link descriptors explicitly supply an icon. ordinary actions use their
 semantic owner's glyph; only chapter and map destination lists use `null`.
 the menu retains its 16px decorative slot and text label. custom content owns its
 anatomy: swatches and status prose need no action glyph, while nested actions do.
-loading/empty/trailing-failure prose and preparation feedback retain their own
-presentation. icon-only button contracts remain non-null. lucide owns standard
+empty and domain-state prose retain their own presentation. operational waiting
+uses fixed controls; failures use the host recovery layer. icon-only button
+contracts remain non-null. lucide owns standard
 drawings; use existing semantic presentations or direct named glyph imports,
 without a second registry, inferred glyphs or placeholders.
 
@@ -344,8 +341,8 @@ slot across media, artwork and independent controls. rows without artwork or
 controls reserve the same minimum height, and all rows use one narrow-width
 fold threshold. width, font and control-size changes remeasure the actual
 fractional border box; the full extent is count × measured height. a hidden,
-inert canonical row supplies measurement while the existing loading state is
-visible. ready rows are never clipped to enforce an estimated height.
+inert canonical row supplies measurement while waiting remains in chrome.
+ready rows are never clipped to enforce an estimated height.
 
 `measuredIndexWindow.ts` owns the visible band, overscan and bounded interaction
 pins; `collectionWindow.ts` shares pure rank arithmetic with the queue. the

@@ -16,9 +16,11 @@ import {
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
-import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import compact from "@/components/ui/CompactChrome.module.css";
 import Companion, {
@@ -79,7 +81,7 @@ import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/wo
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
+import { useWorkspaceStore, WorkspaceSessionNotice, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
 /** One route-owned composition, derived by the workspace before its body mounts. */
@@ -146,17 +148,13 @@ export default function PaneShell(props: PaneShellProps) {
       }),
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
-  const returnFeedbackFocus = useCallback(
-    () => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id),
-    [pane.id],
-  );
   return (
     <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
-      <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
+
         <PaneChromeContext value={chrome}>
           <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
         </PaneChromeContext>
-      </FeedbackScope>
+
     </PaneRuntimeProvider>
   );
 }
@@ -186,6 +184,7 @@ function PaneView({
   readonly companionMaxWidthPx: number;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
+  const [feedbackBounds, setFeedbackBounds] = useState<HTMLDivElement | null>(null);
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
   const activateHistory = (back: boolean, event: TargetActivationEvent) => {
@@ -251,6 +250,7 @@ function PaneView({
   const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
+  const bindFeedbackBounds = useCallback((element: HTMLDivElement | null) => { scrollportRef.current = element; setFeedbackBounds(element); }, []);
   const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const focusFrame = useRef(0);
@@ -512,6 +512,11 @@ function PaneView({
   const railPx = rail ? Math.ceil(rail.widthPx) : 0;
 
   return (
+    <FeedbackSurface bounds={feedbackBounds} interaction={null} modal={null} active={isActive}
+      protectedTargets={() => [chromeRef.current, paneRef.current?.querySelector<HTMLElement>("[data-feedback-recovery]") ?? null].filter((element): element is HTMLElement => element !== null)}
+      returnFocus={() => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id)}>
+    <RetainedActionFeedback />
+    <WorkspaceSessionNotice />
     <section
       ref={paneRef}
       className={styles.paneShell}
@@ -590,7 +595,7 @@ function PaneView({
           }}
         >
           <div
-            ref={scrollportRef}
+            ref={bindFeedbackBounds}
             id={bodyId}
             className={styles.body}
             data-body-mode={route.bodyMode}
@@ -638,6 +643,7 @@ function PaneView({
         resourceRef={body?.resourceRef}
       />
     </section>
+    </FeedbackSurface>
   );
 }
 
@@ -655,5 +661,6 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
       return "Applied";
     },
   });
-  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
+  const occurrence = useFeedbackOccurrence(arrival.failure !== null, resourceRef);
+  return arrival.failure ? <FeedbackFailure occurrence={occurrence} scope="Local" content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
 }

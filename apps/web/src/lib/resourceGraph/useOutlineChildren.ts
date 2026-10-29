@@ -4,7 +4,9 @@
  * authoritative; remote facts fail separately and never decide local emptiness.
  * Descriptor identity fences results from a previous occurrence's exclusions. */
 import {useCallback, useEffect, useState} from "react";
-import {useAuthoredStore} from "@/lib/authored/provider";
+import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
+import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
+import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
 import {useChangeStamp} from "@/lib/api/changes";
@@ -20,11 +22,13 @@ type RemoteProof=Schema<"RemoteChildrenItem">;
 interface Proof {identity:string;value:boolean;local_ref:string|null}
 export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,OutlineChildrenDescriptor>){
   const store=useAuthoredStore();
+  const accountId=useAuthoredAccountId();
   const entries=[...descriptors].sort(([a],[b])=>a.localeCompare(b));
   const key=JSON.stringify(entries);
   const [attempt,setAttempt]=useState(0);
+  const remoteKey=entries.length?JSON.stringify(["outline-facts",scope,key]):null;
   const remote=usePaneFreeServerValue<Map<string,{identity:string;proof:RemoteProof}>>({
-    key:entries.length?`outline-facts:${scope}`:null,
+    key:remoteKey,
     stale:JSON.stringify([key,useChangeStamp("Metadata"),attempt]),
     load:async signal=>{
       const proofs=new Map<string,{identity:string;proof:RemoteProof}>();
@@ -54,12 +58,14 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     const owner=retained?.identity===descriptor.identity?retained.proof.local_ref:null;
     return {key:id,refs:owner&&owner!==descriptor.resource_ref?[descriptor.resource_ref,owner]:[descriptor.resource_ref],excluded_link_ids:descriptor.excluded_edge_ids};
   });
-  const localKey=JSON.stringify(occurrences);
-  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;errors:ReadonlyMap<string,unknown>}>(()=>({proofs:new Map(),errors:new Map()}));
+  const localKey=JSON.stringify([accountId,occurrences]);
+  const chunkKeys=new Set<string>();
+  for(let offset=0;offset<occurrences.length;offset+=100)chunkKeys.add(JSON.stringify(occurrences.slice(offset,offset+100)));
+  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;errors:ReadonlyMap<string,{error:unknown;occurrence:object}>;pending:ReadonlySet<string>;accountId:string|null}>(()=>({proofs:new Map(),errors:new Map(),pending:chunkKeys,accountId}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
     const mounted=new Set(occurrences.map(item=>item.key));
-    setLocal(current=>({proofs:new Map([...current.proofs].filter(([id])=>mounted.has(id))),errors:new Map()}));
+    setLocal(current=>({accountId,proofs:new Map(current.accountId===accountId?[...current.proofs].filter(([id])=>mounted.has(id)):[]),errors:new Map(current.accountId===accountId?[...current.errors].filter(([key])=>chunkKeys.has(key)):[]),pending:chunkKeys}));
     for(let offset=0;offset<occurrences.length;offset+=100){
       const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))},chunkKey=JSON.stringify(chunk);
       let revision:bigint|null=null;
@@ -70,10 +76,17 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
         setLocal(current=>{
           const proofs=new Map(current.proofs),errors=new Map(current.errors);errors.delete(chunkKey);
           chunk.forEach((item,index)=>proofs.set(item.key,{query:item,value:result.children[index]===true}));
-          return {proofs,errors};
+          const pending=new Set(current.pending);pending.delete(chunkKey);
+          return {accountId,proofs,errors,pending};
         });
       };
-      stops.push(store.subscribe(query,receive,error=>{if(active)setLocal(current=>({...current,errors:new Map(current.errors).set(chunkKey,error)}));}));
+      stops.push(store.subscribe(query,receive,error=>{
+        if(!active)return;
+        if(!isAuthoredStorageFailure(error)){reportError(error);return;}
+        setLocal(current=>{
+        const pending=new Set(current.pending);pending.delete(chunkKey);
+        return {...current,pending,errors:new Map(current.errors).set(chunkKey,{error,occurrence:current.errors.get(chunkKey)?.occurrence??{}})};
+      });}));
     }
     return()=>{active=false;for(const stop of stops)stop();};
     // Serialized descriptors are the closed query's identity.
@@ -84,10 +97,15 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
   for(const [id,descriptor]of entries){
     const retained=proofFor(id,descriptor.identity);
     const fact=retained?.identity===descriptor.identity?retained.proof:null;
-    const localProof=local.proofs.get(id),query=localQueries.get(id)!;
+    const localProof=local.accountId===accountId?local.proofs.get(id):null,query=localQueries.get(id)!;
     const localPositive=localProof?.value===true&&JSON.stringify(localProof.query.excluded_link_ids)===JSON.stringify(query.excluded_link_ids)&&localProof.query.refs.every(ref=>query.refs.includes(ref));
     items.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
   }
   const retry=useCallback(()=>setAttempt(n=>n+1),[]);
-  return {items,error:local.errors.values().next().value??null,remoteError:remote.status==="loading"?null:remote.error,retry};
+  const failure=local.accountId===accountId?[...local.errors].find(([key])=>chunkKeys.has(key))?.[1]??null:null;
+  const remoteError=remote.status==="loading"?null:remote.error;
+  const remoteOccurrence=useFeedbackOccurrence(remoteError!==null,remoteKey);
+  return {items,error:failure?.error??null,occurrence:failure?.occurrence??null,
+    pending:local.accountId!==accountId||[...local.pending].some(key=>chunkKeys.has(key)),
+    remoteError,remoteOccurrence,remotePending:remote.status==="loading"||remote.status==="failed"&&remote.retrying||remote.status==="ready"&&remote.refreshing,retry};
 }

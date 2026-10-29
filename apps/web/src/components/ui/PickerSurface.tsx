@@ -7,12 +7,15 @@
 // would move the control the press meant to reach). Content owns its semantics
 // and initial focus; the surface owns placement and the existing overlay layer.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import {
+  OverlayContext,
   useOverlay,
   useOverlayContainer,
   wasOverlayInvokedByTouch,
@@ -66,6 +69,9 @@ export default function PickerSurface({
   readonly children: ReactNode;
 }) {
   const isMobile = useIsMobileViewport();
+  const modal = useContext(OverlayContext);
+  const [regionElement, setRegionElement] = useState<HTMLDivElement | null>(null);
+  const [panelElement, setPanelElement] = useState<HTMLDivElement | null>(null);
   const region = active && inline;
   const desktop = active && !inline && !isMobile;
   const regionRef = useRef<HTMLDivElement>(null);
@@ -78,12 +84,14 @@ export default function PickerSurface({
     flip: true,
     keepAnchorVisible: true,
   });
+  const bindRegion = useCallback((element: HTMLDivElement | null) => { regionRef.current = element; setRegionElement(element); }, []);
+  const bindPanel = useCallback((element: HTMLDivElement | null) => { panel.ref.current = element; setPanelElement(element); }, [panel.ref]);
   useCollectionLayout(regionRef, region);
   useCollectionLayout(panel.ref, desktop);
   const select = useRef(initialFocus);
   select.current = initialFocus;
   const container = useOverlayContainer();
-  useOverlay(desktop || region, {
+  const { layer } = useOverlay(desktop || region, {
     kind: "transient",
     onDismiss: onClose,
     inside: region ? undefined : () => [panel.ref.current, anchorEl],
@@ -115,14 +123,17 @@ export default function PickerSurface({
     return (
       <div
         id={panelId}
-        ref={regionRef}
+        ref={bindRegion}
         role="region"
         aria-label={title}
         tabIndex={-1}
         className={`${collection.surface} ${styles.inline}`}
       >
-        <div className={styles.header}>
+        <FeedbackSurface bounds={regionElement} interaction={layer} modal={modal} active={region}
+          protectedTargets={() => regionRef.current ? [...regionRef.current.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []} returnFocus={() => regionRef.current}>
+        <div className={styles.header} data-feedback-controls="true">
           <h3 className={styles.title}>{title}</h3>
+          <FeedbackRecoveryControl />
           <Button
             iconOnly
             icon={<X />}
@@ -132,6 +143,7 @@ export default function PickerSurface({
           />
         </div>
         {children}
+        </FeedbackSurface>
       </div>
     );
   }
@@ -141,14 +153,18 @@ export default function PickerSurface({
         ? createPortal(
             <div
               id={panelId}
-              ref={panel.ref}
+              ref={bindPanel}
               role={desktopRole ?? undefined}
               aria-label={desktopRole ? title : undefined}
               tabIndex={desktopRole ? -1 : undefined}
               className={[collection.surface, styles.surface, heightLimit === "available" && styles.available, className].filter(Boolean).join(" ")}
               style={panel.style}
             >
-              {children}
+              <FeedbackSurface bounds={panelElement} interaction={layer} modal={modal} active={desktop}
+                protectedTargets={() => anchorEl ? [anchorEl] : []} returnFocus={() => panel.ref.current}>
+                <span className={styles.recoverySlot}><FeedbackRecoveryControl /></span>
+                {children}
+              </FeedbackSurface>
             </div>,
             container,
           )

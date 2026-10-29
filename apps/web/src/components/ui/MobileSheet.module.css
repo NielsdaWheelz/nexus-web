@@ -198,3 +198,7 @@
     animation: none;
   }
 }
+
+.recovery { position: absolute; inset-inline-start: var(--space-3); inset-block-start: var(--space-2); }
+
+.header { padding-inline-start: calc(var(--space-3) + var(--size-xl)); min-block-size: var(--size-xl); }

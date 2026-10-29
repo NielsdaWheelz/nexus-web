@@ -21,7 +21,7 @@ export type ButtonLinkProps = Omit<ComponentProps<"a">, "children" | "aria-label
 /** Native navigation; blocked links stay mounted/named without href and keep caller tab policy. */
 export default function ButtonLink(props: ButtonLinkProps) {
   const {
-    emphasis, tone, size, iconOnly, icon, tooltip: _tooltip, children, className, ref, href,
+    emphasis, tone, size, iconOnly, icon, reserveIcon, busyKey, tooltip: _tooltip, children, className, ref, href,
     "aria-label": label, "aria-disabled": disabled, ...attributes
   } = props;
   const blocked = href === null || disabled === true || disabled === "true";
@@ -38,7 +38,7 @@ export default function ButtonLink(props: ButtonLinkProps) {
       aria-disabled={blocked || disabled}
       className={cx(buttonClassName({ emphasis, tone, size, iconOnly }), className)}
     >
-      <ControlContents icon={icon} busy={busy}>{children}</ControlContents>
+      <ControlContents icon={icon} reserveIcon={reserveIcon} busy={busy} busyKey={busyKey}>{children}</ControlContents>
     </a>}
   />;
 }

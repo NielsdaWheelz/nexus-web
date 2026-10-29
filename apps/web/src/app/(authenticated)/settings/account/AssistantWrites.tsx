@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
@@ -61,6 +61,8 @@ export default function AssistantWrites({
     },
   });
   const writes = list.items;
+  const readOccurrence = useFeedbackOccurrence(list.failure !== null, filter);
+  const undoOccurrence = useFeedbackOccurrence(undoFailure !== null || busyId !== null);
   const readFeedback = useCollectionReadFeedback({
     list, unit: UNIT, waiting: false, outcome: null, returnFocus: () => landmark.current,
   });
@@ -74,9 +76,9 @@ export default function AssistantWrites({
 
   const undo = async (id: string) => {
     setBusyId(id);
-    setUndoFailure(null);
     try {
       await undoAssistantWrite(id);
+      setUndoFailure(null);
       setRevision((current) => current + 1);
     } catch (caught) {
       if (!handleUnauthenticatedApiError(caught)) {
@@ -113,12 +115,12 @@ export default function AssistantWrites({
       }
     >
       {undoFailure ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "undo not confirmed", message: undoFailure.message }} announcement="Assertive" />
+        <FeedbackFailure scope="Local" occurrence={undoOccurrence} content={{ tone: "Warning", title: "undo not confirmed", message: undoFailure.message }} announcement="Assertive" />
       ) : null}
       {list.status === "loading" ? (
-        <PaneLoadingState label="Loading writes" announcement="None" />
+        <PaneLoadingState />
       ) : list.status === "failed" && list.failure !== null ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           announcement="Polite"
           content={{
             tone: "Warning",
@@ -173,6 +175,7 @@ export default function AssistantWrites({
                 ? <p className={styles.effectStatus}>undo unavailable for this older filing</p> : null}
               {write.undo_allowed ? (
                 <Button
+                  reserveIcon
                   aria-busy={busyId === write.id || undefined}
                   disabled={busyId !== null}
                   onClick={() => void undo(write.id)}
@@ -185,7 +188,7 @@ export default function AssistantWrites({
         </ol>
       ) : null}
       {list.status === "ready" && list.failure !== null && list.failure.op !== "More" ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={{ tone: "Warning", title: "couldn’t refresh writes", message: undoFailureMessage(list.failure.error), requestId: list.failure.error.requestId }}
           announcement="Polite"
           actions={[{ label: "try again", onClick: list.retry, busy: list.running !== null }]}

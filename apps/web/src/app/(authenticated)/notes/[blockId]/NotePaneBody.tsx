@@ -7,7 +7,7 @@ import { normalizeQuote } from "@nexus/authored/identity";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import {useLocalOutlineRoot, type LocalOutlineHandle} from "@/components/notes/LocalOutline";
-import Button from "@/components/ui/Button";
+import {FeedbackFailure, FeedbackBusy, useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -76,14 +76,15 @@ export default function NotePaneBody() {
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
   usePaneChrome(useMemo(() => ({ resourceRef }), [resourceRef]));
+  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null, ref);
+  const entryOccurrence = useFeedbackOccurrence(error !== null, ref);
   if (!resource) {
-    if (read.error) return <div role="alert"><p>couldn’t open this note on this device.</p><Button onClick={read.retry}>retry</Button></div>;
-    if (!read.rootRead.known) return <p>opening note…</p>;
+    if (!read.rootRead.known) return <>{read.view}<FeedbackBusy subject={ref} pending={read.error === null}/></>;
     return <p>this note is no longer available.</p>;
   }
   return <div ref={sourceView} tabIndex={-1}>
-    {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
-    {error ? <p role="alert">{error instanceof Error ? error.message : "couldn’t save this change on this device."}</p> : null}
+    {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
+    {error ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{tone: "Warning", title: "couldn’t open this note"}} announcement="Polite"/> : null}
     {read.view}
   </div>;
 }

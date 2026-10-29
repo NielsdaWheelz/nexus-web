@@ -3,7 +3,7 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, STALE_BUILD_FEEDBACK, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
@@ -271,11 +271,11 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     state = next;
     for (const listener of listeners) listener.changed();
   };
-  const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent): CommandOutcome => {
+  const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent, preserveCopy = false): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
-    const title = kind === "Unconfirmed" && (pending.command.kind === "Send" || pending.command.kind === "Repeat")
-      ? "response status unconfirmed" : kind === "Unconfirmed" ? "change status unconfirmed" : feedback.title;
-    set({ kind, command: pending.command, feedback: { ...feedback, title } });
+    set({ kind, command: pending.command, feedback: kind === "Unconfirmed" && !preserveCopy && feedback !== STALE_BUILD_FEEDBACK
+      ? { ...feedback, title: "change not confirmed", message: "the request may have succeeded." }
+      : feedback });
     return PENDING;
   };
   const deliver = (tree: ConversationTree | null) => {
@@ -439,7 +439,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         throw failure.error;
       }
       if (failure.kind === "Handled") {
-        if (attempt.unconfirmed) hold("Unconfirmed", { tone: "Warning", title: "", message: "sign in to check this change" });
+        if (attempt.unconfirmed) hold("Unconfirmed", { tone: "Warning", title: "", message: "sign in to check this change" }, true);
         else {
           pending = null;
           set(IDLE_COMMAND);

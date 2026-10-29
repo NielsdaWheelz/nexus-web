@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -27,6 +27,7 @@ type Command = Extract<ActionDescriptor, { kind: "command" }>;
 function useOpenAction(item: ImportItem) {
   const { ctx, run } = useActionRuntime();
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
   const mediaRef = item.media_id === null ? null : `media:${item.media_id}`;
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
@@ -54,7 +55,7 @@ function useOpenAction(item: ImportItem) {
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
-  return { action, feedback: failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" /> };
+  return { action, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 function OpenControl({ item, action }: { readonly item: ImportItem; readonly action: Command }) {
@@ -62,7 +63,7 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
     const detail = prepareActionSelect(event, null);
     if (detail && !action.disabled) action.onSelect(detail);
   };
-  return <ButtonLink href={`/media/${item.media_id}`}
+  return <ButtonLink reserveIcon busyKey={item.ref} href={`/media/${item.media_id}`}
     aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}
   >{action.label}</ButtonLink>;
@@ -92,7 +93,7 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
 }
 
 function RecoveryControl({ action }: { readonly action: Command }) {
-  return <Button aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
+  return <Button reserveIcon busyKey={action.id} aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     onClick={event => { if (!action.disabled) action.onSelect({ triggerEl: event.currentTarget, openIntent: "default" }); }}
   >{action.label}</Button>;
 }
@@ -104,6 +105,7 @@ function RecoveryControl({ action }: { readonly action: Command }) {
 function useUploadActions(item: ImportItem) {
   const { run } = useActionRuntime();
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
   const busy = useBusyActionIds(item.ref);
   const inputRef = useRef<HTMLInputElement>(null);
   if (item.media_id !== null) return { input: null, retry: null, remove: null, feedback: null };
@@ -149,7 +151,7 @@ function useUploadActions(item: ImportItem) {
         send("RetryUpload", () => uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }));
     }}
   />;
-  return { input, retry, remove, feedback: failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" /> };
+  return { input, retry, remove, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 /** Commands and feedback survive CSS promotion; the row owns its overflow ref. */
@@ -207,7 +209,7 @@ export function ImportObligationActions({ item, obligation }: {
 }) {
   const offer = item.obligations[obligation]?.recovery ?? null;
   const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" || offer?.kind === "BrowserCapture" ? null : offer);
-  if (offer?.kind === "BrowserCapture") return <ButtonLink href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
+  if (offer?.kind === "BrowserCapture") return <ButtonLink reserveIcon busyKey={item.ref} href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
   if (item.media_id === null) return obligation === "source" ? <UploadActions item={item} /> : null;
   return action ? <RecoveryControl action={action} /> : null;
 }

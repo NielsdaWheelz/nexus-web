@@ -15,12 +15,14 @@ import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import { ExcerptText } from "@/components/resources/ResourceBody";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { assertNever } from "@/lib/assertNever";
 import { useChangeStamp } from "@/lib/api/changes";
+import {apiTransportFeedback} from "@/lib/api/client";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import type { ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -59,7 +61,6 @@ const VISIT = definePaneVisitDataKey<SearchVisit>("Search.Phase");
 const LEXICAL_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Lexical");
 const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Hybrid");
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"];
-const PROGRESS_REVEAL_MS = 150;
 const phaseRank = { lexical: 0, hybrid: 1 };
 
 export default function SearchPaneBody() {
@@ -138,6 +139,16 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     },
   });
   const selected = visit.adopted?.phase === "hybrid" ? hybrid : lexical;
+  const [incidents, setIncidents] = useState<{key: string; lexical: {error: ApiError; occurrence: object} | null; hybrid: {error: ApiError; occurrence: object} | null}>({key, lexical: null, hybrid: null});
+  const previousIncidents = incidents.key === key ? incidents : {key, lexical: null, hybrid: null};
+  const observedIncident = (phase: SearchPhase, read: typeof lexical) => {
+    const previous = previousIncidents[phase];
+    if (read.failure !== null) return previous?.error === read.failure.error ? previous : {error: read.failure.error, occurrence: previous?.occurrence ?? {}};
+    return read.current && read.fresh && read.running === null ? null : previous;
+  };
+  const phaseIncidents = {key, lexical: observedIncident("lexical", lexical), hybrid: observedIncident("hybrid", hybrid)};
+  if (incidents.key !== key || incidents.lexical !== phaseIncidents.lexical || incidents.hybrid !== phaseIncidents.hybrid) setIncidents(phaseIncidents);
+
   // remote search reads synchronized projections, including a server copy of authored text.
   const results = (visit.adopted === null ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
     .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row);
@@ -243,7 +254,6 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     const next = { phase, key: JSON.stringify([key, phase, stamp, attempt]), stamp };
     setVisit(current => ({ ...current, attempts: { ...current.attempts, [phase]: attempt } }));
     if (visit.adopted?.phase === phase) setRefreshPhase(next.phase);
-    setRefreshError(null);
     return next;
   };
   const refreshResults = () => {
@@ -259,8 +269,8 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   };
   const retrySearch = () => {
     returning.current = false;
-    if (lexical.failure !== null || refreshError?.phase === "lexical") retryPhase("lexical");
-    if (hybridWanted && (hybrid.failure !== null || refreshError?.phase === "hybrid")) retryPhase("hybrid");
+    if (phaseIncidents.lexical !== null || refreshError?.phase === "lexical") retryPhase("lexical");
+    if (hybridWanted && (phaseIncidents.hybrid !== null || refreshError?.phase === "hybrid")) retryPhase("hybrid");
   };
   const lexicalState = !enabled ? "idle" : lexical.current ? "ready" : lexical.failure !== null ? "failed" : "pending";
   const hybridState = !hybridWanted ? "idle" : hybrid.current ? "ready" : hybrid.failure !== null ? "failed" : "pending";
@@ -269,32 +279,29 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   const unfixable = [visit.adopted?.phase === "hybrid" ? undefined : lexical.failure?.error, hybrid.failure?.error, refreshError?.error].find(error => error !== undefined && UNFIXABLE.includes(error.code));
   const prefixFailure = visit.adopted !== null && failure !== null;
   const pending = enabled && visit.adopted?.phase !== "hybrid" && (lexicalState === "pending" || hybridState === "pending");
-  const [revealed, setRevealed] = useState(false);
-  useEffect(() => {
-    if (!pending) { setRevealed(false); return; }
-    const timer = setTimeout(() => setRevealed(true), PROGRESS_REVEAL_MS);
-    return () => clearTimeout(timer);
-  }, [pending]);
   const progressText = local.matches?.length && progress.text === "no results found." ? "no other results found." : progress.text;
   const message = local.scopeAvailable === false ? "scope unavailable on this device. connect to refresh its access and reading data."
     : unfixable !== undefined ? unfixable.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available"
     : remoteOffline && visit.adopted === null ? "other results aren’t available offline. your notes on this device are still searchable."
     : rejectedCursor ? "results need refreshing." : prefixFailure ? failure.op === "More" ? "more results couldn’t be loaded. your results are still here." : "results couldn’t be refreshed. your results are still here."
-    : blank ? "ready to search." : unsupported ? query.view === "passages" ? "no passages for these content types" : "no results found." : !pending || revealed || progress.action !== null ? progressText : "";
+    : blank ? "ready to search." : unsupported ? query.view === "passages" ? "no passages for these content types" : "no results found." : !pending || progress.action !== null ? progressText : "";
   const action = local.scopeAvailable === false ? null : rejectedCursor ? "refresh" : prefixFailure ? failure.op !== "More" ? "refresh" : null : progress.action;
   const count = results.length;
   const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
   const statusAction = unfixable !== undefined || prefixFailure && failure.op === "More" ? undefined
     : action === null ? undefined : { label: SEARCH_ACTION_LABELS[action], onClick: action === "refresh" ? refreshResults : action === "related" ? () => { returning.current = false; retryPhase("hybrid"); } : retrySearch, busy: refreshPhase !== null };
+  const visualStatus = local.scopeAvailable === false || unfixable !== undefined || remoteOffline && visit.adopted === null || unsupported || held
+    ? message : pending ? visit.adopted?.phase === "lexical" ? "text matches" : "" : failure !== null ? "" : message;
   const readFeedback = useCollectionReadFeedback({
     list: rejectedCursor ? { ...selected, retry: refreshResults } : selected,
     unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" },
     waiting: false, outcome: null, returnFocus: () => inputRef.current,
   });
+  const factsOccurrence = useFeedbackOccurrence(factsError !== null, key);
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
-    query: { kind: "Controls", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: message || "\u00a0", detail: count ? `${count} loaded ${unit}.` : undefined, announce: true, action: statusAction }} /> },
+    query: { kind: "Controls", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: visualStatus, detail: count ? `${count} loaded ${unit}.` : undefined, speech: pending || failure !== null ? null : message, action: held ? statusAction : undefined }} /> },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : pending ? { kind: "Pending" } : { kind: "None" } },
   });
   const sections = [
@@ -304,6 +311,13 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     { key: "inside", label: "inside sources", rows: results.filter(row => "section" in row && row.section === "inside") },
   ];
   return <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={interact}>
+    <FeedbackBusy subject={key} pending={pending || refreshPhase !== null}/>
+    {phaseIncidents.lexical && lexical.failure?.op !== "More" ? <FeedbackFailure scope="Local" occurrence={phaseIncidents.lexical.occurrence}
+      content={apiTransportFeedback(phaseIncidents.lexical.error, "couldn’t search your content") ?? {tone: "Warning", title: "couldn’t search your content", requestId: phaseIncidents.lexical.error.requestId}} announcement="Polite"
+      actions={UNFIXABLE.includes(phaseIncidents.lexical.error.code) ? undefined : [{label: "retry search", onClick: retrySearch, busy: lexical.running !== null}]}/> : null}
+    {phaseIncidents.hybrid && hybrid.failure?.op !== "More" ? <FeedbackFailure scope="Local" occurrence={phaseIncidents.hybrid.occurrence}
+      content={apiTransportFeedback(phaseIncidents.hybrid.error, "related matches aren’t available") ?? {tone: "Warning", title: "related matches aren’t available", requestId: phaseIncidents.hybrid.error.requestId}} announcement="Polite"
+      actions={UNFIXABLE.includes(phaseIncidents.hybrid.error.code) ? undefined : [{label: "retry related matches", onClick: () => {returning.current = false; retryPhase("hybrid");}, busy: hybrid.running !== null}]}/> : null}
     {localApplies ? <LocalResults local={local} remote={results} more={() => setLocalPages(value => value + 1)} /> : null}
     <div key={visit.adopted?.key ?? key}>
       {query.view === "resources" ? sections.filter(section => section.rows.length > 0).map(section => <section className={styles.section} key={section.key} aria-label={section.label}>
@@ -315,7 +329,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
         {results.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={podcastFor(row)} afterRemoval={afterRemoval(results.slice(index + 1))} />)}
       </ResourceList>}
     </div>
-    {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
+    {factsError !== null ? <FeedbackFailure scope="Local" occurrence={factsOccurrence} content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
       actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
     {blank ? <FeedbackNotice content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None" /> : null}
     {unsupported && query.view === "passages" ? <div className={styles.empty}><FeedbackNotice content={{ tone: "Neutral", title: message }} announcement="None" /><div className={styles.emptyActions}>
@@ -325,7 +339,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     {readFeedback.notice}
     {readFeedback.announcement}
     {visit.adopted !== null && selected.current && !selected.complete && selected.failure === null && !rejectedCursor
-      ? <Button disabled={refreshPhase !== null || selected.running !== null} aria-busy={selected.running === "More" || undefined}
+      ? <Button reserveIcon busyKey={key} disabled={refreshPhase !== null || selected.running !== null} aria-busy={selected.running === "More" || undefined}
         onClick={() => { interact(); selected.more(); }}>load more</Button> : null}
   </div>;
 }
@@ -335,18 +349,17 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
 function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
   const runtime = usePaneRuntime();
   if (local.scopeAvailable === false) return <FeedbackNotice content={{ tone: "Info", title: "scope unavailable on this device", message: "connect to refresh its access and reading data." }} announcement="Polite" />;
-  if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search this device" }} announcement="Polite"
-    actions={[{ label: "retry", onClick: local.retry }]} />;
+  const failure = <AuthoredReadFailure error={local.error} occurrence={local.occurrence} retry={local.retry} pending={local.pending} title="couldn’t search this device"/>;
   const remoteRefs = new Set(remote.map(row => row.item.ref));
   const shown = (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref));
-  if (!shown.length) return null;
-  return <section className={styles.section} aria-label="on this device">
+  if (!shown.length) return failure;
+  return <>{failure}<section className={styles.section} aria-label="on this device">
     <h2 className={styles.sectionHeading}>on this device</h2>
     <ResourceList ariaLabel="on this device">
       {shown.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
     </ResourceList>
-    {!local.complete ? <Button onClick={more}>show more from this device</Button> : null}
-  </section>;
+    {!local.complete ? <Button reserveIcon aria-busy={local.pending} onClick={more}>show more from this device</Button> : null}
+  </section></>;
 }
 
 function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {

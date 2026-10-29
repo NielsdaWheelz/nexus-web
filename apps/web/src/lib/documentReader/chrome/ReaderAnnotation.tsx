@@ -7,12 +7,12 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 // in the mounted source, and each attached note as its own editable resource in
 // endpoint order. Note editing saves on this device as it happens; unlink and delete
 // address exactly one note and never the highlight.
-import { useState, useSyncExternalStore } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { useState } from "react";
+import { FeedbackFailure, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { LocalCommitError } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { deleteLink, deleteResource } from "@/lib/resourceGraph/links";
 import type { AttachedNote, ReaderAnnotation } from "../annotations";
 import styles from "./chrome.module.css";
@@ -32,12 +32,20 @@ export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnn
 
 function AttachedNoteRow({ note, editable }: { readonly note: AttachedNote; readonly editable: boolean }) {
   const writing = useWritingRuntime();
-  const [failure, setFailure] = useState<string | null>(null);
-  const command = (title: string, run: () => Promise<unknown>) => () => {
-    setFailure(null);
-    // an uncommitted frame is retried from the writing error notice; nothing else is lost.
-    void run().catch((error: unknown) => { if (!(error instanceof LocalCommitError)) setFailure(title); });
+  const [failure, setFailure] = useState<{title: string; run(): Promise<unknown>} | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [defect, setDefect] = useState<{error: unknown} | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null, note.ref);
+  const perform = (title: string, run: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    void run().then(() => setFailure(null), (error: unknown) => {
+      if (error instanceof LocalCommitError) return;
+      if (isAuthoredStorageFailure(error)) setFailure({title, run}); else setDefect({error});
+    }).finally(() => setBusy(false));
   };
+  const command = (title: string, run: () => Promise<unknown>) => () => perform(title, run);
+  if (defect) throw defect.error;
   return <li className={styles.attachedNote}>
     <BoundNoteEditor noteRef={note.ref} label="attached note" editable={editable} compact />
     {editable && writing ? <ActionMenu label="attached note actions" source={{ kind: "Immediate", subjectKey: note.ref, title: "attached note",
@@ -45,21 +53,8 @@ function AttachedNoteRow({ note, editable }: { readonly note: AttachedNote; read
         { kind: "command", id: "UnlinkNote", label: "Unlink", icon: <Unlink size={16} aria-hidden="true" />, onSelect: command("note wasn’t unlinked", () => deleteLink(writing, { linkId: note.linkId })) },
         { kind: "command", id: "DeleteNote", label: ACTION_CATALOG.DeleteNote.label, icon: <ACTION_CATALOG.DeleteNote.icon size={16} aria-hidden="true" />, tone: "danger", onSelect: command("note wasn’t deleted", () => deleteResource(writing, { ref: note.ref })) },
       ] }] } }} /> : null}
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: failure }} announcement="Polite" onDismiss={() => setFailure(null)} /> : null}
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: failure.title }} announcement="Polite" actions={[{label: "retry", busy, onClick: () => perform(failure.title, failure.run)}]} /> : null}
   </li>;
-}
-
-const NO_SUBSCRIPTION = () => () => {};
-
-/** An uncommitted reading command holds the account's writing until it is retried. Note
- * editors report their own text's failure; this names every other one. */
-export function LocalWritingError() {
-  const writing = useWritingRuntime();
-  const snapshot = useSyncExternalStore(writing?.subscribe ?? NO_SUBSCRIPTION, () => writing?.snapshot() ?? null, () => null);
-  if (!writing || snapshot === null || snapshot.error === null ||
-    snapshot.error_refs.length > 0 && snapshot.error_refs.every(ref => ref.startsWith("note_block:"))) return null;
-  return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
-    actions={[{ label: "retry saving", onClick: () => { void writing.retry().catch(() => {}); } }]} />;
 }
 
 /** Every attached note, independently, in the highlight's endpoint order. */

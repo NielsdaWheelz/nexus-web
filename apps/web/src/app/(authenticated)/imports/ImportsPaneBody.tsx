@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList, {
   type MatchedImportEvidence,
@@ -126,16 +126,17 @@ export default function ImportsPaneBody() {
   const [listSettled, setListSettled] = useState(false);
   usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
 
+  const summaryOccurrence = useFeedbackOccurrence(summary.status === "failed");
   // Before the counts choose a view there is none to publish controls for.
   if (view === null)
     return summary.status === "failed" ? (
-      <FeedbackState
+      <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
         content={loadFailure(summary.error)}
         announcement="Assertive"
         actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
       />
     ) : (
-      <PaneLoadingState label="Loading imports" announcement="Polite" />
+      <PaneLoadingState />
     );
   return (
     <ImportsList

@@ -446,7 +446,14 @@ export function useNexusController() {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         if (error instanceof LocalCommitError) {
           if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
-          setPage({...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t save on this device",message:"keep this page open. retry saving."},unconfirmed:false}});
+          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t confirm saving on this device",message:"keep nexus open. retry saving."},unconfirmed:false}};
+          setPage(retryable);
+          void error.completion.then(() => {
+            if (!visible.current || currentPage.current !== retryable || ctx.sessionSignal().aborted || captureAttempt.current?.noteId !== running.noteId) return;
+            captureAttempt.current.promise = Promise.resolve("");
+            captureAttempt.current.retry = null;
+            capture({...retryable, submit: {kind: "Running", unconfirmed: false}});
+          }, () => {});
           return;
         }
         const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
@@ -673,6 +680,9 @@ export function useNexusController() {
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
     searchProgress: find.progress,
+    searchFailures: find.readFailures,
+    localSearchFailure: find.localFailure,
+    searchIdentity: find.queryIdentity,
     searchUnavailable: find.searchUnavailable,
     searchRefreshRevision,
     interact: find.interact,
@@ -698,8 +708,6 @@ export function useNexusController() {
     panes,
     workspaceState: state,
     desktopMaximized: workspace.desktopMaximized,
-    titlesFailed: panes.some((pane) => pane.presentation.status === "Failed"),
-    retryTitles: presentations.retryTitles,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
       id: snapshot.pane.id,
       presentation: presentations.forVisit(snapshot.pane.current_visit),

@@ -12,7 +12,7 @@ import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { ResourceIndexBody } from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
@@ -20,6 +20,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/links";
+import { LocalCommitError } from "@/lib/notes/runtime";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { authoredPreview } from "@/lib/notes/presentation";
 import { localResourceHref } from "@/lib/resources/localResource";
@@ -45,12 +46,11 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   });
   const entries = context.status === "ready" ? context.data.items : [];
   const failure = context.status === "loading" ? null : context.error;
+  const occurrence = useFeedbackOccurrence(failure !== null, selfRef);
   return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
     <div className={styles.tools}><ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Plus size={16} aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
-    {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…" }} announcement="Polite" /> : null}
     <p className={styles.metadata}>available to future replies</p>
-    {context.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading context…" }} announcement="Polite" /> : null}
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: context.status === "ready" ? "couldn’t refresh connections" : "context couldn’t be loaded", requestId: failure.requestId }} announcement="Assertive" actions={[{ label: context.status === "ready" ? "retry refresh" : "retry", onClick: context.refetch, busy: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }]} /> : null}
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: context.status === "ready" ? "couldn’t refresh connections" : "context couldn’t be loaded", requestId: failure.requestId }} announcement="Assertive" actions={[{ label: context.status === "ready" ? "retry refresh" : "retry", onClick: context.refetch, busy: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }]} /> : null}
     {context.status === "ready" ? <ResourceList ariaLabel="Chat context">
       {entries.map((entry, index) => <ContextIndexItem key={entry.item.ref} entry={entry}
         afterRemoval={() => {
@@ -82,7 +82,9 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const refreshRequested = useRef(false);
   const removeButton = useRef<HTMLButtonElement>(null);
   const reasonId = useId();
-  const feedback = useFeedback();
+  const occurrence = useFeedbackOccurrence(failure !== null || busy, entry.item.ref);
+  const readOccurrence = useFeedbackOccurrence(!!authored?.error, entry.item.ref);
+  const notesOccurrence = useFeedbackOccurrence(!!annotations?.error, entry.item.ref);
   const runtime = useWritingRuntime();
   useActionFocusRecovery(removeButton, afterRemoval);
   if (defect) throw defect.error;
@@ -91,19 +93,18 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
     const command = submitted.current ?? entry.mutation;
     if (!command) return;
     submitted.current = command;
-    setBusy(true); setFailure(null);
+    setBusy(true);
     try {
       await mutateConnection(runtime, command);
       submitted.current = null;
       if (document.activeElement === removeButton.current) afterRemoval()?.focus({ preventScroll: true });
       void onChanged();
     } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
+      if (handleUnauthenticatedApiError(error) || error instanceof LocalCommitError) return;
       try {
         const content = connectionMutationErrorMessage(error);
         const shown = isApiError(error) && error.code === "E_CONTEXT_CHANGED" ? { ...content, title: "future context changed; refresh before removing this item" } : content;
         setFailure(shown);
-        feedback.receipt(shown);
       } catch (error) { setDefect({ error }); }
       if (!outcomeUnknown(error)) {
         submitted.current = null;
@@ -123,10 +124,11 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   if (parsed === null) throw new Error(`Invalid context ref: ${entry.item.ref}`);
   const type = resourceTypeLabel(parsed.scheme).toLowerCase();
   const label = item?.label ?? `${type} unavailable`;
-  const status = authored?.error || authored?.data ? `${type} unavailable` : `loading ${type}…`;
+  const status = authored?.error || authored?.data ? `${type} unavailable` : type;
   const notes = annotations?.data?.rows ?? [];
   const supporting = <>
-    {authored?.error ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: authored.retry }]} /> : authored?.data && item === null ? <span>not available on this device</span> : null}
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" actions={[{label: stale ? "refresh future context" : "retry removing", onClick: () => {if (stale) {refreshRequested.current = true; void onChanged();} else void remove();}, busy}]} /> : null}
+    {authored?.error ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: authored.retry }]} /> : authored?.data && item === null ? <span>not available on this device</span> : null}
     {notes.map(({ resource }) => {
       const preview = authoredPreview(resource);
       const href = localResourceHref(resource);
@@ -138,9 +140,9 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
         <span className={styles.notePrefix}>note: </span><ResourceIndexBody body={preview.body} />
       </a>;
     })}
-    {annotations?.error ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load attached notes" }} announcement="Polite" actions={[{ label: "retry", onClick: annotations.retry }]} /> : annotations && !annotations.data ? <span>loading notes…</span> : null}
+    {annotations?.error ? <FeedbackFailure scope="Local" occurrence={notesOccurrence} content={{ tone: "Warning", title: "couldn’t load attached notes" }} announcement="Polite" actions={[{ label: "retry", onClick: annotations.retry }]} /> : null}
   </>;
-  const hasSupport = Boolean(authored?.error || authored?.data && item === null || notes.length || annotations?.error || annotations && !annotations.data);
+  const hasSupport = Boolean(failure || authored?.error || authored?.data && item === null || notes.length || annotations?.error || annotations && !annotations.data);
   return <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     attention={failure ? [failure.title, failure.message].filter(Boolean).join(" · ") : undefined}
     primaryControl={entry.mutation ? <>

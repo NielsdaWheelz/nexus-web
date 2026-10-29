@@ -6,13 +6,15 @@ import { useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
+  FeedbackFailure,
+  useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch, apiTransportFeedback } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, outcomeUnknown } from "@/lib/api/client";
 import {
   modeledApiError,
   useServerValue,
@@ -78,7 +80,7 @@ export default function SettingsIdentitiesPaneBody() {
       const modeled = modeledApiError(error, fail);
       if (modeled !== null)
         setFailure(
-          apiTransportFeedback(modeled, UNLINK_FAILED) ?? {
+          outcomeUnknown(modeled) && modeled.code !== "E_UNAUTHENTICATED" ? {tone: "Warning", title: "change not confirmed", message: "the request may have succeeded.", requestId: modeled.requestId} : apiTransportFeedback(modeled, UNLINK_FAILED) ?? {
             tone: "Danger",
             title: UNLINK_FAILED,
           },
@@ -89,6 +91,7 @@ export default function SettingsIdentitiesPaneBody() {
   };
 
   const loadError = identities.status === "loading" ? null : identities.error;
+  const readOccurrence = useFeedbackOccurrence(loadError !== null);
   const ready = identities.status === "ready" ? identities : null;
   const missing = OAUTH_PROVIDERS.filter(
     (provider) =>
@@ -99,13 +102,10 @@ export default function SettingsIdentitiesPaneBody() {
       <PaneSection>
         <div className={styles.content}>
           {identities.status === "loading" ? (
-            <PaneLoadingState
-              label="Loading identities…"
-              announcement="Polite"
-            />
+            <PaneLoadingState />
           ) : null}
           {loadError ? (
-            <FeedbackNotice
+            <FeedbackFailure scope="Local" occurrence={readOccurrence}
               content={
                 apiTransportFeedback(loadError, LOAD_FAILED) ?? {
                   tone: "Danger",
@@ -118,7 +118,7 @@ export default function SettingsIdentitiesPaneBody() {
             />
           ) : null}
           {failure ? (
-            <FeedbackNotice content={failure} announcement="Assertive" />
+            <FeedbackFailure scope="Local" occurrence={failure} content={failure} announcement="Assertive" />
           ) : null}
           {ready === null ? null : (
             <>
@@ -156,10 +156,7 @@ export default function SettingsIdentitiesPaneBody() {
                                 kind: "command",
                                 id: "unlink-identity",
                                 icon: <Unlink size={16} aria-hidden="true" />,
-                                label:
-                                  unlinking === identity.id
-                                    ? "Unlinking..."
-                                    : "Unlink",
+                                label: "Unlink",
                                 tone: "danger",
                                 disabled:
                                   unlinking !== null || ready.refreshing,

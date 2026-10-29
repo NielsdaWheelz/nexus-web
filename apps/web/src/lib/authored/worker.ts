@@ -133,7 +133,7 @@ scope.onconnect = event => {
         try {
           const result = await operation(port, data.op, data);
           if (data.op !== "close" && data.op !== "retire") port.postMessage({ id: data.id, ok: true, result });
-        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed" }); }
+        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", code: error instanceof Error && "code" in error && error.code === "E_AUTHORED_LOCAL" ? error.code : null }); }
       });
     };
     submit();

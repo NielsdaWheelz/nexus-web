@@ -75,3 +75,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+.menu { padding-inline-end: calc(var(--size-xl) + var(--space-2)); }
+.menuContents { min-width: 0; }
+.recoverySlot { position: absolute; inset-inline-end: var(--space-1); inset-block-start: var(--space-1); }
