@@ -5,7 +5,6 @@
  * Descriptor identity fences results from a previous occurrence's exclusions. */
 import {useCallback, useEffect, useState} from "react";
 import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
-import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
@@ -82,7 +81,6 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
       };
       stops.push(store.subscribe(query,receive,error=>{
         if(!active)return;
-        if(!isAuthoredStorageFailure(error)){reportError(error);return;}
         setLocal(current=>{
         const pending=new Set(current.pending);pending.delete(chunkKey);
         return {...current,pending,errors:new Map(current.errors).set(chunkKey,{error,occurrence:current.errors.get(chunkKey)?.occurrence??{}})};
