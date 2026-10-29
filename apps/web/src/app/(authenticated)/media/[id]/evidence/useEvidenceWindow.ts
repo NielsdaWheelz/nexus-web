@@ -62,9 +62,13 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
   const capture = useCallback(() => {
     const list = root.current, scroll = port.current, outside = outer.current;
     if (!list || !scroll || !outside || aligned) return;
-    const top = Math.max(scroll.getBoundingClientRect().top, outside.getBoundingClientRect().top);
-    const row = [...list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].find(node => node.getBoundingClientRect().bottom > top);
-    if (row?.dataset.group) anchor.current = {key: row.dataset.group, offset: row.getBoundingClientRect().top - scroll.getBoundingClientRect().top};
+    const box = scroll.getBoundingClientRect(), bounds = outside.getBoundingClientRect();
+    const top = Math.max(box.top, bounds.top), bottom = Math.min(box.bottom, bounds.bottom);
+    const row = [...list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].find(node => {
+      const rect = node.getBoundingClientRect();
+      return rect.bottom > top && rect.top < bottom;
+    });
+    anchor.current = row?.dataset.group ? {key: row.dataset.group, offset: row.getBoundingClientRect().top - box.top} : null;
   }, [aligned, outer, port, root]);
 
   // Rebind only admitted boxes. A resize may change a gap before the current row;

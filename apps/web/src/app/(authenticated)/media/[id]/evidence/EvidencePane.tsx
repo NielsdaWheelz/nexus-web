@@ -235,7 +235,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     });
   }, [writing, requestFocus]);
 
-  const captureScroll = () => {
+  const captureScroll = useCallback(() => {
     if (aligned || restore.current !== null) return;
     const port = list.current;
     const root = pane.current;
@@ -257,7 +257,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (!row || bottom <= top || row.getBoundingClientRect().top >= bottom) return;
     const key = row.dataset.group;
     if (key) updateBrowse(current => ({ ...current, anchor: { key, offsetPx: row.getBoundingClientRect().top - box.top, outerScrollTop: root.scrollTop } }));
-  };
+  }, [aligned, updateBrowse]);
 
   const preserveNormalFlowFocus = useCallback(() => {
     const pin = pinned.current;
@@ -278,7 +278,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (!port || aligned || publicationKey === null) return;
     rows.current = [...port.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")];
     alignedPosition.current = null;
-    if (restore.current === null) return;
+    if (restore.current === null) {captureScroll(); return;}
     let frame = 0;
     const measure = () => {
       frame = 0;
@@ -317,7 +317,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     for (const row of rows.current) observer.observe(row);
     schedule();
     return () => { scheduleRestore.current = null; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [aligned, byKey, disclosureKeys, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
+  }, [aligned, byKey, captureScroll, disclosureKeys, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
 
   const stopRestore = () => {
     restore.current = null;

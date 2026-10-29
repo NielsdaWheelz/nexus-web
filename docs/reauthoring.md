@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-reader connections admission against `352e30350`: +270 net authored runtime
-lines (329 added, 59 deleted): reader evidence +227, note editors/host/runtime
+reader connections admission against `352e30350`: +274 net authored runtime
+lines (336 added, 62 deleted): reader evidence +231, note editors/host/runtime
 +37, shared resource rows +6. sparse root admission replaces full-corpus mounts;
 complete logical order replaces mounted-neighbour recovery. existing drafts,
 native editors, local commits and menu pins retain their owners. no nested tree,
