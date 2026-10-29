@@ -24,7 +24,6 @@ export interface OutlineRowChrome {
   childrenAvailable: boolean;
   open: boolean;
   terminal: boolean;
-  root: boolean;
   selected: boolean;
   toggle(): void;
   select(): void;
@@ -37,7 +36,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
   const runtime = usePaneRuntime();
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
-    if (!row || row.root) return [];
+    if (!row) return [];
     const parsed = row.ref === null ? null : parseResourceRef(row.ref);
     // justify-defect: only uncommitted drafts lack a canonical resource ref.
     if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
