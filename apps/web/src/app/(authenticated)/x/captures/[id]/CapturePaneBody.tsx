@@ -25,6 +25,12 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { destinationTarget, targetOfLocator, targetOfResolution, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { PostActions } from "@/app/(authenticated)/media/[id]/Embeds";
 
+function isMissingCapture(document: ReturnType<Reader["getState"]>["document"]): boolean {
+  const error = document.status === "failed" && !document.retrying ? document.error
+    : document.status === "ready" && !document.refreshing ? document.refreshFailure?.error : null;
+  return isApiError(error) && error.status === 404;
+}
+
 export default function CapturePaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("capture route requires an id");
@@ -70,7 +76,7 @@ function CaptureReader({ id }: { readonly id: string }) {
   const recentSnapshot = recent.snapshot;
   const recentRef = useRef(recent);
   recentRef.current = recent;
-  const missing = state.document.status === "failed" && !state.document.retrying && isApiError(state.document.error) && state.document.error.status === 404;
+  const missing = isMissingCapture(state.document);
   useEffect(() => {
     if (!missing) return;
     const controller = new AbortController();
@@ -83,7 +89,7 @@ function CaptureReader({ id }: { readonly id: string }) {
         const { command_seq } = await store.readReplica();
         if (retriedSequence.current !== null && BigInt(command_seq) <= BigInt(retriedSequence.current)) {
           const current = reader.getState().document;
-          if (current.status !== "failed" || current.retrying || !isApiError(current.error) || current.error.status !== 404) return;
+          if (!isMissingCapture(current)) return;
           const evidence = retryEvidence.current;
           retryEvidence.current = null;
           const entry = recentRef.current.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
@@ -102,7 +108,7 @@ function CaptureReader({ id }: { readonly id: string }) {
         await store.whenUploaded(command_seq, controller.signal);
         if (controller.signal.aborted) return;
         const current = reader.getState().document;
-        if (current.status === "failed" && !current.retrying) {
+        if (isMissingCapture(current)) {
           retriedSequence.current = command_seq;
           retryEvidence.current = recentRef.current.snapshot?.entries.find(entry => entry.target.kind === "x_capture" && entry.target.capture_id === id) ?? missingEvidence.current;
           attemptedRevision.current = retryEvidence.current?.used_revision ?? null;
