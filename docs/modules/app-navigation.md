@@ -200,7 +200,9 @@ focus and yields to surviving controls/overlays. menus retain query and selectio
 `aria-activedescendant` names the mounted candidate whenever the query has focus.
 
 lookup guidance is visible outside the grid/list and uses the existing polite
-status owner. command/lookup views omit the mobile use-text menu; literal search
+status owner. unknown heads show a 32-codepoint preview so guidance leaves choices
+reachable; the full input and literal-search payload remain intact.
+command/lookup views omit the mobile use-text menu; literal search
 is an explicit row. mobile keeps sibling action buttons and 48 px targets.
 renderers project prepared content and forward gestures; they do not interpret
 commands, choose defaults or repair navigation.

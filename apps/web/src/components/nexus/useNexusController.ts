@@ -7,6 +7,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
+import { truncateText } from "@/lib/display/format";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
 import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
@@ -152,7 +153,7 @@ export function useNexusController() {
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const lookupGuidance = parsed.intent.kind === "CommandLookup"
-    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${parsed.intent.head}. `}choose a command to start empty, or search this text`
+    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)} — `}choose a command to start empty, or search this text`
     : null;
   const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
