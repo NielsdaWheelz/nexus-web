@@ -3,13 +3,18 @@
  * links overlay those facts. Shared quote matching and exact temporary FTS checks
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
-import type { AuthoredQuery, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture } from "./types.ts";
+import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
+import type { AuthoredQuery, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
+import { normalizeQuote } from "./identity.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
 /** Literal stored capture; search supplies its authorized excerpt separately. */
-export function capturedHighlightText(selection: SelectionCapture): string {
-  return HIGHLIGHT_TEXT_FIELDS.map(field => selection[field] ?? "").join("");
+export function capturedHighlightText(resource: ResourceProjection): string {
+  if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
+  if (resource.excerpt.kind === "table_summary") return "table excerpt";
+  const parts = excerptTextParts(resource.excerpt.body);
+  return parts.prefix + parts.exact + parts.suffix;
 }
 // Index fields separately so a selected word fragment remains independently searchable.
 const HIGHLIGHT_SEARCH_SQL = HIGHLIGHT_TEXT_FIELDS.map(field =>
@@ -37,10 +42,10 @@ const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
+  SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
@@ -66,10 +71,10 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'source_publication',json_extract(p.state_json,'$.capture.value.publication'),'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json
   FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
 const SEARCH_FAMILY = `CASE substr(d.ref,1,instr(d.ref,':')-1)
   WHEN 'note_block' THEN 'notes' WHEN 'page' THEN 'notes' WHEN 'highlight' THEN 'highlights'
@@ -248,9 +253,18 @@ export const SEARCH_MATCH_SQL = {
   search_match_insert: `INSERT INTO temp.scope_search_match(text) VALUES(?)`,
   search_match_read: `SELECT bm25(scope_search_match) AS score FROM temp.scope_search_match WHERE scope_search_match MATCH ? LIMIT 1`,
 } as const;
+const EXCERPT_ROW_SQL = `SELECT projection_json,state_json,'selection' AS capture_kind FROM resources WHERE ref=?1 AND kind='highlight' AND visible=1
+  UNION ALL SELECT projection_json,state_json,'passage' AS capture_kind FROM passages WHERE 'passage_anchor:'||anchor_id=?1`;
+const EXCERPT_READING_SQL = `SELECT reading_ref,source_ref,body_generation,source_generation FROM scope_readings WHERE revision=(SELECT active_revision FROM scope_state) AND reading_ref=? AND NOT EXISTS(SELECT 1 FROM scope_revocations WHERE scope_ref=reading_ref)`;
+const EXCERPT_INCOMPLETE_TABLE_SQL = `SELECT 1 AS incomplete FROM scope_facts
+  WHERE revision=(SELECT active_revision FROM scope_state) AND kind='incomplete_table' AND owner_ref=?1
+    AND json_extract(state_json,'$.fragment_id')=?2 AND (
+      json_extract(state_json,'$.start_offset')<?4 AND json_extract(state_json,'$.end_offset')>?3
+      OR json_extract(state_json,'$.start_offset')=json_extract(state_json,'$.end_offset') AND ?3<=json_extract(state_json,'$.start_offset') AND json_extract(state_json,'$.start_offset')<=?4)
+  LIMIT 1`;
 /** Every read shape is finite and packaged by content identity for the native host. */
 export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
-  SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_ANNOTATION_OWNERS_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias] as const;
+  SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_ANNOTATION_OWNERS_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias, EXCERPT_ROW_SQL, EXCERPT_READING_SQL, EXCERPT_INCOMPLETE_TABLE_SQL] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
 function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclude:string,requireRootLive=true):string {
@@ -348,6 +362,7 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       if (key.kind === "link") return { sql: "SELECT link_id AS binding_id FROM links WHERE endpoint_a=? AND endpoint_b=?", params: [key.endpoint_a, key.endpoint_b] };
       return { sql: "SELECT anchor_id AS binding_id FROM passages WHERE source_ref=? AND json_extract(state_json,'$.normalized_exact')=? AND json_extract(state_json,'$.prefix')=? AND json_extract(state_json,'$.suffix')=?", params: [key.source_ref, key.normalized_exact, key.prefix, key.suffix] };
     }
+    case "excerpt": return {sql:EXCERPT_ROW_SQL,params:[query.ref]};
     case "resource": return { sql: `${READABLE} SELECT projection_json,NULL AS link_json FROM readable WHERE ref=?`, params: [query.ref] };
     case "source_alias": return { sql: SCOPE_SQL.scope_source_alias, params: [query.ref] };
     case "resolve": {
@@ -390,6 +405,97 @@ type PassageMembership = { activation_ref: string | null } | false;
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
   return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, outline_window: null};
+}
+
+/** Exact capture identity is loaded first. Reading aliases prove admission only, never substitute a capture. */
+export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery,{kind:"excerpt"}>): Promise<Omit<QueryResult,"store_revision">> {
+  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,outline_window:null};
+  const rows = await read({sql:EXCERPT_ROW_SQL,params:[query.ref]});
+  if (!rows.length) return result;
+  const row = rows[0]!, resource: ResourceProjection = JSON.parse(String(row.projection_json));
+  const state: ResourceState | PassageState = JSON.parse(String(row.state_json));
+  const capture: SelectionCapture | PassageCapture = "capture" in state ? state.capture.value : state.kind === "highlight" ? state.selection.value : (() => {throw new Error("Excerpt row is not a capture");})();
+  const hasTable = (nodes: ExcerptNode[]): boolean => nodes.some(node => node.kind === "table" || "children" in node && hasTable(node.children));
+  const containsTable = hasTable(capture.excerpt.content);
+  if (capture.locator?.type === "x_capture_offsets") {
+    const locator = capture.locator, extent = capture.excerpt.source_extent;
+    if (resource.source_ref !== `fragment:${locator.fragment_id}` || capture.publication?.kind !== "x_capture" || capture.publication.capture_id !== locator.capture_id ||
+      extent !== null && (extent.reading_ref !== resource.source_ref || extent.document_identity !== `capture:${locator.capture_id}` || extent.fragment_id !== locator.fragment_id))
+      return {...result,scope_available:false};
+    if (query.reading_ref !== null && query.reading_ref !== resource.source_ref) return {...result,scope_available:false};
+  }
+
+  let scope: ExcerptScope = {kind:"capture"};
+  if (query.reading_ref !== null) {
+    const readings = await read({sql:EXCERPT_READING_SQL,params:[query.reading_ref]});
+    const reading = readings[0];
+    if (!reading) return {...result,scope_available:false};
+    const locator = capture.locator;
+    const physical = locator !== null && "media_id" in locator ? `media:${locator.media_id}` : resource.source_ref;
+    if (String(reading.source_ref) !== physical && String(reading.reading_ref) !== resource.source_ref) return {...result,scope_available:false};
+    if (reading.reading_ref !== reading.source_ref) {
+      const intervals: Record<string,unknown>[] = [];
+      let intervalCursor: string | null = null;
+      for (;;) {
+        const page = await read({sql:SEARCH_INTERVALS_SQL,params:[JSON.stringify([query.reading_ref]),intervalCursor]});
+        intervals.push(...page);
+        if (page.length < 100) break;
+        intervalCursor = String(page.at(-1)!.cursor_json);
+      }
+      const samePublication = capture.publication?.kind === "reader" && capture.publication.generation === Number(reading.source_generation);
+      const extent = capture.excerpt.source_extent;
+      const sameExtentPublication = extent !== null && (
+        extent.reading_ref === String(reading.source_ref) && reading.source_generation != null && extent.document_identity === `g${String(reading.source_generation)}` ||
+        extent.reading_ref === query.reading_ref && reading.body_generation != null && extent.document_identity === `g${String(reading.body_generation)}`
+      );
+      const fragment = locator !== null && "fragment_id" in locator ? locator.fragment_id : null;
+      const start = locator !== null && "start_offset" in locator ? locator.start_offset : null;
+      const end = locator !== null && "end_offset" in locator ? locator.end_offset : null;
+      const interval = samePublication && sameExtentPublication && fragment !== null && start !== null && end !== null ? intervals.find(interval => interval.purpose === "body" && interval.fragment_id === fragment && Number(interval.start_offset) <= start && Number(interval.end_offset) >= end) : null;
+      if (interval && extent !== null && extent.fragment_id === fragment) {
+        scope = {kind:"interval",start_offset:Number(interval.start_offset),end_offset:Number(interval.end_offset)};
+      }
+      else {
+        const [prefix, suffix] = "capture" in state ? [state.prefix, state.suffix]
+          : state.kind === "highlight" ? [state.selection.value.prefix ?? "", state.selection.value.suffix ?? ""]
+          : (() => { throw new Error("Excerpt row is not a capture"); })();
+        const exact = normalizeQuote(capture.quote_exact), normalizedPrefix = normalizeQuote(prefix), normalizedSuffix = normalizeQuote(suffix);
+        const scanner = new ScopeQuoteScanner(exact,normalizedPrefix,normalizedSuffix);
+        let cursor: string | null = null;
+        for (;;) {
+          const windows = await read({sql:SEARCH_QUOTE_WINDOWS_SQL,params:[query.reading_ref,exact,normalizedPrefix,normalizedSuffix,cursor]});
+          if (!windows.length) break;
+          const window = windows[0]!;
+          scanner.add({fragment_id:String(window.fragment_id),start_offset:Number(window.raw_start),normalized_start_offset:Number(window.lo),normalized_text:String(window.normalized_text),edits:JSON.parse(String(window.edits_json)),start_cut:Number(window.start_cut) === 1,end_cut:Number(window.end_cut) === 1});
+          if (scanner.ambiguous) break;
+          cursor = String(window.cursor_json);
+        }
+        if (scanner.result === null) return {...result,scope_available:false};
+        scope = {kind:"selection"};
+      }
+    }
+  }
+  if (scope.kind === "selection" && containsTable) return {...result,scope_available:false};
+  if (scope.kind === "interval" && containsTable) {
+    const scoped = scopeExcerpt(capture.excerpt,scope);
+    if (scoped === null) return {...result,scope_available:false};
+    if (hasTable(scoped.content)) {
+      const extent = scoped.source_extent;
+      if (extent === null || (await read({sql:EXCERPT_INCOMPLETE_TABLE_SQL,params:[query.reading_ref,extent.fragment_id,extent.start_offset,extent.end_offset]})).length)
+        return {...result,scope_available:false};
+    }
+  }
+  const excerpt = excerptView(capture.excerpt,"full",scope);
+  const selection = (() => {
+    if (scope.kind === "capture" || resource.selection === null) return resource.selection;
+    const original = resource.selection, selector = original.locator.text_quote_selector;
+    const text_quote_selector = selector === null ? null : {...selector,prefix:null,suffix:null};
+    switch (original.locator.type) {
+      case "x_capture_offsets": case "web_text_offsets": case "epub_fragment_offsets": return {...original,prefix:null,suffix:null,locator:{...original.locator,text_quote_selector}};
+      case "pdf_page_geometry": return {...original,prefix:null,suffix:null,locator:{...original.locator,prefix:null,suffix:null,text_quote_selector}};
+    }
+  })();
+  return {...result,rows:[{resource:{...resource,selection,excerpt},link:null,match_text:null,activation_ref:query.reading_ref,matched_field:null,activation_field:null}]};
 }
 
 /** Both serialized hosts execute this same bounded search. SQL filters the family
@@ -615,6 +721,15 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         if (admitted === null) return {...result, rows: [], next_cursor: null, scope_available: false};
         if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact, activation_ref: admitted.activation_ref, matched_field: passage.source_ref.startsWith("highlight:")?"annotation":null, activation_field: passage.source_ref.startsWith("highlight:")?"annotation":null};
       } else if (all) match = {resource, link: null, match_text: null, activation_ref: null, matched_field: null, activation_field: null};
+      if (match && (resource.kind === "highlight" || passage !== null)) {
+        const full = await excerptQuery(read,{kind:"excerpt",ref:resource.ref,reading_ref:match.matched_field==="annotation"?null:match.activation_ref});
+        const resolved = full.rows[0]?.resource;
+        if (!resolved) continue;
+        const view = resolved.excerpt;
+        if (view === null || view.kind !== "content") throw new Error("Full local excerpt is not content");
+        const parts = excerptTextParts(view.body);
+        match = {...match,resource:{...resolved,excerpt:excerptView({...view.body,source_extent:null,truncated_before:view.omitted_before,truncated_after:view.omitted_after},"compact",{kind:"capture"})},match_text:passage === null && match.matched_field==="annotation" ? match.match_text : passage === null ? parts.prefix + parts.exact + parts.suffix : parts.exact};
+      }
       if (match) result.rows.push(match);
       if (result.rows.length === limit) return {...result, next_cursor: resource.ref};
     }

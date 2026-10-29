@@ -2,6 +2,8 @@
 
 /** The capture and its writing survive independently of source availability. */
 import {useEffect, useMemo, useRef, useState} from "react";
+import ReaderExcerpt from "@/components/resources/ReaderExcerpt";
+import type {ExcerptView} from "@nexus/authored/excerpt";
 import {normalizeQuote} from "@nexus/authored/identity";
 import {bodyPassageRange} from "@/lib/notes/inspection";
 import {matchScopeQuote, normalizeScopeText} from "@nexus/authored/scope";
@@ -22,10 +24,10 @@ export default function HighlightPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("highlight route requires an id");
   const ref = `highlight:${id}`;
-  const read = useAuthoredQuery({kind: "resource", ref});
+  const read = useAuthoredQuery({kind: "excerpt", ref, reading_ref: null});
   const resource = read.data?.rows[0]?.resource;
-  const capture = useRef("");
-  if (resource?.selection) capture.current = resource.selection.quote_exact;
+  const capture = useRef<ExcerptView | null>(null);
+  if (resource?.excerpt) capture.current = resource.excerpt;
   const [unresolved, setUnresolved] = useState<string | null>(null);
   const [inspection, setInspection] = useState<NoteInspection | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
@@ -88,7 +90,7 @@ export default function HighlightPaneBody() {
   usePaneChrome(useMemo(() => ({resourceRef}), [resourceRef]));
   const source = resource ? highlightSourceHref(resource) : null;
   return <article>
-    <blockquote><mark data-color={resource?.color ?? undefined}>{resource?.selection?.quote_exact || capture.current || "selected region"}</mark></blockquote>
+    {capture.current ? <ReaderExcerpt excerpt={capture.current} color={resource?.color ?? null} full /> : null}
     {!resource ? <p>{read.data ? "this highlight is no longer available." : "opening highlight…"}</p> : null}
     {read.error ? <div role="alert">couldn’t open this highlight on this device. <Button onClick={read.retry}>retry</Button></div> : null}
     {source ? <a href={source} data-workspace-rich-target="true">view in source</a> : null}

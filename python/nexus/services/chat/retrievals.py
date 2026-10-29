@@ -35,6 +35,7 @@ from nexus.schemas.resource_evidence import (
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
+from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
@@ -251,7 +252,13 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
     )
     return RetrievalCitation(
         captured_evidence=CapturedEvidence(
-            quote=CapturedQuote(exact=hit["snippet"], prefix=None, suffix=None, color=None),
+            quote=CapturedQuote(
+                excerpt=plain_excerpt(hit["snippet"], None, None),
+                exact=hit["snippet"],
+                prefix=None,
+                suffix=None,
+                color=None,
+            ),
             source=CapturedSource(
                 ref=ref, title=hit["title"], media_kind=None, contributors=None, location_label=None
             ),

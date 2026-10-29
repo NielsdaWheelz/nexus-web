@@ -361,11 +361,14 @@ def _resource(
         return f"{head}</resource>"
     captured = citation.captured_evidence if citation else None
     if captured is not None and captured.quote is not None:
+        from nexus.services.reader_excerpts import quote_parts
+
+        parts = quote_parts(captured.quote)
         inner = quotes.quote_block(
             "quote",
-            exact=captured.quote.exact,
-            prefix=captured.quote.prefix,
-            suffix=captured.quote.suffix,
+            exact=parts.exact,
+            prefix=parts.prefix,
+            suffix=parts.suffix,
             source=captured.source.title,
             annotation=resource.quote.annotation if resource.quote else None,
         )

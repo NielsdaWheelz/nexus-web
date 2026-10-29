@@ -222,6 +222,20 @@ def read_passage_sources(
                         end < len(fragment.canonical_text),
                     )
                 )
+    fragment_ids = list({id_ for scheme, id_ in owners if scheme == "fragment"})
+    if fragment_ids:
+        for fragment_id, words in db.execute(
+            text(
+                "SELECT id,canonical_text FROM fragments WHERE id=ANY(:ids) AND x_post_capture_id IS NOT NULL"
+            ),
+            {"ids": fragment_ids},
+        ):
+            ranges[fragment_id] = [(fragment_id, 0, len(words))]
+            sources[fragment_id] = [
+                text_quote.NormalizedOwnerSource(
+                    fragment_id, None, None, text_quote.normalize_for_match(words)
+                )
+            ]
     notes = (
         {
             id_: words

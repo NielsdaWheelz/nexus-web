@@ -14,13 +14,13 @@ prerequisites and release order:
    verify accepted prefixes/common head, then close clients. an unavailable
    device blocks cutover until its disposition is explicitly resolved. stop
    server writers/workers through the existing release owner and verify backup.
-3. authored format is 3. wire stays 17: live release
+3. authored format is 4. wire stays 17: live release
    `3d81ef45ef28f637a4de07c66ab172bbab9e22c2` uses 16; this unreleased branch
    already carries the next wire revision. recheck that release boundary at
    deployment. reject old producers before replay comparison. migrate
    canonical resources, references, projections, index owners/jobs and the
    snapshot/feed floor atomically; retain old accepted bytes as inert history.
-   register the new-format server replica; conversion register stamps use it.
+   register the format-4 server replica; conversion register stamps use it.
    advance account/snapshot lamport above all retained registers and preserve old
    replica/prefix records needed to validate retained causal evidence.
 4. pair api/workers, web/extension and signed android delivery. retire old-format

@@ -1,3 +1,5 @@
+import { excerptTextParts } from "@nexus/authored/excerpt";
+import ReaderExcerpt from "./ReaderExcerpt";
 import { Fragment } from "react";
 import { MediaTitle } from "@/components/media/MediaIdentity";
 import type { Schema } from "@/lib/api/wire";
@@ -20,9 +22,7 @@ export function separateMatchEvidence(body: Body, match: ResourceMatch | null): 
     case "named":
       return body.title === text ? null : match;
     case "passage":
-      return body.exact.text === text
-        || (body.prefix?.text === text && !body.exact.truncated_before)
-        || (body.suffix?.text === text && !body.exact.truncated_after) ? null : match;
+      return match;
     case "prose":
       return body.excerpt.text === text ? null : match;
     case "images":
@@ -50,8 +50,8 @@ export function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: Reso
   </>;
 }
 
-/** Literal phrasing content; navigation, editing and graph state belong to callers. */
-export default function ResourceBody({ body, match = null }: { body: Body; match?: ResourceMatch | null }) {
+/** Passive resource content; navigation, editing and graph state belong to callers. */
+export default function ResourceBody({ body, match = null, full = false }: { body: Body; match?: ResourceMatch | null; full?: boolean }) {
   const inlineEvidence = Boolean(match?.excerpt.text) && separateMatchEvidence(body, match) === null;
   switch (body.kind) {
     case "media":
@@ -59,11 +59,7 @@ export default function ResourceBody({ body, match = null }: { body: Body; match
     case "named":
       return <span data-resource-primary data-resource-inline-evidence={inlineEvidence || undefined} className={styles.named}>{body.title ? <ExcerptText excerpt={{ text: body.title, truncated_before: false, truncated_after: false }} match={match} /> : "untitled"}</span>;
     case "passage":
-      return <span data-resource-primary data-resource-inline-evidence={inlineEvidence || undefined} className={styles.passage}>
-        {body.prefix && !body.exact.truncated_before ? <span className={styles.context}><ExcerptText excerpt={body.prefix} match={match} /></span> : null}
-        {hasExcerpt(body.exact) ? <mark className={styles.exact} data-color={body.color ?? undefined}><ExcerptText excerpt={body.exact} match={match} /></mark> : <mark className={styles.exact} data-color={body.color ?? undefined}>selected region</mark>}
-        {body.suffix && !body.exact.truncated_after ? <span className={styles.context}><ExcerptText excerpt={body.suffix} match={match} /></span> : null}
-      </span>;
+      return <ReaderExcerpt excerpt={body.excerpt} color={body.color} full={full} />;
     case "prose":
       return <>
         <span data-resource-primary data-resource-inline-evidence={inlineEvidence || undefined} className={body.format === "code" ? styles.code : styles.prose}>
@@ -86,7 +82,7 @@ export function ResourceIndexBody({ body }: { body: Body }) {
   switch (body.kind) {
     case "media": return <MediaTitle subject={{ kind: "Stored", summary: body.media_summary }} />;
     case "named": return body.title || "untitled";
-    case "passage": return <mark className={styles.exact} data-color={body.color ?? undefined}>{hasExcerpt(body.exact) ? <ExcerptText excerpt={body.exact} /> : "selected region"}</mark>;
+    case "passage": return body.excerpt.kind === "content" ? <ExcerptText excerpt={{ text: excerptTextParts(body.excerpt.body).exact || "selected region", truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }} /> : "table excerpt";
     case "prose": return <span className={body.format === "code" ? styles.code : undefined} style={{ whiteSpace: "inherit" }}>
       {hasExcerpt(body.excerpt) ? <ExcerptText excerpt={body.excerpt} /> : "empty note"}
       {body.image_count > 0 ? <span className={styles.bodyCount}> · {body.image_count === 1 ? "image" : `${body.image_count} images`}</span> : null}

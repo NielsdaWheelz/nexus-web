@@ -25,6 +25,7 @@ from nexus.schemas.resource_evidence import (
 )
 from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_items.locations import (
     current_locator,
@@ -203,6 +204,9 @@ def get_search_result(
             captured_evidence.quote
             if captured_evidence is not None
             else CapturedQuote(
+                excerpt=plain_excerpt(
+                    selector["exact"], selector.get("prefix"), selector.get("suffix")
+                ),
                 exact=selector["exact"],
                 prefix=selector.get("prefix"),
                 suffix=selector.get("suffix"),

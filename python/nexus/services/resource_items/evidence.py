@@ -47,17 +47,24 @@ from nexus.schemas.resource_items import (
     WholeSourceLocationOut,
 )
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
+from nexus.services.reader_excerpts import (
+    plain_excerpt,
+    project_excerpts,
+    read_captures,
+    scope_excerpts,
+)
 from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_items.items import (
     passage_body,
+    passage_label,
     resource_item_out,
-    resource_items_out,
     source_attributions,
     visible_refs,
 )
 from nexus.services.resource_items.locations import (
     TIMED_KINDS,
+    captured_quote,
     current_locator,
     current_passages,
     location_reads,
@@ -109,7 +116,13 @@ def capture_evidence(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
         locator = annotation_locator(ref.id, annotation.body_text)
         return CapturedEvidence(
-            quote=CapturedQuote(exact=annotation.body_text, prefix=None, suffix=None, color=None)
+            quote=CapturedQuote(
+                excerpt=plain_excerpt(annotation.body_text),
+                exact=annotation.body_text,
+                prefix=None,
+                suffix=None,
+                color=None,
+            )
             if locator is not None
             else None,
             source=CapturedSource(
@@ -162,7 +175,15 @@ def _capture(
         reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
     ).get(ref.uri)
     if scoped is not None:
-        owner, quote, locator = scoped.owner, scoped.quote, scoped.locator
+        owner, locator = scoped.owner, scoped.locator
+        quote = (
+            captured_quote(scoped)
+            if ref.scheme in ("highlight", "passage_anchor")
+            else CapturedQuote(
+                excerpt=plain_excerpt(scoped.quote.exact, scoped.quote.prefix, scoped.quote.suffix),
+                **scoped.quote.model_dump(),
+            )
+        )
     elif ref.scheme in ("evidence_span", "content_chunk", "oracle_passage_anchor"):
         passage = current_passages(
             db,
@@ -172,7 +193,11 @@ def _capture(
         ).get(ref.uri)
         if passage is None or passage.owner.scheme == "media":
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
-        owner, quote, locator = passage.owner, passage.quote, passage.locator
+        owner, locator = passage.owner, passage.locator
+        quote = CapturedQuote(
+            excerpt=plain_excerpt(passage.quote.exact, passage.quote.prefix, passage.quote.suffix),
+            **passage.quote.model_dump(),
+        )
     elif ref.scheme in ("highlight", "fragment", "reader_apparatus_item"):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
     elif ref.scheme == "passage_anchor":
@@ -182,8 +207,13 @@ def _capture(
         ).one()
         owner = assert_resource_ref(f"{row.owner_scheme}:{row.owner_id}")
         words = row.selector["quote"]
+        saved = read_captures(db, [ref.uri])[ref.uri]["capture"]["value"]
         quote = CapturedQuote(
-            exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
+            excerpt=saved["excerpt"],
+            exact=saved["quote_exact"],
+            prefix=words.get("prefix"),
+            suffix=words.get("suffix"),
+            color=None,
         )
         from nexus.services import locator_resolver
 
@@ -200,7 +230,13 @@ def _capture(
         note = read_notes(db, viewer_id=viewer_id, note_ids=[ref.id]).get(ref.id)
         if note is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-        quote = CapturedQuote(exact=note.body_text, prefix=None, suffix=None, color=None)
+        quote = CapturedQuote(
+            excerpt=plain_excerpt(note.body_text, None, None),
+            exact=note.body_text,
+            prefix=None,
+            suffix=None,
+            color=None,
+        )
         if note.body_text:
             locator = {
                 "type": "note_block_offsets",
@@ -216,7 +252,13 @@ def _capture(
             {"id": ref.id},
         ).one()
         owner = ResourceRef("conversation", row.conversation_id)
-        quote = CapturedQuote(exact=row.content, prefix=None, suffix=None, color=None)
+        quote = CapturedQuote(
+            excerpt=plain_excerpt(row.content, None, None),
+            exact=row.content,
+            prefix=None,
+            suffix=None,
+            color=None,
+        )
         if row.content:
             locator = {
                 "type": "message_offsets",
@@ -232,6 +274,29 @@ def _capture(
         if locator is not None and locator["type"] == "highlight_annotation_offsets"
         else None
     )
+    if (
+        quote is not None
+        and ref.scheme not in ("highlight", "passage_anchor")
+        and locator is not None
+        and locator["type"] in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets")
+    ):
+        from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+
+        reading = (
+            owner.id if owner.scheme in ("media", "fragment") else UUID(str(locator["media_id"]))
+        )
+        frozen = source_excerpts(
+            db,
+            [
+                SourceExcerptRequest(
+                    reading_id=reading,
+                    fragment_id=UUID(str(locator["fragment_id"])),
+                    start=locator["start_offset"],
+                    end=locator["end_offset"],
+                )
+            ],
+        )[0]
+        quote = quote.model_copy(update={"excerpt": frozen})
     if locator is not None and locator["type"] == "note_block_offsets":
         # Note offsets freeze with the body version they were proven against.
         proof = CapturedPassageTarget(
@@ -290,7 +355,7 @@ def _admitted_evidence(
     viewer_id: UUID,
     evidence: CapturedEvidence,
     reading_media_id: UUID | None = None,
-) -> CapturedEvidence | None:
+) -> tuple[CapturedEvidence, dict[str, Any], tuple[tuple[int, int], ...]] | None:
     """Historical words remain frozen, but current scope governs their disclosure."""
     target = evidence.target
     if target.field == "annotation":
@@ -301,7 +366,7 @@ def _admitted_evidence(
             ),
             {"id": owner.id, "viewer": viewer_id},
         )
-        return evidence if allowed else None
+        return (evidence, {"kind": "capture"}, ()) if allowed else None
     owner_ref = target.owner_ref or evidence.source.ref
     if not isinstance(target, CapturedPassageTarget):
         if evidence.quote is not None and owner_ref and owner_ref.startswith("media:"):
@@ -313,7 +378,7 @@ def _admitted_evidence(
                 or not can_read_media(db, viewer_id, owner_id)
             ):
                 return None
-        return evidence
+        return evidence, {"kind": "capture"}, ()
     if target.locator.type == "x_capture_offsets":
         owner = assert_resource_ref(target.owner_ref)
         if (
@@ -339,34 +404,42 @@ def _admitted_evidence(
         words = scoped.quote.exact
         if words[target.locator.start_offset : target.locator.end_offset] != evidence.quote.exact:
             return None
-        return evidence
+        return evidence, {"kind": "capture"}, ()
     if not target.owner_ref.startswith("media:"):
-        return evidence
+        return evidence, {"kind": "capture"}, ()
     owner = assert_resource_ref(target.owner_ref)
     quote = evidence.quote
     if quote is None:
         return None
+    owner_kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": owner.id})
+    if (
+        owner_kind is not None
+        and owner_kind != "text_part"
+        and reading_media_id in (None, owner.id)
+        and can_read_media(db, viewer_id, owner.id)
+    ):
+        # Whole-source authority admits the saved evidence independently of
+        # current fragments. Placement is resolved separately for activation.
+        return evidence, {"kind": "capture"}, ()
     reads = location_reads(db, viewer_id, [target])
     current = current_locator(target, quote, reads)
-    if owner.id in reads.passages.canonical_media and reading_media_id in (None, owner.id):
-        if current is None or not can_read_media(db, viewer_id, owner.id):
-            return None
-        chosen_owner = owner
-        chosen_locator = current
-    else:
-        scoped = scoped_media_passage(
-            db,
-            viewer_id=viewer_id,
-            source_media_id=owner.id,
-            quote=quote,
-            locator=current or target.locator.model_dump(mode="json"),
-            reading_media_id=reading_media_id,
-        )
-        if scoped is None:
-            return None
-        chosen_owner, chosen_locator = scoped.owner, scoped.locator
+    if current is None:
+        return None
+    scoped = scoped_media_passage(
+        db,
+        viewer_id=viewer_id,
+        source_media_id=owner.id,
+        quote=quote,
+        locator=current,
+        reading_media_id=reading_media_id,
+    )
+    if scoped is None:
+        return None
+    chosen_owner, chosen_locator = scoped.owner, scoped.locator
+    scope = scoped.excerpt_scope or {"kind": "capture"}
+    incomplete_tables = scoped.incomplete_tables
     selector = (chosen_locator or {}).get("text_quote_selector") or {}
-    if current is not None and selector:
+    if selector:
         prefix_limit = len(selector.get("prefix") or "")
         suffix_limit = len(selector.get("suffix") or "")
         quote = quote.model_copy(
@@ -375,8 +448,15 @@ def _admitted_evidence(
                 "suffix": quote.suffix[:suffix_limit] if quote.suffix and suffix_limit else None,
             }
         )
-    return evidence.model_copy(
-        update={"quote": quote, "target": target.model_copy(update={"owner_ref": chosen_owner.uri})}
+    return (
+        evidence.model_copy(
+            update={
+                "quote": quote,
+                "target": target.model_copy(update={"owner_ref": chosen_owner.uri}),
+            }
+        ),
+        scope,
+        incomplete_tables,
     )
 
 
@@ -389,15 +469,60 @@ def evidence_items(
     """Each occurrence as an item of its frozen words and attribution; the current state
     of the cited ref's owner decides only whether the location still opens (I6)."""
     current = {
-        item.ref: item
-        for item in resource_items_out(
-            db, viewer_id=viewer_id, refs=[ref for ref, _, _ in occurrences]
+        ref.uri: ResourceItemOut(
+            authored_by_viewer=False,
+            ref=ref.uri,
+            action_ref=ref.uri,
+            label="Source",
+            missing=False,
+            preview=ResourcePreviewOut(
+                body=NamedResourceBodyOut(
+                    title="Source", image_url=None, media_kind=None, contributors=None
+                ),
+                source=None,
+            ),
+            activation=ResourceActivationOut(
+                field=None,
+                resource_ref=ref.uri,
+                kind="none",
+                href=None,
+                unavailable_reason="source_unavailable",
+            ),
         )
+        for ref, _, _ in occurrences
     }
-    admitted = [
+    admissions = [
         _admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)
         for _, evidence, _ in occurrences
     ]
+    quoted_admissions = [
+        value for value in admissions if value is not None and value[0].quote is not None
+    ]
+    frozen = iter(
+        scope_excerpts(
+            [
+                {"excerpt": quote.excerpt.model_dump(mode="json"), "scope": value[1]}
+                for value in quoted_admissions
+                if (quote := value[0].quote) is not None
+            ],
+            incomplete_tables=[value[2] for value in quoted_admissions],
+        )
+    )
+    admitted: list[CapturedEvidence | None] = []
+    for admission in admissions:
+        if admission is None:
+            admitted.append(None)
+        elif admission[0].quote is None:
+            admitted.append(admission[0])
+        else:
+            excerpt = next(frozen)
+            admitted.append(
+                None
+                if excerpt is None
+                else admission[0].model_copy(
+                    update={"quote": admission[0].quote.model_copy(update={"excerpt": excerpt})}
+                )
+            )
     owners = {
         owner
         for value in admitted
@@ -414,6 +539,22 @@ def evidence_items(
             for value in admitted
             if value is not None and isinstance(value.target, CapturedPassageTarget)
         ],
+    )
+    projected = iter(
+        project_excerpts(
+            [
+                {
+                    "source_ref": original.source.ref,
+                    "capture": {"kind": "evidence", "value": original.model_dump(mode="json")},
+                    "mode": "full",
+                    "scope": admission[1],
+                }
+                for (_, original, _), admission, value in zip(
+                    occurrences, admissions, admitted, strict=True
+                )
+                if admission is not None and value is not None and value.quote is not None
+            ]
+        )
     )
     out = []
     for (ref, evidence, key), value in zip(occurrences, admitted, strict=True):
@@ -467,9 +608,12 @@ def evidence_items(
                 unavailable_reason="location_unavailable",
             )
         quote = evidence.quote
+        projection = next(projected) if quote else None
         body = (
-            passage_body(quote.exact, quote.prefix, quote.suffix, quote.color)
-            if quote
+            passage_body(
+                projection, quote.color, reading_ref=evidence.target.owner_ref, captured=False
+            )
+            if quote and projection is not None
             else NamedResourceBodyOut(
                 title=frozen.title or "Source",
                 image_url=None,
@@ -480,7 +624,9 @@ def evidence_items(
         out.append(
             current[ref.uri].model_copy(
                 update={
-                    "label": quote.exact[:120] if quote else frozen.title or "Source",
+                    "label": passage_label(projection.text_parts.exact)
+                    if projection is not None and projection.text_parts is not None
+                    else frozen.title or "Source",
                     "preview": ResourcePreviewOut(body=body, source=attribution),
                     "activation": activation,
                 }
@@ -647,7 +793,7 @@ def resolve_source_target(
     )
     if admitted is None:
         return _UNAVAILABLE_SOURCE
-    evidence = admitted
+    evidence = admitted[0]
     captured = evidence.target
     owner = assert_resource_ref(captured.owner_ref) if captured.owner_ref else None
     source = (

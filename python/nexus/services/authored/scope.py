@@ -45,10 +45,13 @@ from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
+    read_media_text_scope,
+    read_scope_fragment,
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
 from nexus.services.reader_publication import ready_publication_rows_sql
+from nexus.services.reader_text_slice import incomplete_table_intervals
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.search.scope import reading_media_ids_sql
 
@@ -180,6 +183,23 @@ def _ctes() -> str:
         )"""
 
 
+def _incomplete_tables(db: Session, reading_id: UUID) -> list[tuple[str, dict[str, Any]]]:
+    """Negative structural facts from the same trusted slice the reader receives."""
+    scope = read_media_text_scope(db, reading_id)
+    records = {}
+    for interval in scope.fragment_intervals:
+        for start, end in incomplete_table_intervals(read_scope_fragment(db, scope, interval)):
+            key = f"reading:{reading_id}:incomplete_table:{interval.fragment_id}:{start}:{end}"
+            records[key] = {
+                "kind": "incomplete_table",
+                "reading_ref": f"media:{reading_id}",
+                "fragment_id": str(interval.fragment_id),
+                "start_offset": start,
+                "end_offset": end,
+            }
+    return sorted(records.items())
+
+
 def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]]]:
     """Stream canonical metadata; no source text enters the digest or page buffer."""
     relation = f"""
@@ -208,6 +228,14 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         UNION ALL SELECT DISTINCT 'capture-member:'||m.media_id::text||':'||c.fragment_id::text,
             jsonb_build_object('kind','media_member','root_ref','media:'||m.media_id::text,'reading_ref','fragment:'||c.fragment_id::text)
             FROM capture_members m JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-workspace:'||c.fragment_id::text,
+            jsonb_build_object('kind','workspace_member','reading_ref','fragment:'||c.fragment_id::text)
+            FROM workspace w JOIN capture_members m ON m.media_id=w.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-library:'||library.library_id::text||':'||c.fragment_id::text,
+            jsonb_build_object('kind','library_member','library_ref','library:'||library.library_id::text,'reading_ref','fragment:'||c.fragment_id::text)
+            FROM library_members library JOIN capture_members m ON m.media_id=library.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
         UNION ALL SELECT 'capture-interval:'||fragment_id::text,
             jsonb_build_object('kind','interval','interval_key','capture:'||fragment_id::text,'reading_ref','fragment:'||fragment_id::text,'fragment_id',fragment_id,'fragment_idx',idx,'start_offset',0,'end_offset',size,'purpose','body','start_cut',false,'end_cut',false) FROM capture_readings WHERE size>0
         UNION ALL SELECT 'reading:'||media_id::text,
@@ -229,13 +257,25 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
             jsonb_build_object('kind','interval','interval_key',interval_key,'reading_ref','media:'||reading_media_id::text,'fragment_id',fragment_id,'fragment_idx',fragment_idx,'start_offset',start_offset,'end_offset',end_offset,'purpose',purpose,'start_cut',start_cut,'end_cut',end_cut) FROM intervals
     """
     rows = db.execute(
-        text(_ctes() + f' SELECT key,state FROM ({relation}) facts ORDER BY key COLLATE "C"'),
+        text(
+            _ctes()
+            + f''' SELECT key,state,EXISTS (
+                SELECT 1 FROM readings r WHERE 'reading:'||r.media_id::text=facts.key
+                    AND r.is_part AND r.text_ready
+            ) AS clipped_ready FROM ({relation}) facts ORDER BY key COLLATE "C"'''
+        ),
         {"viewer_id": viewer_id},
         execution_options={"yield_per": 256},
     )
     try:
         for row in rows:
             yield row.key, row.state
+            if row.clipped_ready:
+                # These keys extend their reading key, preserving the stream's
+                # byte ordering and the existing digest/page continuation fence.
+                yield from _incomplete_tables(
+                    db, UUID(row.state["reading_ref"].removeprefix("media:"))
+                )
     finally:
         rows.close()
 

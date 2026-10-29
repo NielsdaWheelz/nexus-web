@@ -32,13 +32,15 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,3,0)", account.toString(), UUID.randomUUID().toString())
-        transaction {
-            val state = replica()
-            check(state.getString("account_id") == account.toString())
-            val format = state.getInt("format_revision")
-            check(format == 3) { "authored format mismatch; drain the previous client before reprovisioning this device" }
-        }
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,4,0)", account.toString(), UUID.randomUUID().toString())
+        try {
+            transaction {
+                val state = replica()
+                check(state.getString("account_id") == account.toString())
+                val format = state.getInt("format_revision")
+                check(format == 4) { "authored format mismatch; drain the previous client before reprovisioning this device" }
+            }
+        } catch (error: Throwable) { connection.close(); throw error }
     }
     private fun run(sql: String, vararg values: Any?) { rows(sql, *values) }
     private fun rows(sql: String, vararg values: Any?): JSONArray = connection.prepare(sql).use { readRows(it, *values) }
@@ -137,7 +139,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until passages.length()) {
             val state = passages.getJSONObject(index)
             val key = JSONArray().put(state.getString("source_ref")).put(state.getString("normalized_exact")).put(state.getString("prefix")).put(state.getString("suffix"))
-            run("INSERT INTO passages VALUES(?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString())
+            val projection = byRef["passage_anchor:${state.getString("anchor_id")}"] ?: error("missing passage projection")
+            run("INSERT INTO passages VALUES(?,?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json,projection_json=excluded.projection_json", state.getString("anchor_id"), state.getString("source_ref"), key.toString(), state.toString(), projection.toString())
         }
         val stubs = states.getJSONArray("source_stubs")
         for (index in 0 until stubs.length()) { val state = stubs.getJSONObject(index); run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", state.getString("source_ref"), state.toString()) }

@@ -23,7 +23,6 @@ from nexus.auth.permissions import (
     highlight_readability_filter,
     highlight_readability_sql,
     highlight_visibility_filter,
-    requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.db.models import Fragment, Highlight, HighlightFragmentAnchor, HighlightPdfAnchor, Media
@@ -45,8 +44,6 @@ from nexus.services.media_text_scope import (
 )
 from nexus.services.resource_grants import invalidate_annotation_visibility
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
-
-AFFIX_CODEPOINTS = 64
 
 
 def read_highlight_annotations(
@@ -323,6 +320,7 @@ def _project_anchored(
     db: Session,
     viewer_id: UUID,
     anchored: list[tuple[Highlight, FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut]],
+    reading_media_id: UUID | None = None,
 ) -> list[TypedHighlightOut]:
     ids = [highlight.id for highlight, _ in anchored]
     conversations = {
@@ -330,30 +328,6 @@ def _project_anchored(
         for highlight_id, rows in batch_conversations_with_any_edge_to_ref(
             db, viewer_id=viewer_id, targets=ids, target_scheme="highlight"
         ).items()
-    }
-    from nexus.services.x_source import readable_x_capture_ids_sql
-
-    contexts = {
-        row.highlight_id: row
-        for row in db.execute(
-            text(f"""
-            SELECT hfa.highlight_id,min(scope.start_offset) AS start_offset,
-                   max(scope.end_offset) AS end_offset,f.canonical_text
-            FROM highlight_fragment_anchors hfa
-            JOIN ({text_scope_rows_sql(requested_media_ids_cte_sql())}) scope
-              ON scope.fragment_id=hfa.fragment_id
-             AND scope.start_offset<=hfa.start_offset AND scope.end_offset>=hfa.end_offset
-            JOIN fragments f ON f.id=hfa.fragment_id
-            WHERE hfa.highlight_id=ANY(:ids)
-            GROUP BY hfa.highlight_id,f.canonical_text
-            UNION ALL
-            SELECT hfa.highlight_id,0,char_length(f.canonical_text),f.canonical_text
-            FROM highlight_fragment_anchors hfa JOIN fragments f ON f.id=hfa.fragment_id
-            JOIN ({readable_x_capture_ids_sql()}) captures ON captures.capture_id=f.x_post_capture_id
-            WHERE hfa.highlight_id=ANY(:ids)
-        """),
-            {"ids": ids, "viewer_id": viewer_id},
-        )
     }
     projected = [
         _highlight_out(
@@ -365,31 +339,22 @@ def _project_anchored(
         for highlight, anchor in anchored
     ]
 
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.locations import media_passages
+
+    passages = media_passages(
+        db,
+        viewer_id=viewer_id,
+        refs=[ResourceRef("highlight", item.id) for item in projected],
+        include_excerpts=False,
+        reading_media_ids={f"highlight:{item.id}": reading_media_id for item in projected}
+        if reading_media_id is not None
+        else None,
+    )
     for item in projected:
-        anchor = item.anchor
-        if (
-            not isinstance(anchor, (FragmentAnchorOut, XCaptureAnchorOut))
-            or anchor.start_offset is None
-            or anchor.end_offset is None
-        ):
-            continue
-        context = contexts.get(item.id)
-        item.prefix = (
-            context.canonical_text[
-                max(
-                    context.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
-                ) : anchor.start_offset
-            ]
-            if context is not None
-            else ""
-        )
-        item.suffix = (
-            context.canonical_text[
-                anchor.end_offset : min(context.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
-            ]
-            if context is not None
-            else ""
-        )
+        passage = passages.get(f"highlight:{item.id}")
+        item.prefix = passage.quote.prefix or "" if passage is not None else ""
+        item.suffix = passage.quote.suffix or "" if passage is not None else ""
     return projected
 
 
@@ -466,31 +431,6 @@ def list_highlights_for_media(
         db,
         viewer_id,
         [(item, unresolved if live is None else _anchor_out(db, item)) for item, live in rows],
+        media_id,
     )
-    if scope is not None:
-        for item in projected:
-            anchor = item.anchor
-            if (
-                not isinstance(anchor, FragmentAnchorOut)
-                or anchor.fragment_id is None
-                or anchor.start_offset is None
-                or anchor.end_offset is None
-            ):
-                continue
-            interval = next(
-                value
-                for value in scope.fragment_intervals
-                if value.fragment_id == anchor.fragment_id
-            )
-            source = db.execute(
-                select(Fragment.canonical_text).where(Fragment.id == anchor.fragment_id)
-            ).scalar_one()
-            item.prefix = source[
-                max(
-                    interval.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
-                ) : anchor.start_offset
-            ]
-            item.suffix = source[
-                anchor.end_offset : min(interval.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
-            ]
     return projected

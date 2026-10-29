@@ -27,7 +27,7 @@ from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.items import visible_refs
-from nexus.services.resource_items.locations import media_passages
+from nexus.services.resource_items.locations import captured_quote, media_passages
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -245,6 +245,26 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
             {"ids": ids, "viewer": viewer_id},
         )
     }
+    from nexus.schemas.reader_excerpts import ExcerptBody
+    from nexus.services.reader_excerpts import text_parts
+
+    quoted = list(passages.items())
+    literal = dict(
+        zip(
+            (ref for ref, _ in quoted),
+            text_parts(
+                [
+                    ExcerptBody.model_validate(
+                        captured_quote(passage).excerpt.model_dump(
+                            exclude={"source_extent", "truncated_before", "truncated_after"}
+                        )
+                    )
+                    for _, passage in quoted
+                ]
+            ),
+            strict=True,
+        )
+    )
     out = []
     for id_ in ids:
         uri = f"highlight:{id_}"
@@ -269,10 +289,11 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
         else:
             owner = owners[passage.owner.id]
             source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
+        parts = literal[uri]
         quote = ResolvedQuote(
-            exact=passage.quote.exact,
-            prefix=passage.quote.prefix or "",
-            suffix=passage.quote.suffix or "",
+            exact=parts.exact,
+            prefix=parts.prefix,
+            suffix=parts.suffix,
             source_label=source,
             annotation=annotations[id_].body_text if id_ in annotations else None,
         )

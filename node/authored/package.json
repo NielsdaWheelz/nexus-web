@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./excerpt": "./src/excerpt.ts",
+    "./canonical": "./src/canonical.ts",
     "./capture": "./src/capture.ts",
     "./types": "./src/types.ts",
     "./documents": "./src/documents.ts",
@@ -17,12 +19,13 @@
     "./markdown": "./src/markdown.ts"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
     "fractional-indexing": "4.0.0",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-to-markdown": "2.1.2",
     "prosemirror-model": "1.25.4",
     "uuid": "11.1.0",
-    "yjs": "13.6.33",
-    "mdast-util-gfm": "3.1.0",
-    "mdast-util-to-markdown": "2.1.2"
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "typescript": "6.0.2",

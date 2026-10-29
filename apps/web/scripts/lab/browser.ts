@@ -15,19 +15,20 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
  * a non-null state seeds the fresh profile. chromium revokes its grant when its CDP session
  * detaches, so the session stays attached to the returned page until close(); callers
  * keep that page open. firefox's macOS app-data bookkeeping also belongs to the
- * temporary root. optional proxies apply to the whole private profile, including
- * shared workers; TLS remains end to end. close() removes all browser state. */
+ * temporary root. restart() closes the browser process and reopens the same profile;
+ * callers use its returned context/page. optional proxies cover shared-worker traffic
+ * with end-to-end TLS. close() removes all browser state. */
 export async function openLabBrowser(input: {
   web_origin: string;
   storage_state: string | null;
-  proxy?: {server: string};
+  proxy?: { server: string; bypass?: string };
 } & (
   | { browser?: "chromium"; web_tls: { leaf_spki_sha256: string } }
   | { browser: "firefox"; web_tls: { ca_file: string } }
-)): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
+)): Promise<{ context: BrowserContext; page: Page; restart(offline?: boolean): Promise<{ context: BrowserContext; page: Page }>; close(): Promise<void> }> {
   const directory = await mkdtemp(join(tmpdir(), "nexus-lab-browser-"));
   const profile = join(directory, "profile");
-  let context: BrowserContext | null = null;
+  const state: { context: BrowserContext | null } = { context: null };
   try {
     await mkdir(profile);
     if (input.browser === "firefox") {
@@ -49,42 +50,59 @@ export async function openLabBrowser(input: {
         // precreation avoids macos's deny-delete acl on automatic home folders.
         await Promise.all(["Library/Application Support", "Library/Caches", "Downloads", "Documents"].map(part => mkdir(join(appData, part), { recursive: true })));
       }
-      context = await firefox.launchPersistentContext(profile, {
-        headless: true,
-        ...(input.proxy ? {proxy: input.proxy, firefoxUserPrefs: {"network.proxy.allow_hijacking_localhost": true, "network.proxy.no_proxies_on": ""}} : {}),
-        args: [], ignoreHTTPSErrors: false,
-        ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: appData } } : {}),
-      });
-    } else {
-      context = await chromium.launchPersistentContext(profile, {
-        headless: true,
-        ...(input.proxy ? {proxy: input.proxy} : {}),
-        args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
-      });
     }
-    if (input.storage_state !== null) await context.setStorageState(input.storage_state);
-    const page = context.pages()[0] ?? await context.newPage();
-    if (input.browser === "firefox") {
-      await page.goto(`${input.web_origin}/robots.txt`, { waitUntil: "domcontentloaded" });
-      await page.evaluate(async () => {
-        if ((await navigator.permissions.query({ name: "persistent-storage" })).state !== "granted")
-          throw new Error("firefox lab persistent-storage permission was not granted");
-        const persisted = await Promise.race([
-          navigator.storage.persist(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("firefox lab persistence request timed out")), 5000)),
-        ]);
-        if (!persisted || !await navigator.storage.persisted()) throw new Error("firefox lab storage is not persistent");
-      });
-    } else {
-      const session = await context.newCDPSession(page);
-      await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+    async function open(seed: boolean, offline: boolean): Promise<{ context: BrowserContext; page: Page }> {
+      if (input.browser === "firefox") {
+        state.context = await firefox.launchPersistentContext(profile, {
+          headless: true,
+          offline,
+          ...(input.proxy ? {proxy: input.proxy, firefoxUserPrefs: {"network.proxy.allow_hijacking_localhost": true, "network.proxy.no_proxies_on": ""}} : {}),
+          args: [], ignoreHTTPSErrors: false,
+          ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: join(directory, "app-data") } } : {}),
+        });
+      } else {
+        state.context = await chromium.launchPersistentContext(profile, {
+          headless: true,
+          offline,
+          ...(input.proxy ? {proxy: input.proxy} : {}),
+          args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
+        });
+      }
+      const context = state.context;
+      await context.setOffline(offline);
+      if (seed && input.storage_state !== null) await context.setStorageState(input.storage_state);
+      const page = context.pages()[0] ?? await context.newPage();
+      if (input.browser === "firefox" && seed) {
+        await page.goto(`${input.web_origin}/robots.txt`, { waitUntil: "domcontentloaded" });
+        await page.evaluate(async () => {
+          if ((await navigator.permissions.query({ name: "persistent-storage" })).state !== "granted")
+            throw new Error("firefox lab persistent-storage permission was not granted");
+          const persisted = await Promise.race([
+            navigator.storage.persist(),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("firefox lab persistence request timed out")), 5000)),
+          ]);
+          if (!persisted || !await navigator.storage.persisted()) throw new Error("firefox lab storage is not persistent");
+        });
+      } else if (input.browser !== "firefox") {
+        const session = await context.newCDPSession(page);
+        await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+      }
+      return { context, page };
     }
-    const opened = context;
-    return { context: opened, page, close: async () => {
-      try { await opened.close(); } finally { await rm(directory, { recursive: true, force: true }); }
+    const opened = await open(true, false);
+    return { ...opened, restart: async (offline = false) => {
+      if (state.context === null) throw new Error("lab browser is closed");
+      await state.context.close();
+      state.context = null;
+      return open(false, offline);
+    }, close: async () => {
+      await state.context?.close();
+      state.context = null;
+      await rm(directory, { recursive: true, force: true });
     } };
   } catch (error) {
-    try { await context?.close(); } finally { await rm(directory, { recursive: true, force: true }); }
+    await state.context?.close();
+    await rm(directory, { recursive: true, force: true });
     throw error;
   }
 }

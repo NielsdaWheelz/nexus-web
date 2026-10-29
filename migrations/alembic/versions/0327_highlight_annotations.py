@@ -1,4 +1,4 @@
-"""Consume attached notes into permanent highlight bodies at authored format 3.
+"""Consume attached notes into permanent highlight bodies at authored format 4.
 
 All writers and workers must be stopped and a verified backup retained. This one
 transaction inventories recoverable canonical state and typed references, refuses
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0326"
-down_revision = "0325"
+revision = "0327"
+down_revision = "0326"
 branch_labels = None
 depends_on = None
 
@@ -93,7 +93,7 @@ def _parts(ref: str) -> tuple[str, UUID]:
 
 
 def _refuse(record, reason, repair="repair the named records before retrying"):
-    raise RuntimeError(f"0326 {record}: {reason}; {repair}")
+    raise RuntimeError(f"0327 {record}: {reason}; {repair}")
 
 
 @cache
@@ -340,11 +340,11 @@ def _inventory(db):
         mapping[note] = highlight
         attachments[highlight] = row["link_id"]
     for account, maximum in maxima.items():
-        server = str(uuid5(UUID(account), "authored:server:3"))
+        server = str(uuid5(UUID(account), "authored:server:4"))
         if server in replicas[account] or maximum >= _MAX_COUNTER:
             _refuse(
                 f"account {account}",
-                "format-3 reserved replica collision or lamport exhaustion",
+                "format-4 reserved replica collision or lamport exhaustion",
             )
     return {
         "notes": notes,
@@ -442,7 +442,7 @@ def _retarget_links(inventory):
         )["positions"]
         stamp = {
             "lamport": str(inventory["maxima"][account] + 1),
-            "replica_id": str(uuid5(UUID(account), "authored:server:3")),
+            "replica_id": str(uuid5(UUID(account), "authored:server:4")),
         }
         for link, key in zip(replacement, keys, strict=True):
             identity = link["link_id"]
@@ -768,7 +768,7 @@ def _passages(inventory):
                 state["capture"],
                 stamp={
                     "lamport": str(inventory["maxima"][account] + 1),
-                    "replica_id": str(uuid5(UUID(account), "authored:server:3")),
+                    "replica_id": str(uuid5(UUID(account), "authored:server:4")),
                 },
             )
         semantic = (
@@ -884,6 +884,40 @@ def _audit_json(value, inventory, record):
                 not isinstance(ref, str) or not ref.startswith("highlight:")
             ):
                 _refuse(record, "annotation field targets a non-highlight")
+
+
+def _excerpt_preview(source_ref, capture):
+    # Reuse the predecessor's frozen serializer; destination changes alter revisions.
+    result = subprocess.run(
+        [
+            _node_binary(),
+            "--max-old-space-size=128",
+            str(Path(__file__).with_name("0326_excerpt_projection.mjs")),
+        ],
+        input=_json(
+            {
+                "op": "project_excerpts",
+                "items": [
+                    {
+                        "source_ref": source_ref,
+                        "capture": {"kind": "passage", "value": capture},
+                        "mode": "compact",
+                        "scope": {"kind": "capture"},
+                    }
+                ],
+            }
+        ),
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=True,
+        env={"NODE_ENV": "production", "PATH": "/usr/local/bin:/usr/bin:/bin"},
+    )
+    projection = json.loads(result.stdout)["items"][0]
+    return {
+        "excerpt": projection["view"],
+        "capture_revision": projection["capture_revision"],
+    }
 
 
 def _plan_relational(db, inventory):
@@ -1065,6 +1099,9 @@ def _plan_relational(db, inventory):
                     "body_sha256": locator["body_sha256"],
                 }
             row["selector"] = dict(selector, locator_hint=hint)
+            row["excerpt_preview"] = _excerpt_preview(
+                mapping[source], canonical["state"]["capture"]["value"]
+            )
         key = (row["user_id"], row["owner_scheme"], row["owner_id"], row["anchor_key"])
         if key in anchor_keys:
             _refuse(
@@ -1422,9 +1459,9 @@ def _write_canonical(db, inventory):
     for account, maximum in inventory["maxima"].items():
         db.execute(
             sa.text(
-                "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,3)"
+                "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,4)"
             ),
-            {"a": UUID(account), "r": uuid5(UUID(account), "authored:server:3")},
+            {"a": UUID(account), "r": uuid5(UUID(account), "authored:server:4")},
         )
         db.execute(
             sa.text(
@@ -1564,9 +1601,13 @@ def _write_relational(db, inventory):
     for row in inventory["anchors"]:
         db.execute(
             sa.text(
-                "UPDATE passage_anchors SET owner_scheme=:owner_scheme,owner_id=:owner_id,selector=CAST(:selector AS jsonb) WHERE id=:id"
+                "UPDATE passage_anchors SET owner_scheme=:owner_scheme,owner_id=:owner_id,selector=CAST(:selector AS jsonb),excerpt_preview=CAST(:excerpt_preview AS jsonb) WHERE id=:id"
             ),
-            dict(row, selector=_json(row["selector"])),
+            dict(
+                row,
+                selector=_json(row["selector"]),
+                excerpt_preview=_json(row["excerpt_preview"]),
+            ),
         )
     for row in inventory["index_states"]:
         db.execute(
@@ -1723,7 +1764,7 @@ def _rebuild_derived(db, inventory):
         )
     # Quote rows remain source-only. Annotation words have their own private family.
     db.execute(
-        sa.text("""UPDATE keyword_occurrences k SET body=h.exact,prefix=h.prefix,suffix=h.suffix
+        sa.text("""UPDATE keyword_occurrences k SET body=h.exact
         FROM highlights h WHERE k.family='highlight' AND k.ref='highlight:'||h.id::text""")
     )
     db.execute(
@@ -1880,7 +1921,7 @@ def upgrade() -> None:
     ):
         op.drop_constraint(constraint, table, type_="check")
     op.execute(
-        "ALTER TABLE authored_replicas ALTER COLUMN format_revision SET DEFAULT 3"
+        "ALTER TABLE authored_replicas ALTER COLUMN format_revision SET DEFAULT 4"
     )
     _write_canonical(db, inventory)
     _write_json_updates(db, inventory)
@@ -1891,5 +1932,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        "0326 is irreversible; restore the verified backup and matching clients"
+        "0327 is irreversible; restore the verified backup and matching clients"
     )

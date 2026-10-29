@@ -83,7 +83,8 @@ class CanonicalStructure:
 class _CanonicalTextTarget:
     """Stream sanitized HTML into canonical raw text without retaining a DOM."""
 
-    def __init__(self, *, capture_structure: bool = False) -> None:
+    def __init__(self, *, capture_structure: bool = False, capture_native: bool = False) -> None:
+        self.native_runs = array("I") if capture_native else None
         self.chunks: list[str] = []
         self.last_char = ""
         self.length = 0
@@ -207,10 +208,44 @@ class _CanonicalTextTarget:
         if normalized_tag == "br":
             self._append("\n")
 
-    def data(self, text: str) -> None:
+    def data(self, text: str, native_start: int | None = None) -> None:
         if not self._visible_stack or not self._visible_stack[-1]:
             return
-        self._append(WHITESPACE_RE.sub(" ", text))
+        collapsed = WHITESPACE_RE.sub(" ", text)
+        first = self.length
+        self._append(collapsed)
+        if native_start is None or self.native_runs is None:
+            return
+        raw = first
+        source = native_start
+
+        def run(raw_end: int, source_end: int) -> None:
+            nonlocal raw, source
+            runs = self.native_runs
+            if runs is None:
+                raise ValueError("Native source capture is disabled")
+            affine = raw_end - raw == source_end - source
+            if (
+                runs
+                and affine
+                and runs[-3] == raw
+                and runs[-1] == source
+                and runs[-3] - runs[-4] == runs[-1] - runs[-2]
+            ):
+                runs[-3], runs[-1] = raw_end, source_end
+            else:
+                runs.extend((raw, raw_end, source, source_end))
+            raw, source = raw_end, source_end
+
+        cursor = 0
+        for match in WHITESPACE_RE.finditer(text):
+            if match.start() > cursor:
+                count = match.start() - cursor
+                run(raw + count, source + count)
+            run(raw + 1, source + match.end() - match.start())
+            cursor = match.end()
+        if cursor < len(text):
+            run(raw + len(text) - cursor, source + len(text) - cursor)
 
     def end(self, _tag: str) -> None:
         normalized_tag = self._tag_stack.pop()
@@ -230,6 +265,18 @@ class _CanonicalTextTarget:
 
     def close(self) -> None:
         return None
+
+
+class NativeCanonicalTarget(_CanonicalTextTarget):
+    """Source-owner walk with sparse native codepoint runs, never display nodes."""
+
+    def __init__(self) -> None:
+        super().__init__(capture_native=True)
+
+    def projection(self) -> "NativeCanonicalProjection":
+        if self.native_runs is None:
+            raise ValueError("Native source capture is disabled")
+        return NativeCanonicalProjection("".join(self.chunks), self.native_runs)
 
 
 def _walk(html_sanitized: str, *, capture_structure: bool) -> _CanonicalTextTarget:
@@ -312,38 +359,200 @@ def _normalize_nfc(text: str, boundaries: Sequence[int] | None) -> tuple[str, ar
     sources = array(source_type)
     for start, raw, normalized in _normalized_batches(text):
         chunks.append(normalized)
-        if normalized == raw:
-            sources.extend(
-                bisect_right(boundaries, source) for source in range(start, start + len(raw))
-            )
-            continue
-
-        # Monotone boundary buckets preserve source order and composition minima.
-        # Queues belong to this normalization-safe batch, not the whole document.
-        decomposed_sources: dict[str, array] = {}
-        for source, original_char in enumerate(raw, start=start):
-            source_bucket = bisect_right(boundaries, source)
-            for decomposed_char in unicodedata.normalize("NFD", original_char):
-                if decomposed_char not in decomposed_sources:
-                    decomposed_sources[decomposed_char] = array(source_type)
-                decomposed_sources[decomposed_char].append(source_bucket)
-        source_positions = dict.fromkeys(decomposed_sources, 0)
-        for char in normalized:
-            source_start = len(boundaries)
-            for decomposed_char in unicodedata.normalize("NFD", char):
-                positions = decomposed_sources[decomposed_char]
-                position = source_positions[decomposed_char]
-                source_start = min(source_start, positions[position])
-                if position + 1 == len(positions):
-                    del decomposed_sources[decomposed_char]
-                    del source_positions[decomposed_char]
-                elif (position + 1) * 2 >= len(positions):
-                    del positions[: position + 1]
-                    source_positions[decomposed_char] = 0
-                else:
-                    source_positions[decomposed_char] = position + 1
-            sources.append(source_start)
+        sources.extend(
+            bisect_right(boundaries, first)
+            for first, _last in _nfc_contributors(start, raw, normalized)
+        )
     return "".join(chunks), sources
+
+
+def _nfc_contributors(start: int, raw: str, normalized: str) -> Iterator[tuple[int, int]]:
+    """Complete raw contributor bounds under the publication's NFC queue policy."""
+    if normalized == raw:
+        for source in range(start, start + len(raw)):
+            yield source, source + 1
+        return
+    decomposed_sources: dict[str, array] = {}
+    for source, original_char in enumerate(raw, start=start):
+        for decomposed_char in unicodedata.normalize("NFD", original_char):
+            if decomposed_char not in decomposed_sources:
+                decomposed_sources[decomposed_char] = array("I")
+            decomposed_sources[decomposed_char].append(source)
+    positions = dict.fromkeys(decomposed_sources, 0)
+    for char in normalized:
+        first, last = start + len(raw), start
+        for decomposed_char in unicodedata.normalize("NFD", char):
+            queue = decomposed_sources[decomposed_char]
+            position = positions[decomposed_char]
+            source = queue[position]
+            first, last = min(first, source), max(last, source + 1)
+            if position + 1 == len(queue):
+                del decomposed_sources[decomposed_char]
+                del positions[decomposed_char]
+            elif (position + 1) * 2 >= len(queue):
+                del queue[: position + 1]
+                positions[decomposed_char] = 0
+            else:
+                positions[decomposed_char] = position + 1
+        yield first, last
+
+
+class NativeCanonicalProjection:
+    """Sparse inverse queries through the publication's existing transforms.
+
+    Flat source/normalized strings are retained. Provenance is affine/atomic
+    runs plus requested intervals, never a character-sized origin array.
+    """
+
+    def __init__(self, raw: str, runs: array) -> None:
+        self.raw = raw
+        self.runs = runs
+        normalized, _ = _normalize_nfc(raw, None)
+        collapsed, _ = _collapse_blank_lines(normalized, None)
+        self.text, _ = _trim_lines(collapsed, None)
+        # Columns: canonical start/end, normalized start/end, atomic flag.
+        self.spans = array("I")
+        normalized_spans = array("I")
+        source = output = 0
+        for first, end in _blank_line_runs(normalized):
+            if first > source:
+                normalized_spans.extend((output, output + first - source, source, first, 0))
+                output += first - source
+            normalized_spans.extend((output, output + 2, first, end, 1))
+            output += 2
+            source = end
+        if source < len(normalized):
+            normalized_spans.extend(
+                (output, output + len(normalized) - source, source, len(normalized), 0)
+            )
+        index = canonical = 0
+        for first, end in _trimmed_spans(collapsed):
+            while index < len(normalized_spans) and normalized_spans[index + 1] <= first:
+                index += 5
+            at = index
+            while at < len(normalized_spans) and normalized_spans[at] < end:
+                lo, hi = max(first, normalized_spans[at]), min(end, normalized_spans[at + 1])
+                if normalized_spans[at + 4]:
+                    left, right = normalized_spans[at + 2], normalized_spans[at + 3]
+                else:
+                    left = normalized_spans[at + 2] + lo - normalized_spans[at]
+                    right = left + hi - lo
+                self.spans.extend(
+                    (canonical, canonical + hi - lo, left, right, normalized_spans[at + 4])
+                )
+                canonical += hi - lo
+                at += 5
+
+    def _native(self, first: int, end: int) -> tuple[int, int]:
+        runs = self.runs
+        lo, hi = 0, len(runs) // 4
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if runs[mid * 4 + 1] <= first:
+                lo = mid + 1
+            else:
+                hi = mid
+        start = 0xFFFFFFFF
+        finish = 0
+        at = lo * 4
+        while at < len(runs) and runs[at] < end:
+            raw_start, raw_end, native_start, native_end = runs[at : at + 4]
+            if raw_end - raw_start == native_end - native_start:
+                native_start += max(0, first - raw_start)
+                native_end -= max(0, raw_end - end)
+            start, finish = min(start, native_start), max(finish, native_end)
+            at += 4
+        return start, finish
+
+    def bounds(self, intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        queries = []
+        for index, (first, end) in enumerate(intervals):
+            for at in range(0, len(self.spans), 5):
+                lo, hi = max(first, self.spans[at]), min(end, self.spans[at + 1])
+                if lo >= hi:
+                    continue
+                left, right = self.spans[at + 2], self.spans[at + 3]
+                if not self.spans[at + 4]:
+                    left += lo - self.spans[at]
+                    right = left + hi - lo
+                queries.append((left, right, index))
+        result = [(0xFFFFFFFF, 0) for _ in intervals]
+        normalized_offset = 0
+        for raw_start, original, normalized in _normalized_batches(self.raw):
+            batch_end = normalized_offset + len(normalized)
+            active = [
+                (
+                    max(lo, normalized_offset) - normalized_offset,
+                    min(hi, batch_end) - normalized_offset,
+                    index,
+                )
+                for lo, hi, index in queries
+                if lo < batch_end and hi > normalized_offset
+            ]
+            if original == normalized:
+                for lo, hi, index in active:
+                    first, end = self._native(raw_start + lo, raw_start + hi)
+                    before = result[index]
+                    result[index] = min(before[0], first), max(before[1], end)
+            elif active:
+                for offset, (lo, hi) in enumerate(
+                    _nfc_contributors(raw_start, original, normalized)
+                ):
+                    selected = [index for first, end, index in active if first <= offset < end]
+                    if selected:
+                        first, end = self._native(lo, hi)
+                        for index in selected:
+                            before = result[index]
+                            result[index] = min(before[0], first), max(before[1], end)
+            normalized_offset = batch_end
+        return result
+
+    def prefixes(self, points: list[int]) -> list[int]:
+        raw_points = []
+        for point in points:
+            lo, hi = 0, len(self.runs) // 4
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if self.runs[mid * 4 + 3] <= point:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            at = lo * 4
+            if at == len(self.runs):
+                raw_points.append(len(self.raw))
+            elif point <= self.runs[at + 2]:
+                raw_points.append(self.runs[at])
+            elif self.runs[at + 1] - self.runs[at] == self.runs[at + 3] - self.runs[at + 2]:
+                raw_points.append(self.runs[at] + point - self.runs[at + 2])
+            else:
+                raw_points.append(self.runs[at + 1])
+        normalized_points = [0] * len(points)
+        normalized_offset = 0
+        for start, original, normalized in _normalized_batches(self.raw):
+            for index, point in enumerate(raw_points):
+                if point >= start + len(original):
+                    normalized_points[index] = normalized_offset + len(normalized)
+                elif point >= start:
+                    if original == normalized:
+                        normalized_points[index] = normalized_offset + point - start
+                    else:
+                        normalized_points[index] = normalized_offset + sum(
+                            first < point
+                            for first, _end in _nfc_contributors(start, original, normalized)
+                        )
+            normalized_offset += len(normalized)
+        output = []
+        for point in normalized_points:
+            count = 0
+            for at in range(0, len(self.spans), 5):
+                first, end = self.spans[at + 2], self.spans[at + 3]
+                if self.spans[at + 4]:
+                    if first < point:
+                        count += self.spans[at + 1] - self.spans[at]
+                else:
+                    count += max(0, min(point, end) - first)
+            output.append(count)
+        return output
 
 
 def _normalized_batches(text: str) -> Iterator[tuple[int, str, str]]:

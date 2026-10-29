@@ -52,6 +52,8 @@ def project(
     visibility_changes = []
     changed_notes = []
     for item in result.projections:
+        if item.kind == "source":
+            continue
         ref = require_ref(item.ref)
         scalar = {"note": "body_text", "highlight": "annotation_body_text", "page": "NULL"}[
             item.kind
@@ -152,6 +154,14 @@ def project(
                 enqueue_authored_text_reindex(
                     db, owner_kind=owner_kind, owner_id=ref.id, reason="authored_merge"
                 )
+    passage_previews = {
+        item.ref: {
+            "excerpt": item.excerpt.model_dump(mode="json"),
+            "capture_revision": item.capture_revision,
+        }
+        for item in result.projections
+        if item.kind == "source" and item.excerpt is not None
+    }
     for passage in result.passages:
         owner = require_ref(passage.source_ref)
         quote = {
@@ -206,9 +216,9 @@ def project(
                 }
         db.execute(
             text(
-                "INSERT INTO passage_anchors(id,user_id,owner_scheme,owner_id,anchor_key,selector) "
-                "VALUES (:id,:a,:scheme,:owner,:key,CAST(:selector AS jsonb)) ON CONFLICT(id) "
-                "DO UPDATE SET selector=excluded.selector"
+                "INSERT INTO passage_anchors(id,user_id,owner_scheme,owner_id,anchor_key,selector,excerpt_preview) "
+                "VALUES (:id,:a,:scheme,:owner,:key,CAST(:selector AS jsonb),CAST(:preview AS jsonb)) ON CONFLICT(id) "
+                "DO UPDATE SET selector=excluded.selector,excerpt_preview=excluded.excerpt_preview"
             ),
             {
                 "id": passage.anchor_id,
@@ -217,6 +227,7 @@ def project(
                 "owner": owner.id,
                 "key": key,
                 "selector": json.dumps({"quote": quote, "locator_hint": hint}),
+                "preview": json.dumps(passage_previews[f"passage_anchor:{passage.anchor_id}"]),
             },
         )
     _project_links(db, account_id, result, visibility_changes)
@@ -376,11 +387,12 @@ def _highlight(
     )
     db.execute(
         text(
-            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible,annotation_body_pm_json,annotation_body_text) "
-            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible,CAST(:body AS jsonb),:words) "
+            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible,annotation_body_pm_json,annotation_body_text,excerpt_preview) "
+            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible,CAST(:body AS jsonb),:words,CAST(:preview AS jsonb)) "
             "ON CONFLICT(id) DO UPDATE SET color=excluded.color,exact=excluded.exact, "
             "prefix=excluded.prefix,suffix=excluded.suffix,authored_visible=excluded.authored_visible, "
             "annotation_body_pm_json=excluded.annotation_body_pm_json,annotation_body_text=excluded.annotation_body_text, "
+            "excerpt_preview=excluded.excerpt_preview, "
             "updated_at=CASE WHEN :public_changed THEN now() ELSE highlights.updated_at END"
         ),
         {
@@ -396,6 +408,12 @@ def _highlight(
             "prefix": capture.prefix or "",
             "suffix": capture.suffix or "",
             "visible": item.visible,
+            "preview": json.dumps(
+                {
+                    "excerpt": item.excerpt.model_dump(mode="json") if item.excerpt else None,
+                    "capture_revision": item.capture_revision,
+                }
+            ),
         },
     )
     if isinstance(

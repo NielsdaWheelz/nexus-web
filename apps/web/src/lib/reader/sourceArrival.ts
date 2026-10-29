@@ -39,6 +39,8 @@ const ARRIVAL = definePaneVisitDataKey<ArrivalIntent>("Source.Inspection");
 export interface SourceArrivalContext {
   readonly activationId: string;
   readonly signal: AbortSignal;
+  /** Requested visit intent; restored separately reports matching applied inspection. */
+  readonly purpose: "Open" | "RestoreVisit";
   readonly restored: boolean;
   mayFocus(target?: HTMLElement): boolean;
 }
@@ -285,6 +287,7 @@ export function useSourceArrival(input: {
         const outcome = target === null ? "Unavailable" : await latest.current.input.apply(target, {
           activationId: intent.activationId,
           signal,
+          purpose: intent.purpose,
           restored: intent.phase === "Applied" && intent.sourceIdentity === sourceIdentity,
           mayFocus: (element) => {
             const owner = getInteractionOwner();

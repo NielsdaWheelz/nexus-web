@@ -1,6 +1,8 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { FullResourceBody } from "@/components/resources/ExcerptDisclosure";
+import { authoredItem } from "@/lib/notes/presentation";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import { useWritingRuntime } from "@/lib/notes/hooks";
@@ -15,7 +17,7 @@ export const PLACEMENT_COPY: Record<Exclude<ReaderAnnotation["placement"]["kind"
 /** The literal captured quote, never the current source text. */
 export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnnotation }) {
   return <>
-    <mark className={styles.annotationQuote} data-color={annotation.color}>{annotation.selection.quote_exact}</mark>
+    <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef)} />
     {annotation.placement.kind === "unlocated" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unlocated }} announcement="None" /> : null}
   </>;
 }

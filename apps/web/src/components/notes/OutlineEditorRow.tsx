@@ -1,12 +1,14 @@
 "use client";
 
-/** Native row controls live outside ProseMirror's contentDOM. Portals publish
- * chrome into the view's stable slots; no control creates an editing host. */
-import type {ResourceProjection} from "@nexus/authored/types";
+/** React owns native controls and passive reference bodies in stable node-view
+ * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
 import {useRef} from "react";
 import {useWorkGuard} from "@/lib/unsavedWork";
 import {createPortal} from "react-dom";
+import type {ResourceProjection} from "@nexus/authored/types";
+import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
+import {authoredItem} from "@/lib/notes/presentation";
 import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, Unlink} from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
@@ -18,8 +20,8 @@ import styles from "./OutlineEditorRow.module.css";
 
 export interface OutlineRowChrome {
   row_id: string;
-  highlight: ResourceProjection | null;
   ref: string | null;
+  resource: ResourceProjection | null;
   kind: "note" | "title" | "reference";
   depth: number;
   parent_id: string | null;
@@ -29,7 +31,6 @@ export interface OutlineRowChrome {
   childrenAvailable: boolean;
   open: boolean;
   terminal: boolean;
-  root: boolean;
   selected: boolean;
   toggle(): void;
   select(): void;
@@ -44,7 +45,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
   const owners = useRef(new Map<string, readonly string[]>());
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
-    if (!row || row.root) return [];
+    if (!row) return [];
     const parsed = row.ref === null ? null : parseResourceRef(row.ref);
     // justify-defect: only uncommitted drafts lack a canonical resource ref.
     if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
@@ -75,6 +76,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
       </button> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.highlight ? [createPortal(<div contentEditable={false}><mark data-color={row.highlight.color ?? undefined}>{row.highlight.selection?.quote_exact || "selected region"}</mark><HighlightAnnotation highlightRef={row.highlight.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={ids => owners.current.set(row.row_id, ids)}/></div>, mount.content, `${row.row_id}:highlight`)] : [])];
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={ids => owners.current.set(row.row_id, ids)}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+        mount.content, `${row.row_id}:content`)] : [])];
   });
 }

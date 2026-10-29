@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.reader_excerpts import FrozenExcerpt
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 ResourceField = Literal["annotation"] | None
@@ -28,11 +29,15 @@ class CapturedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class CapturedQuote(CapturedModel):
+class LocationQuote(CapturedModel):
     exact: str
     prefix: str | None
     suffix: str | None
     color: HighlightColor | None
+
+
+class CapturedQuote(LocationQuote):
+    excerpt: FrozenExcerpt
 
 
 class CapturedSource(CapturedModel):

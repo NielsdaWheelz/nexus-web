@@ -1,6 +1,6 @@
-/** Frozen 0326 body grammar. Runtime executes the sibling bundled .mjs only.
- * Rebuild: bun build migrations/alembic/versions/0326_highlight_annotations.source.ts
- *   --target=node --minify --outfile=migrations/alembic/versions/0326_highlight_annotations.mjs
+/** Frozen 0327 body grammar. Runtime executes the sibling bundled .mjs only.
+ * Rebuild: bun build migrations/alembic/versions/0327_highlight_annotations.source.ts
+ *   --target=node --minify --outfile=migrations/alembic/versions/0327_highlight_annotations.mjs
  * Dependencies are frozen into that artifact: yjs 13.6.33, prosemirror-model 1.25.4,
  * fractional-indexing 4.0.0. Never import application modules here.
  */
@@ -265,7 +265,7 @@ function convertBody(input: {ref:string;state:string|null}, mapping: Record<stri
   } finally { doc.destroy(); }
 }
 let raw = "";
-for await (const part of process.stdin) {raw += part;if (Buffer.byteLength(raw)>32*1024*1024) throw new TypeError("0326 converter input exceeds 32 MiB; split the batch");}
+for await (const part of process.stdin) {raw += part;if (Buffer.byteLength(raw)>32*1024*1024) throw new TypeError("0327 converter input exceeds 32 MiB; split the batch");}
 const input = JSON.parse(raw);
 let result;
 try {
@@ -280,6 +280,6 @@ try {
   else if (input.op === "bodies") result = {bodies:input.bodies.map(body=>{
     try {return convertBody(body,input.mapping);} catch(error) {throw new TypeError(`body ${body.ref}: ${error.message}; repair the source body before retrying`);}
   })};
-  else throw new TypeError("unknown 0326 converter operation");
-} catch(error) {process.stderr.write(`0326 ${error.message}\n`);process.exit(1);}
+  else throw new TypeError("unknown 0327 converter operation");
+} catch(error) {process.stderr.write(`0327 ${error.message}\n`);process.exit(1);}
 process.stdout.write(JSON.stringify(result));

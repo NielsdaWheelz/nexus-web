@@ -19,23 +19,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import XPostMedia
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.services import authored, library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
-PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block", "highlight")
-
-_QUAD_KEYS = ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4")
+PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block", "highlight", "fragment")
 
 
 def normalize_quote_text(text: str) -> str:
@@ -54,75 +51,6 @@ def compute_anchor_key(*, exact: str, prefix: str, suffix: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def canonical_locator_hint(hint: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Validate and canonically encode a replaceable locator hint.
-
-    Locator integers are base-10 ints; non-integral geometry becomes a fixed
-    decimal string without exponent or trailing zero. Hints never enter
-    ``anchor_key``.
-    """
-    if hint is None:
-        return None
-    kind = hint.get("kind")
-    if kind == "highlight_annotation_text":
-        return {
-            "kind": kind,
-            "highlight_id": str(UUID(hint["highlight_id"])),
-            "start_offset": _canonical_int(hint["start_offset"], field="start_offset"),
-            "end_offset": _canonical_int(hint["end_offset"], field="end_offset"),
-            "body_sha256": hint["body_sha256"],
-        }
-    if kind == "text":
-        out: dict[str, Any] = {"kind": "text"}
-        if hint.get("fragment_id") is not None:
-            out["fragment_id"] = str(hint["fragment_id"])
-        if hint.get("section_id") is not None:
-            out["section_id"] = str(hint["section_id"])
-        out["start_offset"] = _canonical_int(hint.get("start_offset"), field="start_offset")
-        out["end_offset"] = _canonical_int(hint.get("end_offset"), field="end_offset")
-        return out
-    if kind == "pdf":
-        raw_quads = hint.get("quads")
-        quads = [
-            {key: _canonical_geometry(quad.get(key), field=key) for key in _QUAD_KEYS}
-            for quad in (raw_quads if isinstance(raw_quads, list) else [])
-        ]
-        out = {
-            "kind": "pdf",
-            "page_number": _canonical_int(hint.get("page_number"), field="page_number"),
-        }
-        if quads:
-            out["quads"] = quads
-        return out
-    if kind == "time":
-        return {
-            "kind": "time",
-            "t_start_ms": _canonical_int(hint.get("t_start_ms"), field="t_start_ms"),
-            "t_end_ms": _canonical_int(hint.get("t_end_ms"), field="t_end_ms"),
-        }
-    raise InvalidRequestError(message=f"Unknown locator hint kind: {kind!r}")
-
-
-def _canonical_int(value: Any, *, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise InvalidRequestError(message=f"Locator hint {field} must be a number")
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise InvalidRequestError(message=f"Locator hint {field} must be an integer")
-        value = int(value)
-    if value < 0:
-        raise InvalidRequestError(message=f"Locator hint {field} must be non-negative")
-    return value
-
-
-def _canonical_geometry(value: Any, *, field: str) -> int | str:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise InvalidRequestError(message=f"Locator hint quad {field} must be a number")
-    if isinstance(value, int) or value.is_integer():
-        return int(value)
-    return format(Decimal(repr(value)).normalize(), "f")
-
-
 def materialize_or_reuse(
     db: Session,
     *,
@@ -132,19 +60,19 @@ def materialize_or_reuse(
     exact: str,
     prefix: str | None = None,
     suffix: str | None = None,
-    locator_hint: dict[str, Any] | None = None,
+    captured_evidence: CapturedEvidence,
 ) -> ResourceRef:
     """Capture or reuse the authored passage for a quote within one owner.
 
+    The caller supplies captured passage evidence; no direct text-only capture exists.
     The normalized quote must resolve uniquely within its owner via the shared
-    resolver; empty, ambiguous, or unmatched quotes are a typed refusal, and locator
-    geometry never disambiguates identity. The semantic owner resolves the permanent
+    resolver; empty, ambiguous, or unmatched quotes are a typed refusal. The semantic owner resolves the permanent
     binding or mints its identity and stamps the literal quote capture; its projection
     writes the ``passage_anchors`` row. Flush-only inside the caller's transaction:
     the account head precedes the post's media family lock, as in every authored writer.
     """
     if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
-        raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
+        raise AssertionError(  # justify-defect: callers pass the closed media|note_block|highlight|fragment set
             f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
         )
     authored.lock_account(db, user_id)
@@ -157,13 +85,6 @@ def materialize_or_reuse(
         if not can_read_media(db, user_id, owner_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    if owner_scheme == "highlight" and not db.scalar(
-        text(
-            "SELECT EXISTS(SELECT 1 FROM highlights WHERE id=:id AND user_id=:viewer AND authored_visible AND annotation_body_pm_json IS NOT NULL)"
-        ),
-        {"id": owner_id, "viewer": user_id},
-    ):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
     quote_exact = normalize_quote_text(exact)
     resolution = locator_resolver.resolve_passage_selector(
         db,
@@ -172,7 +93,6 @@ def materialize_or_reuse(
         exact=quote_exact,
         prefix=normalize_quote_text(prefix or ""),
         suffix=normalize_quote_text(suffix or ""),
-        locator_hint=canonical_locator_hint(locator_hint),
         source_reads=locator_resolver.read_passage_sources(
             db, [(owner_scheme, owner_id)], viewer_id=user_id
         ),
@@ -182,21 +102,40 @@ def materialize_or_reuse(
             ApiErrorCode.E_LINK_TARGET_AMBIGUOUS,
             _REFUSAL_MESSAGES[resolution.status],
         )
-    capture_locator = None
-    if owner_scheme == "highlight":
-        assert resolution.locator is not None
-        capture_locator = {
-            "type": "highlight_annotation_offsets",
-            "highlight_id": str(owner_id),
-            "start_offset": resolution.locator["start_offset"],
-            "end_offset": resolution.locator["end_offset"],
-            "body_sha256": resolution.locator["body_sha256"],
-            "text_quote_selector": {
-                "exact": exact,
-                "prefix": resolution.prefix,
-                "suffix": resolution.suffix,
-            },
-        }
+    assert captured_evidence.quote is not None
+    frozen = captured_evidence.quote.excerpt
+    target = captured_evidence.target
+    if target.kind != "passage" or target.owner_ref != f"{owner_scheme}:{owner_id}":
+        raise InvalidRequestError(message="Captured passage owner mismatch")
+    locator = target.locator.model_dump(mode="json")
+    publication = None
+    extent = frozen.source_extent
+    if owner_scheme == "fragment":
+        if (
+            target.locator.type != "x_capture_offsets"
+            or target.locator.fragment_id != owner_id
+            or target.source_identity != str(target.locator.capture_id)
+            or captured_evidence.quote.exact != exact
+            or frozen.structure != "captured"
+            or extent is None
+            or extent.reading_ref != target.owner_ref
+            or extent.fragment_id != str(owner_id)
+            or extent.document_identity != f"capture:{target.locator.capture_id}"
+            or resolution.locator is None
+            or resolution.locator.get("fragment_id") != str(owner_id)
+        ):
+            raise InvalidRequestError(message="Captured x passage identity mismatch")
+        publication = {"kind": "x_capture", "capture_id": str(target.locator.capture_id)}
+    elif (
+        extent is not None
+        and extent.reading_ref == target.owner_ref == f"media:{owner_id}"
+        and extent.document_identity == target.source_identity
+        and str(getattr(target.locator, "media_id", "")) == str(owner_id)
+        and target.source_identity is not None
+        and target.source_identity.startswith("g")
+        and target.source_identity[1:].isdigit()
+    ):
+        publication = {"kind": "reader", "generation": int(target.source_identity[1:])}
     result = authored.server_command(
         db,
         user_id,
@@ -207,7 +146,12 @@ def materialize_or_reuse(
             "exact": quote_exact,
             "prefix": resolution.prefix,
             "suffix": resolution.suffix,
-            "capture": {"quote_exact": exact, "publication": None, "locator": capture_locator},
+            "capture": {
+                "quote_exact": exact,
+                "publication": publication,
+                "locator": locator,
+                "excerpt": frozen.model_dump(mode="json"),
+            },
         },
         resource_refs=[],
         link_ids=[],
