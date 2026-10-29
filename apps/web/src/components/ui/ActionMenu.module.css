@@ -16,6 +16,7 @@
 }
 
 .menuItemIcon {
+  position: relative;
   display: inline-flex;
   flex: 0 0 16px;
   inline-size: 16px;
@@ -78,6 +79,26 @@
 .trailingRegion {
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.currentMarker {
+  position: absolute;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  color: var(--accent);
+}
+
+.menuItemIcon:has(> svg) .currentMarker {
+  inset-block-end: 0;
+  inset-inline-end: 0;
+}
+
+@media (forced-colors: active) {
+  .currentMarker {
+    color: Highlight;
+  }
 }
 
 /* Initial controls own the width; prepared verbs and trailing facts share its room. */

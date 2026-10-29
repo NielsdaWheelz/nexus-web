@@ -1,26 +1,27 @@
 "use client";
 
 // The query edits text and selects candidates; native secondary buttons own their actions.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
-import { assertNever } from "@/lib/assertNever";
+import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
-import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowExcerptItem, nexusRowExcerptName, nexusRowPrimaryText } from "../NexusRow";
 import NexusPages from "../NexusPages";
+import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "../NexusPaneList";
 import type { NexusController } from "../useNexusController";
 import styles from "../Nexus.module.css";
 
 const GRID_ID = "desktop-nexus-results";
+const NOTICE_ID = "desktop-nexus-notices";
 const HELP_ID = "desktop-nexus-help";
 const MENU_HELP_ID = "desktop-nexus-menu-help";
 const CLOSE_HELP_ID = "desktop-nexus-close-help";
@@ -46,17 +47,26 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     refreshRevision.current = controller.searchRefreshRevision;
     if (gridRef.current) gridRef.current.scrollTop = 0;
   }, [controller.searchRefreshRevision]);
+  useLayoutEffect(() => {
+    const port = gridRef.current;
+    if (!controller.open || controller.page.kind !== "Root" || !port) return;
+    const positions = controller.rootScroll.current;
+    port.scrollTop = positions.Search;
+    return () => { positions.Search = port.scrollTop; };
+  }, [controller.open, controller.page.kind, controller.query, controller.rootScroll]);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
+  const focusedNative = useRef<HTMLElement | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
-  const rows = controller.groups.flatMap((group) => group.rows);
+  const rows = controller.groups.filter(group => controller.reorder.placement === null || group.id === "Open").flatMap((group) => group.rows);
   const index = rows.findIndex((row) => row.key === controller.activeKey);
   const active = rows[index];
 
   useLayoutEffect(() => {
-    const button = focusedSecondary.current;
+    const button = focusedSecondary.current ?? focusedNative.current;
     if (!button || button.isConnected) return;
     focusedSecondary.current = null;
+    focusedNative.current = null;
     const focus = document.activeElement;
     if (focus instanceof HTMLElement && focus !== document.body && focus.isConnected && !focus.closest("[hidden], [inert]")) return;
     if (isTopmostInteractionOwner("Nexus")) inputRef.current?.focus({ preventScroll: true });
@@ -76,56 +86,41 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     if (grid && item) revealCollectionItem(grid, item);
   }, [controller.open, controller.page.kind, controller.activeKey, index]);
 
+  const paneFocusRevision = useRef(controller.paneFocusRevision);
+  useLayoutEffect(() => {
+    if (paneFocusRevision.current === controller.paneFocusRevision) return;
+    paneFocusRevision.current = controller.paneFocusRevision;
+    if (!controller.open || !isTopmostInteractionOwner("Nexus")) return;
+    const key = controller.paneFocusKey;
+    const target = key !== null && !key.startsWith("Pane:")
+      ? Array.from(gridRef.current?.querySelectorAll<HTMLElement>("[data-nexus-control]") ?? []).find(node => node.dataset.nexusControl === key)
+      : null;
+    (target ?? inputRef.current)?.focus({ preventScroll: true });
+  }, [controller.paneFocusRevision, controller.paneFocusKey, controller.open]);
   const typed = controller.query.trim().length > 0;
-  const queryActions = controller.groups.find((group) => group.id === "QuickActions")?.rows.length ?? 0;
+  const queryActions = controller.groups.find(group => group.id === "Continuations")?.rows.length ?? 0;
   const status = typed
     ? `${count(rows.length - queryActions, "result")}. ${count(queryActions, "query action")}.`
     : `${count(rows.length, "item")} in ${count(controller.groups.length, "section")}`;
-  const canSelect = active?.action.kind === "Available";
-  let opensDestination = false;
-  if (active?.action.kind === "Available") {
-    const target = active.action.target;
-    switch (target.kind) {
-      case "Resource":
-      case "InternalHref":
-      case "PaneOpen":
-      case "OpenAcceptedSource":
-      case "OpenDailyPage":
-      case "CreatePage":
-      case "CreateLibrary":
-      case "ChooseCreate":
-      case "ChooseBrowse":
-        opensDestination = true;
-        break;
-      case "ResumeCurrentPlayback":
-      case "OpenAdd":
-      case "ManagePanes":
-        break;
-      default: assertNever(target);
-    }
-  }
-  const menuAvailable = controller.rootMode === "NewPane" ? Boolean(active?.matchingPassage) : active?.secondary?.kind === "TargetMenu";
-  const help = [rows.length > 0 ? "up/down browse" : null, canSelect ? opensDestination ? controller.rootMode === "NewPane" ? "enter open" : "enter open · shift+enter new pane" : "enter select" : null, menuAvailable ? "tab for options" : null].filter(Boolean).join(" · ");
-
   const root = (
     <>
-      {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><button type="button" className={styles.allPanes} onClick={controller.escape}>cancel</button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
-      <label className={styles.inputRow}>
+      {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><Button onClick={controller.escape}>cancel</Button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
+      <div className={styles.inputRow} onPointerDownCapture={controller.interact}>
         <span className="sr-only">Find anything…</span>
         <Input
           ref={inputRef}
           bare
           role="combobox"
-          aria-label="Find anything…"
+          aria-label="find anything…"
           aria-autocomplete="list"
           aria-haspopup="grid"
           aria-controls={GRID_ID}
           aria-expanded="true"
           aria-activedescendant={inputFocused && active ? candidateId(active.key) : undefined}
-          aria-describedby={controller.lookupGuidance === null ? HELP_ID : `${HELP_ID} desktop-nexus-guidance`}
+          aria-describedby={controller.lookupGuidance === null ? HELP_ID : `${HELP_ID} ${NOTICE_ID}-guidance`}
           className={styles.input}
           value={controller.query}
-          placeholder="Find anything…"
+          placeholder="find anything…"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
@@ -147,8 +142,15 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               return;
             }
             if (event.defaultPrevented || !isTopmostInteractionOwner("Nexus")) return;
+            controller.interact();
             const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain && rows.length > 0) {
+            if (event.key === "Tab" && plain && active) {
+              const secondary = document.getElementById(candidateId(active.key))?.querySelector<HTMLButtonElement>("[data-nexus-secondary]");
+              if (secondary) {
+                event.preventDefault();
+                secondary.focus();
+              }
+            } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain && rows.length > 0) {
               event.preventDefault();
               const down = event.key === "ArrowDown";
               const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
@@ -159,6 +161,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                 if (grid && item) revealCollectionItem(grid, item);
               }
             } else if (event.key === "Enter") {
+              if (controller.reorder.placement !== null) {
+                event.preventDefault();
+                if (!event.repeat && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && active) controller.activate(active.action, { disposition: { kind: "Follow" } }, active);
+                return;
+              }
               const activation = workspaceTargetActivationIntent(event, "activate");
               if (activation.kind === "Unowned") return;
               event.preventDefault();
@@ -166,91 +173,95 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               controller.submitInput({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
             } else if (event.key === "Escape") {
               event.preventDefault();
-              if (controller.rootMode === "NewPane") controller.escape();
-              else if (controller.query) controller.setQuery("");
-              else controller.escape();
+              controller.escape();
             }
           }}
         />
-      </label>
-      <div className={styles.help} aria-hidden="true">{help}</div>
+        <NexusQueryStatus controller={controller} noticeId={NOTICE_ID} />
+      </div>
       <span id={HELP_ID} className="sr-only">
-        {rows.length > 0 ? "up and down arrows browse results. " : ""}
-        {canSelect ? opensDestination ? controller.rootMode === "NewPane" ? "enter opens the selected result in a new pane. " : "enter opens the selected result. shift plus enter opens in a new pane. " : "enter selects the highlighted action. " : ""}
-        {menuAvailable ? "tab reaches options for the selected result." : ""}
+        {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.`
+          : controller.rootMode === "NewPane" ? "arrows select results. enter opens in a new pane. tab reaches selected options."
+            : "arrows select results. enter activates; shift plus enter opens in a new pane. tab reaches selected options."}
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
-      {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
-      {controller.lookupGuidance === null ? null : <div id="desktop-nexus-guidance" className={styles.help}>{controller.lookupGuidance}</div>}
-      <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
+      <NexusPaneDrag controller={controller} scrollport={() => gridRef.current} mobile={false}>
       <div
         ref={node => { gridRef.current = node; surfaceRef.current = node?.parentElement ?? null; }}
-        id={GRID_ID}
-        role="grid"
-        aria-label={typed ? "Find results" : "Nexus options"}
-        aria-colcount={1}
         aria-busy={controller.busy || undefined}
-        className={`${collection.fillViewport} ${styles.grid}`}
+        className={`${collection.fillViewport} ${styles.resultScroll}`}
         data-collection-viewport=""
         onPointerDownCapture={controller.interact}
-        onFocusCapture={controller.interact}
+        onFocusCapture={event => { if (event.target instanceof HTMLElement && gridRef.current?.contains(event.target)) focusedNative.current = event.target; controller.interact(); }}
         onWheelCapture={controller.interact}
         onTouchMoveCapture={controller.interact}
         onKeyDownCapture={controller.interact}
       >
+        <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} className={styles.grid}>
         {controller.groups.map((group) => (
-          <div key={group.id} role="rowgroup" aria-labelledby={`desktop-nexus-section-${group.id}`} className={styles.group}>
-            <div role="row" className={styles.headingRow}>
+          <Fragment key={group.id}>
+          <div role="rowgroup" aria-labelledby={group.label ? `desktop-nexus-section-${group.id}` : undefined} aria-label={group.label ? undefined : group.id === "Results" ? "results" : "query actions"} className={styles.group}>
+            {group.label ? <div role="row" className={styles.headingRow}>
               <div role="gridcell">
-                <h3 id={`desktop-nexus-section-${group.id}`}>{group.label}</h3>
+                {group.id === "Open" && controller.paneListPresented ? <NexusPaneListHeader controller={controller} mobile={false} /> : <h3 id={`desktop-nexus-section-${group.id}`}>{group.label}</h3>}
               </div>
-            </div>
-            {group.rows.map((row) => {
+            </div> : null}
+            <div id={group.id === "Open" && controller.paneListPresented ? "desktop-nexus-open-panes" : undefined} role="presentation">
+            {group.rows.map((row, rowIndex) => {
               const selected = row.key === controller.activeKey;
-              const ownExcerpt = row.match?.excerpt.text;
-              const snippet = row.matchingPassage?.match?.excerpt.text
-                ?? ((row.item?.preview.body.kind === "named" && ownExcerpt === row.item.preview.body.title) || (row.item?.preview.body.kind === "media" && ownExcerpt === row.item.preview.body.media_summary.title) ? undefined : ownExcerpt);
+              const snippet = nexusRowEvidenceText(row);
               const passageFacts = row.matchingPassage
                 ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method)
                 : undefined;
               const reason = row.action.kind === "Unavailable" ? row.action.reason : undefined;
               return (
-                <div
-                  key={row.key}
+                <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <div
+                  ref={drag.setNodeRef}
+                  style={paneDragStyle(drag)}
+                  data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined}
+                  data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined}
                   role="row"
                   aria-selected={selected}
                   className={`${collection.row} ${styles.gridRow}`}
                   data-active={selected || undefined}
-                  data-nested={row.parent ? true : undefined}
-                >
+                                  >
                   <div
                     id={candidateId(row.key)}
                     role="gridcell"
-                    aria-label={rowName([row.label, rowFacts(row, true), snippet, passageFacts, reason])}
+                    aria-label={group.id === "Open" && controller.paneListPresented ? paneCandidateName(controller, row, rowIndex) : rowName([nexusRowPrimaryText(row), rowFacts(row), snippet, passageFacts, reason])}
                     className={styles.candidateCell}
-                    aria-disabled={reason ? true : undefined}
                     onPointerMove={event => {
                       const press = pointerPress.current;
                       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
                       if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)
-                        && document.activeElement === inputRef.current) controller.setActive(row.key, false);
+                        && document.activeElement === inputRef.current) controller.setActive(row.key);
                     }}
                   >
                     <div
+                      ref={drag.setActivatorNodeRef}
+                      data-nexus-control={row.key}
                       className={styles.primaryCell}
+                      onMouseDown={event => { if (drag.enabled && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && isTopmostInteractionOwner("Nexus")) drag.listeners?.onMouseDown?.(event); }}
+                      onTouchStart={event => { if (drag.enabled && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && isTopmostInteractionOwner("Nexus")) drag.listeners?.onTouchStart?.(event); }}
                       aria-disabled={reason ? true : undefined}
                       onPointerDown={event => {
                         if (!event.isPrimary || event.button !== 0) return;
                         pointerPress.current = { key: row.key, x: event.clientX, y: event.clientY, moved: false };
-                        if (event.pointerType !== "touch") event.preventDefault();
+                        drag.begin(event);
+                        if (event.pointerType !== "touch" && !drag.enabled) event.preventDefault();
                       }}
-                      onPointerCancel={() => { pointerPress.current = null; }}
+                      onPointerUp={event => { delete event.currentTarget.dataset.dragPointer; }}
+                      onPointerCancel={event => { pointerPress.current = null; delete event.currentTarget.dataset.dragPointer; }}
                       onClick={(event) => {
                         const press = pointerPress.current;
                         pointerPress.current = null;
                         if (event.detail !== 0 && (!press || press.key !== row.key || press.moved)) return;
+                        if (controller.reorder.placement !== null) {
+                          event.preventDefault();
+                          if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { controller.setActive(row.key); controller.activate(row.action, { disposition: { kind: "Follow" } }, row); }
+                          return;
+                        }
                         const activation = workspaceTargetActivationIntent(event);
                         if (activation.kind === "Unowned") return;
                         event.preventDefault();
@@ -263,18 +274,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         );
                       }}
                     >
-                      <NexusRowBody row={row} desktop disclosure={{
-                        triggerAttributes: { tabIndex: selected ? 0 : -1,
-                          onFocus: event => { focusedSecondary.current = event.currentTarget; controller.setActive(row.key); },
-                          onBlur: () => { focusedSecondary.current = null; } },
-                      }} />
+                      {controller.reorder.placement?.kind === "ChoosePosition" && group.id === "Open" ? <span className={styles.panePosition} aria-hidden>{rowIndex + 1}</span> : null}
+                      <NexusRowBody row={row} desktop />
                     </div>
                     {row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && row.secondary?.kind === "ClosePane" ? (
                       <Button
                         iconOnly
                         tabIndex={selected ? 0 : -1}
                         className={styles.actionsButton}
-                        aria-label={`close ${row.label}`}
+                        data-nexus-secondary=""
+                        data-nexus-control={`ClosePane:${row.secondary.paneId}`}
+                        aria-label={`close ${paneRowName(controller, row)}`}
                         aria-describedby={CLOSE_HELP_ID}
 
                         onFocus={(event) => {
@@ -285,9 +295,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         onKeyDown={(event) => {
                           if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault();
                         }}
-                        onClick={() => {
+                        onClick={event => {
+                          event.currentTarget.focus({ preventScroll: true });
                           controller.setActive(row.key);
-                          if (row.secondary?.kind === "ClosePane" && controller.closePane(row.secondary.paneId) !== null) inputRef.current?.focus({ preventScroll: true });
+                          if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId);
                         }}
                         icon={<X size={18} aria-hidden="true" />} />
                     ) : row.secondary?.kind === "TargetMenu" || (controller.rootMode === "NewPane" && row.matchingPassage) ? <NexusRowMenu
@@ -306,6 +317,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         renderTrigger: (trigger) => (
                           <OverflowMenuButton
                             {...trigger}
+                            data-nexus-secondary=""
                             aria-describedby={MENU_HELP_ID}
                             className={styles.actionsButton}
                             onFocus={(event) => {
@@ -321,20 +333,33 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         ),
                       }}
                     /> : null}
+                    <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{
+                      tabIndex: selected ? 0 : -1,
+                      "aria-label": nexusRowExcerptName(row),
+                      onFocus: event => { focusedSecondary.current = event.currentTarget; controller.setActive(row.key); },
+                      onBlur: () => { focusedSecondary.current = null; },
+                    }} />
                   </div>
-                </div>
+                </div>}</NexusPaneSortable>
               );
             })}
+            </div>
           </div>
+          {group.id === "Open" ? <NexusClosedPanes controller={controller} mobile={false} /> : null}
+          </Fragment>
         ))}
+        </div>
+        {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
+        <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       </div>
+      </NexusPaneDrag>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement || controller.lookupGuidance, controller.searchProgress.text, controller.titlesFailed ? PANE_TITLES_FAILED : null, !controller.pending ? status : null].filter(Boolean).join(" ")}
+        {[controller.announcement, controller.searchProgress.kind === "Pending" ? controller.searchProgress.text : null, controller.noticeText, !controller.pending ? status : null].filter(Boolean).join(" ")}
       </div>
     </>
   );
 
-  // Escape, Back and the scrim all take one step back: a page, the query, then the palette.
+  // Every root dismissal uses the controller; child pages keep their guarded back step.
   return (
     <ModalFrame
       open={controller.open}

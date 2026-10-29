@@ -1,6 +1,7 @@
 // The Nexus vocabulary: what a row is, where it leads, and which page the launcher shows.
 import type { ComponentType } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { LocalMatch } from "@/lib/search/localSearch";
 import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
@@ -65,7 +66,7 @@ export type NexusTarget =
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManagePanes" };
+  | { readonly kind: "UseText"; readonly text: string };
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
@@ -79,36 +80,32 @@ export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
   | { readonly kind: "Unavailable"; readonly reason: string };
 
-export type NexusRankTier = "ExplicitIntent" | "Exact" | "PrefixOrToken" | "CurrentContext" | "FuzzyOrSynonym" | "MetadataOrFullText";
-export type NexusHomeSection = "Commands" | "Resources" | "Saved" | "Inside";
+export type NexusRankTier = "ExplicitIntent" | "Exact" | "PrefixOrToken" | "Substring" | "Lexical" | "FuzzyOrSynonym" | "Semantic";
 
 export interface NexusRow {
   /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
   readonly key: string;
-  /** Existing resources, panes and destinations qualify for automatic highlight. */
-  readonly existing: boolean;
+  readonly localMatch: LocalMatch | null;
   readonly label: string;
   readonly icon: NexusIcon;
   readonly type?: string;
   readonly detail?: string;
-  readonly state?: "Current" | "Open" | "Minimized";
+  readonly state?: "Current" | "Minimized";
   readonly item?: Schema<"ResourceItemOut">;
   readonly match?: Schema<"SearchMatchOut"> | null;
   readonly matchMethod?: "lexical" | "semantic" | null;
   readonly matchingPassage?: Schema<"SearchOccurrenceOut"> | null;
-  readonly placement?: { readonly home: NexusHomeSection; readonly promoted: boolean };
-  readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly secondary?:
     | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "ClosePane"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
-  readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
+  readonly rank: { readonly stream: "Navigation" | "Local" | "Resources" | "Saved" | "Passages"; readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
 }
 
 export interface NexusGroup {
-  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "BestMatch" | NexusHomeSection;
+  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "Results" | "Continuations";
   readonly label: string;
   readonly rows: readonly NexusRow[];
 }
@@ -130,7 +127,9 @@ export interface NexusRootOrigin {
   readonly control: string;
 }
 
-type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
+export type UseTextPage = { readonly kind: "UseText"; readonly text: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
+export type ChoiceReturn = { readonly kind: "Root"; readonly origin: NexusRootOrigin } | UseTextPage;
+type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly returnTo: ChoiceReturn; readonly activation: NexusTargetActivation };
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
@@ -140,11 +139,12 @@ export type ReplayableSubmitState =
 
 export type NexusPage =
   | { readonly kind: "Root" }
+  | UseTextPage
   | CreateChoice
-  | { readonly kind: "ChooseBrowse"; readonly query: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation }
+  | { readonly kind: "ChooseBrowse"; readonly query: string; readonly returnTo: ChoiceReturn; readonly activation: NexusTargetActivation }
   | {
       readonly kind: "CreateLibrary";
-      readonly returnTo: CreateChoice | { readonly kind: "Root"; readonly origin: NexusRootOrigin };
+      readonly returnTo: CreateChoice | ChoiceReturn;
       readonly libraryId: string;
       readonly name: string;
       readonly activation: NexusTargetActivation;
@@ -159,8 +159,7 @@ export type NexusPage =
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }
-  | { readonly kind: "Add"; readonly sessionId: string }
-  | { readonly kind: "ManagePanes" };
+  | { readonly kind: "Add"; readonly sessionId: string };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

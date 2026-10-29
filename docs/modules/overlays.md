@@ -224,7 +224,7 @@ root listeners: a component's own key handler runs first and keeps a key by
 preventing its default (the Nexus inputs own Escape this way). a
 feature's own global Escape command must yield while
 `hasActiveInteractionOwner()`; the reader (`media/[id]/chrome.tsx`) does, so
-Escape with its inspector sheet on top closes only the sheet. react listens on
+escape with its covering inspector on top closes only that task. react listens on
 every portal container too: a portaled component that stops a key's
 propagation hides it from the document. `ActionMenu` stops every key, since
 react bubbles a portaled menu's keys through its owners (the linked-notes
@@ -282,11 +282,15 @@ live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
-drag. Back and Escape go through the feature's guard. mobile Nexus is its one
-user: native keyboard/nested overlays precede task back; a child returns through
-its guarded origin, search returns to overview, and the new-pane picker cancels
-to overview without clearing its query. visible cancel performs that transition
-directly. dirty work keeps its confirmation; ordinary overview closes.
+drag. back and escape go through the feature's optional guard. `panelId` names
+the frame; function children receive its guarded dismissal request. all mobile
+companions also use this frame, with task close returning to primary content.
+the frame can remain mounted while hidden; companion bodies retain their own
+unmount policy. mobile nexus lets native keyboard/nested overlays precede task
+back; a child returns through its guarded origin, search returns to overview,
+and the new-pane picker cancels to overview without clearing its query. visible
+cancel performs that transition directly. dirty work keeps its confirmation;
+ordinary overview closes.
 
 **ActionMenu**: a "…" or custom trigger. `MenuSource` supplies a known subject key
 and title plus immediate complete content or preparation keyed by the exact abort
@@ -319,15 +323,16 @@ there; this quiet interval does not assert portable keyboard completion. close,
 replacement and unmount cancel admission; prepared actions retain their original
 five-second deadline. published geometry and resize retirement remain strict.
 
-Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
-wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
+Enter and Space use ordinary opening; ArrowDown requests the first item,
+ArrowUp the last. arrows wrap, Home/End and typeahead navigate items. desktop items have `tabIndex=-1`;
 disabled items remain arrow-focusable and display a wrapping reason. Tab and
 Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
 enclosing modal boundary wraps. this also applies while failed, empty or
 disabled-only on desktop. custom editable controls retain their editing keys.
-focus moves to the first (or last) item once, after the first
-placement, so a moving anchor never resets the keyboard position. choosing a
+ordinary keyboard opening focuses the current-location item, otherwise the first;
+explicit arrow opening chooses first/last. touch retains panel focus and reveals
+current location once. later placement never resets the keyboard position. choosing a
 command returns focus before it runs unless it opts out. a handled workspace
 link transfers focus ownership to navigation; closing must not reactivate its
 source pane. an unhandled native mouse link retains normal menu restoration.
@@ -336,7 +341,9 @@ published command meaning and target geometry remain stable. changed title,
 sections, labels, targets, reasons, controls or unsolicited layout close with one
 announcement; a fresh activation is required. same-geometry availability and
 handlers remain live. a choice's names, options and reason are meaning; its
-checked value is live state and repaints in place. capture checks precede
+checked value is live state and repaints in place. command/link `current: "location"`
+is also live: its reserved marker and `aria-current` update without retiring the
+menu or moving focus/scroll. capture checks precede
 custom/native activation, including shifted and auxiliary links. list scrolling
 and header drag are deliberate movement.
 mobile sheets measure layout position within their fixed backdrop, independently

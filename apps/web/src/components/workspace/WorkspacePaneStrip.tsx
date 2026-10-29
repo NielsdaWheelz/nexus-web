@@ -186,7 +186,7 @@ export default function WorkspacePaneStrip(props: {
   const ids = items.map((item) => item.paneId);
   const chips = items.map((item) => ({ item, controls: paneControls({
     state: props.state, paneId: item.paneId, title: item.label,
-    desktopMaximized: props.isMaximized, isMobile: false,
+    desktopMaximized: props.isMaximized,
   }) }));
   const targets: FocusTarget[] = chips.flatMap(({ item, controls }) => [
     { paneId: item.paneId, control: "activate" },
@@ -432,7 +432,7 @@ export default function WorkspacePaneStrip(props: {
           <div className={cx(styles.chip, styles.dragOverlay, compact.compact, selection.surface, draggedItem.isActive && selection.selected)} data-active={draggedItem.isActive || undefined} aria-hidden inert>
             <span className={cx(styles.activator, selection.target)}><ChipIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
-              {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized, isMobile: false }).map((control) => {
+              {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized }).map((control) => {
                 const Icon = control.icon;
                 return <span key={control.slot} className={styles.action}><Icon size={16} strokeWidth={1.75} aria-hidden /></span>;
               })}

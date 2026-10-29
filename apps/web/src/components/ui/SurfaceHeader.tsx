@@ -53,7 +53,7 @@ const RECOVERY = {
 /**
  * A pane's chrome bar: back and forward, the identity (which yields width
  * first), resource shortcuts, a primary action, More and Inspector. Narrow
- * phones keep back, forward, More and the workspace action; other commands
+ * phones keep back, forward, More and Inspector; other commands
  * retain their identity in More. Desktop: the pane's top row. Mobile: a stationary frame
  * around the hideable top bar, after its visually hidden recovery toggle.
  */
@@ -131,7 +131,7 @@ export default function SurfaceHeader({
   }, [mobile, viewport, frameRef]);
   const recovery = mobile && visibility !== null ? RECOVERY[visibility] : null;
   const actions = [...paneActions, ...menuActions];
-  const displaced = narrow ? [primaryAction?.action, companion].filter((action): action is PanePrimaryAction | PaneCompanionAction => action !== undefined) : [];
+  const displaced = narrow ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
   const seen = new Set(actions.map(action => action.id));
   const projectedPaneActions = [...paneActions, ...displaced.filter(action => {
     if (seen.has(action.id)) return false;
@@ -263,7 +263,7 @@ export default function SurfaceHeader({
                   {actions.some(action => action.indicator?.kind === "Status") ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
                 </span>} />
             ) : null}
-            {!narrow && companion && companionState ? (
+            {companion && companionState ? (
               <Button
                 iconOnly
                 icon={companion.icon}

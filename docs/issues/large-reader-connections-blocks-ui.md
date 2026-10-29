@@ -2,6 +2,12 @@
 
 open; separate reader performance work, outside the 57 metadata repairs.
 
+still blocks mobile companion release at `da19e2959`: a valid 10,000-reference
+epub exceeded ordinary connections readiness, then browser readback stalled.
+current reproduction and release requirements live in
+[release-mobile-companion.md](release-mobile-companion.md). the normal-flow
+renderer still mounts every group (`EvidencePane.tsx:504–510`).
+
 on production `8a67e218ae28cedf89932d7feb13d5cffea05c60`, open
 `228d14cf-120c-495c-9e5c-5a3383658843`, connections, all items; disclose
 source text and follow its “view in source” link. the second selected source

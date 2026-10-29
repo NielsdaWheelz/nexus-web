@@ -21,7 +21,6 @@ import {
   FeedbackState,
   FeedbackStatus,
   type FeedbackAnnouncement,
-  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -41,7 +40,7 @@ import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import type { NavigationFailure } from "./navigator";
+import { navigationFailureContent } from "./navigationFeedback";
 
 export type {
   Reader,
@@ -308,24 +307,6 @@ export default function DocumentReaderView(
       </div>
     </div>
   );
-}
-
-const NAVIGATION_TITLES: Record<NavigationFailure["operation"], string> = {
-  Open: "couldn’t open that passage",
-  Restore: "couldn’t restore your reading position",
-  Return: "couldn’t return to your held place",
-  Reflow: "couldn’t keep this passage in view",
-  Continue: "couldn’t set your reading position here",
-};
-
-/** Copy follows the failed intention; capture has its own explanation except on adoption. */
-function navigationFailureContent(failure: NavigationFailure): FeedbackContent {
-  return {
-    tone: "Warning",
-    title: failure.operation !== "Continue" && failure.reason === "CaptureUnavailable"
-      ? "couldn’t hold your current place"
-      : NAVIGATION_TITLES[failure.operation],
-  };
 }
 
 /** Where the held spot is: its section, its page, or how far through. */

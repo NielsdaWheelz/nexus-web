@@ -6,7 +6,7 @@ Lexical phases never call the provider or neighbour query. Visible SQL facts det
 admission and order; canonical items own activation, including unavailable locations.
 A full resource prefix omits chunk neighbours only when selected media have lexical
 passages or no current eligible vectors; the prefix includes its continuation row.
-Preview omits chunk neighbours only when two lexical inside owners fill its prefix
+Preview omits chunk neighbours only when eight lexical inside owners fill its prefix
 and each selected media has a lexical child or no current eligible model vector.
 Full reads share database-wide backend admission; direct preview and one-character
 reads remain independent. Strict evidence retrieval remains in service.py.
@@ -463,7 +463,10 @@ async def preview(
     status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def read(db: Session) -> SearchPreviewResponse:
-        r = _retrieval(db, viewer_id, query, 4, embedding, failure)
+        r = replace(
+            _retrieval(db, viewer_id, query, 8, embedding, failure),
+            exclude_viewer_authored=True,
+        )
         if not query.requests_read:
             return SearchPreviewResponse(
                 phase=phase, resources=[], saved=[], passages=[], semantic_status=status
@@ -492,10 +495,9 @@ async def preview(
         def compose(
             facts: IndexedRead,
         ) -> tuple[list[_Resource], list[_Resource], list[DiscoveryHit]]:
-            rows = [_Resource(h.ref, h, None) for h in _rank(facts, r, primary, group=False)[:4]]
+            rows = [_Resource(h.ref, h, None) for h in _rank(facts, r, primary, group=False)[:8]]
             saved = [
-                _Resource(h.ref, h, None)
-                for h in _rank(facts, replace(r, k=2), saved_families, group=False)[:2]
+                _Resource(h.ref, h, None) for h in _rank(facts, r, saved_families, group=False)[:8]
             ]
             rows = _enrich(facts, rows, families)
             inside: list[DiscoveryHit] = []
@@ -506,7 +508,7 @@ async def preview(
                 inside.extend(
                     facts.rank(
                         (family,),
-                        k=2,
+                        k=8,
                         group_owners=True,
                         excluded_owners=[row.ref.id for row in rows if row.ref.scheme == scheme],
                     )
@@ -516,7 +518,7 @@ async def preview(
                 inside, key=lambda h: (*h.order[:-1], h.owner.uri if h.owner else h.ref.uri)
             ):
                 distinct.setdefault(hit.owner, hit)
-            return rows, saved, list(distinct.values())[:2]
+            return rows, saved, list(distinct.values())[:8]
 
         rows, saved, inside = compose(facts)
         if defer_chunks:
@@ -527,7 +529,7 @@ async def preview(
                 if row.ref.scheme == "media" and (row.passage is None or not row.passage.lexical)
             ]
             if (
-                len(inside) < 2
+                len(inside) < 8
                 or any(not hit.lexical for hit in inside)
                 or (missing and has_media_vectors(db, r.embedding[0], missing, r.viewer_id))
             ):

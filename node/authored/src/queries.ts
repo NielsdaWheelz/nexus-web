@@ -6,7 +6,7 @@
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import type { AuthoredQuery, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
-import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, type ScopeInterval, type ScopeReading } from "./scope.ts";
+import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
 /** Literal stored capture; search supplies its authorized excerpt separately. */
@@ -37,6 +37,17 @@ export function pageTitle(title: string, local_date: string | null): string {
   if (title) return title;
   if (local_date === null) return "untitled page";
   return `${MONTHS[Number(local_date.slice(5,7))-1]} ${Number(local_date.slice(8,10))}, ${local_date.slice(0,4)}`;
+}
+/** Literal names alone receive name precedence; prose remains lexical evidence. */
+export function searchName(resource: ResourceProjection): string | null {
+  if (resource.kind === "page") return pageTitle(resource.title ?? "", resource.local_date);
+  return resource.kind === "source" && /^(page|media|podcast|conversation|contributor|library|oracle_reading):/u.test(resource.ref)
+    ? resource.title : null;
+}
+export function searchNameMatch(resource: ResourceProjection, text: string): "exact" | "prefix" | "substring" | null {
+  const name = searchName(resource)?.trim().toLowerCase();
+  const query = text.trim().toLowerCase();
+  return !name || !query ? null : name === query ? "exact" : name.startsWith(query) ? "prefix" : name.includes(query) ? "substring" : null;
 }
 const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
 const READABLE = `WITH readable AS (
@@ -88,6 +99,29 @@ const SEARCH_SQL = `WITH wanted AS MATERIALIZED(
 ),readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
   SELECT r.projection_json,NULL AS link_json,p.state_json AS passage_json FROM readable r
   LEFT JOIN passages p ON r.ref='passage_anchor:'||p.anchor_id ORDER BY r.ref`;
+// SQLite lower() is ASCII-only. Inspect bounded literal-name batches in the shared
+// owner, independently of FTS, then retain only the admitted best eight names.
+const SEARCH_NAMES_SQL = `WITH wanted AS MATERIALIZED(
+  SELECT d.ref FROM (
+    SELECT ref FROM resources WHERE kind='page' AND visible=1
+    UNION SELECT source_ref AS ref FROM source_stubs
+      WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref)
+  ) d WHERE (?1 IS NULL OR ${SEARCH_FAMILY} IN (SELECT value FROM json_each(?1)))
+    AND d.ref>?2 ORDER BY d.ref LIMIT 100
+),readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
+  SELECT r.projection_json,NULL AS link_json,NULL AS passage_json FROM readable r
+  ORDER BY r.ref`;
+// Held rows need current scoped evidence admission even when a new top eight omits
+// them. Exact ref reads remain bounded and use the same name/lexical proof below.
+const SEARCH_ADMISSION_SQL = `WITH wanted AS MATERIALIZED(
+  SELECT d.ref FROM (SELECT value AS ref FROM json_each(?1)) d
+    WHERE ?3 IS NULL OR ${SEARCH_FAMILY} IN (SELECT value FROM json_each(?3))
+),readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
+  SELECT r.projection_json,NULL AS link_json,p.state_json AS passage_json,
+    EXISTS(SELECT 1 FROM search_fts f CROSS JOIN search_documents d ON d.rowid=f.rowid
+      WHERE search_fts MATCH ?2 AND d.ref=r.ref) AS lexical_match
+  FROM readable r LEFT JOIN passages p ON r.ref='passage_anchor:'||p.anchor_id
+  ORDER BY r.ref`;
 const SEARCH_SCOPE_CTES = `requested(scope_ref) AS (SELECT value FROM json_each(?1)),
   revision(value) AS (SELECT active_revision FROM scope_state WHERE singleton=1),
   facts AS MATERIALIZED(
@@ -263,7 +297,7 @@ const EXCERPT_INCOMPLETE_TABLE_SQL = `SELECT 1 AS incomplete FROM scope_facts
       OR json_extract(state_json,'$.start_offset')=json_extract(state_json,'$.end_offset') AND ?3<=json_extract(state_json,'$.start_offset') AND json_extract(state_json,'$.start_offset')<=?4)
   LIMIT 1`;
 /** Every read shape is finite and packaged by content identity for the native host. */
-export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
+export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_NAMES_SQL, SEARCH_ADMISSION_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
   SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_ANNOTATION_OWNERS_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias, EXCERPT_ROW_SQL, EXCERPT_READING_SQL, EXCERPT_INCOMPLETE_TABLE_SQL] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
@@ -346,7 +380,7 @@ function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>):
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
 }
 
-export function compileQuery(query: AuthoredQuery): CompiledQuery {
+export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
     case "outline_window": return outlineWindow(query);
@@ -503,10 +537,15 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
  * quote uniqueness and clipped FTS matching precede the requested result limit.
  * Only positive bounded quote windows cross the storage boundary; source text and
  * derived scope inputs never replace the canonical authored projection. */
-export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search"}>,
+export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search" | "search_preview" | "search_admission"}>,
   score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
   const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, outline_window: null};
-  const limit = Math.max(1, Math.min(100, Math.floor(query.limit)));
+  const preview = query.kind !== "search";
+  const admission = query.kind === "search_admission";
+  if (query.kind === "search_preview" && !Number.isFinite(query.limit)
+    || admission && query.refs.length > 8) throw new RangeError("Search preview exceeds bound");
+  const limit = admission ? 8 : Math.max(1, Math.min(preview ? 8 : 100, Math.floor(query.limit)));
+  if (preview && !query.text.trim()) return result;
   const all = query.scopes.some(scope => scope.kind === "all");
   const scopeRefs = query.scopes.flatMap(scope => scope.kind === "all" ? [] : [`${scope.kind}:${scope.id}`]);
   const scopesJson = JSON.stringify(scopeRefs);
@@ -650,16 +689,33 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
     passageMembership.set(ref, member);
     return member;
   };
-  let cursor = query.cursor ?? "";
+  let cursor = query.kind === "search" ? query.cursor ?? "" : "";
+  let names = query.kind === "search_preview";
+  let nameCount = 0;
+  let accepted = 0;
+  const nameOrder = (a: QueryRow, b: QueryRow): number => {
+    const tiers = {exact: 0, prefix: 1, substring: 2};
+    const tier = tiers[searchNameMatch(a.resource, query.text)!] - tiers[searchNameMatch(b.resource, query.text)!];
+    const left = searchName(a.resource)!.trim().toLowerCase(), right = searchName(b.resource)!.trim().toLowerCase();
+    return tier || (left < right ? -1 : left > right ? 1 : 0) || (a.resource.ref < b.resource.ref ? -1 : a.resource.ref > b.resource.ref ? 1 : 0);
+  };
   for (;;) {
-    const families = query.families === null ? null : JSON.stringify(query.families);
-    const raw = await read({sql: all ? SEARCH_SQL : SEARCH_SCOPED_SQL, params: all ? [expression, families, cursor, 100] : [scopesJson, expression, families, cursor, 100]});
-    if (!raw.length) return result;
-    const candidates = raw.map(row => {
+    // A preview can inspect many name batches without retaining their proof maps.
+    if (preview) for (const cache of [readings, loadedSources, exactReadings, loadedExactSources, sourceNotes, peers, aliases, highlightTexts, annotationOwners, passageMembership, directFacts]) cache.clear();
+    // Preview slots hold only discovery families: an unclassified stub (message:, fragment:)
+    // never renders, so null materializes the complete vocabulary. Full search keeps its cursor.
+    const families = query.families === null && !preview ? null : JSON.stringify(query.families ?? SEARCH_FAMILIES);
+    const batch = names || !preview ? 100 : limit + nameCount - accepted;
+    const raw = await read(admission ? {sql: SEARCH_ADMISSION_SQL, params: [JSON.stringify(query.refs), expression, families]}
+      : names ? {sql: SEARCH_NAMES_SQL, params: [families, cursor]}
+      : {sql: all ? SEARCH_SQL : SEARCH_SCOPED_SQL, params: all ? [expression, families, cursor, batch] : [scopesJson, expression, families, cursor, batch]});
+    const candidates = raw.flatMap(row => {
       const resource: ResourceProjection = JSON.parse(String(row.projection_json));
+      if (names && searchNameMatch(resource, query.text) === null) return [];
+      if (admission && Number(row.lexical_match) !== 1 && searchNameMatch(resource, query.text) === null) return [];
       const passage: PassageState | null = row.passage_json === null ? null : JSON.parse(String(row.passage_json));
       if (resource.kind === "note") sourceNotes.set(resource.ref, resource.visible);
-      return {resource, passage};
+      return [{resource, passage}];
     });
     const annotationRefs = [...new Set(candidates.flatMap(({passage}) => passage?.source_ref.startsWith("highlight:") ? [passage.source_ref] : []))];
     if (annotationRefs.length) for (const row of await read({sql:SEARCH_ANNOTATION_OWNERS_SQL,params:[JSON.stringify(annotationRefs)]})) {
@@ -730,11 +786,26 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         const parts = excerptTextParts(view.body);
         match = {...match,resource:{...resolved,excerpt:excerptView({...view.body,source_extent:null,truncated_before:view.omitted_before,truncated_after:view.omitted_after},"compact",{kind:"capture"})},match_text:passage === null && match.matched_field==="annotation" ? match.match_text : passage === null ? parts.prefix + parts.exact + parts.suffix : parts.exact};
       }
-      if (match) result.rows.push(match);
-      if (result.rows.length === limit) return {...result, next_cursor: resource.ref};
+      if (match) {
+        if (names) {
+          result.rows.push(match);
+          result.rows.sort(nameOrder);
+          if (result.rows.length > limit) result.rows.pop();
+        } else {
+          accepted++;
+          if (!preview || !result.rows.some(row => row.resource.ref === resource.ref)) result.rows.push(match);
+          if (result.rows.length === limit || preview && accepted === limit + nameCount)
+            return {...result, next_cursor: preview ? null : resource.ref};
+        }
+      }
     }
-    if (raw.length < 100) return result;
-    cursor = candidates.at(-1)!.resource.ref;
+    if (admission) return result;
+    if (raw.length < batch) {
+      if (!names || result.rows.length === limit) return result;
+      names = false;
+      nameCount = result.rows.length;
+      cursor = "";
+    } else cursor = String(JSON.parse(String(raw.at(-1)!.projection_json)).ref);
   }
 }
 

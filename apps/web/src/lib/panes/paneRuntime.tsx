@@ -91,12 +91,13 @@ interface PaneRuntimeCommands {
     options?: { readonly returnFocusTo?: HTMLElement | null },
   ): void;
   closeSecondaryPane(options?: { focusAfterClose?: HTMLElement | null; restoreFocus?: boolean }): void;
+  revealPrimary(input: { readonly focusTarget: HTMLElement }): void;
   /** The Inspector action's toggle. */
   toggleSecondaryPane(): void;
 }
 export type PaneHostCommands = Pick<
   PaneRuntimeCommands,
-  "requestSecondarySurface" | "closeSecondaryPane" | "toggleSecondaryPane"
+  "requestSecondarySurface" | "closeSecondaryPane" | "toggleSecondaryPane" | "revealPrimary"
 >;
 
 const RuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -162,6 +163,7 @@ export function PaneRuntimeProvider(props: {
         now().host.requestSecondarySurface(surfaceId, options),
       closeSecondaryPane: (options) => now().host.closeSecondaryPane(options),
       toggleSecondaryPane: () => now().host.toggleSecondaryPane(),
+      revealPrimary: (input) => now().host.revealPrimary(input),
     };
     return commands;
   }, [pane.id]);

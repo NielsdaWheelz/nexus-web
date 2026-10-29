@@ -146,8 +146,11 @@ shutdown fails. `headless=False` requests visibility, never desktop approval.
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and
 returns ownership before `attachPage()` waits for its webview. the caller owns
-real login and input. `close()` disconnects, stops the owned package and removes
-only its created mappings and returns the exact released mappings.
+real login and input. `close()` stops the owned package and releases its transport
+and created mappings before a bounded cdp disconnect; it returns the exact released
+mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
+the old process and devtools forward before disconnecting, and refuses relaunch
+after a retirement error.
 `setWebReachable` gates the owned web reverse through a loopback tcp transport.
 going offline closes its pooled connections and rejects new ones before removing
 the reverse; storage remains independently reachable. tls and http/2 pass through

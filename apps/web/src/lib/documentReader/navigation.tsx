@@ -8,18 +8,18 @@ import type { ReaderDestination } from "./location";
 import type { Reader } from "./runtime";
 import { sourceTarget,localTarget } from "./model";
 
-export function activateReaderDestination(reader: Reader, destination: ReaderDestination, event: TargetActivationEvent, onDefault?: () => void, enter: "native" | "activate" = "native") {
+export function activateReaderDestination(reader: Reader, destination: ReaderDestination, event: TargetActivationEvent, onDefault?: (destination: ReaderDestination) => void, enter: "native" | "activate" = "native") {
   const activation = workspaceTargetActivationIntent(event, enter);
   if (activation.kind === "Unowned") return "unhandled" as const;
   event.preventDefault();
   if (activation.kind === "Consume") return "consumed" as const;
-  const local = onDefault ?? (() => {
+  const local = onDefault ? () => onDefault(destination) : () => {
     // justify-defect: evidence destinations are host-owned and always bind their local activation.
     if (destination.target.kind === "evidence_item") throw new Error("evidence destination requires a host activation");
     const state=reader.getState().document;
     const target=state.status==="ready" && state.doc.identity===destination.source_identity ? localTarget(state.doc,destination.target) : null;
     if (target && target.kind!=="evidence_item") void reader.inspect({target});
-  });
+  };
   if (reader.navigation) {
     if (reader.navigation.activate(destination, activation.intent, local) === "Refused") return "consumed" as const;
   }
@@ -37,7 +37,7 @@ export function activateReaderDestination(reader: Reader, destination: ReaderDes
 export function ReaderLink({ reader, target, onDefault, disabled = false, ref, children, ...attributes }: HTMLAttributes<HTMLElement> & {
   readonly reader: Reader;
   readonly target: ReaderDestination["target"];
-  readonly onDefault?: () => void;
+  readonly onDefault?: (destination: ReaderDestination) => void;
   readonly disabled?: boolean;
   readonly ref?: Ref<HTMLAnchorElement | HTMLButtonElement>;
 }) {
