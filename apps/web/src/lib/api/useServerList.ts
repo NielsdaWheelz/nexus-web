@@ -116,7 +116,7 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly readPolicy?: string;
   /** Manual recovery leaves a rejected cursor for an explicit fresh search. */
   readonly cursorRecovery?: "manual";
-  /** Whole-walk budget; capacity mode counts successful page execution only. Null means to the end. */
+  /** Whole-walk budget; capacity mode charges fetch time except busy responses. Null means to the end. */
   readonly prefixTimeoutMs?: (pages: number | null) => number;
   readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
@@ -227,9 +227,15 @@ function useList<T, M>(
             : pageAllowance === undefined ? remainingExecutionMs : Math.min(remainingExecutionMs, pageAllowance);
           return requestWithRetry(async pageSignal => {
             const started = performance.now();
-            const page = await fetchPage(cursor, pageSize, pageSignal);
-            if (remainingExecutionMs !== undefined) remainingExecutionMs -= performance.now() - started;
-            return page;
+            let busy = false;
+            try {
+              return await fetchPage(cursor, pageSize, pageSignal);
+            } catch (error) {
+              busy = isApiError(error) && error.code === "E_DATABASE_BUSY";
+              throw error;
+            } finally {
+              if (!busy && remainingExecutionMs !== undefined) remainingExecutionMs -= performance.now() - started;
+            }
           }, signal, { retry: "capacity", timeoutMs });
         };
         const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
