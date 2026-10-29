@@ -3,6 +3,7 @@
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
+import type {TextEditorHandle} from "./NoteEditor";
 import {createPortal} from "react-dom";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
@@ -31,12 +32,13 @@ export interface OutlineRowChrome {
   terminal: boolean;
   selected: boolean;
   workOwners(owners: readonly string[]): void;
+  editorReady(editor: TextEditorHandle | null): void;
   toggle(): void;
   select(): void;
   unlink(): void;
   reveal(): void;
 }
-export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement}
+export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement; input: TextEditorHandle | null}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
@@ -74,7 +76,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
       </button> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
         mount.content, `${row.row_id}:content`)] : [])];
   });
 }

@@ -943,9 +943,14 @@ export class OutlineController {
     return {rows};
   }
   select(row_id: string, extend = false): void {
-    const input = this.rootAttachment?.ownsFocus() ? this.rootAttachment.handle : this.handle;
+    const input = this.activeInput();
     if (!input?.settleNativeInput() || !input.canArrange() || !this.handle?.canArrange()) return;
     this.selectPrepared(row_id, extend);
+  }
+  private activeInput(): TextEditorHandle | null {
+    const active = document.activeElement;
+    return [...this.mounts.values()].find(mount => mount.input && active !== null && mount.content.contains(active))?.input
+      ?? (this.rootAttachment?.ownsFocus() ? this.rootAttachment.handle : this.handle);
   }
   private selectPrepared(row_id: string, extend = false): void {
     const snapshot = this.rangeSnapshot();
@@ -1035,7 +1040,8 @@ export class OutlineController {
     return !this.workGuard.confirmLoss({scopes: [], ownerIds: [...owners]});
   }
   arrange(row_id: string, command: "indent" | "outdent" | "move_up" | "move_down"): void {
-    if (!this.handle?.settleNativeInput() || !this.handle.canArrange()) return;
+    const input = this.activeInput();
+    if (!input?.settleNativeInput() || !input.canArrange() || !this.handle?.canArrange()) return;
     this.arrangePrepared(row_id, command, this.blockRange ? null : this.selection);
   }
   private movePlan(row_id: string, command: "move_up" | "move_down"): MovePlan | null {
@@ -1271,6 +1277,7 @@ export class OutlineController {
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
       childrenAvailable: row.children?.available === true, open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
+      editorReady: editor => {const mount = this.mounts.get(row.row_id); if (mount) mount.input = editor;},
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id), unlink: () => this.unlink(row.row_id), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
           else if (ancestor?.kind === "occurrence" && this.rows.has(ancestor.key)) void this.focus(ancestor.key); else if (ancestor) this.revealExternal?.(ancestor);}
@@ -1350,7 +1357,7 @@ export class OutlineController {
       }
       else if (row.kind === "reference" && !row.gap) content.contentEditable = "false";
     };
-    const mount = {row_id: id, leading, trailing, content, sync};
+    const mount: OutlineRowMount & {sync(): void} = {row_id: id, leading, trailing, content, input: null, sync};
     sync(); this.mounts.set(id, mount); this.notify();
     return {dom, ...(node.type.name !== "reference_row" ? {contentDOM: content} : {}), update: next => {if (next.type !== node.type || next.attrs.row_id !== id) return false; node = next; sync(); return true;},
       stopEvent: event => event.target instanceof Node && (leading.contains(event.target) || trailing.contains(event.target) || this.rows.get(id)?.kind === "reference"),

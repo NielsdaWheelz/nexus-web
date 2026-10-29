@@ -93,6 +93,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     const release = () => {if (!retired) {nativeFlight.current = false; latest.current.onSelectionChange?.(selection());}};
     nativeRelease.current = release;
     const begin = (event: Event) => {
+      if (event instanceof KeyboardEvent && ["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return;
       nativeFlight.current = true;
       queueMicrotask(() => {if (event.defaultPrevented) release();});
     };
@@ -131,7 +132,14 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
         const head = Y.createRelativePositionFromTypeIndex(text, Math.min(text.length, at.head - 1));
         return target => ({anchor: (Y.createAbsolutePositionFromRelativePosition(anchor, target.doc)?.index ?? at.anchor - 1) + 1, head: (Y.createAbsolutePositionFromRelativePosition(head, target.doc)?.index ?? at.head - 1) + 1});
       },
-      focus: (requested, preventScroll) => {const at = typeof requested === "function" ? requested(document) : requested; const input = ref.current; if (!input) return; const a = at === "end" ? input.value.length : Math.max(0, at.anchor - 1), b = at === "end" ? a : Math.max(0, at.head - 1); input.focus({preventScroll}); input.setSelectionRange(a,b);},
+      focus: (requested, preventScroll) => {
+        const at = typeof requested === "function" ? requested(document) : requested, input = ref.current;
+        if (!input) return;
+        const text = (baseline.current ?? document.doc).getText("title").toString();
+        const a = at === "end" ? text.length : Math.max(0, Math.min(text.length, at.anchor - 1)), b = at === "end" ? a : Math.max(0, Math.min(text.length, at.head - 1));
+        input.focus({preventScroll}); input.setSelectionRange(a, b);
+        if (input.value !== text) pendingSelection.current = {input, anchor: a, head: b, intent: inputIntent.current};
+      },
       canArrange: () => !composing.current && !nativeFlight.current && !applying.current && pendingSelection.current === null && ref.current?.value === baseline.current?.getText("title").toString(),
       localHistory: command => {
         if (!handle.canArrange()) return {enabled: false, execute: () => undefined};

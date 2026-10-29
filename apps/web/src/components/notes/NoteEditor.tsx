@@ -731,6 +731,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       }
       if (latest.current.history) {
+        releaseNativeInput(current);
         if (redo) latest.current.history.redo(); else latest.current.history.undo();
         return true;
       }

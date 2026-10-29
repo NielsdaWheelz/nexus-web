@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-outline range editing against `b79cf2f56`: +738 net authored runtime lines
-(1,264 added, 526 deleted). outline/model/history +593; note editors +15;
+outline range editing against `b79cf2f56`: +756 net authored runtime lines
+(1,286 added, 530 deleted). outline/model/history +600; note editors +26;
 authored runtime +79; shared graph allocation +50; work guard +1; shortcut help +0. it removes
 additive selection, single-item reparent history, selected enter/paste/cut mutation branches and
 duplicate position allocation. the existing editor, pending-input, history and
