@@ -139,6 +139,7 @@ export default function BrowsePreviewPaneBody() {
         ? previewErrorMessage(resource.error)
         : null;
   usePreviewTitleHint(target, preview?.title);
+
   usePaneChrome({
     podcastMetadata: preview?.kind === "Podcast" ? { kind: "DiscoveryPodcastPreview", preview } : undefined,
     header:

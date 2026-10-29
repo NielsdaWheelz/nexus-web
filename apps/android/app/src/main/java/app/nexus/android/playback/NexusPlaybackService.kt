@@ -92,6 +92,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var releaseDevice: (() -> Unit)? = null
     private var releaseStop: (() -> Unit)? = null
     private var account: UUID? = null
+    private var accountLifetime: Long = -1
     private var store: PlaybackStore? = null
     private var undoQueue: JSONObject? = null
     private var pendingCheckpoint: Pair<PlaybackStore, JSONObject>? = null
@@ -157,7 +158,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 val mine = retireActivation()
                 scope.launch {
                     val prepared = prepareActivation(resumeMediaId())
-                    loads.withLock { resume(key, loaded, mine, prepared) }
+                    loads.withLock { if (resume(key, loaded, mine, prepared) == null) recordRecentPlayback() }
                 }
             }
             override fun prepare() {
@@ -262,18 +263,21 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         try { device.initialize() } catch (_: IOException) { return }
         try { loads.withLock {
             val owner = device.accountId()
-            if (owner == account) {
+            val lifetime = device.recentLifetime()
+            if (owner == account && lifetime == accountLifetime) {
                 if (owner != null && device.remotelyAdmitted()) {
                     store?.let { recorder.bind(owner, it) }
                 }
                 return@withLock
             }
             unbind()
-            if (owner != null && owner == device.accountId()) {
+            if (owner != null && owner == device.accountId() && lifetime == device.recentLifetime()) {
                 val playback = PlaybackStore.open(this, owner)
+                if (owner != device.accountId() || lifetime != device.recentLifetime()) return@withLock
                 store = playback
                 playback.onListeningChanged = { scope.launch { publish() } }
                 account = owner
+                accountLifetime = lifetime
                 recorder.bind(owner, playback)
                 consumptionRevision = 0
                 // A restored checkpoint never starts audio or manufactures a sample.
@@ -491,12 +495,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     if (activation == null) return failure("Unavailable")
                     if (!install(activation.descriptor, episode = true, play = request.getBoolean("play"), positionMs = positionMs, lease = activation.lease, localRepair = activation.localRepair))
                         return failure(if (generation != activationGeneration) "Stale" else "Unavailable")
+                    if (request.getBoolean("play")) recordRecentPlayback()
                 }
             }
             "preview" -> loads.withLock {
                 if (mine != activationGeneration) return failure("Stale")
                 player.pause(); checkpoint()
                 if (!install(request.getJSONObject("descriptor"), episode = false)) return failure("Stale")
+                recordRecentPlayback()
             }
             "dismiss" -> loads.withLock {
                 if (mine != activationGeneration) return failure("Stale")
@@ -540,6 +546,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
                         player.seekTo(minOf(position.toLong(), duration ?: Long.MAX_VALUE))
                         playHere()
+                        recordRecentPlayback()
                         checkpoint()
                     }
                     "seek", "skip" -> if (!recorder.fenced()) {
@@ -549,7 +556,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         player.seekTo(maxOf(0, position))
                         checkpoint()
                     }
-                    "play" -> resume(request.getString("key"), request.getString("expected_load_id"), mine ?: return failure("Stale"), prepared)?.let { return failure(it) }
+                    "play" -> {
+                        resume(request.getString("key"), request.getString("expected_load_id"), mine ?: return failure("Stale"), prepared)?.let { return failure(it) }
+                        recordRecentPlayback()
+                    }
                     "pause" -> {
                         player.pause()
                         checkpoint()
@@ -934,7 +944,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             "next", "previous" -> {
                 if (!exact) return failure("Stale")
                 if (kind == "previous" && current != null && player.currentPosition > 3_000 && loadedEntryId == current) {
-                    retireActivation(); player.seekTo(0); checkpoint(); return ok()
+                    retireActivation(); player.seekTo(0); checkpoint(); if (player.playWhenReady) recordRecentPlayback(); return ok()
                 }
                 moveCursor(next, if (kind == "next") 1 else -1)
                 if (current == null) play = false
@@ -981,8 +991,21 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             if (generation != activationGeneration) return failure("Stale")
             if (!activated) return failure("Unavailable")
         }
+        if (activated && activate && play && kind in setOf("select", "next", "previous")) recordRecentPlayback()
         publish()
         return ok()
+    }
+
+    private fun recordRecentPlayback() {
+        val owner = account ?: return
+        val lifetime = accountLifetime
+        if (owner != device.accountId() || lifetime != device.recentLifetime()) return
+        val current = { owner == device.accountId() && lifetime == device.recentLifetime() }
+        val id = if (isEpisode()) key()?.let { runCatching { UUID.fromString(it) }.getOrNull() } else null
+        runCatching {
+            if (id != null) device.recordRecentMedia(id, current = current)
+            else if (!isEpisode()) descriptor()?.optString("target")?.takeIf { it.isNotEmpty() }?.let { device.recordRecentPreview(it, current) }
+        }
     }
 
     /** Retain authority for this queue and its one undo offer; old replacements cannot grow a device cache. */
@@ -1037,6 +1060,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         } catch (error: IOException) { failed = error }
         try { recorder.unbind() } catch (error: IOException) { failed = error }
         account = null
+        accountLifetime = -1
         store?.onListeningChanged = null
         store = null
         undoQueue = null

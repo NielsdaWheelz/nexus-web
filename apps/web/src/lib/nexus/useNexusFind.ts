@@ -23,12 +23,11 @@ import { fetchSearchPreview, type PreviewPhase } from "@/lib/search/searchApi";
 import { searchQueryToParams } from "@/lib/search/searchParams";
 import { WRITING_REF, localResult, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
-import type { NexusRecent, NexusSource } from "./model";
+import type { NexusSource } from "./model";
 import type { NexusQuery } from "./query";
 
-type History = ApiJson<"/me/nexus-history", "get">;
+type Ranking = ApiJson<"/me/nexus-ranking", "get">;
 
-const EMPTY_RECENT: readonly NexusRecent[] = [];
 const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
 const LOCAL_PAGES = 1;
 const EMPTY_LOCAL: readonly LocalMatch[] = [];
@@ -49,19 +48,19 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   }, []);
   const feedback = useFeedback();
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
-  const [historyWanted, setHistoryWanted] = useState(false);
+  const [rankingWanted, setRankingWanted] = useState(false);
   const [revision, setRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
   const fail = useThrowLater();
   useEffect(() => {
-    if (open) setHistoryWanted(true);
+    if (open) setRankingWanted(true);
   }, [open]);
 
   const text = query.text;
-  const base = usePaneFreeServerValue<History>({
-    key: historyWanted ? `${accountId}:nexus-history:${revision}` : null,
+  const base = usePaneFreeServerValue<Ranking>({
+    key: rankingWanted ? `${accountId}:nexus-ranking:${revision}` : null,
     stale: "",
-    load: (signal) => apiFetch<History>("/api/me/nexus-history", { signal }),
+    load: (signal) => apiFetch<Ranking>("/api/me/nexus-ranking", { signal }),
   });
 
   const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
@@ -81,11 +80,11 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   params.delete("view");
   params.set("phase", "lexical");
   const previewHref = `/api/search/preview?${params}`;
-  const historyHref: `/api/${string}` = `/api/me/nexus-history?${new URLSearchParams({ query: text })}`;
+  const rankingHref: `/api/${string}` = `/api/me/nexus-ranking?${new URLSearchParams({ query: text })}`;
   // Search must fit both its GET transports and its eventual workspace address.
   // Explicit authoring commands never send their arguments through discovery.
   const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH &&
-    historyHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
+    rankingHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
   const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
   const identityKey = open && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
@@ -137,10 +136,10 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const lexicalSettled = lexicalKey !== null && lexical.status !== "loading";
   const hybridSettled = hybridKey !== null && hybrid.status !== "loading";
   const typedId = identityKey !== null && (wantsLexical ? lexicalSettled && (!wantsHybrid || hybridSettled) : directSettled) ? text : null;
-  const typed = usePaneFreeServerValue<History>({
-    key: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
+  const typed = usePaneFreeServerValue<Ranking>({
+    key: typedId === null ? null : `${accountId}:nexus-ranking:${revision}:${typedId}`,
     stale: "",
-    load: signal => apiFetch<History>(historyHref, { signal }),
+    load: signal => apiFetch<Ranking>(rankingHref, { signal }),
   });
   const remotePreview = shown?.data ?? null;
   // remote search reads synchronized projections; local authored rows are canonical.
@@ -195,14 +194,14 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
       if (!live.current) return Promise.resolve();
       if (sending) return sending;
       sending =
-      apiFetch<ApiJson<"/me/nexus-selections", "post">>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
+      apiFetch<void>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
         () => { if (live.current) setRevision((value) => value + 1); },
         (error: unknown) => {
           if (!live.current) return;
           if (handleUnauthenticatedApiError(error)) return;
-          const content = isApiError(error) ? apiTransportFeedback(error, "recent selection not confirmed") : null;
+          const content = isApiError(error) ? apiTransportFeedback(error, "selection not confirmed") : null;
           if (content === null) {
-            // justify-defect: history admits only auth recovery and transport feedback (a stale build too).
+            // justify-defect: ranking admits only auth recovery and transport feedback (a stale build too).
             fail({ error });
             return;
           }
@@ -216,7 +215,6 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   };
 
   return {
-    recent: baseData?.recent ?? EMPTY_RECENT,
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
     preview,
     reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,

@@ -3,7 +3,7 @@
 import type { NativeBootstrap } from "@/lib/native/contracts";
 import type { WorkspaceState } from "@/lib/workspace/model";
 export type BrowserBinding = Pick<NativeBootstrap, "account" | "reader_profile" | "workspace">;
-async function database(): Promise<IDBDatabase> {
+export async function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open("nexus-authored-binding", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("binding");
@@ -18,7 +18,7 @@ export async function readBrowserBinding(): Promise<BrowserBinding | null> {
     request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error);
   }); } finally { db.close(); }
 }
-export async function writeBrowserBinding(binding: BrowserBinding): Promise<void> {
+export async function writeBrowserBinding(binding: BrowserBinding, expectedLifetime: string): Promise<void> {
   const db = await database();
   try { await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("binding", "readwrite", { durability: "strict" });
@@ -26,9 +26,10 @@ export async function writeBrowserBinding(binding: BrowserBinding): Promise<void
     const retiring = store.get("retiring");
     const signedOut = store.get("signed_out");
     const current = store.get("current");
-    current.onsuccess = () => {
+    const lifetime = store.get("lifetime");
+    lifetime.onsuccess = () => {
       const existing = current.result as BrowserBinding | undefined;
-      if (retiring.result != null || signedOut.result === true || existing && existing.account.account_id !== binding.account.account_id) { tx.abort(); return; }
+      if (retiring.result != null || signedOut.result === true || lifetime.result !== expectedLifetime || existing && existing.account.account_id !== binding.account.account_id) { tx.abort(); return; }
       if (!existing) store.put(binding, "current");
     };
     tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
@@ -71,7 +72,7 @@ export async function clearBrowserRetiring(): Promise<void> {
   const db = await database();
   try { await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("binding", "readwrite", { durability: "strict" });
-    tx.objectStore("binding").delete("retiring"); tx.objectStore("binding").delete("current"); tx.objectStore("binding").put(true, "signed_out");
+    tx.objectStore("binding").delete("retiring"); tx.objectStore("binding").delete("current"); tx.objectStore("binding").delete("lifetime"); tx.objectStore("binding").delete("recent_targets"); tx.objectStore("binding").put(true, "signed_out");
     tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
   }); } finally { db.close(); }
 }
@@ -95,4 +96,28 @@ export async function beginBrowserSignIn(): Promise<void> {
       tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
     }); } finally { db.close(); }
   });
+}
+
+/** Read the binding and capture its lifetime in the same transaction. */
+export async function readBrowserAdmission(): Promise<{ binding: BrowserBinding | null; lifetime: string }> {
+  const db = await database();
+  try { return await new Promise((resolve, reject) => {
+    const tx = db.transaction("binding", "readwrite", { durability: "strict" });
+    const store = tx.objectStore("binding");
+    const current = store.get("current");
+    const retiring = store.get("retiring");
+    const signedOut = store.get("signed_out");
+    const lifetime = store.get("lifetime");
+    let result: { binding: BrowserBinding | null; lifetime: string };
+    lifetime.onsuccess = () => {
+      const binding = current.result as BrowserBinding | undefined;
+      if (retiring.result != null || signedOut.result === true) { tx.abort(); return; }
+      const token = lifetime.result ?? crypto.randomUUID();
+      if (lifetime.result == null) store.put(token, "lifetime");
+      result = { binding: binding ?? null, lifetime: token };
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onabort = () => reject(tx.error ?? new Error("browser admission failed"));
+    tx.onerror = () => reject(tx.error);
+  }); } finally { db.close(); }
 }

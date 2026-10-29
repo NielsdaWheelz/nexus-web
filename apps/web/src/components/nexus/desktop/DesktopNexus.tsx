@@ -18,7 +18,7 @@ import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
 import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
+import { NexusRecentStatus, NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
 import styles from "../Nexus.module.css";
@@ -261,6 +261,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
       <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
+      <NexusRecentStatus controller={controller} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
       <div
         ref={node => { gridRef.current = node; surfaceRef.current = node?.parentElement ?? null; }}

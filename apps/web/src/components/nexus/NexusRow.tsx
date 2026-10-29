@@ -143,3 +143,14 @@ export function NexusTitleFailure({ failed, retry, returnFocus, announce = true 
     </div>
   ) : null;
 }
+
+export function NexusRecentStatus({ controller }: { controller: NexusController }) {
+  const { snapshot, readFailure, writeFailure, read } = controller.recentStatus;
+  if (controller.query) return null;
+  return <>
+    {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} />
+      : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
+      : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
+    {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} /> : null}
+  </>;
+}

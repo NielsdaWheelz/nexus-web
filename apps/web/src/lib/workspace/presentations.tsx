@@ -13,7 +13,11 @@ import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { mediaKindLabel } from "@/lib/media/kind";
 import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
-import type { PaneVisit } from "@/lib/workspace/model";
+import { pageTitle } from "@nexus/authored/queries";
+import { useRecent } from "@/lib/recent/store";
+import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
+import { recentValueForHref } from "@/lib/panes/paneRouteModel";
+import { normalizeVisitTitleHint, type PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
 import type { OutlineRootMetadata } from "@/components/notes/LocalOutline";
@@ -21,9 +25,9 @@ type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
-interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
-type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
+type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
 const PublisherContext = createContext<PublishTitle | null>(null);
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
   return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
@@ -39,17 +43,22 @@ export function useNoteRootTitle(ref: string, rootRead: OutlineRootMetadata): vo
 }
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */
-function AuthoredTitleSubscription({ store, locatorKey, kind, value, publish }: {
-  store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string;
+function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevision, publish }: {
+  store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string; usedRevision: string | undefined;
   publish: PublishTitle;
 }) {
-  useEffect(() => store.subscribe(kind === "daily" ? { kind: "daily", local_date: value } : { kind: "resource", ref: value }, result => {
-    publish(locatorKey, titleFacts(result.rows[0]?.resource ?? null), result.store_revision);
-  }, reportError), [store, locatorKey, kind, value, publish]);
+  useEffect(() => {
+    let live = true;
+    const stop = store.subscribe(kind === "daily" ? { kind: "daily", local_date: value } : { kind: "resource", ref: value }, result => {
+      if (live) publish(locatorKey, titleFacts(result.rows[0]?.resource ?? null), result.store_revision, usedRevision);
+    }, reportError);
+    return () => { live = false; stop(); };
+  }, [store, locatorKey, kind, value, usedRevision, publish]);
   return null;
 }
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
+  const recent = useRecent();
   const store = useAuthoredStore();
   const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
@@ -59,27 +68,28 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   const locators = useMemo(() => {
     const result = new Map<string, PanePresentationLocator>();
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
+    for (const entry of recent.snapshot?.entries ?? []) {
+      const target = entry.target;
+      if (target.kind !== "preview" && target.kind !== "x_capture") result.set(panePresentationLocatorKey(target), target);
+    }
     return [...result.values()];
-  }, [state.panes]);
-  const activeVisit = state.panes.find(pane => pane.id === state.active_primary_pane_id)?.current_visit;
-  const activeRoute = activeVisit ? resolvePaneRouteModel(activeVisit.href) : null;
-  const activeNote = activeRoute?.id === "note" && activeRoute.titleLocator?.kind === "resource_ref" ? activeRoute.titleLocator.ref : null;
-  const [local, setLocal] = useState<{entries: Map<string, {facts: TitleFacts | null; store_revision: string}>; semanticRevision: number}>(() => ({entries: new Map(), semanticRevision: 0}));
-  const publishLocal = useCallback<PublishTitle>((key, facts, storeRevision) => {
+  }, [state.panes, recent.snapshot]);
+  const [local, setLocal] = useState<{entries: Map<string, {facts: TitleFacts | null; store_revision: string; used_revision?: string}>; semanticRevision: number}>(() => ({entries: new Map(), semanticRevision: 0}));
+  const publishLocal = useCallback<PublishTitle>((key, facts, storeRevision, usedRevision) => {
     setLocal(previous => {
       const before = previous.entries.get(key);
       const order = before ? BigInt(storeRevision) - BigInt(before.store_revision) : null;
       if (order !== null && order < 0n) return previous;
       const old = before?.facts;
       const unchanged = old === facts || old !== undefined && old !== null && facts !== null && old.ref === facts.ref && old.title === facts.title && old.local_date === facts.local_date;
-      if (order === 0n && unchanged) return previous;
+      if (order === 0n && unchanged && (usedRevision === undefined || usedRevision === before?.used_revision)) return previous;
       // justify-service-invariant-check: one account revision has one canonical caption per locator.
-      if (order === 0n) throw new Error("title facts disagree at the same store revision");
-      return {entries: new Map(previous.entries).set(key, {facts, store_revision: storeRevision}), semanticRevision: previous.semanticRevision + (unchanged ? 0 : 1)};
+      if (order === 0n && !unchanged) throw new Error("title facts disagree at the same store revision");
+      return {entries: new Map(previous.entries).set(key, {facts, store_revision: storeRevision, used_revision: usedRevision ?? before?.used_revision}), semanticRevision: previous.semanticRevision + (unchanged && usedRevision === undefined ? 0 : 1)};
     });
   }, []);
   const remoteLocators = locators.filter(locator => !authored(locator));
-  const remoteKey = JSON.stringify([accountId, remoteLocators, changes, observation, foreground, attempt]);
+  const remoteKey = JSON.stringify([accountId, remoteLocators, recent.snapshot?.entries.map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, observation, foreground, attempt]);
   const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: "", load: async signal => {
     const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
     for (let offset = 0; offset < remoteLocators.length; offset += 100) {
@@ -101,9 +111,9 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     if (authored(locator)) {
       const resource = local.entries.get(key)?.facts;
       if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
-      if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate"?route.defaultLabel:visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
+      if (resource === null) return { title: route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
       const title = resource.title;
-      const name = title.trim() ? title : resource.local_date !== null ? route.defaultLabel : null;
+      const name = title.trim() ? title : resource.local_date !== null ? pageTitle("", resource.local_date) : null;
       return { title: name ?? route.defaultLabel, name, detail: kind, status: "Ready" };
     }
     const canonical: Canonical | null | undefined = remoteFacts?.get(key);
@@ -139,8 +149,49 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     // Watermark-only entries changes cannot change any published resource ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [local.semanticRevision, remoteFacts]);
+  const forRecent = useCallback((entry: RecentEntry): PanePresentation => {
+    const fallback = resolvePaneRouteModel(entry.href).defaultLabel;
+    if (entry.target.kind === "preview" || entry.target.kind === "x_capture") return { title: entry.title_hint ?? fallback, name: entry.title_hint, detail: entry.detail_hint, status: "Ready" };
+    const presentation = forVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
+    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint ?? fallback.toLowerCase() };
+    return presentation;
+  }, [forVisit]);
+  useEffect(() => {
+    for (const entry of recent.snapshot?.entries ?? []) {
+      if (entry.target.kind === "x_capture") continue;
+      if (entry.target.kind === "preview") {
+        const visit = state.panes.map(pane => pane.current_visit).find(visit => {
+          const value = recentValueForHref(visit.href);
+          return value !== null && recentTargetKey(value.target) === recentTargetKey(entry.target);
+        });
+        const title = normalizeVisitTitleHint(visit?.title_hint ?? null);
+        if (title !== null && title !== entry.title_hint) recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: title, detail_hint: entry.detail_hint } });
+        continue;
+      }
+      const presentation = forRecent(entry);
+      const key = panePresentationLocatorKey(entry.target);
+      const localEntry = local.entries.get(key);
+      const facts = localEntry?.facts;
+      if (authored(entry.target) && localEntry?.used_revision !== entry.used_revision) continue;
+      if (entry.target.kind === "resource_ref" && authored(entry.target) && facts === null) {
+        recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: null });
+        continue;
+      }
+      if (!authored(entry.target) && remote.status === "ready" && !remote.error && remote.data.has(key) && remote.data.get(key) === null) {
+        recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: null });
+        continue;
+      }
+      if (presentation.status !== "Ready") continue;
+      const canonicalHref = entry.target.kind === "daily_date" && facts?.ref.startsWith("page:") ? `/pages/${facts.ref.slice(5)}` : entry.href;
+      const value = recentValueForHref(canonicalHref, normalizeVisitTitleHint(presentation.title));
+      if (!value) continue;
+      value.detail_hint = normalizeVisitTitleHint(presentation.detail);
+      if (recentTargetKey(value.target) !== recentTargetKey(entry.target) || value.href !== entry.href || value.title_hint !== entry.title_hint || value.detail_hint !== entry.detail_hint)
+        recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: value });
+    }
+  }, [recent, forRecent, local.entries, state.panes, remote]);
   const retryTitles = useCallback(() => retry(value => value + 1), []);
-  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }), [forVisit, resourceRefForVisit, retryTitles]);
+  const value = useMemo(() => ({ forVisit, forRecent, resourceRefForVisit, retryTitles }), [forVisit, forRecent, resourceRefForVisit, retryTitles]);
   useEffect(() => {
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);
@@ -151,11 +202,11 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   }, [state.panes, forVisit, setVisitTitleHint]);
   return <PublisherContext value={publishLocal}><Context value={value}>
     {locators.map(locator => {
-      if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref" || locator.kind === "resource_ref" && locator.ref === activeNote) return null;
+      if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref") return null;
       const key = panePresentationLocatorKey(locator);
       return <AuthoredTitleSubscription key={key} store={store} locatorKey={key}
         kind={locator.kind === "daily_date" ? "daily" : "resource"}
-        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} publish={publishLocal} />;
+        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} usedRevision={recent.snapshot?.entries.find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
     })}
     {children}
   </Context></PublisherContext>;

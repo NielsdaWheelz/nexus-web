@@ -36,6 +36,18 @@ export default function Shelf() {
       void localCall("close", { media_id: availableId });
     };
   }, [availableId]);
+  useEffect(() => {
+    if (opened === null || opened.media_id !== mediaId) return;
+    let sent = false;
+    const acknowledge = () => {
+      if (sent || document.visibilityState !== "visible") return;
+      sent = true;
+      void localCall("opened", { media_id: opened.media_id }).catch(() => undefined);
+    };
+    acknowledge();
+    document.addEventListener("visibilitychange", acknowledge);
+    return () => document.removeEventListener("visibilitychange", acknowledge);
+  }, [opened, mediaId]);
   const back = () => { void localCall("open_hosted", { path: "/downloads" }).catch(() => setFailure("couldn’t open downloads · try again")); };
   const item = opened === null ? null : index?.items.find(row => row.media_id === opened.media_id) ?? opened;
   const remove = () => {

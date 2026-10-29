@@ -25,6 +25,7 @@ import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
+import { RecentProvider } from "@/lib/recent/store";
 import { AuthoredProvider } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
@@ -64,6 +65,7 @@ import styles from "./layout.module.css";
 const returnWorkspaceFocus = () => document.getElementById("entry-failure") ?? findActivePaneLandmarkFocusTarget();
 
 export default function AuthenticatedShell(props: {
+  browserLifetime?: string;
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
@@ -75,6 +77,7 @@ export default function AuthenticatedShell(props: {
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
       <AuthoredProvider accountId={props.account.accountId}>
+        <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
         <RenderEnvironmentProvider value={props.renderEnvironment}>
           <UnauthenticatedApiBoundary>
             <MobileViewportProvider>
@@ -99,6 +102,7 @@ export default function AuthenticatedShell(props: {
             </MobileViewportProvider>
           </UnauthenticatedApiBoundary>
         </RenderEnvironmentProvider>
+        </RecentProvider>
       </AuthoredProvider>
     </AuthenticatedAccountProvider>
   );

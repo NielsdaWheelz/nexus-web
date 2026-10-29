@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
+import { NexusRecentStatus, NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -147,6 +147,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} /> : null}
       </div>
       <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
+        <NexusRecentStatus controller={controller} />
         <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>

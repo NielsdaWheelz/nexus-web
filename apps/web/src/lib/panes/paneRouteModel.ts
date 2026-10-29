@@ -37,7 +37,9 @@ import {
 } from "@/lib/resourceGraph/resourceRef";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import type { ShareTarget } from "@/lib/sharing/types";
-import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { normalizeWorkspaceHref, parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { isCanonicalUuid } from "@/lib/validation";
+import type { RecentValue } from "@/lib/recent/model";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
@@ -404,4 +406,44 @@ export function resolvePaneRouteShareIdentity(
   if (!route.shareByRoute) return null;
   const target = routeShareTarget({ href: route.pathname, label });
   return target.kind === "Route" ? target : null;
+}
+
+function isDiscoveryTarget(value: string): boolean {
+  const match = /^ndt1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(value);
+  if (!match) return false;
+  try {
+    const decode = (part: string) => atob(part.replace(/-/gu, "+").replace(/_/gu, "/") + "=".repeat((4 - part.length % 4) % 4));
+    const encode = (part: string) => btoa(part).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    const payload = decode(match[1]!);
+    const tag = decode(match[2]!);
+    return payload.length > 0 && payload.length <= 4096 && tag.length === 32 && encode(payload) === match[1] && encode(tag) === match[2];
+  } catch { return false; }
+}
+
+/** A deliberately opened resource and its stable reopening address. */
+export function recentValueForHref(href: string, titleHint: string | null = null): RecentValue | null {
+  const normalized = normalizeWorkspaceHref(href);
+  if (normalized === null) return null;
+  const url = parseWorkspaceHref(normalized)!;
+  const route = resolvePaneRouteModel(normalized);
+  let target: RecentValue["target"] | null = route.titleLocator;
+  if (route.id === "browsePreview") {
+    const preview = url.searchParams.get("target");
+    if (preview && isDiscoveryTarget(preview)) target = { kind: "preview", target: preview };
+  } else if (route.id === "xCapture" && isCanonicalUuid(route.params.id)) target = { kind: "x_capture", capture_id: route.params.id };
+  if (target === null) return null;
+  const query = new URLSearchParams();
+  if (target.kind === "preview") query.set("target", target.target);
+  if (route.id === "conversation") {
+    const leaf = url.searchParams.get("leaf");
+    if (leaf && conversationEndpoint(url.searchParams).kind === "Endpoint") query.set("leaf", leaf);
+  }
+  const path = target.kind === "resource_ref" ? (() => {
+    const ref = parseResourceRef(target.ref)!;
+    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", conversation: "conversations", podcast: "podcasts", page: "pages", note_block: "notes", oracle_reading: "oracle" };
+    return `/${prefix[ref.scheme]}/${ref.id}`;
+  })() : target.kind === "contributor_handle" ? `/authors/${target.handle}`
+    : target.kind === "daily_date" ? `/daily/${target.local_date}`
+      : target.kind === "x_capture" ? `/x/captures/${target.capture_id}` : "/browse/preview";
+  return { target, href: `${path}${query.size ? `?${query}` : ""}`, title_hint: titleHint, detail_hint: null };
 }

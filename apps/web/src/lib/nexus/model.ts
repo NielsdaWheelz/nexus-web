@@ -14,8 +14,6 @@ import type {
 export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import"}`;
 
-export type NexusHistorySource = Schema<"NexusSelectionRecordRequest">["source"];
-export type NexusRecent = Schema<"NexusHistoryRecentOut">;
 
 export interface AddSeed {
   readonly kind: "Content";
@@ -102,8 +100,8 @@ export interface NexusRow {
   readonly secondary?:
     | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "ClosePane"; readonly paneId: string };
-  /** Present iff an accepted selection of this row is remembered in Nexus history. */
-  readonly source?: NexusHistorySource;
+  /** Present iff an accepted selection of this row is recorded for selection ranking. */
+  readonly learns_selection?: boolean;
   readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
 }
 

@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecent } from "@/lib/recent/store";
+import { recentTargetKey } from "@/lib/recent/model";
+
 // The Nexus session: open/closed, the page state machine, the stable result list, and the
 // one activation core every row, choice, keybinding, open request and workflow goes through.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -91,6 +94,9 @@ export function useNexusController() {
   const subscribeWorkspace = useSubscribeWorkspace();
   const { state } = workspace;
   const presentations = useWorkspacePresentations();
+  const recent = useRecent();
+  const readRecent = recent.read;
+  const heldRecent = useRef<{ target: string; revision: string; href: string }[] | null>(null);
 
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
@@ -146,9 +152,9 @@ export function useNexusController() {
   }, [viewport.isMobile, page.kind]);
   const wasOpen = useRef(false);
   useEffect(() => {
-    if (open && !wasOpen.current) presentations.retryTitles();
+    if (open && !wasOpen.current) { presentations.retryTitles(); readRecent(); heldRecent.current = null; }
     wasOpen.current = open;
-  }, [open, presentations]);
+  }, [open, presentations, readRecent]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
@@ -166,15 +172,33 @@ export function useNexusController() {
       })),
     [presentations, state],
   );
+  const recentItems = useMemo(() => {
+    const seen = new Set<string>();
+    return (recent.snapshot?.entries ?? []).flatMap(entry => {
+      const resourceRef = presentations.resourceRefForVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
+      const key = resourceRef ?? recentTargetKey(entry.target);
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ entry, presentation: presentations.forRecent(entry), resourceRef }];
+    });
+  }, [recent.snapshot, presentations]);
+  const visibleRecent = heldRecent.current === null ? recentItems : heldRecent.current.flatMap(held => {
+    const item = recentItems.find(candidate => recentTargetKey(candidate.entry.target) === held.target || candidate.entry.used_revision === held.revision);
+    return item ? [{ ...item, rowKey: held.revision, heldHref: held.href }] : [];
+  });
+  const interact = () => {
+    find.interact();
+    if (!parsed.text && heldRecent.current === null) heldRecent.current = recentItems.slice(0, 8).map(item => ({ target: recentTargetKey(item.entry.target), revision: item.entry.used_revision, href: item.entry.href }));
+  };
   useLayoutEffect(() => {
     if (!finding) return;
     setList((previous) => mergeResults(previous, listIdentity, candidateRows({
       query: parsed, panes, frecency: find.frecency, preview: find.preview,
       reference: find.reference, referenceFailed: find.referenceFailed,
       local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
-      retained: previous.identity === listIdentity ? previous.rows : [],
+      retained: previous.identity === listIdentity ? previous.rows : [], recent: recentItems,
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision, recentItems]);
 
   // Navigation from outside the launcher's own pane commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -242,7 +266,7 @@ export function useNexusController() {
     list: list.identity === listIdentity ? list : EMPTY_LIST,
     panes,
     playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
-    recent: find.recent,
+    recent: visibleRecent,
     frecency: find.frecency,
   });
   const rows = groups.flatMap((group) => group.rows);
@@ -382,15 +406,10 @@ export function useNexusController() {
     if (!result || result.kind === "Cancelled") return result;
     setAnnouncement("");
     finishNavigation(null);
-    if (!row?.source) return result;
+    if (!row?.learns_selection) return result;
     const pane = materialized.kind === "PaneOpen" ? panes.find((pane) => pane.id === materialized.paneId)! : null;
     const href = materialized.kind === "InternalHref" ? materialized.href : pane?.href ?? null;
-    let settledLabel: string | null = row.label;
-    if (pane) {
-      const visit = state.panes.find((candidate) => candidate.id === pane.id)!.current_visit;
-      settledLabel = visit.title_hint ?? (pane.presentation.status === "Ready" ? pane.presentation.title : null);
-    }
-    if (href && settledLabel !== null) find.remember({ query: parsed.text || null, target_href: href, label_snapshot: settledLabel, source: row.source });
+    if (href) find.remember({ query: parsed.text || null, target_href: href });
     return result;
   }
 
@@ -560,11 +579,11 @@ export function useNexusController() {
     setAnnouncement("");
     setQueryState(next);
     if (viewport.isMobile) setRootMode("Search");
-    if (next !== query) rootScroll.current.Search = 0;
+    if (next !== query) { rootScroll.current.Search = 0; heldRecent.current = null; }
   }
 
   function setActive(key: string, deliberate = true) {
-    if (deliberate) find.interact();
+    if (deliberate) interact();
     setList((current) => current.active?.context === searchContext && current.active.key === key && current.moved
       ? current : { ...current, active: { context: searchContext, key }, moved: true });
 
@@ -675,10 +694,12 @@ export function useNexusController() {
     searchProgress: find.progress,
     searchUnavailable: find.searchUnavailable,
     searchRefreshRevision,
-    interact: find.interact,
+    interact,
+    recentStatus: { snapshot: recent.snapshot, readFailure: recent.readFailure, writeFailure: recent.writeFailure, read: recent.read },
     setComposing,
     refreshResults: () => {
       find.refresh();
+      heldRecent.current = null;
       setSearchRefreshRevision(current => current + 1);
       setList(EMPTY_LIST);
       setFocusRevision(current => current + 1);
