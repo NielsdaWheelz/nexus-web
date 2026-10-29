@@ -20,5 +20,10 @@ run `20261028-213644-490ad0adf70b` narrowed the failure: transfer job
 `1314407500` called `jobFinished` after 226 ms and rescheduled with one failure;
 there was no os stop reason. `OfflineJobService.kt:304-306` converts its
 `IOException` into retryable network failure without retaining the cause. the api
-logged no reading-copy request. diagnose that exception before changing retry or
-scheduling policy.
+logged no reading-copy access entry; that does not prove the request never arrived.
+diagnose that exception before changing retry or scheduling policy.
+
+the canonical integrated shelf journey passed in `20261028-220347-9526792e2a09`:
+its first copy completed after 134,963 ms through normal retry, the second after
+842 ms. offline restart and supersession passed. this qualifies recency and
+reader composition but does not resolve the intermittent transfer failure.
