@@ -74,15 +74,21 @@ export function nexusRowPrimaryText(row: NexusRow): string {
     case "passage": return [body.prefix && !body.exact.truncated_before ? literal(body.prefix) : "", literal(body.exact), body.suffix && !body.exact.truncated_after ? literal(body.suffix) : ""].join("") || row.label;
     case "images": return [body.count === 1 ? "image" : `${body.count} images`, ...body.alts.flatMap(alt => alt ? [literal(alt)] : [])].join("\n");
     case "reference": return body.label?.text ? `reference · ${literal(body.label)}` : "embedded resource";
-    case "media": return row.label;
+    case "media": return body.media_summary.title;
   }
+}
+
+function rowEvidence(body: Schema<"ResourceItemOut">["preview"]["body"], match: Schema<"SearchMatchOut"> | null) {
+  if (body.kind === "media" && match?.excerpt.text === body.media_summary.title
+    && !match.excerpt.truncated_before && !match.excerpt.truncated_after) return null;
+  return separateMatchEvidence(body, match);
 }
 
 /** Supplemental evidence excludes a complete literal already spoken as the primary name. */
 export function nexusRowEvidenceText(row: NexusRow): string | null {
   if (row.localMatch) return localContent(row.localMatch).separate?.excerpt.text ?? null;
   if (row.matchingPassage) return row.matchingPassage.match?.excerpt.text ?? row.matchingPassage.item.label;
-  return row.item ? separateMatchEvidence(row.item.preview.body, row.match ?? null)?.excerpt.text ?? null : null;
+  return row.item ? rowEvidence(row.item.preview.body, row.match ?? null)?.excerpt.text ?? null : null;
 }
 
 function NexusLocalContent({ match, title, facts, excerptId }: { match: LocalMatch; title: string; facts: string; excerptId: string | undefined }) {
@@ -100,7 +106,7 @@ function NexusResourceContent({ item, row, excerptId }: { item: ResourceItem; ro
   const body = item.preview.body;
   const metadata = rowFacts(row);
   const passage = row.matchingPassage;
-  const evidence = passage ? separateMatchEvidence(passage.item.preview.body, passage.match) : separateMatchEvidence(body, row.match ?? null);
+  const evidence = passage ? separateMatchEvidence(passage.item.preview.body, passage.match) : rowEvidence(body, row.match ?? null);
   return <>
     <div className={styles.rowLabel} title={nexusRowPrimaryText(row)} id={passage || evidence ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
     {metadata || passage || evidence ? <div className={styles.rowSupplement}>
