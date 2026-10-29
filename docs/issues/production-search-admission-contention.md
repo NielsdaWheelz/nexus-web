@@ -37,3 +37,36 @@ exact-key waiter/holder pid and container while it exists, and account for that
 caller's admitted lifetime before choosing a repair. this record is resolved
 when the cause is established and corrected or explicitly accepted with its
 observed limits; the later successful operation alone does not establish that.
+
+2026-10-26 live attribution: at18:18:34.571utc, granted holder87963 on the exact
+`nexus:expensive-search` advisory key was the background container172.18.0.3.
+its suggestion-similarity query had run121.20s since18:16:33.366. postgres
+cancelled it at18:21:33.328 on the worker's300000ms statement timeout; refresh
+job01a1796d-9a8c-7e7b-8a97-b8528ae81d29 settled failed at18:21:34.118. another
+background similarity query held the gate at18:23:11.157. these observations
+identify current ownership, not the historical2026-10-25 holder. no browser
+waiter was present in these snapshots; browser1.5/5s budgets cannot accommodate
+the observed sustained hold.
+
+the complete captured SQL/parameters were replayed read-only on the verified
+0317 morning backup using exact deployed images under amd64 emulation. all five
+original anchors and1114 eligible media validated. one original anchor took
+5.18s and returned zero candidates; five anchors exceeded a15s diagnostic cap.
+the one-anchor plan performed550881 embedding lookups,708753 shared-buffer
+reads and10978 temporary blocks each read/written. anchor selection and peer
+readiness each hashed722253 chunks from a3394-row estimate, growing to8 batches.
+ready-state rows were estimated3 versus579 observed. final ranking received
+zero rows and was not the spilling owner.
+
+next controlled candidate: use the existing0317 expression statistic by making
+the six positive readiness comparisons `(alias.lexical_revision = alias.revision)
+IS TRUE`, as `search/semantic.py` already does. this preserves positive-filter
+semantics but has NOT been tested in this suggestion statement. compare outputs
+and plans before any structural rewrite. per-anchor splitting alone has not
+established interactive lock occupancy; exact peer slices or a reviewed bounded
+retrieval contract may still be required. a lower timeout that repeatedly aborts
+the whole computation does not prove useful background progress.
+
+private evidence is in `nexus-search-profile-20261026-bzr4ivr6`. emulation,
+rebuilt indexes/statistics and snapshot age preclude a production latency or
+capacity claim. production and application code remain unchanged.
