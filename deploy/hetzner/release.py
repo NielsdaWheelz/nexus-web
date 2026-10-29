@@ -1006,9 +1006,14 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
     stop_writers(writers)
     assert_no_writers(writers, clean_exit=True)
     if continuation:
-        prove_ancestry(
-            candidate, database_revision(psql), original_revision=cohort.database_revision
-        )
+        current_revision = database_revision(psql)
+        if current_revision:
+            prove_ancestry(candidate, current_revision, original_revision=cohort.database_revision)
+        elif (
+            cohort.database_revision
+            or psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0"
+        ):
+            raise Failure("candidate continuation lost its revision or the database is not empty")
         note("continuing the same immutable candidate/config; retaining its compatible queued work")
     elif starting_revision:
         assert_generation_quiescence()
