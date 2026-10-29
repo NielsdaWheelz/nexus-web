@@ -101,7 +101,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
     return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
   } });
-  const captureKey = JSON.stringify([accountId, captureLocators, recent.snapshot?.entries.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), heldRecent.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, foreground, attempt]);
+  const captureKey = JSON.stringify([accountId, captureLocators, recent.snapshot?.entries.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, foreground, attempt]);
   const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${captureKey}` : null, stale: "", load: async signal => {
     while (!signal.aborted) {
       const { command_seq } = await store.readReplica();

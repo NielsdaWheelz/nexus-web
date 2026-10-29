@@ -181,12 +181,13 @@ export function useNexusController() {
   const recentItems = useMemo(() => {
     const seen = new Set<string>();
     return allRecentItems.filter(item => {
+      if (presentations.isRecentRemoved(item.entry)) return false;
       const key = item.resourceRef ?? recentTargetKey(item.entry.target);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [allRecentItems]);
+  }, [allRecentItems, presentations]);
   const visibleRecent = heldRecent.current === null ? recentItems : heldRecent.current.flatMap(held => {
     const heldRef = presentations.resourceRefForVisit({ id: "", href: held.entry.href, title_hint: held.entry.title_hint });
     const current = allRecentItems.find(candidate => recentTargetKey(candidate.entry.target) === recentTargetKey(held.entry.target) || candidate.entry.used_revision === held.entry.used_revision)
