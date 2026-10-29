@@ -1,7 +1,8 @@
 """separate piece bibliography from its source edition.
 
 refuse disputed data before clearing exact child copies. retain job history with an
-explicit empty report. rollback requires the paired backup because cleared facts
+explicit empty report, removing the retired manual-author flag from historical
+completed results. rollback requires the paired backup because cleared facts
 and revision increments cannot be reconstructed safely.
 """
 
@@ -108,6 +109,10 @@ def upgrade() -> None:
         keys = {"status", "purpose", "completed_at"}
         if status == "completed":
             keys |= {"changed_fields", "unresolved_fields"}
+            if "retained_manual_authors" in result:
+                if type(result["retained_manual_authors"]) is not bool:
+                    raise RuntimeError(f"malformed manual-author flag: {job_id}")
+                keys.add("retained_manual_authors")
         elif status != "no_findings":
             raise RuntimeError(f"malformed bibliography result: {job_id}")
         if set(result) != keys or not isinstance(result["completed_at"], str):
@@ -155,7 +160,7 @@ def upgrade() -> None:
     for job_id in convert:
         connection.execute(
             sa.text("""
-            UPDATE background_jobs SET result=result || jsonb_build_object('container_report', NULL)
+            UPDATE background_jobs SET result=(result-'retained_manual_authors') || jsonb_build_object('container_report', NULL)
             WHERE id=:id
         """),
             {"id": job_id},

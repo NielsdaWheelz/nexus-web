@@ -17,11 +17,21 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.resource_evidence import CapturedPassageTarget
+from nexus.schemas.resource_evidence import (
+    CapturedEvidence,
+    CapturedPassageTarget,
+    CapturedQuote,
+    ResourceField,
+)
 from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import require_ref
-from nexus.services.resource_items.locations import source_identities
+from nexus.services.resource_items.locations import (
+    current_locator,
+    location_reads,
+    source_identities,
+)
 from nexus.services.search.admission import (
     remaining_milliseconds,
     search_session,
@@ -42,7 +52,7 @@ from nexus.services.search.scope import authorize_scope
 from nexus.services.search.semantic import Embedding, embed_text
 from nexus.services.search.sources import Hit, Retrieval, merge, rank
 
-_SEMANTIC = frozenset({"content_chunk", "note_block"})
+_SEMANTIC = frozenset({"content_chunk", "note_block", "highlight_annotation"})
 
 
 def read_snapshot[T](
@@ -66,7 +76,7 @@ def _families(query: SearchQuery) -> list[str] | None:
     if not (query.terms or query.formats or query.authors or query.roles):
         return None
     families = {family_of(result_type) for result_type in query.effective_result_types}
-    return sorted(families | ({"note_block"} if query.highlight_notes_only else set()))
+    return sorted(families | ({"highlight_annotation"} if "highlight" in families else set()))
 
 
 def _page(
@@ -94,7 +104,6 @@ def _page(
         contributor_ids=None if authors is None else list(authors.values()),
         roles=query.roles,
         embedding=embedding,
-        highlight_notes_only=query.highlight_notes_only,
     )
     hits = merge(hit for family in families for hit in rank(db, r, family))
     page = hits[offset : offset + limit + 1]
@@ -159,6 +168,8 @@ def get_search_result(
     result_id: str,
     evidence_span_ids: list[UUID] | None = None,
     passage_target: CapturedPassageTarget | None = None,
+    field: ResourceField = None,
+    captured_evidence: CapturedEvidence | None = None,
 ) -> SearchResultOut:
     """Reopen one visible row by durable identity, in the caller's transaction.
 
@@ -176,6 +187,43 @@ def get_search_result(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid search result id"
         ) from None
     owner = require_ref(passage_target.owner_ref) if passage_target is not None else None
+    annotation_quote = None
+    if passage_target is not None and passage_target.field == "annotation":
+        assert owner is not None and owner.scheme == "highlight"
+        if result_type == "highlight" and identity != owner.id:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Annotation target disagrees with highlight"
+            )
+        if captured_evidence is not None and captured_evidence.target != passage_target:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Captured annotation target disagrees"
+            )
+        assert passage_target.locator.type == "highlight_annotation_offsets"
+        selector = passage_target.locator.text_quote_selector
+        annotation_quote = (
+            captured_evidence.quote
+            if captured_evidence is not None
+            else CapturedQuote(
+                excerpt=plain_excerpt(
+                    selector["exact"], selector.get("prefix"), selector.get("suffix")
+                ),
+                exact=selector["exact"],
+                prefix=selector.get("prefix"),
+                suffix=selector.get("suffix"),
+                color=None,
+            )
+        )
+        if (
+            annotation_quote is None
+            or annotation_quote.exact != selector["exact"]
+            or current_locator(
+                passage_target, annotation_quote, location_reads(db, viewer_id, [passage_target])
+            )
+            is None
+        ):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation passage no longer resolves")
+        # The immutable field target survives replacement of a chunk/span identity.
+        result_type, identity = "highlight", owner.id
     if (
         owner is not None
         and owner.scheme == "media"
@@ -183,8 +231,12 @@ def get_search_result(
         and passage_target.source_identity != source_identities(db, [owner.id]).get(owner.id)
     ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search passage body changed")
+    if passage_target is not None:
+        field = passage_target.field
     hit = Hit(
-        result_type,
+        "highlight_annotation"
+        if result_type == "highlight" and field == "annotation"
+        else result_type,
         identity,
         "",
         1.0,
@@ -194,6 +246,21 @@ def get_search_result(
     if not found:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
     result = found[0]
+    if annotation_quote is not None:
+        assert passage_target is not None
+        frozen = captured_evidence or result.captured_evidence.model_copy(
+            update={"quote": annotation_quote, "target": passage_target}
+        )
+        return result.model_copy(
+            update={
+                "snippet": annotation_quote.exact[:300],
+                "locator": passage_target.locator,
+                "captured_evidence": frozen,
+                "context_ref": result.context_ref.model_copy(
+                    update={"field": "annotation", "passage_target": passage_target}
+                ),
+            }
+        )
     if passage_target is not None:
         current = result.captured_evidence.target
         if not isinstance(current, CapturedPassageTarget) or current.model_dump(

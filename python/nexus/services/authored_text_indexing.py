@@ -1,17 +1,18 @@
-"""Revision- and claim-fenced note text publication, then semantic completion.
+"""Revision- and claim-fenced authored text publication, then semantic completion.
 
 Edits hold note → queue → index state, raise the revision and coalesce waiting work.
 Both publications recheck that revision, exact claim and source body. Text commits
 before provider work and survives failures; retries embed its existing ids. Completed
 outcomes replay without changing ids, timestamps or connection-discovery effects.
-Only a visible note publishes: a semantically deleted note raises its revision and
+Only a visible authored body publishes: hiding it raises its revision and
 leaves search with its rows and identities intact, and revival reindexes it.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from provider_runtime.errors import CredentialMissing
@@ -42,24 +43,35 @@ from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.suggestion_changes import record_input_change
 
-JOB_KIND = "note_reindex_job"
-_BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id AND authored_visible"
+JOB_KIND = "authored_text_reindex_job"
+OwnerKind = Literal["note_block", "highlight"]
 
 
-def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> None:
+def _body_query(owner_kind: OwnerKind) -> str:
+    if owner_kind == "note_block":
+        return "SELECT body_text, user_id FROM note_blocks WHERE id = :id AND authored_visible"
+    return "SELECT annotation_body_text AS body_text, user_id FROM highlights WHERE id = :id AND authored_visible AND annotation_body_pm_json IS NOT NULL"
+
+
+def enqueue_authored_text_reindex(
+    db: Session, *, owner_kind: OwnerKind, owner_id: UUID, reason: str
+) -> None:
     """Raise revision and reset one unclaimed job; a running old revision is superseded.
 
-    The body writer holds the note row. Queue rows precede state, matching the
+    The body writer holds the resource projection row. Queue rows precede state, matching the
     dead-letter owner's queue → state lock order. Retry rule: each body edit requests
     a new revision in its owner transaction; unclaimed jobs coalesce to the latest.
     """
     jobs = queue.jobs_for_payload(
-        db, kind=JOB_KIND, match={"note_block_id": str(note_block_id)}, lock=True
+        db, kind=JOB_KIND, match={"owner_kind": owner_kind, "owner_id": str(owner_id)}, lock=True
     )
-    revision = mark_content_index_pending(
-        db, owner=IndexOwner("note_block", note_block_id), reason=reason
-    )
-    payload = {"note_block_id": str(note_block_id), "revision": revision, "reason": reason}
+    revision = mark_content_index_pending(db, owner=IndexOwner(owner_kind, owner_id), reason=reason)
+    payload = {
+        "owner_kind": owner_kind,
+        "owner_id": str(owner_id),
+        "revision": revision,
+        "reason": reason,
+    }
     waiting = [job for job in jobs if job.status in ("pending", "failed")]
     for obsolete in waiting[1:]:
         queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
@@ -69,43 +81,45 @@ def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> No
         queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
 
 
-def hide_note_index(db: Session, *, note_block_id: UUID) -> None:
-    """Withdraw a semantically deleted note's text from search, keeping index identity.
+def hide_authored_text_index(db: Session, *, owner_kind: OwnerKind, owner_id: UUID) -> None:
+    """Withdraw an authored body's text from search, keeping index identity.
 
     Raising the revision makes its retained chunks inadmissible and supersedes any
-    running publication; no job is queued. The projection holds the note row. Revival
-    calls ``enqueue_note_reindex``, which raises the revision again and republishes.
+    running publication; no job is queued. The resource projection holds its row. Revival
+    calls ``enqueue_authored_text_reindex``, which raises the revision again and republishes.
     """
-    mark_content_index_pending(
-        db, owner=IndexOwner("note_block", note_block_id), reason="authored_hidden"
-    )
+    mark_content_index_pending(db, owner=IndexOwner(owner_kind, owner_id), reason="authored_hidden")
 
 
-def run_note_reindex_job(
+def run_authored_text_reindex_job(
     *, payload: Mapping[str, Any], context: queue.JobExecutionContext
 ) -> queue.JobResult:
     """Publish local text first; complete semantics only for its exact ids and revision."""
     from nexus.services import connection_discovery
 
-    note_block_id, revision, reason = (
-        UUID(payload["note_block_id"]),
+    owner_kind = cast(OwnerKind, payload["owner_kind"])
+    assert owner_kind in ("note_block", "highlight")
+    owner_id, revision, reason = (
+        UUID(payload["owner_id"]),
         int(payload["revision"]),
         str(payload["reason"]),
     )
-    owner = IndexOwner("note_block", note_block_id)
-    result: dict[str, object] = {"owner": {"kind": owner.kind, "id": str(note_block_id)}}
+    owner = IndexOwner(owner_kind, owner_id)
+    result: dict[str, object] = {"owner": {"kind": owner.kind, "id": str(owner_id)}}
 
     def fence(db: Session, body: str | None = None) -> tuple[Row[Any], Row[Any]] | None:
-        current = db.execute(text(_BODY + " FOR UPDATE"), {"id": note_block_id}).one_or_none()
+        current = db.execute(
+            text(_body_query(owner_kind) + " FOR UPDATE"), {"id": owner_id, "kind": owner_kind}
+        ).one_or_none()
         if current is None or queue.lock_running_job_claim(db, context=context) is None:
             return None
         state = db.execute(
             text(
                 "SELECT revision, lexical_revision, status, active_embedding_provider AS provider,"
                 " active_embedding_model AS model FROM content_index_states"
-                " WHERE owner_kind = 'note_block' AND owner_id = :id FOR UPDATE"
+                " WHERE owner_kind = :kind AND owner_id = :id FOR UPDATE"
             ),
-            {"id": note_block_id},
+            {"id": owner_id, "kind": owner_kind},
         ).one()
         if state.revision != revision or (body is not None and current.body_text != body):
             return None
@@ -115,10 +129,10 @@ def run_note_reindex_job(
         connection_discovery.queue_connection_discovery_scan(
             db,
             user_id=user_id,
-            ref=ResourceRef(scheme="note_block", id=note_block_id),
-            reason="note_reindex",
+            ref=ResourceRef(scheme=owner_kind, id=owner_id),
+            reason="authored_text_reindex",
         )
-        record_input_change(db, owners=(f"note_block:{owner.id}",))
+        record_input_change(db, owners=(f"{owner_kind}:{owner.id}",))
 
     def prepare(db: Session) -> ContentIndexResult | tuple[str, bool] | None:
         snapshot = fence(db)
@@ -132,9 +146,9 @@ def run_note_reindex_job(
             text(
                 "UPDATE content_index_states SET status = 'indexing', status_reason = :reason,"
                 " active_embedding_provider = NULL, active_embedding_model = NULL, updated_at = now()"
-                " WHERE owner_kind = 'note_block' AND owner_id = :id"
+                " WHERE owner_kind = :kind AND owner_id = :id"
             ),
-            {"id": note_block_id, "reason": reason},
+            {"id": owner_id, "kind": owner_kind, "reason": reason},
         )
         return current.body_text, state.lexical_revision == revision
 
@@ -149,7 +163,7 @@ def run_note_reindex_job(
         embedding_spool = directory / "embeddings.jsonl"
         try:
             if not lexical_ready:
-                blocks = _note_blocks(note_block_id, body)
+                blocks = _authored_blocks(owner_kind, owner_id, body)
                 spool_chunks(blocks, chunks_spool)
 
                 def publish_text(db: Session) -> ContentIndexResult | None:
@@ -159,7 +173,9 @@ def run_note_reindex_job(
                     published = publish_text_index(
                         db,
                         owner=owner,
-                        source_kind="note",
+                        source_kind="note"
+                        if owner_kind == "note_block"
+                        else "highlight_annotation",
                         blocks=blocks,
                         chunks=read_spool(chunks_spool),
                         reason=reason,
@@ -167,7 +183,7 @@ def run_note_reindex_job(
                     if published.status != "indexing":
                         completion_effects(db, snapshot[0].user_id)
                     else:
-                        record_input_change(db, owners=(f"note_block:{owner.id}",))
+                        record_input_change(db, owners=(f"{owner_kind}:{owner.id}",))
                     return published
 
                 published = index_phase("publish_note_text", publish_text)
@@ -218,14 +234,20 @@ def run_note_reindex_job(
     return result | {"status": published.status, "chunk_count": published.chunk_count}
 
 
-def _note_blocks(note_block_id: UUID, body: str) -> list[IndexableBlock]:
-    """The body is one citable block; chunk windows never leave its anchor."""
-    if not body.strip():
+def _authored_blocks(owner_kind: OwnerKind, owner_id: UUID, body: str) -> list[IndexableBlock]:
+    """One exact authored body; annotation offsets never refer to its source quote."""
+    if not body:
         return []
     locator: dict[str, object] = {
-        "kind": "note_text",
-        "note_block_id": str(note_block_id),
+        "kind": "note_text" if owner_kind == "note_block" else "highlight_annotation_text",
+        "note_block_id" if owner_kind == "note_block" else "highlight_id": str(owner_id),
         "start_offset": 0,
         "end_offset": len(body),
     }
-    return [IndexableBlock(body, 0, locator)]
+    if owner_kind == "highlight":
+        locator["body_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return [
+        IndexableBlock(
+            body, 0, locator, heading_path=("annotation",) if owner_kind == "highlight" else ()
+        )
+    ]

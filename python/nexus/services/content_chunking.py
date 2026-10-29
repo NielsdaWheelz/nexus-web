@@ -49,6 +49,7 @@ _ANCHOR_KEYS = {
     "pdf_text": ("page_number",),
     "transcript_time_text": ("t_start_ms", "t_end_ms"),
     "note_text": ("note_block_id",),
+    "highlight_annotation_text": ("highlight_id",),
 }
 
 
@@ -211,7 +212,9 @@ def _chunk_locator(
     head, tail = blocks[first_idx].locator, blocks[last_idx].locator
     locator = head | {"text_quote": {"exact": text, "prefix": "", "suffix": ""}}
     match head["kind"]:
-        case "web_text" | "epub_text" | "note_text" | "x_capture_text":
+        case (
+            "web_text" | "epub_text" | "note_text" | "x_capture_text" | "highlight_annotation_text"
+        ):
             locator["start_offset"] = int(str(head["start_offset"])) + first_start
             locator["end_offset"] = int(str(tail["start_offset"])) + last_end
         case "pdf_text":  # a page is one block, so a chunk never leaves its page

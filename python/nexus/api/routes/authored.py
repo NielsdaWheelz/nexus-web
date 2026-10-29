@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
+from pydantic import TypeAdapter, ValidationError
 from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -99,7 +100,24 @@ def provision(request: ProvisionReplica, viewer: ViewerDep, db: DbSession) -> Da
     return Data(data=authored.provision(db, viewer.user_id, request))
 
 
-@router.post("/changes")
+_REPLICA_ID = TypeAdapter(UUID)
+
+
+async def require_current_upload_replica(
+    request: Request, viewer: ViewerDep, db: DbSession
+) -> None:
+    """Refuse retired producers before FastAPI decodes their change grammar."""
+    try:
+        value = await request.json()
+        replica_id = _REPLICA_ID.validate_python(value["replica_id"])
+    except (KeyError, TypeError, ValidationError) as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Invalid authored replica"
+        ) from exc
+    await to_thread.run_sync(authored.require_current_replica, db, viewer.user_id, replica_id)
+
+
+@router.post("/changes", dependencies=[Depends(require_current_upload_replica)])
 def upload(request: UploadChanges, viewer: ViewerDep, db: DbSession) -> Data[AcceptedChanges]:
     return Data(data=authored.upload(db, viewer.user_id, request))
 

@@ -2,6 +2,9 @@
 
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
+import HighlightAnnotation from "./HighlightAnnotation";
+import {useRef} from "react";
+import {useWorkGuard} from "@/lib/unsavedWork";
 import {createPortal} from "react-dom";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
@@ -38,6 +41,8 @@ export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
+  const guard = useWorkGuard();
+  const owners = useRef(new Map<string, readonly string[]>());
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row) return [];
@@ -48,7 +53,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const identity = resourceTypeLabel(scheme).toLowerCase();
     const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
     const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
-    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
+    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => {if (guard.confirmLoss({scopes: [], ownerIds: owners.current.get(row.row_id) ?? []})) row.unlink();}});
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
@@ -71,7 +76,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
       </button> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={ids => owners.current.set(row.row_id, ids)}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
         mount.content, `${row.row_id}:content`)] : [])];
   });
 }

@@ -47,7 +47,7 @@ export interface SourceArrivalContext {
 
 export type SourceArrivalApplyTarget =
   | { readonly kind: "source"; readonly source: SourceTarget }
-  | { readonly kind: "resource"; readonly resource_ref: string }
+  | { readonly kind: "resource"; readonly resource_ref: string; readonly field: "annotation" | null }
   | { readonly kind: "highlight"; readonly highlight_id: string }
   | { readonly kind: "passage"; readonly passage: PassageState; readonly canonical_source_ref: string | null }
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
@@ -245,11 +245,11 @@ export function useSourceArrival(input: {
         const local = intent.target.kind === "resource" && (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "xCapture") &&
           intent.target.resource_ref.startsWith("highlight:") ? intent.target.resource_ref.slice("highlight:".length) : null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
-        else if (ready && intent.target.kind === "resource" && latest.current.runtime.routeId === "note" &&
+        else if (ready && intent.target.kind === "resource" && (latest.current.runtime.routeId === "note" || latest.current.runtime.routeId === "highlight") &&
             intent.target.resource_ref === latest.current.runtime.resourceRef) target = intent.target;
         else if (local !== null) target = { kind: "highlight", highlight_id: local };
         else if (intent.target.kind === "resource" && intent.target.resource_ref.startsWith("passage_anchor:") &&
-            (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "xCapture" || latest.current.runtime.routeId === "note")) {
+            (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "xCapture" || latest.current.runtime.routeId === "note" || latest.current.runtime.routeId === "highlight")) {
           const anchor = intent.target.resource_ref.slice("passage_anchor:".length);
           const states = await authored.readStates(selectStates({ anchor_ids: [anchor] }));
           if (!current()) return;

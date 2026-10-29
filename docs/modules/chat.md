@@ -294,12 +294,10 @@ row. loading and failed reads remain explicit. failed refresh may retain prior
 local data with retry feedback. source attribution and authorized highlight-id
 navigation remain supplied; local selection clears a stale location label.
 
-`highlight_notes` returns all visible local notes linked to a highlight in one
-sqlite statement, ordered by that endpoint’s bytewise position then link id.
-it excludes hidden notes/links and known hidden local highlights. the caller
-admits visible owned highlights or supplied readable peer quotations; no local
-peer stub is required, and the query grants no remote reading authority.
-android packages this query’s sql hash with its assets.
+owned highlight previews read the single local annotation body and label it
+separately from the source quotation. peer quotations never load that private
+field. saved annotation content and unsubmitted question input have independent
+owners; sending a question cannot consume or overwrite the annotation.
 
 context previews describe current content eligible for future replies, not prior
 prompt bytes. the existing finite upload barrier remains responsible for send.

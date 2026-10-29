@@ -700,8 +700,8 @@ export function projectResourceActions(
       highlightId: id,
     }),
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
-    // attached notes are independent: the reader composes a new one; no singleton note id.
-    HighlightNote: entry({ kind: "EditHighlightNote", highlightId: id, noteBlockId: null }),
+    // The highlight pane owns its annotation field.
+    EditHighlightAnnotation: entry({ kind: "EditHighlightAnnotation", highlightId: id }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
     RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
     RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],

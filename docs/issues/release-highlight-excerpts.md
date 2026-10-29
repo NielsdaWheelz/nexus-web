@@ -72,18 +72,14 @@ commands incompatible. accepted source command contents must remain immutable
 
 ## device transition and release
 
-deploy paired clients before reopening writing. the one-time storage transition
-reads only prior format metadata and pending-row count. in one transaction require
-format 1 or 2 and zero pending rows, apply the device schema change, retire old authored
-rows/projections, set format 3 and provisioning incomplete, and preserve replica
-identity, source sequence and clocks. nonempty pending rows refuse; old command
-bodies are never parsed or rewritten. existing snapshot staging/completion replaces
-state and derived indexes; interruption restarts provisioning with writing disabled.
-this finite storage migration remains, but no runtime can read/write prior-format content.
-preserve account state and downloaded sources; do not use android signout or clear
-the whole application.
+annotation migration 0327 follows excerpt migration 0326 and advances the combined
+grammar to format 4. its private body fields change both client and server grammar;
+format-3 excerpt clients cannot participate. runtime rejects old local stores.
+after proving every outbox empty, explicitly retire authored device state and
+bootstrap a complete snapshot with a fresh replica, preserving downloaded sources
+and unrelated account state. no old command bytes are decoded or replayed.
 
-verify exact database head, v3 provision/snapshot/above-floor catch-up, below-floor
+verify exact database head, v4 provision/snapshot/above-floor catch-up, below-floor
 refusal, old-client refusal, id-preserving offline reads, subsequent color/resize
 commands, historical quotation reads and unchanged pdf behavior on both platforms.
 exercise the pending-write refusal before any real retirement. no partial-pair
@@ -91,7 +87,7 @@ release, automatic data deletion or silent source reconstruction.
 
 rollback requires restoring the paired database/device backups and old binaries
 while writers remain stopped. after new writes resume, use explicit repair; do
-not replay v3 writes into earlier formats. this is a short coordinated cutover, not a rolling
+not replay v4 writes into earlier formats. this is a short coordinated cutover, not a rolling
 compatibility deployment.
 
 resolved when the paired release and device qualification satisfy these checks,

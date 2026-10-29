@@ -60,6 +60,7 @@ const ROUTES = {
   pageNew: ["pages/new", "New page", FileText],
   page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
   dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
+  highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", ListTodo],
   stats: ["stats", "Stats", ChartColumn],
@@ -86,6 +87,7 @@ const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   author: ["contributor_handle", "handle"],
   page: ["page", "pageId"],
   note: ["note_block", "blockId"],
+  highlight: ["highlight", "id"],
   oracleReading: ["oracle_reading", "readingId"],
 };
 // Query changes keep the mounted body (url-owned filters, sort, selection).
@@ -191,7 +193,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
-  const section = id === "downloads" || id === "xCapture" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
+  const section = id === "downloads" || id === "xCapture" || id === "highlight" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
   const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
@@ -204,7 +206,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
     section,
     header: pendingLabel
       ? { kind: "Resource", pendingLabel }
-      : pattern.length === 1 || id === "xCapture"
+      : pattern.length === 1 || id === "xCapture" || id === "highlight"
         ? { kind: "Section", context: "None" }
         : { kind: "Section", context: "Destination", destinationId: section! },
     returnKind,

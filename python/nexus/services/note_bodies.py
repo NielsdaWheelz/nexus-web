@@ -43,18 +43,6 @@ def markdown_body(markdown: str) -> dict[str, Any]:
     return {"type": "body", "attrs": {"presentation": "prose"}, "content": content}
 
 
-def sole_embed(body_pm_json: dict[str, Any]) -> ResourceRef | None:
-    """The resource a body consisting of exactly one embed presents standalone."""
-    content = body_pm_json.get("content")
-    if not isinstance(content, list) or len(content) != 1:
-        return None
-    node = content[0]
-    if not isinstance(node, dict) or node.get("type") != "resource_embed":
-        return None
-    ref = parse_resource_ref(str(node["attrs"]["resource_ref"]))
-    return None if isinstance(ref, ResourceRefParseFailure) else ref
-
-
 @dataclass(frozen=True, slots=True)
 class NoteRead:
     body_pm_json: dict[str, Any]
@@ -75,8 +63,8 @@ def read_notes(db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]) -> dic
     return {id_: NoteRead(body, words) for id_, body, words in rows}
 
 
-def project_note_embeds(
-    db: Session, *, viewer_id: UUID, note_id: UUID, embedded_refs: Sequence[str]
+def project_body_embeds(
+    db: Session, *, viewer_id: UUID, owner: ResourceRef, embedded_refs: Sequence[str]
 ) -> None:
     """Replace the note's ``note_body`` facts with its current embeds. Flush-only.
 
@@ -87,7 +75,8 @@ def project_note_embeds(
     Contributor search text and admission follow visible credits only, so no fact here
     refreshes them; a fact to a contributor opens only its detail, read live.
     """
-    source = note_ref(note_id)
+    assert owner.scheme in ("note_block", "highlight")
+    source = owner
     wanted: dict[ResourceRef, None] = {}
     for raw in embedded_refs:
         target = parse_resource_ref(raw)
@@ -103,8 +92,8 @@ def project_note_embeds(
             select(ResourceEdge).where(
                 ResourceEdge.user_id == viewer_id,
                 ResourceEdge.origin == "note_body",
-                ResourceEdge.source_scheme == "note_block",
-                ResourceEdge.source_id == note_id,
+                ResourceEdge.source_scheme == owner.scheme,
+                ResourceEdge.source_id == owner.id,
             )
         )
     }
@@ -119,8 +108,8 @@ def project_note_embeds(
             user_id=viewer_id,
             kind="context",
             origin="note_body",
-            source_scheme="note_block",
-            source_id=note_id,
+            source_scheme=owner.scheme,
+            source_id=owner.id,
             target_scheme=target.scheme,
             target_id=target.id,
         )

@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -42,7 +42,11 @@ def materialize_link_endpoint(
             raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be linked")
         return ref
     candidate = require_ref(endpoint.candidate_ref)
-    if capability(candidate.scheme).link_mode != "materialize_passage":
+    if capability(candidate.scheme).link_mode != "materialize_passage" and not (
+        candidate.scheme == "highlight"
+        and endpoint.passage_target is not None
+        and endpoint.passage_target.field == "annotation"
+    ):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate")
     expected = endpoint.passage_target
     reading = None if expected is None else assert_resource_ref(expected.owner_ref)
@@ -51,6 +55,7 @@ def materialize_link_endpoint(
             db,
             viewer_id=viewer_id,
             ref=candidate,
+            field=expected.field if expected is not None else None,
             reading_media_id=None if reading is None or reading.scheme != "media" else reading.id,
         )
     except ConflictError as exc:
@@ -80,6 +85,7 @@ def _place(target: CapturedPassageTarget) -> tuple[object, ...]:
     """Owner, body identity and canonical extent; quote context is presentation."""
     return (
         target.owner_ref,
+        target.field,
         target.source_identity,
         target.locator.model_dump(mode="json", exclude={"text_quote_selector"}),
     )
@@ -103,14 +109,10 @@ def count_retained_neutral_links(
     db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
 ) -> int:
     """Live authored links created in the window whose two endpoints are still visible,
-    excluding highlight-note annotations (migrated or new, whatever their origin)."""
+    including ordinary related notes; annotations are a highlight field."""
     window = [ResourceEdge.created_at < end]
     if start is not None:
         window.append(ResourceEdge.created_at >= start)
-    annotation = or_(
-        (ResourceEdge.source_scheme == "highlight") & (ResourceEdge.target_scheme == "note_block"),
-        (ResourceEdge.source_scheme == "note_block") & (ResourceEdge.target_scheme == "highlight"),
-    )
     rows = db.execute(
         select(
             ResourceEdge.source_scheme,
@@ -120,7 +122,6 @@ def count_retained_neutral_links(
         ).where(
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.origin.in_(AUTHORED_LINK_ORIGINS),
-            ~annotation,
             text(edge_live_sql("resource_edges")),
             *window,
         )

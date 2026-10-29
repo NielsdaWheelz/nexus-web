@@ -116,7 +116,7 @@ SYSTEM_PROMPT = (
     "into a library the user administers. "
     "nexus__note__create(markdown, page_uri?) appends a note the user dictates to today's "
     "daily note, or to a given page. "
-    "nexus__highlight__create(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
+    "nexus__highlight__create(media_uri, exact, prefix?, suffix?, annotation?) dog-ears an exact "
     "passage; if exact is not unique, add prefix/suffix or quote more surrounding "
     "text — an ambiguous quote is refused, so never guess. "
     "nexus__edge__create(source_uri, target_uri, kind?, rationale) connects two of the "
@@ -193,7 +193,13 @@ def assemble(
             if snapshot is not None and quoted_subject:
                 target = snapshot.evidence.target
                 citation = (
-                    _attached_citation(db, ref.resolved, viewer_id, passage_target=target)
+                    _attached_citation(
+                        db,
+                        ref.resolved,
+                        viewer_id,
+                        passage_target=target,
+                        captured_evidence=snapshot.evidence,
+                    )
                     if isinstance(target, CapturedPassageTarget)
                     else None
                 )
@@ -288,6 +294,7 @@ def _attached_citation(
     viewer_id: UUID,
     *,
     passage_target: CapturedPassageTarget | None = None,
+    captured_evidence: CapturedEvidence | None = None,
 ) -> RetrievalCitation | None:
     """Citable = rendered with a body or quote, and a retrieval row can materialize."""
 
@@ -312,6 +319,7 @@ def _attached_citation(
             result_type=result_type,
             source_id=str(ref.id),
             passage_target=passage_target,
+            captured_evidence=captured_evidence,
         )
         citation = citation_from_search_result(result)
     except (NotFoundError, ConflictError, ValueError):
@@ -362,7 +370,7 @@ def _resource(
             prefix=parts.prefix,
             suffix=parts.suffix,
             source=captured.source.title,
-            note=resource.quote.note if resource.quote else None,
+            annotation=resource.quote.annotation if resource.quote else None,
         )
         return f"{head}\n{inner}\n</resource>"
     if resource.quote is not None:
@@ -373,7 +381,7 @@ def _resource(
             prefix=quote.prefix,
             suffix=quote.suffix,
             source=quote.source_label,
-            note=quote.note,
+            annotation=quote.annotation,
         )
         return f"{head}\n{inner}\n</resource>"
     if resource.inline_body is not None:

@@ -223,6 +223,7 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     if inserted_entry_id is not None:
         call.created_refs.append(
             {
+                "field": None,
                 "kind": "entry",
                 "id": str(inserted_entry_id),
                 "label": placement.name,
@@ -295,7 +296,9 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
         resource_refs=[owner.uri],
         link_ids=[],
     )
-    call.created_refs.append({"kind": "note_block", "id": str(note.id), "label": label})
+    call.created_refs.append(
+        {"field": None, "kind": "note_block", "id": str(note.id), "label": label}
+    )
     return NoteCreateSuccess(note_uri=note.uri, page_uri=value.page_uri)
 
 
@@ -433,23 +436,26 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
                 "excerpt": frozen.model_dump(mode="json"),
             },
             "color": value.color or "yellow",
+            "body_pm_json": note_bodies.markdown_body(value.annotation or ""),
         },
     ]
-    note = None
-    if value.note and value.note.strip():
-        note = ResourceRef("note_block", uuid5(call.id, "nexus.highlight.create:note_block"))
-        intents += _note_and_link(note.uri, note_bodies.markdown_body(value.note), highlight.uri)
-    authored.server_command(
+    merged = authored.server_command(
         db, viewer, command={"kind": "batch", "intents": intents}, resource_refs=[], link_ids=[]
     )
-    call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
-    if note is not None:
-        call.created_refs.append(
-            {"kind": "note_block", "id": str(note.id), "label": "highlight note"}
-        )
-    return HighlightCreateSuccess(
-        exact=exact, highlight_uri=highlight.uri, note_uri=None if note is None else note.uri
+    call.created_refs.append(
+        {"kind": "highlight", "id": str(highlight.id), "label": words, "field": None}
     )
+    annotation = next(item for item in merged.projections if item.ref == highlight.uri)
+    if annotation.body_pm_json is not None:
+        call.created_refs.append(
+            {
+                "kind": "highlight",
+                "id": str(highlight.id),
+                "label": "annotation",
+                "field": "annotation",
+            }
+        )
+    return HighlightCreateSuccess(exact=words, highlight_uri=highlight.uri)
 
 
 def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
@@ -467,7 +473,9 @@ def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
             snapshot=CitationSnapshot(rationale=rationale),
         ),
     )
-    call.created_refs.append({"kind": "edge", "id": str(edge.id), "label": rationale})
+    call.created_refs.append(
+        {"field": None, "kind": "edge", "id": str(edge.id), "label": rationale}
+    )
     return EdgeCreateSuccess(
         edge_id=edge.id,
         kind=kind,
@@ -488,7 +496,9 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     item_id, title = found
     if inserted:
-        call.created_refs.append({"kind": "queue", "id": str(item_id), "label": title})
+        call.created_refs.append(
+            {"field": None, "kind": "queue", "id": str(item_id), "label": title}
+        )
     return QueueAddSuccess(
         already_present=not inserted, media_uri=media.uri, queue_entry_id=item_id, title=title
     )
@@ -503,6 +513,25 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     kind, target = ref["kind"], UUID(ref["id"])
     if kind == "entry":
         _unfile(db, viewer_id, ref)
+        return
+    if ref["field"] == "annotation":
+        assert kind == "highlight"
+        authored.lock_account(db, viewer_id)
+        row = db.get(Highlight, target)
+        if (
+            row is None
+            or row.user_id != viewer_id
+            or not row.authored_visible
+            or row.annotation_body_pm_json is None
+        ):
+            return
+        authored.server_command(
+            db,
+            viewer_id,
+            command={"kind": "clear_annotation", "ref": f"highlight:{target}"},
+            resource_refs=[f"highlight:{target}"],
+            link_ids=[],
+        )
         return
     if kind in ("note_block", "highlight"):
         uri = f"{kind}:{target}"

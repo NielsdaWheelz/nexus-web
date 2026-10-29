@@ -16,10 +16,12 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
  * detaches, so the session stays attached to the returned page until close(); callers
  * keep that page open. firefox's macOS app-data bookkeeping also belongs to the
  * temporary root. restart() closes the browser process and reopens the same profile;
- * callers use its returned context/page. close() removes all browser state. */
+ * callers use its returned context/page. optional proxies cover shared-worker traffic
+ * with end-to-end TLS. close() removes all browser state. */
 export async function openLabBrowser(input: {
   web_origin: string;
   storage_state: string | null;
+  proxy?: { server: string; bypass?: string };
 } & (
   | { browser?: "chromium"; web_tls: { leaf_spki_sha256: string } }
   | { browser: "firefox"; web_tls: { ca_file: string } }
@@ -54,6 +56,7 @@ export async function openLabBrowser(input: {
         state.context = await firefox.launchPersistentContext(profile, {
           headless: true,
           offline,
+          ...(input.proxy ? {proxy: input.proxy, firefoxUserPrefs: {"network.proxy.allow_hijacking_localhost": true, "network.proxy.no_proxies_on": ""}} : {}),
           args: [], ignoreHTTPSErrors: false,
           ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: join(directory, "app-data") } } : {}),
         });
@@ -61,6 +64,7 @@ export async function openLabBrowser(input: {
         state.context = await chromium.launchPersistentContext(profile, {
           headless: true,
           offline,
+          ...(input.proxy ? {proxy: input.proxy} : {}),
           args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
         });
       }

@@ -109,7 +109,7 @@ def build_reader_evidence(
             target = resolve_source_target(
                 db,
                 viewer_id=viewer_id,
-                target=ResourceSourceTargetKey(resource_ref=ref),
+                target=ResourceSourceTargetKey(field=None, resource_ref=ref),
                 reading_media_id=media_id,
             )
         except NotFoundError:
@@ -438,6 +438,7 @@ def _child_continuation(
             source = LinkPassageEndpoint(
                 candidate_ref=ref.uri,
                 passage_target=CapturedPassageTarget(
+                    field=None,
                     owner_ref=f"media:{media_id}",
                     locator=locator,
                     precision=precision,
