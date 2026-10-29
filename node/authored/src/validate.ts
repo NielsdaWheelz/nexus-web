@@ -55,6 +55,13 @@ function validateLocatorCapture(locator: Locator, source_ref: string): void {
       range(locator.start_offset, locator.end_offset);
       if (locator.type === "epub_fragment_offsets" && locator.section_id !== null) uuid(locator.section_id);
       break;
+    case "highlight_annotation_offsets":
+      uuid(locator.highlight_id);
+      if (source_ref !== `highlight:${locator.highlight_id}`) throw new TypeError("Annotation locator disagrees with highlight owner");
+      range(locator.start_offset, locator.end_offset);
+      if (!locator.text_quote_selector || !locator.text_quote_selector.exact) throw new TypeError("Annotation text evidence requires its quote selector");
+      if (locator.body_sha256 !== null && !/^[0-9a-f]{64}$/u.test(locator.body_sha256)) throw new TypeError("Invalid annotation body hash");
+      break;
     case "note_block_offsets":
       if (source_ref !== `note_block:${locator.block_id}`) throw new TypeError("Locator note disagrees with immutable source");
       range(locator.start_offset, locator.end_offset);

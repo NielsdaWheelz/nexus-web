@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
-from nexus.schemas.resource_evidence import CapturedPassageTarget
+from nexus.schemas.resource_evidence import CapturedPassageTarget, ResourceField
 
 SEARCH_RESULT_TYPES = Literal[
     "media",
@@ -35,6 +35,16 @@ class SearchResultContextRefOut(BaseModel):
     type: SEARCH_RESULT_TYPES
     id: UUID | str
     evidence_span_ids: list[UUID]
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        if self.field == "annotation" and self.type != "highlight" and self.passage_target is None:
+            raise ValueError("annotation field requires a highlight")
+        if self.passage_target is not None and self.field != self.passage_target.field:
+            raise ValueError("context field and captured target disagree")
+        return self
+
     passage_target: CapturedPassageTarget | None
 
 

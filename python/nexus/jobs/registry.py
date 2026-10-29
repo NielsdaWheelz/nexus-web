@@ -138,10 +138,10 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_history="nexus.services.import_history:on_index_job_outcome",
         ),
-        "note_reindex_job": JobDefinition(
+        "authored_text_reindex_job": JobDefinition(
             "background",
-            "nexus.services.note_indexing:run_note_reindex_job",
-            on_dead="nexus.jobs.dead_letters:note_index",
+            "nexus.services.authored_text_indexing:run_authored_text_reindex_job",
+            on_dead="nexus.jobs.dead_letters:authored_text_index",
         ),
         "media_unit_build": JobDefinition(
             "background",

@@ -321,8 +321,8 @@ def _source_context(
         quote = resolved.quote
         source_text = f"Highlight from {quote.source_label}:\n"
         source_text += f"{quote.prefix}{quote.exact}{quote.suffix}"
-        if quote.note:
-            source_text += f"\n\nReader note:\n{quote.note}"
+        if quote.annotation:
+            source_text += f"\n\nAnnotation:\n{quote.annotation}"
     elif ref.scheme == "page":
         kin = frozenset(expand_owned_child_refs(db, viewer_id=user_id, ref=ref))
         bodies = db.scalars(

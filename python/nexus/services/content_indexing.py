@@ -13,7 +13,7 @@ it, so a revision has at most one job. A job snapshots the source and publishes 
 while its revision is current and it still holds its queue claim (``fence``, taken at
 both ends of the job). Lock order: media row ``FOR NO KEY UPDATE`` (which admits the
 ``KEY SHARE`` a worker's history insert takes), then the state row, then queue rows.
-A note's index is rebuilt by ``note_indexing``. Immutable x capture fragments own
+A note's index is rebuilt by ``authored_text_indexing``. Immutable x capture fragments own
 passages once; imported posts and threads own no chunks. Fragment publication
 requests the selected parents' existing summary jobs.
 
@@ -126,7 +126,7 @@ _LIVE = ("pending", "failed", "running")
 
 @dataclass(frozen=True)
 class IndexOwner:
-    kind: Literal["media", "note_block", "fragment"]
+    kind: Literal["media", "note_block", "highlight", "fragment"]
     id: UUID
 
 

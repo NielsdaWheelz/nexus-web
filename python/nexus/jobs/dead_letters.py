@@ -16,7 +16,7 @@ from nexus.jobs.queue import JobRow
 from nexus.services.generation import ledger
 
 
-def note_index(db: Session, job: JobRow) -> None:
+def authored_text_index(db: Session, job: JobRow) -> None:
     """Note indexing: an index still waiting on this rebuild fails with the job's code.
 
     Only its payload revision in pending/indexing can fail. Published lexical text
@@ -25,9 +25,10 @@ def note_index(db: Session, job: JobRow) -> None:
     db.execute(
         text("""UPDATE content_index_states
             SET status = 'failed', status_reason = left(:reason, 1000), updated_at = now()
-            WHERE owner_kind = 'note_block' AND owner_id = :id AND revision = :revision AND status IN ('pending', 'indexing')"""),
+            WHERE owner_kind = :kind AND owner_id = :id AND revision = :revision AND status IN ('pending', 'indexing')"""),
         {
-            "id": UUID(job.payload["note_block_id"]),
+            "id": UUID(job.payload["owner_id"]),
+            "kind": job.payload["owner_kind"],
             "revision": int(job.payload["revision"]),
             "reason": f"{job.error_code}: {job.last_error}",
         },

@@ -3936,13 +3936,15 @@ export interface components {
         };
         /** CapturedPassageTarget */
         CapturedPassageTarget: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "passage";
             /** Locator */
-            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Owner Ref */
             owner_ref: string;
             /**
@@ -3967,6 +3969,8 @@ export interface components {
         };
         /** CapturedResourceTarget */
         CapturedResourceTarget: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3990,6 +3994,8 @@ export interface components {
         };
         /** CapturedUnavailableTarget */
         CapturedUnavailableTarget: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4531,7 +4537,7 @@ export interface components {
             /** Kinds */
             kinds?: ("context" | "supports" | "contradicts")[] | null;
             /** Origins */
-            origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant")[] | null;
+            origins?: ("user" | "citation" | "system" | "note_body" | "discovery" | "document_embed" | "assistant")[] | null;
             /** Source Schemes */
             source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Target Schemes */
@@ -4573,7 +4579,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant";
+            origin: "user" | "citation" | "system" | "note_body" | "discovery" | "document_embed" | "assistant";
             other: components["schemas"]["ResourceItemOut"];
             snapshot: components["schemas"]["CitationSnapshot"] | null;
             source: components["schemas"]["ResourceItemOut"];
@@ -5089,6 +5095,8 @@ export interface components {
          * @description A target one write inserted; its undo removes exactly these.
          */
         CreatedRefOut: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * Id
              * Format: uuid
@@ -6831,8 +6839,30 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HighlightAnnotationOffsetsLocator */
+        HighlightAnnotationOffsetsLocator: {
+            /** Body Sha256 */
+            body_sha256: string | null;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Highlight Id
+             * Format: uuid
+             */
+            highlight_id: string;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["TextQuoteSelector"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "highlight_annotation_offsets";
+        };
         /** HighlightPatch */
         "HighlightPatch-Input": {
+            /** Body Update */
+            body_update: string | null;
             color: components["schemas"]["Register_Literal__yellow____green____blue____pink____purple___"];
             /** Delete Vv */
             delete_vv: {
@@ -6855,6 +6885,32 @@ export interface components {
         };
         /** HighlightPatch */
         "HighlightPatch-Output": {
+            /** Body Update */
+            body_update: string | null;
+            color: components["schemas"]["Register_Literal__yellow____green____blue____pink____purple___"];
+            /** Delete Vv */
+            delete_vv: {
+                [key: string]: string;
+            };
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "highlight";
+            /** Ref */
+            ref: string;
+            selection: components["schemas"]["Register_SelectionCapture_-Output"];
+            /** Source Ref */
+            source_ref: string;
+            /** Touch Vv */
+            touch_vv: {
+                [key: string]: string;
+            };
+        };
+        /** HighlightState */
+        HighlightState: {
+            /** Body State */
+            body_state: string;
             color: components["schemas"]["Register_Literal__yellow____green____blue____pink____purple___"];
             /** Delete Vv */
             delete_vv: {
@@ -7691,7 +7747,7 @@ export interface components {
              */
             kind: "located";
             /** Locator */
-            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /**
              * Precision
              * @enum {string}
@@ -7710,6 +7766,8 @@ export interface components {
              * Format: uuid
              */
             effect_id: string;
+            /** Field */
+            field: "annotation" | null;
             /**
              * Generation Id
              * Format: uuid
@@ -9199,7 +9257,7 @@ export interface components {
         "PassageCapture-Input": {
             excerpt: components["schemas"]["FrozenExcerpt-Input"];
             /** Locator */
-            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
             publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
@@ -9209,7 +9267,7 @@ export interface components {
         "PassageCapture-Output": {
             excerpt: components["schemas"]["FrozenExcerpt-Output"];
             /** Locator */
-            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
             publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
@@ -10752,7 +10810,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant";
+            origin: "user" | "citation" | "system" | "note_body" | "discovery" | "document_embed" | "assistant";
         };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
@@ -11705,6 +11763,8 @@ export interface components {
         };
         /** ReferenceResourceBodyOut */
         ReferenceResourceBodyOut: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12017,6 +12077,8 @@ export interface components {
          * @description Where opening a ref goes; ``href`` is null exactly when ``kind`` is none.
          */
         ResourceActivationOut: {
+            /** Field */
+            field: "annotation" | null;
             /** Href */
             href: string | null;
             /**
@@ -12079,6 +12141,8 @@ export interface components {
         };
         /** ResourceSourceTargetKey */
         ResourceSourceTargetKey: {
+            /** Field */
+            field: "annotation" | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12499,6 +12563,8 @@ export interface components {
              * @enum {string}
              */
             match_method: "lexical" | "semantic";
+            /** Matched Field */
+            matched_field: ("quote" | "annotation") | null;
         };
         /** SearchPageInfo */
         SearchPageInfo: {
@@ -12594,6 +12660,8 @@ export interface components {
             match: components["schemas"]["SearchMatchOut"] | null;
             /** Match Method */
             match_method: ("lexical" | "semantic") | null;
+            /** Matched Field */
+            matched_field: ("quote" | "annotation") | null;
             matching_passage: components["schemas"]["SearchOccurrenceOut"] | null;
             /** Name Match */
             name_match: ("exact" | "prefix" | "substring") | null;
@@ -12645,7 +12713,7 @@ export interface components {
         "SelectionCapture-Input": {
             excerpt: components["schemas"]["FrozenExcerpt-Input"];
             /** Locator */
-            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
             passage_ref: string | null;
             /** Prefix */
@@ -12661,7 +12729,7 @@ export interface components {
         "SelectionCapture-Output": {
             excerpt: components["schemas"]["FrozenExcerpt-Output"];
             /** Locator */
-            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
+            locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["HighlightAnnotationOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
             passage_ref: string | null;
             /** Prefix */
@@ -12728,7 +12796,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddEpisodeToAll" | "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "HighlightNote" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveEpisodeFromAll" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
+            kind: "AddEpisodeToAll" | "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightAnnotation" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveEpisodeFromAll" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
         };
         /** SnapshotCounts */
         SnapshotCounts: {
@@ -12748,7 +12816,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 3;
+            format_revision: 4;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -12765,7 +12833,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 3;
+            format_revision: 4;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -12797,7 +12865,7 @@ export interface components {
         /** SnapshotResource */
         SnapshotResource: {
             /** State */
-            state: components["schemas"]["NoteState"] | components["schemas"]["PageState"] | components["schemas"]["HighlightPatch-Output"];
+            state: components["schemas"]["NoteState"] | components["schemas"]["PageState"] | components["schemas"]["HighlightState"];
             /**
              * Type
              * @constant
@@ -13671,7 +13739,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 3;
+            format_revision: 4;
             /**
              * Replica Id
              * Format: uuid

@@ -85,6 +85,16 @@ def _media_cells(conversation: str, library_media: str) -> dict[str, str]:
     }
 
 
+def _highlight_cells(alias: str, library_media: str) -> dict[str, str]:
+    """Private fields inherit the exact highlight's membership in each reading."""
+    return {
+        kind: f"EXISTS (SELECT 1 FROM ({readings}) reading WHERE reading.media_id={alias}.anchor_media_id OR {highlight_in_reading_scope_sql(f'{alias}.id', 'reading.media_id')})"
+        for kind, readings in (("media", _MEDIA), ("library", library_media))
+    } | {
+        "conversation": f"({_context('highlight', f'{alias}.id')} OR {_context('media', f'{alias}.anchor_media_id')})"
+    }
+
+
 def _note_cells(scheme: str, column: str, library_media: str) -> dict[str, str]:
     """A note joins a media or library scope only through its live authored links."""
     edge = f"""EXISTS (SELECT 1 FROM resource_edges e
@@ -113,6 +123,7 @@ def _cells(library_media: str) -> dict[str, dict[str, str]]:
         "content_chunk": _media_cells(_context("media", "m.id"), library_media),
         "fragment": _media_cells(_context("media", "m.id"), library_media),
         "reader_apparatus_item": _media_cells(_context("media", "m.id"), library_media),
+        "highlight_annotation": _highlight_cells("h", library_media),
         "highlight": _media_cells(
             f"({_context('highlight', 'h.id')} OR {_context('media', 'm.id')})", library_media
         ),
@@ -137,11 +148,12 @@ def _cells(library_media: str) -> dict[str, dict[str, str]]:
         "passage_anchor": {
             kind: f"""((pa.owner_scheme = 'media' AND m.id IN ({media}))
             OR (pa.owner_scheme = 'note_block'
-                AND {_note_cells("note_block", "pa.owner_id", library_media)[kind]}))"""
+                AND {_note_cells("note_block", "pa.owner_id", library_media)[kind]})
+            OR (pa.owner_scheme='highlight' AND {_highlight_cells("annotation_h", library_media)[kind]}))"""
             for kind, media in (("media", _MEDIA), ("library", library_media))
         }
         | {
-            "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}))"
+            "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}) OR (pa.owner_scheme='highlight' AND {_highlight_cells('annotation_h', library_media)['conversation']}))"
         },
     }
 
@@ -156,6 +168,7 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
     "fragment": (("fragment", "f.id"),),
     "reader_apparatus_item": (("reader_apparatus_item", "rai.id"),),
     "highlight": (("highlight", "h.id"),),
+    "highlight_annotation": (("highlight", "h.id"),),
     "passage_anchor": (("passage_anchor", "pa.id"),),
     "podcast": (("podcast", "p.id"),),
     "contributor": (("contributor", "vc.contributor_id"),),

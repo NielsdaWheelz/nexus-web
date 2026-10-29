@@ -260,8 +260,9 @@ def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[Resourc
     owner = _owner(facts.is_owner)
     actions: list[ResourceActionOut] = [
         _simple("EditHighlight", owner),
-        _simple("HighlightNote"),
     ]
+    if facts.is_owner:
+        actions.append(_simple("EditHighlightAnnotation"))
     if facts.edit_bounds_applicable:
         actions.append(_simple("EditHighlightBounds", owner))
     actions.append(_simple("DeleteHighlight", owner))

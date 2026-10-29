@@ -1,13 +1,28 @@
 """Captured evidence: immutable words, attribution and the extent they described."""
 
-from typing import Annotated, Literal
+from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader_excerpts import FrozenExcerpt
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
+
+ResourceField = Literal["annotation"] | None
+
+
+def validate_resource_field(resource_ref: str | None, field: ResourceField) -> None:
+    if field is None:
+        return
+    if resource_ref is None or not resource_ref.startswith("highlight:"):
+        raise ValueError("annotation field requires a highlight")
+    identity = resource_ref.removeprefix("highlight:")
+    if str(UUID(identity)) != identity:
+        raise ValueError("annotation field requires a canonical highlight ref")
 
 
 class CapturedModel(BaseModel):
@@ -33,22 +48,48 @@ class CapturedSource(CapturedModel):
     location_label: str | None
 
 
-class CapturedResourceTarget(CapturedModel):
+class CapturedFieldTarget(CapturedModel):
+    owner_ref: str
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self) -> CapturedFieldTarget:
+        validate_resource_field(self.owner_ref, self.field)
+        return self
+
+
+class CapturedResourceTarget(CapturedFieldTarget):
     kind: Literal["resource"] = "resource"
-    owner_ref: str
 
 
-class CapturedPassageTarget(CapturedModel):
+class CapturedPassageTarget(CapturedFieldTarget):
     kind: Literal["passage"] = "passage"
-    owner_ref: str
     locator: RetrievalLocator
     precision: LocationPrecision
     source_identity: str | None
+
+    @model_validator(mode="after")
+    def validate_locator_field(self) -> CapturedPassageTarget:
+        annotation = self.locator.type == "highlight_annotation_offsets"
+        if annotation != (self.field == "annotation"):
+            raise ValueError("annotation field and locator must agree")
+        if (
+            self.locator.type == "highlight_annotation_offsets"
+            and self.owner_ref != f"highlight:{self.locator.highlight_id}"
+        ):
+            raise ValueError("annotation locator must belong to its highlight")
+        return self
 
 
 class CapturedUnavailableTarget(CapturedModel):
     kind: Literal["unavailable"] = "unavailable"
     owner_ref: str | None
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self) -> CapturedUnavailableTarget:
+        validate_resource_field(self.owner_ref, self.field)
+        return self
 
 
 CapturedTarget = Annotated[

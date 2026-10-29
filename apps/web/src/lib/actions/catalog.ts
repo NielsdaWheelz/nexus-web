@@ -158,8 +158,8 @@ export const ACTION_CATALOG = {
     icon: Highlighter,
     group: "CreateTransform",
   },
-  HighlightNote: {
-    label: "Add note…",
+  EditHighlightAnnotation: {
+    label: "Annotate",
     icon: NotebookPen,
     group: "CreateTransform",
   },
@@ -285,7 +285,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight? Its notes are kept. This can’t be undone.",
+      body: "Delete this highlight? Its annotation is deleted too. This can’t be undone.",
     },
   },
   DeletePage: {

@@ -1,7 +1,7 @@
 "use client";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
-// The media pane's annotations. Highlights, their attached notes and the media's
+// The media pane's annotations. Highlights, their annotations and the media's
 // whole-document links are local authored state: the account database owns them online
 // too, and they never wait on the network. The server's document map remains a separate,
 // separately failable section of derived evidence: source references, embeds and
@@ -43,7 +43,7 @@ export interface MediaAnnotationsState {
 }
 
 /** Server facts whose authority is now the local authored graph. */
-const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "highlight_note", "note_body"]);
+const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "note_body"]);
 const PAGE = 100;
 
 /** Remote roots keep canonical identity; only proven mounted owner occurrences

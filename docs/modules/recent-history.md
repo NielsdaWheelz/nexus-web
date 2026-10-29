@@ -88,5 +88,5 @@ removes the row and its activation without selecting a replacement.
 query-selection learning remains server-owned: `GET /me/nexus-ranking` returns
 only frecency, and `POST /me/nexus-selections` accepts query and target href with
 a 204 response. ordinary use makes no selection-learning request. there is no
-history http endpoint or cloud-history import. migration 0327 removes the four
+history http endpoint or cloud-history import. migration 0328 removes the four
 obsolete usage columns and two recency indexes while preserving ranking rows.

@@ -11,7 +11,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -25,13 +25,7 @@ export class Persistence {
     await this.db.transaction(async () => {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
-      if (state.format_revision === FORMAT_REVISION) return;
-      if (state.format_revision !== 1 && state.format_revision !== 2) throw new Error("authored format mismatch");
-      const pending = await this.db.all("SELECT 1 FROM pending_changes LIMIT 1");
-      if (pending.length) throw new Error("sync this device’s pending writing with the previous nexus version before updating.");
-      for (const table of RETIRED_FORMAT_TABLES) await this.db.run(`DROP TABLE ${table}`);
-      for (const sql of DEVICE_SCHEMA) if (!sql.startsWith("PRAGMA")) await this.db.run(sql);
-      await this.db.run("UPDATE replica_state SET format_revision=?,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1", [FORMAT_REVISION]);
+      if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
     });
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
@@ -49,9 +43,9 @@ export class Persistence {
       const rows = await this.db.all(`SELECT state_json${table === "resources" ? ",merge_bytes" : ""} FROM ${table} WHERE ${key} IN (${ids.map(() => "?").join(",")})`, ids);
       return rows.map(row => {
         const state = JSON.parse(String(row.state_json));
-        if (table === "resources" && state.kind !== "highlight") {
+        if (table === "resources") {
           if (!(row.merge_bytes instanceof Uint8Array)) throw new Error("authored merge bytes missing");
-          state[state.kind === "note" ? "body_state" : "title_state"] = encodeBytes(row.merge_bytes);
+          state[state.kind === "page" ? "title_state" : "body_state"] = encodeBytes(row.merge_bytes);
         }
         return state as T;
       });
@@ -81,7 +75,8 @@ export class Persistence {
         await this.db.run(SEARCH_MATCH_SQL.search_match_clear);
         try {
           await this.db.run(SEARCH_MATCH_SQL.search_match_insert, [text]);
-          return (await this.db.all(SEARCH_MATCH_SQL.search_match_read, [expression])).length > 0;
+          const [row]=await this.db.all(SEARCH_MATCH_SQL.search_match_read, [expression]);
+          return row ? Number(row.score) : null;
         } finally { await this.db.run(SEARCH_MATCH_SQL.search_match_clear); }
       });
       return {store_revision:(await this.replica()).store_revision,...result};
@@ -104,7 +99,7 @@ export class Persistence {
         if (!resource) throw new Error("outline edge peer is missing from its proven revision");
         const link: LinkState = JSON.parse(String(record.value_json));
         if (record.part === "raw") {
-          rows.push({resource, link, match_text: null, activation_ref: null}); rawRefs.add(resource.ref);
+          rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null}); rawRefs.add(resource.ref);
           children.push(record.child_available === null ? null : Number(record.child_available) === 1);
         } else if (record.part === "before" || record.part === "after" || record.part === "tail") proof[record.part] = link;
         else throw new Error("unknown outline window record");
@@ -124,7 +119,7 @@ export class Persistence {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
       return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, outline_window: null };
     }
-    const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null }));
+    const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
     const last = rows.at(-1);
     let next: string | null = null;
     if ("limit" in query && rows.length === Math.min(100, query.limit) && last) {
@@ -137,9 +132,9 @@ export class Persistence {
     for (const state of states.resources) {
       const projection = states.projections.find(value => value.ref === state.ref);
       if (!projection) throw new Error("missing authored projection");
-      const { body_state: body, title_state: title, ...metadata } = { body_state: null, title_state: null, ...state };
-      const bytes = body ?? title;
-      await this.db.run("INSERT INTO resources(ref,kind,state_json,merge_bytes,projection_json,visible,body_text,title,local_date,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ref) DO UPDATE SET state_json=excluded.state_json,merge_bytes=excluded.merge_bytes,projection_json=excluded.projection_json,visible=excluded.visible,body_text=excluded.body_text,title=excluded.title,local_date=excluded.local_date,source_ref=excluded.source_ref", [state.ref, state.kind, JSON.stringify(metadata), bytes === null ? null : decodeBytes(bytes), JSON.stringify(projection), Number(projection.visible), projection.body_text, projection.title, projection.local_date, projection.source_ref]);
+      const { body_state: _body, title_state: _title, ...metadata } = { body_state: null, title_state: null, ...state };
+      const bytes = state.kind === "page" ? state.title_state : state.body_state;
+      await this.db.run("INSERT INTO resources(ref,kind,state_json,merge_bytes,projection_json,visible,body_text,title,local_date,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ref) DO UPDATE SET state_json=excluded.state_json,merge_bytes=excluded.merge_bytes,projection_json=excluded.projection_json,visible=excluded.visible,body_text=excluded.body_text,title=excluded.title,local_date=excluded.local_date,source_ref=excluded.source_ref", [state.ref, state.kind, JSON.stringify(metadata), decodeBytes(bytes), JSON.stringify(projection), Number(projection.visible), projection.body_text, projection.title, projection.local_date, projection.source_ref]);
       await this.db.run("DELETE FROM reference_index WHERE owner_ref=?", [state.ref]);
       for (const ref of new Set(projection.embedded_refs)) await this.db.run("INSERT INTO reference_index(owner_ref,target_ref) VALUES(?,?)", [state.ref, ref]);
     }

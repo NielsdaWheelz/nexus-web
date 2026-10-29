@@ -59,7 +59,7 @@ internal class RecentTargets(directory: File) {
                 require(parts.size == 2 && UUID.fromString(parts[1]).toString() == parts[1])
                 val path = when (parts[0]) {
                     "media" -> "media"; "library" -> "libraries"; "conversation" -> "conversations"
-                    "podcast" -> "podcasts"; "page" -> "pages"; "note_block" -> "notes"; "oracle_reading" -> "oracle"
+                    "podcast" -> "podcasts"; "page" -> "pages"; "note_block" -> "notes"; "highlight" -> "highlights"; "oracle_reading" -> "oracle"
                     else -> throw IllegalArgumentException("invalid recent resource")
                 }
                 val base = "/$path/${parts[1]}"

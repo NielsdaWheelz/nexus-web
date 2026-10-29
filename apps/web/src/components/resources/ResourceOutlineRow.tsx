@@ -10,12 +10,12 @@
 // Their prepared projection owns first-render identity and navigation; browsing rows read theirs.
 // Browsing rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
-import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
+import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp, History, SquareDashedMousePointer, Unlink} from "lucide-react";
 import type {ResourceProjection} from "@nexus/authored/types";
-import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
 import {FeedbackNotice, FeedbackStatus, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
@@ -117,7 +117,7 @@ interface Presentation {
   href: string | null;
   primary: ReactNode;
   item: Item | null;
-  /** A local highlight's id: attached notes are its children; `add note` composes one. */
+  /** A local highlight's id; its annotation body remains distinct from related resources. */
   highlightId: string | null;
   status: ReactNode;
 }
@@ -236,6 +236,7 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
       {href ? link(sourceLabel ? localResourceLabel(sourceLabel) : "highlight") : null}
       <FullResourceBody item={authoredItem(resource, props.readingRef ?? null)} />
       {sourceLabel ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>{localResourceLabel(sourceLabel)}</span> : null}
+      <HighlightAnnotation highlightRef={props.subject} occurrenceKey={props.occurrenceKey} editable={editable} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
@@ -254,7 +255,7 @@ function AuthoredRow({read:suppliedRead,...props}: Shared & {subject: string;rea
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, representedEdgeIds = EMPTY_EDGE_IDS, onChanged,
   body, sourceContent, resourceDetails, nestedContent, details, placement, rootProps, rowRef,
-  historical = false, editable = true, suppressedEdgeIds=EMPTY_EDGE_IDS, writing: writingRow = false, childrenAvailable, onSelectBlock, annotationFocusRequest = null, onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
+  historical = false, editable: _editable = true, suppressedEdgeIds=EMPTY_EDGE_IDS, writing: writingRow = false, childrenAvailable, onSelectBlock, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, ...props}: Shared & {presentation: Presentation}) {
   const {ref, label, href, item, highlightId} = presentation;
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
@@ -274,12 +275,10 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   const childrenBranch = useMemo(() => enterOutlineOccurrence({branch, ref, target: {kind: "occurrence", key: occurrenceKey},
     edgeIds: [...representedEdgeIds, ...(enteringEdgeId === null ? [] : [enteringEdgeId])]}),
     [branch, ref, occurrenceKey, representedEdgeIds, enteringEdgeId]);
-  // A highlight opens on its attached notes until someone folds it.
+  // A highlight opens its related resources until someone folds it.
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
   const open = projection.kind === "resource" &&
     (placement?.expanded ?? outline?.view.folds.get(occurrenceKey) ?? localOpen ?? highlightId !== null);
-  const [noteRequest, setNoteRequest] = useState(0);
-  const childrenSection = useRef<HTMLElement | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [failure, setFailure] = useState<{content: FeedbackContent; action: FeedbackAction | null} | null>(null);
@@ -322,25 +321,6 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
     if (placement) placement.toggle(); else if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
-  // `add note` and an annotation request open the children and focus their own composer,
-  // the one place a new attached note is written.
-  const latest = useRef({open: () => {}, onAnnotationClose});
-  latest.current = {open: () => { if (!open) toggle(); }, onAnnotationClose};
-  const focusToken = `${annotationFocusRequest ?? ""}:${noteRequest}`;
-  useEffect(() => {
-    if (focusToken === ":0") return;
-    latest.current.open();
-    let frames = 0;
-    let handle = requestAnimationFrame(function attempt() {
-      const target = childrenSection.current?.querySelector<HTMLElement>(
-        `[data-composer-destination="${CSS.escape(ref)}"] [contenteditable="true"]`);
-      // Found or given up, the request is consumed so a later remount does not replay it.
-      if (target) target.focus();
-      if (target || ++frames >= 30) latest.current.onAnnotationClose?.();
-      else handle = requestAnimationFrame(attempt);
-    });
-    return () => cancelAnimationFrame(handle);
-  }, [focusToken, ref]);
   /** One server-fact removal; its failure stays beside the row with the owner's retry. */
   async function mutate(attempt: () => Promise<unknown>) {
     if (busyRef.current || commandDisabledReason) return;
@@ -424,8 +404,6 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
           {body ?? presentation.primary}
           {sourceContent}
           {presentation.status}
-          {highlightId && editable && !historical && !terminal && !open ?
-            <Button className={styles.textButton} onClick={() => setNoteRequest(serial => serial + 1)}>add note</Button> : null}
           {resourceDetails}
           {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
             {connection.snapshot.rationale}</MachineText></div> : null}
@@ -444,7 +422,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
           commandDisabledReason={commandDisabledReason} sections={[]} label={`more actions for ${label}`}/></div>}
       </div>
       {nestedContent || open ? <div className={styles.children} data-outline-children="true">{nestedContent}{open ?
-        <section ref={childrenSection} id={childrenId} aria-label="linked resources">{placement?.children ??
+        <section id={childrenId} aria-label="linked resources">{placement?.children ??
           (writingRow ? <LocalOutline rootRef={ref} occurrencePrefix={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>
             : <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>)}</section> : null}</div> : null}
     </li>

@@ -1,10 +1,11 @@
 /** Causal observed-delete graph plus Yjs text. Applying identical changes is
  * idempotent. Merging never invents a touch, repairs text, or removes neighbors. */
-import type { Change, Corpus, HighlightPatch, LinkState, MergeResult, PassageState, Register, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
+import type { Change, Corpus, HighlightState, LinkState, MergeResult, PassageState, Register, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
 import { canonicalSerialization } from "./canonical.ts";
 import { captureRevision, excerptView, excerptTextParts } from "./excerpt.ts";
 import { validateChange } from "./validate.ts";
 import { MAX_COMMAND_BYTES, CommandTooLargeError } from "./types.ts";
+import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
 import { isResourceRef, sortedEndpoints } from "./identity.ts";
 export function counter(value:string):bigint {
@@ -43,18 +44,19 @@ function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { ret
 export function projectResource(state:ResourceState):ResourceProjection {
   const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[]};
   switch(state.kind) {
-    case "note": {
+    case "note":
+    case "highlight": {
       const {body}=mergeNote(state.body_state,null);
       const embedded_refs:string[]=[];
       const content=body.body_pm_json.content;
       if(Array.isArray(content)) for(const node of content) if(node.type==="resource_embed" && typeof node.attrs?.resource_ref==="string") embedded_refs.push(node.attrs.resource_ref);
-      return {...common,...body,embedded_refs:[...new Set(embedded_refs)]};
+      const projected=state.kind==="highlight"&&!bodyHasContent(body)?{body_pm_json:null,body_text:null}:body;
+      const bodyProjection={...common,...projected,embedded_refs:[...new Set(embedded_refs)]};
+      if(state.kind==="note") return bodyProjection;
+      const {excerpt,...selection}=state.selection.value;
+      return {...bodyProjection,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
     }
     case "page": return {...common,title:mergeTitle(state.title_state,null).title,local_date:state.local_date};
-    case "highlight": {
-      const {excerpt, ...selection} = state.selection.value;
-      return {...common,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
-    }
   }
 }
 export function projectPassage(state: PassageState): ResourceProjection {
@@ -76,9 +78,9 @@ function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState
     }
     case "highlight": {
       if(!isResourceRef(patch.source_ref)) throw new TypeError("Invalid highlight source");
-      const prior:HighlightPatch|null=old?.kind==="highlight"?old:null;
+      const prior:HighlightState|null=old?.kind==="highlight"?old:null;
       if(prior && prior.source_ref!==patch.source_ref) throw new TypeError("Highlight source is immutable");
-      return {...causal,kind:"highlight",source_ref:patch.source_ref,selection:requiredRegister(prior?.selection??null,patch.selection),color:requiredRegister(prior?.color??null,patch.color)};
+      return {...causal,kind:"highlight",body_state:mergeNote(prior?.body_state??null,patch.body_update).body_state,source_ref:patch.source_ref,selection:requiredRegister(prior?.selection??null,patch.selection),color:requiredRegister(prior?.color??null,patch.color)};
     }
   }
 }
