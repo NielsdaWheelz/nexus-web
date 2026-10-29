@@ -142,6 +142,21 @@ export function useModalActive(): boolean {
   return useSyncExternalStore(subscribe, hasActiveModal, () => false);
 }
 
+/** Portaled controls keep the editing interaction of their real opener. */
+export function ownsOverlayFocus(root: Element, target: Element | null): boolean {
+  if (!target) return false;
+  const owned: Element[] = [root];
+  for (const layer of layers) {
+    const options = layer.options.current;
+    if (options.kind === "tooltip") continue;
+    const opener = layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element;
+    if (!opener || !owned.some(element => element.contains(opener))) continue;
+    if (layer.element) owned.push(layer.element);
+    for (const element of options.inside?.() ?? []) if (element) owned.push(element);
+  }
+  return owned.some(element => element.contains(target));
+}
+
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
 }

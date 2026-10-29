@@ -75,6 +75,10 @@
   min-height: 0;
 }
 
+.controlsFrame {
+  min-inline-size: 0;
+}
+
 .chrome {
   display: flex;
   flex-direction: column;
@@ -224,13 +228,21 @@
 }
 
 /* The viewport places a stationary frame; only its painted controls retreat. */
-.paneShell[data-mobile="true"] .chromeFrame {
+.paneShell[data-mobile="true"] .controlsFrame {
   position: absolute;
   top: var(--mobile-controls-top);
   left: 0;
   right: 0;
   z-index: 11;
   pointer-events: none;
+}
+
+.paneShell[data-mobile="true"] .primaryPane {
+  container: none;
+}
+
+.paneShell[data-mobile="true"] .primaryContentRow {
+  container: primaryPane / inline-size;
 }
 
 .paneShell[data-mobile="true"] .chrome {

@@ -123,6 +123,12 @@ before restored pages or shared workers can reconnect.
 the already verified profile keeps its trust and persistence grant; restart never
 reseeds cookies. normal `close()` retires the profile after process shutdown.
 
+`context.setOffline()` is not a shared-worker transport-isolation guarantee.
+authored offline checks use stock firefox's profile-scoped network controls or
+android's `setWebReachable`. restart isolation must precede browser startup,
+including background catch-up. verify that the actual local source prefix remains
+unuploaded before and after restart, then uploads after reconnection.
+
 native firefox drivers import `open_native_firefox` from
 `python/scripts/lab_firefox.py`, using the checkout's `python` import root. it
 uses installed stock firefox, geckodriver and `certutil`, a caller-owned
