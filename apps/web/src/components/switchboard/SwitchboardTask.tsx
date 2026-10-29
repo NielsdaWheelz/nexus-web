@@ -118,7 +118,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const textLabels = ["Ask Nexus", "Add to Today", "Browse…", "Create…"];
 
   const root = (
-    <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { focusedControl.current = event.target instanceof HTMLElement ? event.target : null; }}>
+    <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { if (event.target instanceof HTMLElement && bodyRef.current?.contains(event.target)) focusedControl.current = event.target; }}>
       <header className={styles.header}>
         {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>

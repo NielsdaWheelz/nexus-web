@@ -295,7 +295,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         className={`${collection.fillViewport} ${styles.grid}`}
         data-collection-viewport=""
         onPointerDownCapture={controller.interact}
-        onFocusCapture={event => { focusedNative.current = event.target instanceof HTMLElement ? event.target : null; controller.interact(); }}
+        onFocusCapture={event => { if (event.target instanceof HTMLElement && gridRef.current?.contains(event.target)) focusedNative.current = event.target; controller.interact(); }}
         onWheelCapture={controller.interact}
         onTouchMoveCapture={controller.interact}
         onKeyDownCapture={controller.interact}
