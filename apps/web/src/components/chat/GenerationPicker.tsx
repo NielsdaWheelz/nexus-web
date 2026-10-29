@@ -16,14 +16,10 @@ import {
   modelVariants,
   routeKey,
   type SelectionEditor,
-  type ModelVariant,
 } from "@/lib/chat/selection";
 import type { Catalog } from "@/lib/chat/wire";
 import EffortPicker from "./EffortPicker";
 import styles from "./ChatComposer.module.css";
-
-const chatCapable = (variant: ModelVariant) => variant.reasoning.some((choice) =>
-  choice.chat_state.kind !== "Ineligible" || choice.chat_state.code !== "unsupported_capability");
 
 /** The three choices share one read and commit only advertised exact selections. */
 export default function GenerationPicker({
@@ -51,27 +47,27 @@ export default function GenerationPicker({
       : <FeedbackStatus content={{ tone: "Neutral", title: "loading models…" }} announcement="Polite" />;
   const catalog = catalogRead.data;
   const refresh = catalogRead.error ? catalogRead.refetch : catalogRead.revalidate;
-  const route = editorRoute(catalog, value);
+  const route = editorRoute(value);
   const routeRow = route ? catalogRoute(catalog, route) : null;
   const variant = editorVariant(catalog, value);
-  const routes = catalog.routes.filter((row) => row.readiness.kind !== "Ready" || modelVariants(row).some(chatCapable));
+  const routes = catalog.routes;
   const providers: ChoiceOption[] = routes.map((row) => {
-    const choices = modelVariants(row).filter(chatCapable).flatMap((item) => item.reasoning);
+    const choices = modelVariants(row).flatMap((item) => item.reasoning);
     return {
       id: routeKey(row.route),
       label: row.label,
       detail: null,
       unavailable_reason: row.readiness.kind !== "Ready" ? row.readiness.explanation
         : choices.some((choice) => choice.chat_state.kind === "Selectable")
-        ? null : choiceUnavailable(choices[0]),
+        ? null : choices[0] ? choiceUnavailable(choices[0]) : "no chat models available",
     };
   });
   const missingId = JSON.stringify(value);
   const providerId = route ? routeKey(route) : value.kind === "Selected" ? missingId : null;
   if (providerId !== null && !providers.some((option) => option.id === providerId))
-    providers.unshift({ id: providerId, label: routeRow?.label ?? "provider unavailable", detail: null,
+    providers.unshift({ id: providerId, label: routeRow?.label ?? (route?.kind === "ProviderApi" ? route.provider : route?.kind === "CodexPersonal" ? "Codex" : "provider unavailable"), detail: null,
       unavailable_reason: "this provider has no available chat models" });
-  const variants = modelVariants(routeRow).filter(chatCapable);
+  const variants = modelVariants(routeRow);
   const models: ChoiceOption[] = variants.map((item) => ({
     id: item.key,
     label: item.mode === null ? item.model.label : `${item.model.label} · ${item.reasoning[0].mode_label}`,
@@ -88,7 +84,7 @@ export default function GenerationPicker({
     const label = variant
       ? variant.mode === null ? variant.model.label : `${variant.model.label} · ${variant.reasoning[0].mode_label}`
       : knownModel ? `${knownModel.label} · mode unavailable`
-      : value.kind === "DefaultUnavailable" ? "default model unavailable" : "model unavailable";
+      : modelKey ?? "model unavailable";
     models.unshift({ id: modelId, label, detail: null,
       unavailable_reason: routeRow && routeRow.readiness.kind !== "Ready" ? routeRow.readiness.explanation
         : variant ? choiceUnavailable(variant.reasoning[0])

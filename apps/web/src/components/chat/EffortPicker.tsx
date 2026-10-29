@@ -35,7 +35,7 @@ export default function EffortPicker({
     ? variant.reasoning.find((row) => row.key === currentKey) ?? null : null;
   const fixed = current !== null && variant?.reasoning.length === 1;
   const index = choices.findIndex((row) => row.key === currentKey);
-  const label = current?.effort_label ?? (value.kind === "DefaultUnavailable" ? "default effort unavailable" : "effort unavailable");
+  const label = current?.effort_label ?? (value.kind === "DefaultUnavailable" ? "default effort unavailable" : currentKey ?? "effort unavailable");
   const ladder = JSON.stringify(choices.map((row) => row.key));
   const setTrigger = useCallback((node: HTMLButtonElement | null) => {
     if (node === null && trigger.current === document.activeElement) focusFixedValue.current = true;
