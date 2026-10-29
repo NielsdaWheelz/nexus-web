@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     supabase_audiences: Annotated[tuple[str, ...], NoDecode] = ()
 
     database_url: str
-    database_pool_timeout_seconds: float = Field(0.25, gt=0)
+    database_pool_timeout_seconds: float = Field(5.0, gt=0)
     database_statement_timeout_ms: int = Field(30_000, ge=0)
     # Leaves long transactions room and reaps leaked ones (the pool deadlock idled 180 s+).
     database_idle_in_tx_timeout_ms: int = Field(60_000, ge=0)

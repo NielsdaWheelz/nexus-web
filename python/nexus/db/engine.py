@@ -8,6 +8,9 @@ A scope-owned search lease also retains that same capacity until known backend
 retirement: SQLAlchemy invalidation itself returns a pool record too early.
 Unconfirmed known retirement fails search closed for this scope and requires live
 runtime repair. Ordinary/control sessions have no lifetime semaphore.
+Ordinary checkout uses the configured finite wait (five seconds by default);
+control checkout keeps its independent 250 ms wait. These are operational queue
+safeguards, not successful latency targets.
 Connections disable prepared statements and JIT. Control has a short independent
 statement deadline, never the worker's long domain-query allowance. Bound parameters
 are hidden in SQLAlchemy exception rendering and logs.
@@ -28,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.config import CONNECTION_CAPACITIES, DatabaseRole, get_settings
 
+_CONTROL_POOL_TIMEOUT_SECONDS = 0.25
 _role: DatabaseRole | None = None
 _sync_engines: dict[bool, Engine] = {}
 _sync_engine_lock = Lock()
@@ -142,7 +146,11 @@ def _sync_engine(*, control: bool) -> Engine:
                 settings.database_url,
                 pool_size=count,
                 max_overflow=0,
-                pool_timeout=settings.database_pool_timeout_seconds,
+                pool_timeout=(
+                    _CONTROL_POOL_TIMEOUT_SECONDS
+                    if control
+                    else settings.database_pool_timeout_seconds
+                ),
                 pool_pre_ping=True,
                 hide_parameters=True,
                 connect_args=_connect_args(kind),
@@ -178,6 +186,8 @@ def _async_engine(kind: Literal["ordinary_async", "control_async", "search_async
             max_overflow=0,
             pool_timeout=None
             if kind == "search_async"
+            else _CONTROL_POOL_TIMEOUT_SECONDS
+            if kind == "control_async"
             else get_settings().database_pool_timeout_seconds,
             pool_pre_ping=True,
             hide_parameters=True,
