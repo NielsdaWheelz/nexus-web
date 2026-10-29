@@ -1,0 +1,8 @@
+{
+  "name": "nexus-codex",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openai/codex": "0.165.0"
+  }
+}

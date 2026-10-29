@@ -28,8 +28,12 @@ technology-ownership, import, and module-boundary model.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
 `make setup` and ci install locked dependencies for `apps/web`, `node/authored`
-and `node/ingest`. the authored package's own install supplies module resolution
+`node/ingest` and `node/codex`. the authored package's own install supplies module resolution
 for its shared source and semantic-helper generation/typechecking.
+
+`node/codex` locks the official native codex package. `apps/codex_agent/binary.py`
+resolves that package's launcher for host startup, enrollment and lab instances;
+no ambient codex installation is used. only worker image targets include it.
 
 ## web production build
 

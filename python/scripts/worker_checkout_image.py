@@ -37,6 +37,8 @@ def image_tag() -> str:
         "python/pyproject.toml",
         "python/uv.lock",
         "python/README.md",
+        "node/codex/package.json",
+        "node/codex/bun.lock",
         "node/ingest/package.json",
         "node/ingest/bun.lock",
     ):
