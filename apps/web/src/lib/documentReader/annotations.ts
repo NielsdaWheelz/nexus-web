@@ -10,10 +10,11 @@
 // saved offsets places a mark; otherwise a unique literal occurrence places a derived
 // mark; otherwise the annotation stays unlocated beside its literal quote. A host
 // without source text still lists every annotation with editable notes.
+import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
 import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import type { NoteBody } from "@nexus/authored/body";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
-import type { AuthoredStore, HighlightColor, LinkState, Locator, PassageState, QueryResult, SelectionCapture } from "@nexus/authored/types";
+import type { AuthoredStore, HighlightColor, LinkState, Locator, PassageState, QueryResult, SelectionCapture, SelectionLocation, ResourceProjection } from "@nexus/authored/types";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
 import { prepareLink } from "@/lib/resourceGraph/links";
 import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
@@ -39,7 +40,10 @@ export interface ReaderAnnotation {
   readonly ref: string;
   readonly sourceRef: string;
   readonly color: HighlightColor;
-  readonly selection: SelectionCapture;
+  readonly selection: SelectionLocation;
+  readonly excerpt: ExcerptView;
+  readonly projection: ResourceProjection;
+  readonly readingRef: string;
   readonly placement: Placement;
   readonly notes: readonly AttachedNote[];
 }
@@ -123,7 +127,7 @@ export interface Capture {
 }
 
 /** The exact local capture of one reader selection; null when this source grants no annotation. */
-export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: DraftAnchor): Capture | null {
+export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: DraftAnchor, body: ExcerptBody | null, excerptStart: number | null, excerptEnd: number | null): Capture | null {
   if (anchor.kind === "pdf") {
     // the shared pdf canonicalization admits at most 512 quads and a 2000-code-point quote.
     if (doc.kind !== "pdf" || doc.generation === null || anchor.quads.length > 512 || chars(anchor.exact).length > 2000) return null;
@@ -131,9 +135,9 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
       exact: anchor.exact, prefix: null, suffix: null, text_quote_selector: { exact: anchor.exact, prefix: null, suffix: null }, projection: null };
     // a geometric pdf selection has no textual passage anchor.
     return { sourceRef: mediaRef(mediaId), passage: null, selection: { publication: { kind: "reader", generation: doc.generation }, locator,
-      quote_exact: anchor.exact, prefix: null, suffix: null, passage_ref: null } };
+      quote_exact: anchor.exact, prefix: null, suffix: null, passage_ref: null, excerpt: createPlainExcerpt("", anchor.exact, "", "plain") } };
   }
-  if (doc.kind !== "text") return null;
+  if (doc.kind !== "text" || body === null || excerptStart === null || excerptEnd === null) return null;
   const unit = doc.units.find(candidate => candidate.id === anchor.unit);
   const owner = unit && ownerOf(doc, mediaId, unit);
   if (!unit || !owner) return null;
@@ -142,11 +146,13 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const exact = text.slice(anchor.start, anchor.end).join("");
   const prefix = text.slice(Math.max(0, anchor.start - CONTEXT), anchor.start).join("");
   const suffix = text.slice(anchor.end, anchor.end + CONTEXT).join("");
+  if (excerptCanonicalProof(body).emitted !== text.slice(excerptStart, excerptEnd).join("")) return null;
+  const excerpt = captureExcerpt({ ...body, source_extent: { reading_ref: owner.captureId ? `fragment:${owner.fragment}` : mediaRef(mediaId), document_identity: owner.captureId ? `capture:${owner.captureId}` : doc.identity, fragment_id: owner.fragment, start_offset: unit.sourceStartOffset + excerptStart, end_offset: unit.sourceStartOffset + excerptEnd }, truncated_before: false, truncated_after: false });
   if (owner.captureId) {
     const sourceRef = `fragment:${owner.fragment}`;
     const locator: Locator = { type: "x_capture_offsets", capture_id: owner.captureId, fragment_id: owner.fragment, start_offset: anchor.start, end_offset: anchor.end, text_quote_selector: { exact, prefix, suffix } };
     const passage = passageOf(unit.text, anchor.start, anchor.end);
-    return { sourceRef, passage: passage && { ...passage, source_ref: sourceRef }, selection: { publication: { kind: "x_capture", capture_id: owner.captureId }, locator, quote_exact: exact, prefix, suffix, passage_ref: null } };
+    return { sourceRef, passage: passage && { ...passage, source_ref: sourceRef }, selection: { publication: { kind: "x_capture", capture_id: owner.captureId }, locator, quote_exact: exact, prefix, suffix, passage_ref: null, excerpt } };
   }
   const offsets = { media_id: owner.mediaId, fragment_id: owner.fragment, start_offset: anchor.start + unit.sourceStartOffset,
     end_offset: anchor.end + unit.sourceStartOffset, media_kind: null, text_quote_selector: { exact, prefix, suffix } };
@@ -154,7 +160,7 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const passage = passageOf(unit.text, anchor.start, anchor.end);
   return { sourceRef: mediaRef(owner.mediaId), passage: passage && { ...passage, source_ref: doc.part ? mediaRef(mediaId) : mediaRef(owner.mediaId) },
     selection: { publication: owner.generation === null ? null : { kind: "reader", generation: owner.generation },
-      locator, quote_exact: exact, prefix, suffix, passage_ref: null } };
+      locator, quote_exact: exact, prefix, suffix, passage_ref: null, excerpt } };
 }
 
 /** Units whose offsets this source owns, keyed by canonical fragment. */
@@ -166,7 +172,7 @@ export function sourceUnits(doc: TextDocument, mediaId: string, source: string):
 }
 
 /** Where a saved selection paints on this publication; null when it belongs elsewhere. */
-export function placeSelection(doc: ReaderDocument, mediaId: string, selection: SelectionCapture): Placement | null {
+export function placeSelection(doc: ReaderDocument, mediaId: string, selection: SelectionLocation): Placement | null {
   const { locator, publication } = selection;
   if (locator.type === "pdf_page_geometry") {
     if (doc.kind !== "pdf" || locator.media_id !== mediaId) return null;
@@ -267,13 +273,7 @@ export function locatePassage(doc: ReaderDocument, mediaId: string, passage: Pas
     inspection: { identity: doc.identity, anchors: [anchor], pages: [], precision: "exact" } };
 }
 
-interface Loaded {
-  readonly ref: string;
-  readonly sourceRef: string;
-  readonly color: HighlightColor;
-  readonly selection: SelectionCapture;
-  readonly notes: readonly AttachedNote[];
-}
+type Loaded = Omit<ReaderAnnotation, "id" | "placement">;
 
 async function readAll(store: AuthoredStore, query: (cursor: string | null) => Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult["rows"]> {
   const rows: QueryResult["rows"] = [];
@@ -350,7 +350,8 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
       }
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, notes: notes.get(resource.ref) ?? [] });
+        if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, excerpt: resource.excerpt, projection: resource, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), notes: notes.get(resource.ref) ?? [] });
       }
     }
     if (current !== generation) return;
@@ -418,7 +419,7 @@ async function boundCapture(store: AuthoredStore, accountId: string, capture: Ca
   const anchor = bound.binding_id ?? passageId(accountId, source_ref, await passageKey(normalized_exact, prefix, suffix));
   const selection = { ...capture.selection, passage_ref: `passage_anchor:${anchor}` };
   return { selection, intents: [{ kind: "capture_passage", anchor_id: anchor, source_ref, normalized_exact, prefix, suffix,
-    capture: { quote_exact: selection.quote_exact, publication: selection.publication, locator: selection.locator } }] };
+    capture: { quote_exact: selection.quote_exact, publication: selection.publication, locator: selection.locator, excerpt: selection.excerpt } }] };
 }
 
 /** An independent note appended after the highlight's notes, with its first link. */

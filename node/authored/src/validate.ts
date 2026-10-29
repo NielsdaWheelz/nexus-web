@@ -1,5 +1,6 @@
 /** Runtime validation at the shared semantic boundary. Host schemas close the
  * transport; these checks own identity agreement and content invariants. */
+import { validateExcerpt } from "./excerpt.ts";
 import { isResourceRef, normalizeQuote } from "./identity.ts";
 import { canonicalQuads } from "./geometry.ts";
 import { counter } from "./merge.ts";
@@ -102,6 +103,7 @@ function selection(value: SelectionCapture, source_ref: string): void {
     if (canonical.some((quad, index) => keys.some(key => quad[key] !== quads[index]![key]))) throw new TypeError("PDF selection geometry must be canonical before commit");
     if ([...value.quote_exact].length > 2000) throw new TypeError("PDF quote exceeds 2000 codepoints");
   }
+  validateExcerpt(value.excerpt);
   publication(value.publication);
   validateLocator(value.locator, source_ref);
   if (typeof value.quote_exact !== "string") throw new TypeError("Expected literal quote");
@@ -134,6 +136,7 @@ export function validateChange(change: Change): void {
     uuid(passage.anchor_id);
     if (!isResourceRef(passage.source_ref)) throw new TypeError("Invalid passage source");
     for (const text of [passage.normalized_exact, passage.prefix, passage.suffix]) if (typeof text !== "string" || normalizeQuote(text) !== text) throw new TypeError("Passage binding must be normalized");
+    validateExcerpt(passage.capture.value.excerpt);
     register(passage.capture); publication(passage.capture.value.publication);
     if (typeof passage.capture.value.quote_exact !== "string") throw new TypeError("Expected literal passage quote");
     if (normalizeQuote(passage.capture.value.quote_exact) !== passage.normalized_exact) throw new TypeError("Passage quote disagrees with semantic binding");

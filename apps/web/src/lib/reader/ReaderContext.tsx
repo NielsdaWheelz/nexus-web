@@ -13,6 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { ReaderProfileProvider } from "./ReaderProfileContext";
 import { remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
@@ -144,7 +145,7 @@ export function ReaderProvider({
   );
   if (defect) throw defect.error;
   return (
-    <ReaderContext.Provider value={value}>{children}</ReaderContext.Provider>
+    <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>{children}</ReaderProfileProvider></ReaderContext.Provider>
   );
 }
 

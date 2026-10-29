@@ -82,7 +82,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   if (entry.kind === "highlight") {
     const { annotation } = entry;
     const placement = annotation.placement.kind;
-    return <ResourceOutlineRow resourceRef={annotation.ref} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
+    return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
       omitResourceActions={!actions.sourceContext ? ["Share"] : undefined}
       annotationFocusRequest={verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}

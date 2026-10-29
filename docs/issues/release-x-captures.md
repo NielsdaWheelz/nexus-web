@@ -32,9 +32,13 @@ release conditions:
 4. deploy the single schema migration, converted authored snapshot/feed floor,
    wire/format revisions, api/workers, web, extension and android together. reject
    old producers before replay comparison and below-floor feeds before decoding.
-   retain old accepted prefixes/bytes; new stores and the reserved server producer
-   receive fresh replica identities. stores rebootstrap only after local
-   empty-outbox proof, preserving existing snapshot-completion checks.
+   retain old accepted prefixes/bytes. the combined excerpt migration 0326 moves
+   authored writing to format 3 and requires that format in every upload envelope.
+   this explicit producer fence supersedes the earlier fresh-replica transition:
+   existing device identities/counters survive, and the reserved server:2 producer
+   continues its sequence. stores rebootstrap only after local empty-outbox proof,
+   preserving existing snapshot-completion checks. follow the paired
+   [excerpt cutover](release-highlight-excerpts.md).
 5. qualify source reading through a retained highlight with no media, quote
    import/removal, thread reading, images, sharing and one local authored sync.
    the reported item is `01a1627e-bd78-78fa-bb89-fd76a1a0886a`; its context-only

@@ -147,6 +147,8 @@ def clip_reader_fragment(
         result = copy(node)
         result.clear(keep_tail=False)
         result.attrib.update(node.attrib)
+        if node.tag == "table" and not (start <= before and after <= end):
+            result.set("data-nexus-incomplete-table", "true")
         result.text = node.text if start <= before < end else None
         for child in node:
             if isinstance(child.tag, str):
@@ -170,3 +172,40 @@ def clip_reader_fragment(
     if text != selected.strip():
         raise ValueError("Rich slice disagrees with its canonical source interval")
     return ReaderTextSlice(html, text, start_offset + len(selected) - len(selected.lstrip()))
+
+
+def incomplete_table_intervals(sliced: ReaderTextSlice) -> tuple[tuple[int, int], ...]:
+    """Physical canonical bounds of structurally incomplete tables, including empty ones."""
+    from nexus.services.canonicalize import canonicalize_structure
+
+    root = fragment_fromstring(sliced.html_sanitized, create_parent=True)
+    paths: set[tuple[int, ...]] = set()
+
+    def mark(node: HtmlElement, path: tuple[int, ...]) -> None:
+        if node.tag == "table" and node.get("data-nexus-incomplete-table") == "true":
+            paths.add(path)
+            # Temporary parse-only ids request the existing canonical structure map.
+            # Neither this local tree nor these bookkeeping identities are published.
+            node.set("id", f"nexus-incomplete-table-{len(paths)}")
+        ordinal = 0
+        for child in node:
+            if isinstance(child.tag, str):
+                mark(child, (*path, ordinal))
+                ordinal += 1
+
+    mark(root, ())
+    if not paths:
+        return ()
+    structure = canonicalize_structure(inner_html(root))
+    if structure.text != sliced.canonical_text:
+        raise AssertionError(
+            "Table admission changed canonical text"
+        )  # justify-defect: temporary ids cannot alter the retained text projection.
+    return tuple(
+        (
+            sliced.source_start_offset + element.start_offset,
+            sliced.source_start_offset + element.end_offset,
+        )
+        for element in structure.elements
+        if element.tag == "table" and element.dom_path in paths
+    )

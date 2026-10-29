@@ -37,14 +37,14 @@ import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
+  MAX_ADD_ITEMS,
   findAmbiguousUrlSplit,
   parseAddUrlList,
   validateDraftSource,
   type AddSource,
   type DraftSource,
-} from "./addInput";
+} from "@/lib/nexus/addInput";
 
-export const MAX_ADD_ITEMS = 20;
 const EMPTY_SEED: AddSeed = { kind: "Content", initialDestinations: [] };
 type FileSummary = {
   kind: "File";
