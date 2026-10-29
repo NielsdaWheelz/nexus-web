@@ -31,6 +31,10 @@ emulator used official chromium webview
 not google stable-channel evidence. release must pair the deployed web source
 and rebuilt apk.
 
+main `f0b23ce0d` changes header geometry and native viewport inset ownership.
+the merged source needs fresh header/native geometry qualification before
+release; the paired-apk proof above applies to its recorded source only.
+
 earlier download-readiness misses remain a
 [lab repeatability follow-up](native-lab-download-readiness.md); the final
 ordinary downloaded-reader journey passed without a debugger or forced input.
