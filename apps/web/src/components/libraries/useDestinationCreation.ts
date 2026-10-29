@@ -10,6 +10,7 @@ import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
 
 type Attempt = {
+  readonly occurrence: object;
   readonly form: string;
   readonly id: string;
   readonly name: string;
@@ -80,7 +81,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     attempt.sending = false;
     if (outcome.kind === "Unknown" || outcome.kind === "Refused" && wasUnconfirmed) {
       const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      attempt.failure = { content: wasUnconfirmed ? CREATION_UNCONFIRMED : content ?? CREATION_UNCONFIRMED,
+      attempt.failure = { occurrence: attempt.occurrence, content: wasUnconfirmed ? CREATION_UNCONFIRMED : content ?? CREATION_UNCONFIRMED,
         retry: () => void send(attempt) };
       state.publish();
       return;
@@ -88,7 +89,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     state.attempts.delete(attempt.name.toLowerCase());
     if (outcome.kind === "Refused") {
       const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      if (content !== null) state.refusals.set(attempt.scope, { name: attempt.name, error: { content, retry: null } });
+      if (content !== null) state.refusals.set(attempt.scope, { name: attempt.name, error: { occurrence: attempt.occurrence, content, retry: null } });
       state.publish();
       return;
     }
@@ -99,12 +100,12 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   function project(scope: string | null) {
     const pending = snapshot.pending.filter(attempt => attempt.form === form && (scope === null || attempt.scope === scope));
     const failed = pending.filter(attempt => attempt.failure !== null);
-    const sending = pending.filter(attempt => attempt.sending);
     const errors = [
       ...failed.map(attempt => ({ name: attempt.name, error: { ...attempt.failure!, busy: attempt.sending, commandKey: `library-create:${attempt.id}` } })),
       ...[...snapshot.refusals].filter(([key]) => scope === null || key === scope).map(([, refusal]) => refusal),
     ];
     const error: ChooserError | null = errors.length === 0 ? null : errors.length === 1 ? errors[0].error : {
+      occurrence: errors[0]!.error.occurrence,
       content: { tone: "Warning", title: "some library creations need attention", message: errors.map(item => item.name).join(", ") },
       busy: failed.some(attempt => attempt.sending),
       commandKey: `library-create:${failed.map(attempt => attempt.id).sort().join(",")}`,
@@ -114,7 +115,6 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       pendingNames: snapshot.pending.filter(attempt => attempt.form === form).map(attempt => attempt.name),
       creating: pending.length > 0,
       error,
-      status: sending.length > 0 ? `creating ${sending.map(attempt => `“${attempt.name}”`).join(", ")}…` : undefined,
     };
   }
   return {
@@ -130,7 +130,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
         void send(existing);
         return true;
       }
-      const attempt: Attempt = { form, id: crypto.randomUUID(), name, scope, onCreated, sending: false, failure: null };
+      const attempt: Attempt = { occurrence: {}, form, id: crypto.randomUUID(), name, scope, onCreated, sending: false, failure: null };
       state.attempts.set(key, attempt);
       state.refusals.delete(scope);
       void send(attempt);

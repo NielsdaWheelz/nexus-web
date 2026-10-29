@@ -5,7 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { isApiError, isStaleBuild } from "@/lib/api/client";
@@ -34,8 +34,6 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const [retrying, setRetrying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; requestId?: string } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [announcement, setAnnouncement] = useState<string | null>(null);
-  const announced = useRef(new Set<string>());
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: suggestions.state !== null || suggestions.readFailure !== null || suggestions.withdrawn });
   const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
@@ -74,37 +72,17 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
     ? "couldn’t load suggestions." : "couldn’t refresh suggestions.";
   const readFailureError = suggestions.readFailure?.error ?? suggestions.observationError;
   const waiting = suggestions.adopted === null && !readFailure && suggestions.admissionError === null && !needsRepair;
-  useEffect(() => {
-    const firstCompletion = suggestions.initialCompleted && !announced.current.has("first-completion");
-    if (suggestions.initialCompleted) announced.current.add("first-completion");
-    if (!suggestions.active || retrying) return;
-    const event = notice ? { key: `add-error:${notice.text}`, text: notice.text }
-      : readFailure && suggestions.readFailure?.owner !== "Pane"
-        ? { key: `read-error:${readFailureText}:${readFailureError?.message}`, text: readFailureText }
-      : suggestions.admissionError ? { key: `admission-error:${suggestions.admissionError.error.message}`, text: "couldn’t request suggestions." }
-      : firstCompletion ? { key: "first-completion", text: rows.length ? "suggestions are ready." : "no suggestions right now." } : null;
-    if (event === null || (event.key !== "first-completion" && announced.current.has(event.key))) return;
-    announced.current.add(event.key);
-    setAnnouncement(event.text);
-  }, [suggestions.active, suggestions.readFailure, suggestions.admissionError, suggestions.initialCompleted, readFailure, readFailureText, readFailureError, rows.length, notice, retrying]);
+  const readOccurrence = useFeedbackOccurrence(readFailure, returnScope);
+  const admissionOccurrence = useFeedbackOccurrence(suggestions.admissionError !== null, returnScope);
+  const addOccurrence = useFeedbackOccurrence(notice !== null, returnScope);
 
   async function retry() {
     if (retrying) return;
     setRetrying(true);
-    setAnnouncement(suggestions.readFailure?.intention === "Initial" ? "loading suggestions…" : "refreshing suggestions…");
     try {
-      const outcome = await suggestions.retry();
-      switch (outcome) {
-        case "Refreshed": setAnnouncement("suggestions refreshed."); break;
-        case "Finding": setAnnouncement("finding suggestions…"); break;
-        case "Repair": setAnnouncement("suggestions need repair."); break;
-        case "Failed": setAnnouncement(readFailureText); break;
-        case "NotApplicable": setAnnouncement(null); break;
-        default: assertNever(outcome);
-      }
+      await suggestions.retry();
     } catch (error) {
-      if (isAbortError(error)) setAnnouncement(null);
-      else setDefect({ error });
+      if (!isAbortError(error)) setDefect({ error });
     } finally {
       setRetrying(false);
     }
@@ -148,7 +126,6 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       tabIndex={-1}
       title={title}
     >
-      <span className="sr-only" aria-live={suggestions.active ? "polite" : "off"} aria-atomic="true">{announcement}</span>
       <CollectionView geometry="UniformIndex"
         returnScope={returnScope}
         rows={presentedRows}
@@ -158,18 +135,18 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         notice={<>
           {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
           {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}
-          {readFailure ? <FeedbackNotice
+          {readFailure ? <FeedbackFailure scope="Local" occurrence={readOccurrence}
             content={{ tone: "Danger", title: readFailureText, requestId: isApiError(readFailureError) ? readFailureError.requestId : undefined }}
-            announcement="None" actions={[{ label: "retry", onClick: () => void retry(), busy: retrying || suggestions.reconciling }]} /> : null}
-          {suggestions.admissionError ? <FeedbackNotice
+            announcement="Polite" actions={[{ label: "retry", onClick: () => void retry(), busy: retrying || suggestions.reconciling }]} /> : null}
+          {suggestions.admissionError ? <FeedbackFailure scope="Local" occurrence={admissionOccurrence}
             content={{ tone: "Danger", title: "couldn’t request suggestions.", requestId: suggestions.admissionError.error.requestId }}
-            announcement="None" actions={[{ label: "retry", onClick: suggestions.retryAdmission, busy: suggestions.admitting }]} /> : null}
-          {notice ? <FeedbackNotice content={{ tone: "Danger", title: notice.text, requestId: notice.requestId }} announcement="None" /> : null}
+            announcement="Polite" actions={[{ label: "retry", onClick: suggestions.retryAdmission, busy: suggestions.admitting }]} /> : null}
+          {notice ? <FeedbackFailure scope="Local" occurrence={addOccurrence} content={{ tone: "Danger", title: notice.text, requestId: notice.requestId }} announcement="Polite" /> : null}
           <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
         </>}
         empty={suggestions.adopted !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "no suggestions right now." }} announcement="None" /> : undefined}
         rowControls={Object.fromEntries(rows.flatMap((item) => item.target.kind === "Media" ? [] : [[item.target.ref,
-          <Button key={item.target.ref} aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
+          <Button reserveIcon busyKey={item.target.ref} key={item.target.ref} aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
             aria-disabled={adding.has(item.target.ref) || undefined} aria-busy={adding.has(item.target.ref) || undefined}
             onClick={() => { if (!adding.has(item.target.ref)) void add(item); }}>add</Button>,
         ]]))}

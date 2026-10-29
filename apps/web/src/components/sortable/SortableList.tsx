@@ -513,7 +513,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
     >
       <GestureSurface rootRef={root} begin={begin} canActivate={canActivate}>
-        {indexWindow.plan.kind === "Measure" ? <PaneLoadingState label={`Loading ${ariaLabel}…`} announcement="None" /> : null}
+        {indexWindow.plan.kind === "Measure" ? <PaneLoadingState /> : null}
         <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={busy || indexWindow.plan.kind === "Measure"} windowed={indexWindow.plan.kind !== "Intrinsic"} measuring={indexWindow.plan.kind === "Measure"}>
           {(indexWindow.plan.kind === "Measure" ? [{ id: indexWindow.plan.sampleId, index: 0, gapBeforePx: 0 }] : indexWindow.plan.slots).map(slot => {
             const item = items[slot.index];

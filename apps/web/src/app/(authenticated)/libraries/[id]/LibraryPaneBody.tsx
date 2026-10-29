@@ -18,7 +18,7 @@ import { suggestionTargetId } from "@/lib/suggestions";
 import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -46,7 +46,7 @@ import {
   presentLibraryEntry,
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
-import { renderOrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
+import { OrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   libraryEntriesIndex,
@@ -133,6 +133,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
+  const readOccurrence = useFeedbackOccurrence(failure !== null, id);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
@@ -154,6 +155,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     observed.current = { key: publicationKey, signature: publication };
     if (previous !== null && previous.key === publicationKey && previous.signature !== publication) publishChange("Entries");
   }, [publication, publicationKey]);
+  const detailOccurrence = useFeedbackOccurrence(detail.status === "failed", id);
   const missing = detail.status !== "loading" && detail.error?.status === 404;
   const library = !missing && detail.status === "ready" ? detail.data : null;
   const source = list.status === "ready" ? list.source : LIVE_SOURCE;
@@ -377,7 +379,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     const failure = detail.status === "failed" ? detail.error : null;
     return <>
       {readFeedback.announcement}
-      {failure ? <FeedbackNotice
+      {failure ? <FeedbackFailure scope="Local" occurrence={detailOccurrence}
         content={
           libraryErrorFeedback(failure, "couldn’t load entries", throwDefect) ?? {
             tone: "Danger",
@@ -386,7 +388,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         }
         announcement="Polite"
         actions={[{ label: "try again", onClick: retry, busy: detail.status === "failed" && detail.retrying }]}
-      /> : <PaneLoadingState label="loading entries…" announcement="Polite" />}
+      /> : <PaneLoadingState />}
     </>;
   }
   if (invalidView) {
@@ -430,7 +432,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       {readFeedback.announcement}
       <PaneSurface
         state={<>
-          {ordering !== undefined ? renderOrderNotice({ order: order.state, active, paneId: runtime?.paneId ?? null }) : null}
+          {ordering !== undefined ? <OrderNotice order={order.state} active={active} paneId={runtime?.paneId ?? null}/> : null}
           {readFeedback.notice}
           <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying}
             returnFocus={() => inputRef.current} />
@@ -445,7 +447,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           status={list.status === "failed" ? "error" : list.status}
           error={
             firstLoad ? (
-              <FeedbackNotice
+              <FeedbackFailure scope="Local" occurrence={readOccurrence}
                 content={firstLoad}
                 announcement="Polite"
                 actions={[{ label: "try again", onClick: retry, busy }]}

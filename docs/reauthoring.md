@@ -4,9 +4,9 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-outline range editing against `b79cf2f56`: +756 net authored runtime lines
-(1,286 added, 530 deleted). outline/model/history +600; note editors +26;
-authored runtime +79; shared graph allocation +50; work guard +1; shortcut help +0. it removes
+outline range editing against `10aa3df7b`: +758 net authored runtime lines
+(1,286 added, 528 deleted). outline/model/history +600; note editors +27;
+authored runtime +80; shared graph allocation +50; work guard +1; shortcut help +0. it removes
 additive selection, single-item reparent history, selected enter/paste/cut mutation branches and
 duplicate position allocation. the existing editor, pending-input, history and
 authored-runtime owners now compose one range planner and atomic graph admission.
@@ -61,6 +61,14 @@ region grows. docs and disposable cases are excluded.
 direction, keep features (owner, 2026-10-13). every area is rewritten once, fresh, from a spec of its observable behaviour, and stops at its honest floor: no behaviour cut for a budget, no lines moved out of a slice to fit a cap. the 1/5 target is dropped; the reading kernel alone projects ~81k. earlier rewrites (player #534, reader #535, offline #502, dossiers #514, oracle #531, synapse #525, find #509, launcher #410) change only where a sweep crosses them. code that a feature or release session adds to an area after its rewrite is regrowth: it joins the queue as a re-slice, cut against the newest merged behaviour.
 
 ## counting
+
+quiet feedback against `b79cf2f56`: +980 authored runtime lines (3,339 added,
+2,359 deleted), all web source. scoped passive layers replace the workspace-only
+portal, cold skeletons, request-status rows and duplicated copy timers. the
+existing authored runtime separates document-read recovery from failed writes;
+command owners retain exact retry and loss protection. mounted controls and
+content geometry stay with their existing hosts. docs, generated output and
+disposable cases are excluded; earlier area totals retain their stated bases.
 
 compact palette and inline pane list against `480c20a39`: +699 net authored
 runtime lines (1,704 added, 1,005 deleted): web +612, shared authored +74,

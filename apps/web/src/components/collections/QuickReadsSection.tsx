@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import { apiTransportFeedback } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
@@ -33,8 +33,9 @@ export default function QuickReadsSection() {
   });
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: read.status !== "loading" });
+  const occurrence = useFeedbackOccurrence(failure !== null);
   const failureTitle = loaded === null ? "couldn’t load quick reads" : "couldn’t refresh quick reads";
-  const failureNotice = failure === null ? null : <FeedbackNotice
+  const failureNotice = failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
     content={apiTransportFeedback(failure, failureTitle) ?? {
       tone: "Danger", title: failureTitle, requestId: failure.requestId,
     }}

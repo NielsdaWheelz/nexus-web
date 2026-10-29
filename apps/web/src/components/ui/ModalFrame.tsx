@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { Session } from "@/components/feedback/scope";
 import {
   OverlayContext,
   focusableElements,
@@ -63,6 +65,8 @@ export default function ModalFrame({
   readonly className: string;
   readonly children: ReactNode | ((requestDismiss: () => void) => ReactNode);
 }) {
+  const [panel, setPanel] = useState<HTMLElement | null>(null);
+  const feedback = useContext(Session);
   const requestDismiss = () => {
     if (onDismissRequest?.() !== "blocked") onDismiss();
   };
@@ -74,6 +78,7 @@ export default function ModalFrame({
     returnFocusFallback,
     skipReturnFocus,
   });
+  const bindPanel = useCallback((element: HTMLElement | null) => { layer.element = element; setPanel(element); }, [layer]);
   useLayoutEffect(() => {
     if (!interactionLayer) return;
     interactionLayer.current = layer;
@@ -122,9 +127,7 @@ export default function ModalFrame({
         onClick={(event) => event.stopPropagation()}
       >
         <section
-          ref={(panel) => {
-            layer.element = panel;
-          }}
+          ref={bindPanel}
           id={id}
           className={className}
           role="dialog"
@@ -133,7 +136,11 @@ export default function ModalFrame({
           inert={!topmost}
           tabIndex={-1}
         >
-          {typeof children === "function" ? children(requestDismiss) : children}
+          {feedback ? <FeedbackSurface bounds={panel} interaction={layer} modal={layer} active={open}
+            protectedTargets={() => panel ? [...panel.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []}
+            returnFocus={() => panel}>
+            {typeof children === "function" ? children(requestDismiss) : children}
+          </FeedbackSurface> : typeof children === "function" ? children(requestDismiss) : children}
         </section>
       </div>
     </OverlayContext>,

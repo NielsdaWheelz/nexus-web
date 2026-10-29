@@ -4,7 +4,7 @@
 // The reader owns departure/progress; the shell owns presentation and focus.
 import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { assertNever } from "@/lib/assertNever";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure } from "@/components/feedback/Feedback";
 import { PieceDetails, SourcePieces } from "@/components/media/containedWorks/Pieces";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
@@ -77,7 +77,7 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
   const rich = media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x"
     && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post");
   return <>
-    {modal && failure !== null && liveFailure === failure ? <FeedbackNotice content={navigationFailureContent(failure)} occurrence={failure}
+    {modal && failure !== null && liveFailure === failure ? <FeedbackFailure scope="Local" content={navigationFailureContent(failure)} occurrence={failure}
       announcement="Polite" onDismiss={() => reader.dismissNavigationFailure(failure)} /> : null}
     <SourceIssuesNotice issues={doc.sourceIssues} readable />
     {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} onNavigate={onNavigate} /></>

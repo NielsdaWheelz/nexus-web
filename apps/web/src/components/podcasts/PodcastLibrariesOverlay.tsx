@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
+import { useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -63,7 +64,9 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
       note: included ? `podcast subscription${item.writable ? "" : " · read only"}` : reason ?? undefined,
       action: reason === null ? { kind: "Set", included: true, label: "choose destination" } : { kind: "Blocked", reason } };
   });
+  const readOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, scope);
   const readError = source.status === "loading" || source.error === null ? null : {
+    occurrence: readOccurrence,
     content: podcastErrorMessage(source.error, source.status === "failed" ? "couldn’t load libraries." : "couldn’t refresh libraries."),
     retry: source.refetch, busy: loading,
   };
@@ -73,7 +76,7 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
         anchor={returnFocusTo} returnFocusFallback={returnFocusFallback}
         skipReturnFocus={() => !session.current.choosing}>
         <LibraryChooser context={`podcast-libraries:${scope}`} membershipKind="Chosen" rows={rows} loading={loading}
-          summary={null} status={creation.status} empty="no libraries available"
+          summary={null} empty="no libraries available"
           error={readError ?? creation.error}
           onToggle={({ id }) => {
             const row = rows.find(item => item.id === id);

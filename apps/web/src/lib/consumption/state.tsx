@@ -275,5 +275,5 @@ export function useConsumptionCommands(reportDefect: (failure: { error: unknown 
   const single = useSyncExternalStore(owner.subscribe, owner.snapshot, owner.snapshot);
   const undoItems = useMemo(() => [...single.undoItems, ...bulk.undoItems], [single.undoItems, bulk.undoItems]);
   useLayoutEffect(() => owner.attach(), [owner]);
-  return { commands: owner.commands, undoItems };
+  return { commands: owner.commands, undoItems, collectionFailures: bulk.failures };
 }

@@ -1,0 +1,13 @@
+.setup {
+  position: relative;
+  width: 100%;
+  max-width: 44rem;
+  min-height: var(--size-xl);
+  padding-inline-end: calc(var(--size-xl) + var(--space-3));
+}
+
+.recovery {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: var(--space-3);
+}

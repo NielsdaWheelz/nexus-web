@@ -16,7 +16,7 @@ import { podcastActionFacts } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -219,6 +219,8 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     })];
   });
   const label = BROWSE_SOURCE_LABELS[section.source];
+  const readOccurrence = useFeedbackOccurrence(error !== null, readKey);
+  const factsOccurrence = useFeedbackOccurrence(factsError !== null, readKey);
   const initialError = list.failure?.op !== "More" ? error : null;
   const invalid = initialError?.code === "E_INVALID_REQUEST" || initialError?.code === "E_INVALID_BROWSE_QUERY";
   const feedback = useCollectionReadFeedback({
@@ -228,18 +230,18 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}>
     <h3 id={headingId} className={styles.sourceHeading}>{label}</h3>
     {!list.current && initialError === null ? (
-      <FeedbackStatus content={{ tone: "Neutral", title: `loading ${label.toLowerCase()}…` }} announcement="None" />
+      <FeedbackBusy subject={readKey} pending/>
     ) : initialError !== null && !invalid ? (
-      <FeedbackNotice
+      <FeedbackFailure scope="Local" occurrence={readOccurrence}
         content={{ tone: "Warning", title: `${label} couldn’t be loaded`, message: sectionErrorMessage(initialError), requestId: initialError.requestId }}
         announcement="Polite"
         actions={[{ label: `retry ${label.toLowerCase()}`, onClick: list.retry, busy: list.running !== null }]}
         returnFocus={() => sectionRef.current}
       />
-    ) : list.complete && rows.length === 0 ? (
+    ) : list.complete && initialError === null && rows.length === 0 ? (
       <FeedbackStatus content={{ tone: "Neutral", title: "no results" }} announcement="None" />
     ) : null}
-    {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
+    {factsError !== null ? <FeedbackFailure scope="Local" occurrence={factsOccurrence} content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
       actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
     <CollectionView
       returnScope={`Browse.${section.kind}.${section.source}`}

@@ -46,9 +46,9 @@ function ShelfAccountScope({ children }: { readonly children: ReactNode }) {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    const retry = () => { setState({ kind: "Loading" }); setAttempt(value => value + 1); };
+    const retry = () => { setState(current => current.kind === "Unavailable" ? { ...current, retrying: true } : current); setAttempt(value => value + 1); };
     void readNativeAuthoredAccount().then(id => { if (live) setState({ kind: "Ready", id }); },
-      () => { if (live) setState({ kind: "Unavailable", retry }); });
+      () => { if (live) setState(current => ({ kind: "Unavailable", retrying: false, occurrence: current.kind === "Unavailable" ? current.occurrence : {}, retry })); });
     return () => { live = false; };
   }, [attempt]);
   return <ShelfAccount value={state}><WorkProvider><AuthenticatedWorkspaceErrorBoundary accountId={state.kind === "Ready" ? state.id : undefined}>{children}</AuthenticatedWorkspaceErrorBoundary></WorkProvider></ShelfAccount>;

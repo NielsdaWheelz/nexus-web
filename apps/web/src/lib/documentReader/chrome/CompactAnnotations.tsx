@@ -6,8 +6,9 @@ import { ExcerptCaptureError, excerptView, excerptTextParts } from "@nexus/autho
 // Compact readers share highlight body ownership with the workspace. Explicit
 // creation retains unsubmitted input until local commit; existing bodies autosave.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import {copyText} from "@/lib/ui/copyText";
+import { FeedbackFailure, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -15,7 +16,7 @@ import Dialog from "@/components/ui/Dialog";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { assumeReaderSelectionKey, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { LocalCommitError } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import { bodyHasContent, emptyBody, type NoteBody } from "@nexus/authored/body";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
@@ -25,7 +26,7 @@ import NoteEditor, {type NoteEditorHandle} from "@/components/notes/NoteEditor";
 import { captureSelection, createHighlight, createReaderAnnotations, type Capture, type SourceLabel } from "../annotations";
 import { useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
 import type { Reader } from "../runtime";
-import { AnnotationList, AnnotationQuote, LocalWritingError, PLACEMENT_COPY } from "./ReaderAnnotation";
+import { AnnotationList, AnnotationQuote, PLACEMENT_COPY } from "./ReaderAnnotation";
 import styles from "./chrome.module.css";
 
 const NO_SUBSCRIPTION = () => () => {};
@@ -62,37 +63,43 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const setNote = (body: NoteBody) => setNoteBody(current => ({ ...current, body, revision: current.revision + 1 }));
   const hasNote = bodyHasContent(note.body);
   const [busy, setBusy] = useState(false);
+  const [defect, setDefect] = useState<{error: unknown} | null>(null);
+  const copied = useCopyFeedback(open);
+  const [manualCopy, setManualCopy] = useState<string | null>(null);
+  const copyWriting = () => {const text = draft.read().body.body_text; void copied.copy(text).catch(error => {if (error instanceof ClipboardWriteUnavailableError) setManualCopy(text); else setDefect({error});});};
   const selectionEditor = useRef<NoteEditorHandle | null>(null);
   const selectionReady = useCallback((handle: NoteEditorHandle | null) => {selectionEditor.current = handle;}, []);
   const [issue, setIssue] = useState<{ readonly title: string; readonly retry: (() => void) | null } | null>(null);
-  // one failed frame holds the account's writing; it retries from LocalWritingError, never resaves.
+  // A failed frame retries through the account writing owner, never a new save.
   const blocked = useSyncExternalStore(writing?.subscribe ?? NO_SUBSCRIPTION, () => writing?.snapshot().error != null, () => false);
+  const currentInput = useRef({open, mounted: true});
+  currentInput.current.open = open;
+  useEffect(() => {const current = currentInput.current; current.mounted = true; return () => {current.mounted = false;};}, []);
   const [focused, setFocused] = useState<string | null>(null);
-  const close = () => { if (!guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) return; setOpen(null); setNote(emptyBody()); setIssue(null); setFocused(null); };
+  const close = () => { if (!guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) return false; setOpen(null); setNote(emptyBody()); setIssue(null); setFocused(null); return true; };
   const decorations = useMemo<Decorations | undefined>(() => doc ? { identity: doc.identity, marks: state.marks, noteRefs: [], focused, hovered: null } : undefined,
     [doc, focused, state.marks]);
 
-  /** Runs one local commit; the typed note clears only once its commit is durable. */
-  const commit = (run: () => Promise<unknown>, done: () => void) => {
-    setBusy(true); setIssue(null);
-    const revision = note.revision;
+  /** Runs one local commit; the typed annotation clears only once its commit is durable. */
+  const commit = (run: () => Promise<unknown>, done: () => void, recovery: typeof issue = issue): void => {
+    const submitted = {open, revision: draft.read().revision};
     let failed = false;
-    let notice: typeof issue = null;
     const finish = () => {
-      setIssue(current => current === notice ? null : current);
+      if (!currentInput.current.mounted || currentInput.current.open !== submitted.open) return;
       const current = draft.read();
-      if (current.hyperlink || current.attachment || failed && open?.kind === "selection" && !selectionEditor.current?.settleNativeInput()) return;
-      if (draft.read().revision === revision) {setNote(emptyBody()); done();}
+      if (current.hyperlink || current.attachment || failed && submitted.open?.kind === "selection" && !selectionEditor.current?.settleNativeInput()) return;
+      if (draft.read().revision === submitted.revision) {setIssue(null); setNote(emptyBody()); done();}
     };
+    setBusy(true);
     void run().then(finish, (error: unknown) => {
       failed = true;
-      // the same frozen frame retries here or from the layer notice; the typed note is already in it.
-      if (error instanceof LocalCommitError) void error.completion.then(finish, () => {});
-      notice = error instanceof CommandTooLargeError ? { title: "this selection is too large to save. select a shorter passage.", retry: null } : error instanceof LocalCommitError
-        ? { title: "couldn’t save on this device", retry: () => { void error.retry().catch(() => {}); } }
-        : { title: "couldn’t save this annotation", retry: null };
-      setIssue(notice);
-    }).finally(() => setBusy(false));
+      if (error instanceof LocalCommitError) {setIssue(current => current === recovery ? null : current); void error.completion.then(finish, () => {}); return;}
+      if (error instanceof CommandTooLargeError) {setIssue({title: "this selection is too large to save. select a shorter passage.", retry: null}); return;}
+      if (isAuthoredStorageFailure(error)) {
+        const failure = {title: "couldn’t save this annotation", retry: () => commit(run, done, failure)};
+        setIssue(failure);
+      } else setDefect({error});
+    }).finally(() => {if (currentInput.current.mounted) setBusy(false);});
   };
   const sourceChanged = open?.kind === "selection" && (doc === null || open.identity !== doc.identity);
   const save = (capture: Capture, withNote: boolean) => {
@@ -107,13 +114,19 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const shownAnnotation = annotation ?? (open?.kind === "annotation" && lastAnnotation.current?.id === open.id ? lastAnnotation.current : null);
   const activeMark = open?.kind === "annotation" ? open.mark : null;
   const editor = (placeholder: string, onSave: () => void) => <NoteEditor editorKey={`reader-annotation:${mediaId}`} containingNoteRef={null}
-    body={note.body} revision={note.revision} label="annotation" placeholder={placeholder} compact editable={!busy}
+    body={note.body} revision={note.revision} label="annotation" placeholder={placeholder} compact editable={!busy && !blocked && issue?.retry == null}
     history={null} onEditorReady={selectionReady} onEdit={edit => setNote(edit.after)} onSave={onSave}
     onAttachmentActiveChange={attachment => draft.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => draft.set(value => ({...value, hyperlink}))} />;
-  const issueNotice = issue ? <FeedbackNotice content={{ tone: "Danger", title: issue.title,
-    message: issue.retry ? "keep this page open. retry saving." : "nothing was saved. try again." }} announcement="Assertive"
-    actions={issue.retry ? [{label: "retry saving", onClick: issue.retry}, {label: "copy", onClick: () => {void copyText(draft.read().body.body_text);}}] : [{label: "copy", onClick: () => {void copyText(draft.read().body.body_text);}}]} /> : null;
+  const issueOccurrence = useFeedbackOccurrence(issue !== null, mediaId);
+  if (defect) throw defect.error;
+  const issueNotice = issue ? <FeedbackFailure scope="Local" occurrence={issueOccurrence} content={{ tone: "Danger", title: issue.title,
+    message: issue.retry ? "keep nexus open. retry saving." : undefined }} announcement="Assertive"
+    actions={issue.retry ? hasNote ? [{label: "retry saving", busy, onClick: issue.retry}, {label: "copy unsaved writing", onClick: copyWriting, copiedOccurrence: copied.occurrence ?? undefined}]
+      : [{label: "retry saving", busy, onClick: issue.retry}] : hasNote ? [{label: "copy unsaved writing", onClick: copyWriting, copiedOccurrence: copied.occurrence ?? undefined}] : undefined} /> : null;
   const panel = <>
+    <Dialog open={manualCopy !== null} title="copy unsaved writing" onClose={() => setManualCopy(null)} initialFocus={panel => panel.querySelector("textarea")}>
+      <textarea aria-label="unsaved writing" readOnly value={manualCopy ?? ""} onFocus={event => event.currentTarget.select()} />
+    </Dialog>
     {open === null ? issueNotice : null}
     <Dialog open={open?.kind === "selection"} title="annotate passage" onClose={close}>
       {open?.kind === "selection" ? <div className={styles.compactAnnotation}>
@@ -121,7 +134,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         {sourceChanged ? <p role="status">the source changed. your writing is kept.</p> : null}
         {editor("write an annotation…", () => save(open.capture, true))}
         <div className={styles.compactActions}>
-          <Button emphasis="strong" disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
+          <Button emphasis="strong" reserveIcon aria-busy={busy} disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
           <Button onClick={close}>cancel</Button>
         </div>
       </div> : null}
@@ -137,22 +150,21 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     <Dialog open={open?.kind === "annotation"} title="highlight" onClose={close}>
       {shownAnnotation ? <div className={styles.compactAnnotation}>
         <AnnotationQuote annotation={shownAnnotation} />
-        {activeMark ? <Button onClick={() => { const anchor = activeMark.anchor; close(); void reader.inspect({ target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads }, signal: new AbortController().signal }); }}>view in source</Button> : null}
+        {activeMark ? <Button onClick={() => { const anchor = activeMark.anchor; if (!close()) return; void reader.inspect({ target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads }, signal: new AbortController().signal }); }}>view in source</Button> : null}
         {!annotation ? <p role="status">this highlight is no longer available. your writing is kept.</p> : null}
         <HighlightAnnotation highlightRef={shownAnnotation.ref} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
         <div className={styles.compactActions}>
           {shownAnnotation.selection.publication?.kind === "x_capture" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.publication.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
 
-          <Button tone="danger" disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close)}>delete highlight</Button>
+          <Button tone="danger" reserveIcon aria-busy={busy} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close)}>delete highlight</Button>
         </div>
         {issueNotice}
-      </div> : open?.kind === "annotation" ? <FeedbackStatus content={{ tone: "Neutral", title: "opening highlight…" }} announcement="Polite" /> : null}
+      </div> : null}
     </Dialog>
   </>;
   /** Annotations this publication cannot place, or every annotation when its text is unavailable. */
   const unplaced = state.annotations.filter(entry => entry.placement.kind !== "placed");
   const list = <>
-    <LocalWritingError />
     {showPlaced && state.annotations.length ? <ResourceOutlineList scope={`capture-highlights:${mediaId}`} ariaLabel="your highlights">
       {state.annotations.map(entry => <ResourceOutlineRow key={entry.ref} resourceRef={entry.ref} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />)}
     </ResourceOutlineList> : null}

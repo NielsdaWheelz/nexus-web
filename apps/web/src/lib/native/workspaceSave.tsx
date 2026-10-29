@@ -2,13 +2,13 @@
 // The one device save loop. Only canonical navigation is serialized. A lost
 // commit answer is reconciled against durable bytes before another write.
 import { useEffect, useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure } from "@/components/feedback/Feedback";
 import type { WorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { readDeviceStartup, saveDeviceWorkspace } from "./client";
 
 export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: WorkspaceState; revision: { current: string } } | null) {
-  const [failure, setFailure] = useState<{ retry: () => void; busy: boolean } | null>(null);
+  const [failure, setFailure] = useState<{ retry: () => void; busy: boolean; occurrence: object } | null>(null);
   const initial = local?.initial;
   const revision = local?.revision;
   useEffect(() => {
@@ -39,7 +39,7 @@ export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: 
         saved = desired;
         if (live) setFailure(null);
       } catch {
-        if (live) setFailure({ retry: () => void save(), busy: false });
+        if (live) setFailure(previous => ({ retry: () => void save(), busy: false, occurrence: previous?.occurrence ?? {} }));
       } finally {
         sending = false;
         if (live && queued) { queued = false; if (JSON.stringify(store.value().state) !== desired) void save(); }
@@ -66,5 +66,5 @@ export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: 
       document.removeEventListener("visibilitychange", hidden);
     };
   }, [initial, revision, store]);
-  return failure ? <FeedbackNotice announcement="Polite" content={{ tone: "Danger", title: "workspace changes weren’t saved on this device", message: "keep the app open and retry. reopening may restore an earlier workspace." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null;
+  return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} announcement="Polite" content={{ tone: "Danger", title: "couldn’t confirm workspace changes on this device", message: "keep the app open and retry. reopening may restore an earlier workspace." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null;
 }

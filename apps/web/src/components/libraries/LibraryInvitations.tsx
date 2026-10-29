@@ -5,7 +5,7 @@
 // page is read (no cap); an answer rereads the list.
 
 import { useId, useState } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
@@ -65,6 +65,8 @@ export default function LibraryInvitations({ returnFocus }: {
     }
   };
 
+  const readOccurrence = useFeedbackOccurrence(list.failure !== null, list.requestedKey);
+  const commandOccurrence = useFeedbackOccurrence(feedback !== null);
   if (installedApp && admission !== "Ready") return <FeedbackNotice announcement="Polite" content={{
     tone: "Neutral", title: "library invitations require a connection",
   }} />;
@@ -75,21 +77,21 @@ export default function LibraryInvitations({ returnFocus }: {
       tone: "Danger",
       title: "Library invitations couldn’t be loaded",
     });
-  const shown = list.items.length > 0 || feedback !== null || Boolean(failure);
+  const shown = list.items.length > 0;
   return <>
-    {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
-      <div>
-        <h2 id={headingId}>Library invitations</h2>
-        <p>Accept to add the library here, or decline the invitation.</p>
-      </div>
       {failure ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={failure}
           announcement="Assertive"
           actions={[{ label: "Retry invitations", onClick: list.retry, busy: list.running !== null }]}
         />
       ) : null}
-      {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
+      {feedback ? <FeedbackFailure scope="Local" occurrence={commandOccurrence} content={feedback} announcement="Assertive" /> : null}
+    {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
+      <div>
+        <h2 id={headingId}>Library invitations</h2>
+        <p>Accept to add the library here, or decline the invitation.</p>
+      </div>
       <div className={styles.rows}>
         {list.items.map((invitation) => (
           <div className={styles.row} key={invitation.id}>

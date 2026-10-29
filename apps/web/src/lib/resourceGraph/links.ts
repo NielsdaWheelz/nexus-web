@@ -171,16 +171,17 @@ export function connectionMutationErrorMessage(error: unknown): FeedbackContent 
 
 /** A passage picker result carries its own quote/locator baseline. Known semantic
  * bindings survive deletion; no server reread is substituted during acceptance. */
+export class LinkInputRefusal extends Error {}
 export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget): Promise<{ ref: string; intents: Intent[] }> {
   if (target.kind === "resource") return { ref: target.ref, intents: [] };
   const capture = target.capture;
   const capturedTarget = target.passage_target;
-  if (capture === null || capturedTarget === null) throw new Error("This passage has no retained selection. select it again before linking.");
+  if (capture === null || capturedTarget === null) throw new LinkInputRefusal("This passage has no retained selection. select it again before linking.");
   const locator = capture.locator;
-  if (locator === null) throw new Error("This passage has no retained location.");
+  if (locator === null) throw new LinkInputRefusal("This passage has no retained location.");
   const selector = "text_quote_selector" in locator ? locator.text_quote_selector : null;
   const quote_exact = capture.quote_exact;
-  if (quote_exact === null || quote_exact.length === 0) throw new Error("This passage has no retained quote. select it again before linking.");
+  if (quote_exact === null || quote_exact.length === 0) throw new LinkInputRefusal("This passage has no retained quote. select it again before linking.");
   const prefix = normalizeQuote(selector?.prefix ?? (locator.type === "pdf_page_geometry" ? locator.prefix ?? "" : ""));
   const suffix = normalizeQuote(selector?.suffix ?? (locator.type === "pdf_page_geometry" ? locator.suffix ?? "" : ""));
   const normalized_exact = normalizeQuote(quote_exact);

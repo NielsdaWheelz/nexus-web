@@ -13,9 +13,19 @@ import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merg
 import { MAX_COMMAND_BYTES, CommandTooLargeError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
-export interface WritingDocument { ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>; onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void }
+export interface DocumentReadSnapshot { retrying: boolean; error: unknown | null; occurrence: object | null }
+export interface WritingDocument {
+  ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
+  onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
+  readSnapshot(): DocumentReadSnapshot;
+  subscribeRead(listener: () => void): () => void;
+  retryRead(): void;
+}
 export class LocalCommitError extends Error {
   constructor(message: string, readonly cause: unknown, readonly retry: () => Promise<LocalCommit>, readonly completion: Promise<LocalCommit>) { super(message); this.name = "LocalCommitError"; }
+}
+export function isAuthoredStorageFailure(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "E_AUTHORED_LOCAL" || error.code === "E_AUTHORED_WORKER_STOPPED");
 }
 export function writingStoreStopped(error:unknown):boolean {
   if(error instanceof LocalCommitError)return writingStoreStopped(error.cause);
@@ -27,9 +37,10 @@ export interface LocalCommit {
 }
 export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
 export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
-interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
-interface SaveState { saving: boolean; error: unknown | null; error_refs: string[]; revision: number }
+interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; publishRead(state: DocumentReadSnapshot): void; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
+interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
+  occurrence: object;
   reject_oversize: boolean;
   intent: Intent | null; selection: StateSelection; change: Change | null;
   prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
@@ -69,9 +80,9 @@ export class WritingRuntime {
   private failed: FailedCommit | null = null;
   private retrying: Promise<void> | null = null;
   private retired = false;
-  private state: SaveState = { saving: false, error: null, error_refs: [], revision: 0 };
+  private state: SaveState = { saving: false, error: null, error_occurrence: null, error_refs: [], revision: 0 };
   private pending = 0;
-  private readonly pending_commands = new Set<Promise<LocalCommit | null>>();
+  private readonly pending_commands = new Map<Promise<LocalCommit | null>, FailedCommit | null>();
   private capture_scope: { owner: FailedCommit; origins: Map<string, unknown>; mutated: Set<string>; offending: Map<string,{document:CachedDocument;updates:string[]}> } | null = null;
   constructor(private readonly accountId: string) {}
   snapshot = (): SaveState => this.state;
@@ -82,7 +93,7 @@ export class WritingRuntime {
   }
   async committedPrefix(): Promise<string> {
     const admitted = this.tail;
-    const required = [...this.pending_commands];
+    const required = [...this.pending_commands.keys()];
     await Promise.all(required);
     await admitted;
     if (this.retired) throw new Error("Writing account is closed");
@@ -125,7 +136,7 @@ export class WritingRuntime {
     const committed = new Promise<LocalGraphCommit | null>((resolve, refuse) => {settle = resolve; fail = refuse;});
     void committed.catch(() => {});
     const refuse = (reason: R): null => {accept({kind: "refusal", reason}); return null;};
-    this.pending++; this.pending_commands.add(committed); this.publish({saving: true});
+    this.pending++; this.pending_commands.set(committed, null); this.publish({saving: true});
     const operation = this.tail.then(async () => {
       if (this.retired || !args.active()) return refuse(args.retired);
       const store = await this.store;
@@ -148,6 +159,7 @@ export class WritingRuntime {
         }
         const {change, states} = lowered;
         const owner = this.commandOwner();
+        this.pending_commands.set(committed, owner);
         owner.intent = intent; owner.selection = selection; owner.change = change; owner.store = store;
         owner.prepared = {before: commitBefore(change, snapshot.states, selection), frame: {expected_store_revision: snapshot.replica.store_revision, replica_id: snapshot.replica.replica_id, change, states}};
         owner.release(); owner.held = true; owner.attempting = true; this.failed = owner;
@@ -159,7 +171,7 @@ export class WritingRuntime {
           catch (error) {owner.attempting = false; this.reportFailure(owner, error); receipt = await owner.settled;}
           owner.resolve(receipt); owner.accept(receipt);
           if (this.failed === owner) this.failed = null;
-          this.publish({error: null, error_refs: []});
+          this.publish({error: null, error_occurrence: null, error_refs: []});
           const graphReceipt: LocalGraphCommit = {...receipt, states: owner.prepared!.frame.states};
           accept({kind: "committed", receipt: graphReceipt});
           return graphReceipt;
@@ -230,6 +242,7 @@ export class WritingRuntime {
       const document = this.cacheDocument(note.ref,resource,note.doc,[],null,null);
       const release = document.retain();
       document.track(owner.settled,note.origin);
+      document.text_pending.add(owner.settled);
       void owner.settled.then(release,release);
       const entry = {promise:Promise.resolve(document),value:document};
       this.documents.set(note.ref,entry);
@@ -249,6 +262,8 @@ export class WritingRuntime {
     }
     catch (error) { owner.faulted = true; owner.fault = error; }
     finally { this.capture_scope = null; }
+    for (const {document} of participants) if (scope.mutated.has(document.ref)) document.text_pending.add(owner.settled);
+    for (const {document} of scope.offending.values()) document.text_pending.add(owner.settled);
     const edits: Intent[] = [];
     try {
       for (const {document} of participants) if (scope.mutated.has(document.ref)) {
@@ -290,14 +305,14 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = { occurrence: {}, reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
     return owner;
   }
   private reserve(): FailedCommit {
     this.pending++;
     this.state = { ...this.state, saving: true };
     const owner = this.commandOwner(), {result, settled} = owner;
-    this.pending_commands.add(result);
+    this.pending_commands.set(result, owner);
     const operation = this.tail.then(async () => {
       if (this.retired) throw new Error("Writing account is closed");
       this.failed = owner;
@@ -311,13 +326,14 @@ export class WritingRuntime {
         this.reportFailure(owner, error); receipt = await settled;
       }
       if (this.failed === owner) this.failed = null;
-      this.publish({ error: null, error_refs: [] });
+      this.publish({ error: null, error_occurrence: null, error_refs: [] });
       owner.resolve(receipt);
       return receipt;
     });
     this.tail = operation.then(owner.accept, error => {
       owner.reject(error instanceof Error ? error : new Error("Writing command did not settle"));
-      if (!this.retired) this.publish(error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null ? { error: null, error_refs: [] } : { error, error_refs: owner.selection.refs });
+      if (!this.retired) this.publish(error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null
+        ? { error: null, error_occurrence: null, error_refs: [] } : { error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
       owner.refuse(error);
     }).finally(() => {
       this.pending_commands.delete(result);
@@ -327,7 +343,7 @@ export class WritingRuntime {
   }
   private reportFailure(owner: FailedCommit, error: unknown): void {
     if (this.retired) return;
-    this.publish({ error, error_refs: owner.selection.refs });
+    this.publish({ error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
     const failure = new LocalCommitError("couldn’t save on this device", error, async () => { await this.retry(); return owner.settled; }, owner.settled);
     owner.refuse(failure);
     owner.retry_failure?.(failure);
@@ -427,7 +443,9 @@ export class WritingRuntime {
   }
   /** Copy canonical text from failed creations and every open document with an
    * unresolved local save, including commands queued behind a failed owner. */
-  async uncommittedText(): Promise<string> {
+  hasUncommittedText(): boolean { return this.uncommittedTexts().some(text => text !== ""); }
+  async uncommittedText(): Promise<string> { return this.uncommittedTexts().filter(text => text !== "").join("\n\n"); }
+  private uncommittedTexts(): string[] {
     const texts = new Map<string, string>();
     const text = (body: NoteBody) => rawBodyText(noteBodySchema.nodeFromJSON(body.body_pm_json));
     const creation = (intent: Intent): void => {
@@ -439,16 +457,12 @@ export class WritingRuntime {
       }
       else if (intent.kind === "create_page") texts.set(intent.ref, intent.title);
     };
-    if (this.failed?.intent) creation(this.failed.intent);
-    const refs = new Set(this.state.error_refs);
-    for (const [ref,entry] of this.documents) if (entry.value?.pending) refs.add(ref);
-    for (const ref of refs) {
-      const pending = this.documents.get(ref);
-      if (!pending) continue;
-      const { doc } = await pending.promise;
+    for (const owner of this.pending_commands.values()) if (owner?.intent) creation(owner.intent);
+    for (const [ref, entry] of this.documents) if (entry.value && entry.value.text_pending.size > 0) {
+      const { doc } = entry.value;
       texts.set(ref, doc.share.has("title") ? doc.getText("title").toString() : text(readBody(doc)));
     }
-    return [...texts.values()].filter(text => text !== "").join("\n\n");
+    return [...texts.values()];
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
     return this.getOrOpenDocument(ref, () => this.loadDocument(ref, prelude));
@@ -492,20 +506,32 @@ export class WritingRuntime {
     let observed_touch = resource.touch_vv;
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
+    const readListeners = new Set<() => void>();
+    let readState: DocumentReadSnapshot = {retrying: false, error: null, occurrence: null};
     const cached: CachedDocument = {
       ref, doc, pins: 0, pending: 0, prelude, bytes: Y.encodeStateAsUpdate(doc).byteLength, last_used: Date.now(), unsubscribe: () => {},
+      text_pending: new Set(), read_attempt: 0, read_subscription: 0,
+      readSnapshot: () => readState,
+      subscribeRead: listener => {readListeners.add(listener); return () => readListeners.delete(listener);},
+      publishRead: next => {
+        if (next.retrying === readState.retrying && next.error === readState.error && next.occurrence === readState.occurrence) return;
+        readState = next; for (const listener of readListeners) listener();
+      },
+      retryRead: () => {if (store) this.listenDocument(cached, store, null, true);},
       receive: latest => {
         if (this.retired) return;
         if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) cached.prelude=[];
         observed_touch = mergeVector(observed_touch, latest.touch_vv);
         Y.applyUpdate(doc, decodeBytes(latest.kind !== "page" ? latest.body_state : latest.title_state), REMOTE);
         cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        cached.read_attempt++;
+        cached.publishRead({retrying: false, error: null, occurrence: null});
         void this.evict();
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       track: (result, origin) => {
         pending_edits.add(result); cached.pending++;
-        const settled=()=>{pending_edits.delete(result);cached.pending--;void this.evict();};
+        const settled=()=>{pending_edits.delete(result);cached.text_pending.delete(result);cached.pending--;void this.evict();};
         void result.then(receipt => { try { for (const listener of committed) listener(receipt, origin); } finally { settled(); } },settled);
       },
       capture: () => {
@@ -553,24 +579,39 @@ export class WritingRuntime {
         if (error instanceof LocalCommitError && this.failed) return this.failed.settled;
         throw error;
       });
+      cached.text_pending.add(pending);
       cached.track(pending, origin);
     });
     if (store) this.listenDocument(cached, store, loadedRevision === null ? null : { revision: loadedRevision, resource });
     return cached;
   }
-  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: ResourceState } | null): void {
+  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: ResourceState } | null, retrying = false): void {
     const {ref} = cached;
-    const selection = selectStates({ refs: [ref] });
+    const entry = this.documents.get(ref);
+    const subscription = ++cached.read_subscription;
+    cached.read_attempt++;
+    cached.unsubscribe();
+    const current = () => !this.retired && this.documents.get(ref) === entry && cached.read_subscription === subscription && (!entry?.value || entry.value === cached);
+    const failed = (error: unknown) => {
+      if (!current()) return;
+      cached.read_attempt++;
+      cached.publishRead({retrying: false, error, occurrence: cached.readSnapshot().occurrence ?? {}});
+    };
+    if (retrying) cached.publishRead({...cached.readSnapshot(), retrying: true});
+    cached.retryRead = () => {if (current()) this.listenDocument(cached, store, null, true);};
     const refresh = (result: QueryResult) => {
+      if (!current()) return;
+      const attempt = ++cached.read_attempt;
       const initial = loaded; loaded = null;
       void (initial !== null && result.store_revision === initial.revision
-        ? Promise.resolve({ resources: [initial.resource] }) : store.readStates(selection)).then(current => {
-      const entry = this.documents.get(ref);
-      if (this.retired || !entry || (entry.value && entry.value !== cached)) return;
-      const latest = current.resources.find(r => r.ref === ref);
-      if (latest) cached.receive(latest);
-    }).catch(error => this.publish({ error, error_refs: [ref] })); };
-    cached.unsubscribe = store.subscribe({ kind: "resource", ref }, refresh, reportError);
+        ? Promise.resolve({resources: [initial.resource]}) : store.readStates(selectStates({refs: [ref]}))).then(states => {
+        if (!current() || cached.read_attempt !== attempt) return;
+        const latest = states.resources.find(resource => resource.ref === ref);
+        if (latest) cached.receive(latest);
+        else cached.publishRead({retrying: false, error: null, occurrence: null});
+      }).catch(error => {if (current() && cached.read_attempt === attempt) failed(error);});
+    };
+    cached.unsubscribe = store.subscribe({kind: "resource", ref}, refresh, failed);
   }
   private async evict(): Promise<void> {
     const opened = await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));
@@ -590,6 +631,7 @@ export class WritingRuntime {
     if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);
     this.failed?.reject(new Error("Writing deliberately discarded"));
     this.failed = null;
+    this.publish({error: null, error_occurrence: null, error_refs: []});
     await this.finishClose();
   }
   async close(): Promise<void> {

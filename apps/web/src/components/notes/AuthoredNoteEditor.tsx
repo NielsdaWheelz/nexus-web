@@ -3,6 +3,7 @@
  * UI. Supplied history joins the containing outline; standalone surfaces own theirs. */
 import { useEffect, useState } from "react";
 import * as Y from "yjs";
+import {FeedbackBusy} from "@/components/feedback/Feedback";
 import { bodyInline, readBody } from "@nexus/authored/documents";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
@@ -32,7 +33,7 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
     document.doc.on("update", update); update();
     return () => document.doc.off("update", update);
   }, [document]);
-  if(!history && own?.document!==document)return <p>opening {document.ref.startsWith("highlight:") ? "annotation" : "note"}…</p>;
+  if(!history && own?.document!==document)return <FeedbackBusy subject={document} pending/>;
   return <NoteEditor embedding={embedding} header={header} placeholder="write or @ to link" focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable} compact
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}

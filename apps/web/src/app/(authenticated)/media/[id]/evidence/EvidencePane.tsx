@@ -6,7 +6,7 @@
 // All items uses normal flow; native sidebar scroll never changes the view or text.
 import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import ChoiceField from "@/components/ui/ChoiceField";
 import choiceStyles from "@/components/ui/ChoiceField.module.css";
 import chrome from "@/components/ui/CompactChrome.module.css";
@@ -401,18 +401,19 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (top < 0 || top + Math.min(rect.height, root.clientHeight) > root.clientHeight) root.scrollTop += top;
   }, []);
 
+  const localOccurrence = useFeedbackOccurrence(state.local.status === "failed");
+  const linksOccurrence = useFeedbackOccurrence(state.links.status === "failed");
+  const remoteOccurrence = useFeedbackOccurrence(state.remote.status === "failed");
   const failures = <>
-    {state.local.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} /> : null}
-    {state.remote.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading additional connections…" }} announcement={paneActive ? "Polite" : "None"} /> : null}
-    {unlinkFailure ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device",
+    {unlinkFailure && unlinkFailure.retry === null ? <FeedbackFailure scope="Local" occurrence={unlinkFailure} content={{ tone: "Danger", title: "couldn’t save on this device",
       message: unlinkFailure.retry ? "keep this page open. retry saving." : "nothing was unlinked. try again." }} announcement="Assertive"
       actions={unlinkFailure.retry ? [{ label: "retry", onClick: unlinkFailure.retry }] : undefined} onDismiss={unlinkFailure.retry ? undefined : () => setUnlinkFailure(null)}
       returnFocus={() => list.current} /> : null}
-    {state.local.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t read highlights on this device" }} announcement={paneActive ? "Polite" : "None"}
+    {state.local.status === "failed" ? <FeedbackFailure scope="Local" occurrence={localOccurrence} content={{ tone: "Danger", title: "couldn’t read highlights on this device" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
-    {state.links.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t read links on this device" }} announcement={paneActive ? "Polite" : "None"}
+    {state.links.status === "failed" ? <FeedbackFailure scope="Local" occurrence={linksOccurrence} content={{ tone: "Danger", title: "couldn’t read links on this device" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
-    {state.remote.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "additional connections aren’t available right now" }} announcement={paneActive ? "Polite" : "None"}
+    {state.remote.status === "failed" ? <FeedbackFailure scope="Local" occurrence={remoteOccurrence} content={{ tone: "Warning", title: "additional connections aren’t available right now" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry, busy: state.remote.retrying }]} returnFocus={() => list.current} /> : null}
     {remote?.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
   </>;

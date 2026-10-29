@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence, useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
@@ -418,6 +418,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     busy: recovery?.kind === "Busy",
   };
 
+  const readOccurrence = useFeedbackOccurrence(state.error !== null || history === "Unavailable", conversationId);
+  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null || invalidatedInspection, conversationId);
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
   if (savedOnly) return <div className={styles.pane}>
@@ -445,9 +447,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           announcement="Assertive"
         />
       ) : null}
-      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure?.title ?? "this match is no longer available" }} announcement="Polite" /> : null}
+      {arrival.failure || invalidatedInspection ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{ tone: "Warning", title: arrival.failure?.title ?? "this match is no longer available" }} announcement="Polite" /> : null}
       {state.error || history === "Unavailable" ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={readOccurrence}
           content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}
           announcement="Assertive"
           actions={history === "Unavailable"
@@ -456,7 +458,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         />
       ) : null}
       {recovery?.feedback ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={recovery.occurrence} announcementOccurrence={recovery.feedback}
           content={recovery.feedback}
           announcement="Assertive"
           actions={recovery.kind === "Unconfirmed" && recovery.command.kind === "Send"

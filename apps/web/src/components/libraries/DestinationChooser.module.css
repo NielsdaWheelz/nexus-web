@@ -58,10 +58,3 @@
     transition: none;
   }
 }
-
-.status {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
-}

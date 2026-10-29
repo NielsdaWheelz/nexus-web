@@ -386,8 +386,10 @@ generation on invalidation. adoption commits rows/phase/view/cursor together;
 interaction freezes phase adoption, while ordinary source invalidation remains
 active. visit restoration preserves accepted phase, generation, latch and prefix.
 explicit refresh replaces page one and resets selection/scroll after success;
-pending/failed refresh retains old rows. visible progress uses one polite atomic
-live region per surface with delayed reveal. source titles open the whole work; child excerpts open
+pending/failed refresh retains old rows. foreground waiting uses fixed controls;
+request failures use the scoped recovery surface described in
+[signals](visual-system.md#signals), without moving results or narrating refresh.
+source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening
 bullet. saved quotes retain source attribution and an independent source link.
 the launcher offers matching-passage activation in the resource's existing menu.

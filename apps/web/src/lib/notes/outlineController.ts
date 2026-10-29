@@ -37,7 +37,9 @@ export interface OutlineRow {
   gap?: "before" | "after" | "tail";
   origin: unknown;
 }
-export interface BranchRequest {parent_id: string; ref: string; branch: OutlineBranch; cursor: string | null; anchor: string | null; limit: number;
+export interface BranchRead {pending: boolean; error: unknown | null; occurrence: object | null; retry(): void}
+export class OutlineActionRefusal extends Error {}
+export interface BranchRequest {parent_id: string; ref: string; branch: OutlineBranch; cursor: string | null; anchor: string | null; limit: number; foreground?: boolean;
   navigation?: {lease(): boolean; previous: BranchRequest}}
 interface Held {document: WritingDocument; captureBytes: number; release(): void}
 interface EmbeddedBranch {owner: string; projection: {ref: string; branch: OutlineBranch} | null}
@@ -56,6 +58,8 @@ export class OutlineController {
   readonly windows = new Map<string, OutlineWindow>();
   readonly requests = new Map<string, BranchRequest>();
   readonly documents = new Map<string, Held>();
+  private readonly reads = new Map<string, {request: BranchRequest; token: object; value: BranchRead}>();
+  private readonly admissionFailures = new Map<string, {request: BranchRequest; error: unknown; occurrence: object}>();
   readonly mounts = new Map<string, OutlineRowMount & {sync(): void}>();
   private readonly workOwners = new Map<string, readonly string[]>();
   private blockRange: BlockRange | null = null;
@@ -107,6 +111,30 @@ export class OutlineController {
     this.attempted.add(pending.root_id);
     for (const row of pending.fields.values()) if (row.link && (row.link.endpoint_a === row.ref ? row.link.endpoint_b : row.link.endpoint_a) === row.parent_ref)
       this.identities.set(`${row.parent_id}/${row.link.link_id}`, {id: row.row_id, origin: row.origin});
+  }
+  publishRead(request: BranchRequest, value: BranchRead): () => void {
+    if (!this.active || this.requests.get(request.parent_id) !== request) return () => {};
+    const token = {};
+    this.reads.set(request.parent_id, {request, token, value});
+    this.notify();
+    return () => {if (this.reads.get(request.parent_id)?.token === token) {this.reads.delete(request.parent_id); if (this.active) this.notify();}};
+  }
+  branchRead(parent_id: string): BranchRead {
+    const request = this.requests.get(parent_id);
+    const collected = this.reads.get(parent_id);
+    const read = collected !== undefined && collected.request === request ? collected.value : null;
+    const admission = this.admissionFailures.get(parent_id);
+    const failed = admission?.request === request ? admission : null;
+    const pending = read?.pending === true || this.scheduled.has(parent_id) && (request?.foreground === true || !this.windows.has(parent_id));
+    return {pending, error: read?.error ?? failed?.error ?? null, occurrence: read?.occurrence ?? failed?.occurrence ?? null,
+      retry: () => {
+        if (!request || this.requests.get(parent_id) !== request) return;
+        request.foreground = true;
+        // renew navigation without replacing the collector's request identity.
+        if (request.navigation) request.navigation.lease = this.lease();
+        if (read?.error !== null && read?.error !== undefined) read.retry();
+        else if (failed) {const window = this.proposals.get(parent_id); if (window) this.accept(parent_id, window);}
+      }};
   }
   private connect(): void {
     this.disconnect = this.pending.connect({
@@ -215,7 +243,7 @@ export class OutlineController {
   private changed(reason: ProjectionReason = "projection"): void {this.rebuild(reason); this.notify();}
   refresh(): void {
     this.rebuild();
-    if (this.handle?.canArrange()) {this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.accept(id, window);}
+    if (this.handle?.canArrange()) {this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.resumeAdmission(id, window);}
   }
   configure(rootField: RootField | undefined): void {
     this.rootField = rootField;
@@ -417,10 +445,11 @@ export class OutlineController {
     return [...wanted].reduce((bytes, ref) => {const document = this.writing(ref) ?? captured.find(document => document.ref === ref); return bytes + (document ? Y.encodeStateAsUpdate(document.doc).byteLength : 0);},
       this.reservedBytes + (this.rootAttachment?.handle.encodedBytes() ?? (this.rootDocument ? Y.encodeStateAsUpdate(this.rootDocument.doc).byteLength : 0)) + this.binding.encodedBytes(baselines) + this.capturedBytes() + historyBytes);
   }
-  private denied(parent: string, message: string): void {if (this.attempted.has(parent)) {this.error = new Error(message); this.notify();}}
+  private denied(parent: string, message: string): void {if (this.attempted.has(parent)) {this.error = new OutlineActionRefusal(message); this.notify();}}
   private navigationValid(parent: string): boolean {
     const request = this.requests.get(parent);
     if (!request?.navigation || request.navigation.lease()) return true;
+    if (this.admissionFailures.get(parent)?.request === request) return false;
     this.requests.set(parent, request.navigation.previous); this.versions.set(parent, (this.versions.get(parent) ?? 0) + 1); this.proposals.delete(parent); this.notify();
     return false;
   }
@@ -432,12 +461,12 @@ export class OutlineController {
     // Outstanding captures remain protected; actual admission still checks all charge.
     const visibleBaselines = new Map([...this.baselineRefs(windows).keys()].map(id => [id, 0]));
     if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0, visibleBaselines) > MAX_BYTES) {
-      this.error = new Error("close a branch or load a smaller window before adding more writing"); this.notify(); return false;
+      this.error = new OutlineActionRefusal("close a branch or load a smaller window before adding more writing"); this.notify(); return false;
     }
     while ((this.slots(windows) + count > MAX_REFS || this.bytes(this.refs(windows)) > MAX_BYTES) && this.history.releaseOldest()) {}
     if (this.slots() + count <= MAX_REFS && this.bytes() <= MAX_BYTES) {this.error = null; return true;}
     const message = "finishing older edits; try again";
-    const finishing = this.error instanceof Error && this.error.message === message ? this.error : new Error(message);
+    const finishing = this.error instanceof OutlineActionRefusal && this.error.message === message ? this.error : new OutlineActionRefusal(message);
     this.error = finishing; this.notify();
     this.admission = this.admission.then(async () => {
       await this.history.settleRetired();
@@ -515,11 +544,18 @@ export class OutlineController {
     }
     return selected;
   }
+  /** Background reconciliation resumes deferred admission, never a failed request. */
+  private resumeAdmission(parent_id: string, window: OutlineWindow): void {
+    const request = this.requests.get(parent_id);
+    if (!request || this.admissionFailures.get(parent_id)?.request === request) return;
+    this.accept(parent_id, window);
+  }
   accept(parent_id: string, window: OutlineWindow): void {
     this.refreshChildren(parent_id, window);
     if (this.proposals.get(parent_id) !== window) {this.proposals.set(parent_id, window); this.versions.set(parent_id, (this.versions.get(parent_id) ?? 0) + 1);}
     if (this.scheduled.has(parent_id)) return;
     this.scheduled.add(parent_id);
+    this.notify();
     const version = this.versions.get(parent_id)!;
     const request = this.requests.get(parent_id);
     let released = false, failed = false, installed = false, topologyChanged = false;
@@ -612,24 +648,34 @@ export class OutlineController {
           this.pending.fields.set(field.row_id, {...current, relocating: undefined, previousParent: undefined, previousParentRef: undefined});
         }
         for (const part of accepted) {
+          if (part.request) part.request.foreground = false;
           if (part.request?.navigation) this.requests.set(part.id, {...part.request, navigation: undefined});
           if (this.proposals.get(part.id) === part.window) this.proposals.delete(part.id);
           this.attempted.delete(part.id);
         }
+        for (const part of accepted) this.admissionFailures.delete(part.id);
         installed = true;
         this.blockedRows.clear(); this.error = null; this.changed(initial ? "initial" : "projection"); this.pending.resume();
       } finally {for (const [, held] of acquired) held.release(); this.blockedRows.clear(); if (this.active) this.rebuild(); this.syncReadOnly();}
-    }).catch(error => {failed = true; if (this.active) {this.error = error; this.notify();}}).finally(() => {
+    }).catch(error => {
+      failed = true;
+      if (this.active && request && this.requests.get(parent_id) === request && this.versions.get(parent_id) === version) {
+        const previous = this.admissionFailures.get(parent_id);
+        this.admissionFailures.set(parent_id, {request, error, occurrence: previous?.request === request ? previous.occurrence : {}});
+        this.notify();
+      }
+    }).finally(() => {
       this.scheduled.delete(parent_id);
+      if (this.active) this.notify();
       this.reservedWindows = null; this.reservedBytes = 0; this.settlingRefs.clear();
       const newer = this.proposals.get(parent_id);
-      if (installed && this.active) for (const [id, proposal] of this.proposals) this.accept(id, proposal);
-      else if (topologyChanged && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.accept(parent_id, window);
-      else if (newer && newer !== window && this.active && !failed) this.accept(parent_id, newer);
+      if (installed && this.active) for (const [id, proposal] of this.proposals) this.resumeAdmission(id, proposal);
+      else if (topologyChanged && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.resumeAdmission(parent_id, window);
+      else if (newer && newer !== window && this.active && !failed) this.resumeAdmission(parent_id, newer);
       else if (released && !failed && this.active && [...this.refs(this.windows)].some(ref => !this.documents.has(ref))) {
         const current = this.requests.get(parent_id);
-        if (newer === window && current === request && this.handle?.canArrange() && !this.hasPendingWriting()) this.accept(parent_id, window);
-        else if (!newer && current === request?.navigation?.previous) {const retained = this.windows.get(parent_id); if (retained) this.accept(parent_id, retained);}
+        if (newer === window && current === request && this.handle?.canArrange() && !this.hasPendingWriting()) this.resumeAdmission(parent_id, window);
+        else if (!newer && current === request?.navigation?.previous) {const retained = this.windows.get(parent_id); if (retained) this.resumeAdmission(parent_id, retained);}
       }
     });
   }
@@ -1076,7 +1122,7 @@ export class OutlineController {
       const descendants = new Set<string>();
       for (const candidate of this.rows.values()) {let parent = candidate.parent_id; while (parent) {if (parent === row_id) {descendants.add(candidate.row_id); break;} parent = this.parent(parent);}}
       const protectedWriting = () => [...descendants].some(id => this.pending.fields.get(id)?.pending || this.pending.fields.get(id)?.relocating || this.selected.has(id) || this.view?.hasFocus() && this.selectionRow === id);
-      if (protectedWriting()) {this.error = new Error("finish the writing in this branch before closing it"); this.notify(); return;}
+      if (protectedWriting()) {this.error = new OutlineActionRefusal("finish the writing in this branch before closing it"); this.notify(); return;}
       this.admission = this.admission.then(async () => {
         if (!this.active || !lease() || protectedWriting() || !this.handle?.canArrange()) return;
         for (const id of descendants) this.blockedRows.add(id);
@@ -1097,7 +1143,7 @@ export class OutlineController {
       return;
     }
     const capacity = MAX_REFS - this.refs().size - 3;
-    if (capacity < 1) {this.error = new Error("this editing window is full; close a branch first"); this.notify(); return;}
+    if (capacity < 1) {this.error = new OutlineActionRefusal("this editing window is full; close a branch first"); this.notify(); return;}
     this.opened.add(row_id);
     this.attempted.add(row_id);
     const branch = enterOutlineOccurrence({branch: row.branch, ref: row.ref, target: {kind: "occurrence", key: row_id}, edgeIds: row.link ? [row.link.link_id] : []});
@@ -1111,15 +1157,16 @@ export class OutlineController {
   }
   private request(request: BranchRequest, navigation: boolean | (() => boolean) = false): void {
     if (navigation) {const previous = this.requests.get(request.parent_id)!; request = {...request, navigation: {lease: typeof navigation === "function" ? navigation : this.lease(), previous: previous.navigation?.previous ?? previous}};}
+    request.foreground = true;
     this.requests.set(request.parent_id, request); this.attempted.add(request.parent_id); this.versions.set(request.parent_id, (this.versions.get(request.parent_id) ?? 0) + 1); this.proposals.delete(request.parent_id);
   }
-  get loading(): boolean {return this.blockedRows.size > 0 || this.scheduled.size > 0 && [...this.rows.values()].some(row => row.kind !== "reference" && !this.editableReady(row));}
   get canRetry(): boolean {return this.proposals.size > 0;}
   retry(): void {
     this.error = null;
     for (const [parent, window] of this.proposals) {
       const request = this.requests.get(parent);
-      if (request?.navigation) this.requests.set(parent, {...request, navigation: {...request.navigation, lease: this.lease()}});
+      if (request) request.foreground = true;
+      if (request?.navigation) request.navigation.lease = this.lease();
       this.accept(parent, window);
     }
     this.notify();
@@ -1239,7 +1286,7 @@ export class OutlineController {
       while (parent) {if (parent === id) {descendants.add(row.row_id); break;} parent = this.parent(parent);}
     }
     const protectedWriting = () => [...descendants].some(row => this.pending.fields.get(row)?.pending || this.pending.fields.get(row)?.relocating || this.selected.has(row) || this.view?.hasFocus() && this.selectionRow === row);
-    if (protectedWriting() || !this.handle?.canArrange()) {this.error = new Error("finish the writing in this preview before closing it"); this.notify(); return false;}
+    if (protectedWriting() || !this.handle?.canArrange()) {this.error = new OutlineActionRefusal("finish the writing in this preview before closing it"); this.notify(); return false;}
     try {
       const refs = new Set([...descendants].flatMap(row => {const ref = this.rows.get(row)?.ref; return ref ? [ref] : [];}));
       await Promise.all([...refs].map(ref => this.captureDocument(ref)));
@@ -1275,7 +1322,7 @@ export class OutlineController {
       depth: row.depth, parent_id: row.parent_id, label: this.label(row),
       href: row.resource ? localResourceHref(row.resource) : row.ref ? `/${row.kind === "title" ? "pages" : "notes"}/${row.ref.split(":")[1]}` : null,
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
-      childrenAvailable: row.children?.available === true, open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
+      childrenAvailable: row.children?.available === true || this.requests.has(row.row_id), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
       editorReady: editor => {const mount = this.mounts.get(row.row_id); if (mount) mount.input = editor;},
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id), unlink: () => this.unlink(row.row_id), reveal: () => {
@@ -1332,7 +1379,7 @@ export class OutlineController {
         leading.dataset.outlineTarget = "true"; leading.setAttribute("role", "group"); leading.setAttribute("aria-label", `outline item: ${this.label(row)}`);
       } else {delete leading.dataset.outlineTarget; leading.removeAttribute("role"); leading.removeAttribute("aria-label");}
       if (this.editableItem(row)) leading.setAttribute("aria-keyshortcuts", "F2"); else leading.removeAttribute("aria-keyshortcuts");
-      const hideTrailing = !(row.terminal || row.children?.available === true);
+      const hideTrailing = !(row.terminal || row.children?.available === true || this.requests.has(row.row_id));
       const disclosure = trailing.querySelector<HTMLButtonElement>("button[aria-expanded]");
       if (hideTrailing && disclosure && document.activeElement === disclosure)
         leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});

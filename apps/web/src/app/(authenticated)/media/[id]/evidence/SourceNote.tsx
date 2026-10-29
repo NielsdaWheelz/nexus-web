@@ -5,7 +5,7 @@
 // departure; this disclosure neither adopts a reading place nor writes progress.
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
 import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
@@ -93,10 +93,11 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
     return () => onLayout(disclosureKey, null);
   }, [detail.status, disclosureKey, onLayout]);
   const announcement = paneActive ? "Polite" : "None";
-  if (detail.status === "loading") return <FeedbackStatus content={{ tone: "Neutral", title: "loading source text…" }} announcement={announcement} />;
-  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackNotice content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}
+  const occurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, identity);
+  if (detail.status === "loading") return <FeedbackBusy pending />;
+  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}
     actions={[{ label: "refresh reader items", onClick: onContentChanged }]} />;
-  if (detail.status === "failed") return <FeedbackNotice content={apiTransportFeedback(detail.error, "couldn’t load source text") ?? { tone: "Danger", title: "couldn’t load source text", requestId: detail.error.requestId }} announcement={announcement}
+  if (detail.status === "failed") return <FeedbackFailure scope="Local" occurrence={occurrence} content={apiTransportFeedback(detail.error, "couldn’t load source text") ?? { tone: "Danger", title: "couldn’t load source text", requestId: detail.error.requestId }} announcement={announcement}
     actions={[{ label: "retry", onClick: detail.refetch, busy: detail.retrying }]} />;
   if (!detail.data.targets.length) return <FeedbackNotice content={{ tone: "Warning", title: "source reference unresolved" }} announcement={announcement} />;
   return <ResourceOutlineList scope={`reader-source:${referenceRef}`} ariaLabel="source targets">{detail.data.targets.map((target) => {

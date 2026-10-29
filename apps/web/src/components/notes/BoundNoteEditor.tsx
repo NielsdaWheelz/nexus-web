@@ -1,9 +1,9 @@
 "use client";
-import { useLayoutEffect, useState, useSyncExternalStore } from "react";
-import Button from "@/components/ui/Button";
-import { useWritingDocument, useWritingRuntime } from "@/lib/notes/hooks";
-import { writingStoreStopped, type WritingDocument } from "@/lib/notes/runtime";
-import { readBody } from "@nexus/authored/documents";
+import { useLayoutEffect, useState } from "react";
+import { useWritingDocument } from "@/lib/notes/hooks";
+import { type WritingDocument } from "@/lib/notes/runtime";
+import {FeedbackBusy} from "@/components/feedback/Feedback";
+import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
 import type { EditorHistory, OutlineHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
@@ -21,10 +21,8 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, h
   session?: OutlineHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
 }) {
   const kind = noteRef.startsWith("highlight:") ? "annotation" : "note";
-  const { document: opened, error, retry } = useWritingDocument(suppliedDocument ? null : noteRef);
+  const { document: opened, error, occurrence, pending, retry } = useWritingDocument(suppliedDocument ? null : noteRef);
   const document = suppliedDocument ?? opened;
-  const runtime = useWritingRuntime();
-  const state = useSyncExternalStore(runtime?.subscribe ?? (() => () => {}), runtime?.snapshot ?? (() => EMPTY), () => EMPTY);
   const [openedHistory,setHistory]=useState<{document:typeof document;session:typeof session;history:EditorHistory}|null>(null);
   useLayoutEffect(()=>{
     if(!document||!session)return;
@@ -33,10 +31,10 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, h
     return release;
   },[document,session]);
   const history=suppliedHistory ?? (openedHistory?.document===document&&openedHistory.session===session?openedHistory.history:undefined);
-  if (error) return <div role="alert"><p>couldn’t open this {kind} on this device.</p><Button onClick={retry}>retry</Button></div>;
   return <>
-    {document && (!session || history) ? <AuthoredNoteEditor focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} document={document} label={label} editable={editable} onSplit={onSplit} onJoin={onJoin} history={history} structuralKeys={structuralKeys} inspection={inspection} reference={reference} /> : <p>opening {kind}…</p>}
-    {state.error !== null && state.error_refs.includes(noteRef) ? <div role="alert"><p>{writingStoreStopped(state.error)?"the local store stopped. copy your writing before restarting nexus.":"couldn’t save on this device. keep this page open. retry saving."}</p>{writingStoreStopped(state.error) ? <Button onClick={()=>window.location.reload()}>restart nexus</Button> : <Button onClick={() => { void runtime?.retry().catch(() => {}); }}>retry</Button>}<Button onClick={() => { void navigator.clipboard.writeText(document ? readBody(document.doc).body_text : ""); }}>copy</Button></div> : null}
+    <FeedbackBusy subject={noteRef} pending={pending}/>
+    <AuthoredReadFailure error={error} occurrence={occurrence} pending={pending} retry={retry} title={`couldn’t open this ${kind} on this device`}/>
+    {document ? <DocumentReadFailure document={document} title={`couldn’t refresh this ${kind}`}/> : null}
+    {document && (!session || history) ? <AuthoredNoteEditor focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} document={document} label={label} editable={editable} onSplit={onSplit} onJoin={onJoin} history={history} structuralKeys={structuralKeys} inspection={inspection} reference={reference} /> : null}
   </>;
 }
-const EMPTY = { saving: false, error: null, error_refs: [], revision: 0 };

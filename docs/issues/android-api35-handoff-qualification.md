@@ -26,3 +26,13 @@ episode qualification uses the api 36 phone and api 34 emulator; no api 35 episo
 proof is claimed. temporary auth diagnostics were removed. resolved when the
 real password handoff binds the expected account and reaches native
 redemption/bootstrap on api 35, followed by its episode journey.
+
+quiet-feedback run `20261028-184437-596425143cd1`, source `f63fe0214`, reproduced
+the missing redemption on owned api 35 emulator 5600: password handoff mint
+returned 201 and the matching callback was delivered, but binding remained null
+for 45 seconds and the ui said `couldn’t connect`. private evidence lives in
+`nexus-web-quiet-feedback-native-proof/.nexus-local/lab/<run>/artifacts/`.
+the same candidate's runs `20261028-181121-360c581fe1a6`,
+`20261028-181942-eae8071fc471` and `20261028-182538-92926fab1385` completed binding
+and real local journal-refusal/retry/offline-restart checks. this establishes
+intermittence, not a new root cause or episode qualification.
