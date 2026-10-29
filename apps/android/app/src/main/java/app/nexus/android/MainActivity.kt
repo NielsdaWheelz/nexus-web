@@ -17,7 +17,6 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -36,6 +35,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -305,14 +305,13 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.BLACK)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        val webViewLayout = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        )
         root = FrameLayout(this).apply {
-            addView(
-                webView,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-            )
+            setBackgroundColor(Color.BLACK)
+            addView(webView, webViewLayout)
             addView(
                 statusBarProtection,
                 FrameLayout.LayoutParams(
@@ -322,12 +321,22 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
-        root.setOnApplyWindowInsetsListener { _, insets ->
-            statusBarProtection.layoutParams.height = insets.systemBarAndDisplayCutoutTop()
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            val bottom = maxOf(bars.bottom, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+            if (webViewLayout.leftMargin != bars.left || webViewLayout.topMargin != bars.top ||
+                webViewLayout.rightMargin != bars.right || webViewLayout.bottomMargin != bottom
+            ) {
+                webViewLayout.setMargins(bars.left, bars.top, bars.right, bottom)
+                webView.layoutParams = webViewLayout
+            }
+            statusBarProtection.layoutParams.height = bars.top
             statusBarProtection.requestLayout()
-            appBridge.setKeyboardVisible(WindowInsetsCompat.toWindowInsetsCompat(insets, root)
-                .isVisible(WindowInsetsCompat.Type.ime()))
-            insets
+            appBridge.setKeyboardVisible(insets.isVisible(WindowInsetsCompat.Type.ime()))
+            // native layout has already excluded these occlusions from the web viewport.
+            WindowInsetsCompat.CONSUMED
         }
         setContentView(root)
         root.requestApplyInsets()
@@ -405,19 +414,6 @@ class MainActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         webView.invalidate()
     }
-
-    @Suppress("DEPRECATION")
-    private fun WindowInsets.systemBarAndDisplayCutoutTop(): Int =
-        if (Build.VERSION.SDK_INT >= 30) {
-            getInsets(
-                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-            ).top
-        } else {
-            maxOf(
-                systemWindowInsetTop,
-                if (Build.VERSION.SDK_INT >= 28) displayCutout?.safeInsetTop ?: 0 else 0,
-            )
-        }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

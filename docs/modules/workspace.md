@@ -317,7 +317,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, resourceActions, query, menuActions,
+`usePaneChrome` (`{ header, displayTitle, editor, navigation, primaryAction, resourceActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -507,7 +507,11 @@ desktop and mobile headers order back/forward, identity, optional primary action
 the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls retain whole targets. at primary-pane widths up to 479px, media shortcuts
+controls retain whole targets. authored roots publish an inline title editor or
+an expandable note disclosure/content pair, with feedback outside hidden content.
+notes own editing and disclosure; chrome owns placement, typography and geometry.
+one semantic heading and pane name retain the untruncated display label. editing
+text never starts canvas dragging. at primary-pane widths up to 479px, media shortcuts
 move into the existing more menu; history, identity, more and inspector stay in
 one line. the fixed mobile header uses the same viewport threshold outside the
 desktop containment boundary. search/return, refresh, route share,
@@ -525,7 +529,11 @@ menu retains its existing commands, composition, refs and focus policy.
 every primary header starts with `--pane-chrome-header-height`; compact media
 commands move into overflow instead of adding an action row. desktop, coarse-pointer
 and mobile controls retain 32px, 44px and 48px shared-control targets. mobile
-headers can grow naturally. the viewport owner measures their stationary frames
+headers can grow naturally. expanded note content is capped at the lesser of
+20rem and half the available pane height, then scrolls internally. that budget
+excludes stationary controls and actual occlusions, not the expanding content;
+android's resized viewport does not subtract its keyboard again. the viewport
+owner measures stationary frames
 and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
 publishes their shown envelope in each content surface. routes reserve no extra
 media action row. hidden reader chrome follows the measured overlay contract,
@@ -654,9 +662,11 @@ the safe insets. accessibility navigation can discover it in either state.
 
 the phone's top bar is the active pane's own header: `PaneShell` renders
 `SurfaceHeader` in its `Mobile` projection (back, forward, identity, More,
-Inspector, after the recovery button) as the pane section's child before
-`.primaryPane`, whose inline-size container would otherwise become the fixed
-bar's containing block. nothing publishes chrome out of a pane, so the bar's
+Inspector, after the recovery button) at the same react tree position as desktop,
+inside `.chromeFrame` before the separate controls surface. on mobile,
+`.primaryContentRow` owns inline-size containment so the header remains fixed to
+the viewport. mobile header and controls retain separate stationary measurements;
+desktop measures the complete chrome frame. nothing publishes chrome out of a pane, so the bar's
 links, defects and focus stay with that pane; its More trigger, when present,
 carries `data-pane-chrome-focus`, and every chrome focus path falls back to the
 pane landmark without it.

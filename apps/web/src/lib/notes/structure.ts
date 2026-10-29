@@ -23,6 +23,8 @@ export interface EditorHistory {
   record(edit?: Pick<NoteEdit, "selectionBefore" | "selectionAfter">, admission?: number, bookmark?: OutlineBookmark): void;
 }
 export interface OutlineBookmark {
+  root?: true;
+  resolveBefore?: (document: WritingDocument) => FocusSelection;
   key: string; ref: string; selection: FocusSelection | null;
   resolve?: (document: WritingDocument) => FocusSelection;
   occurrence?: {parent_ref: string; link_id: string | null; parent_id?: string; link?: LinkState | Promise<LinkState>;
@@ -254,12 +256,12 @@ export class OutlineHistory {
       record: (edit, _admission, bookmark) => {
         const current = bookmark ?? this.focus?.capture() ?? null;
         // A resolver captured after an edit cannot describe its numeric before.
-        const raw = current ? {key: current.key, ref: current.ref, selection: current.selection, ...(current.occurrence ? {occurrence: current.occurrence} : {})} : null;
-        const after = raw && edit ? {...raw, selection: edit.selectionAfter} : raw;
+        const raw = current ? {...(current.root ? {root: current.root} : {}), key: current.key, ref: current.ref, selection: current.selection, ...(current.occurrence ? {occurrence: current.occurrence} : {})} : null;
+        const after = raw && edit ? {...raw, selection: edit.selectionAfter, ...(current?.root && current.resolve ? {resolve: current.resolve} : {})} : raw;
         const item = history.manager.undoStack.at(-1); if (!item) return;
         let group = history.latest === item ? history.latestGroup : null;
         if (!group) {
-          group = this.reserve({before: raw && edit ? {...raw, selection: edit.selectionBefore} : raw, after});
+          group = this.reserve({before: raw && edit ? {...raw, selection: edit.selectionBefore, ...(current?.resolveBefore ? {resolve: current.resolveBefore} : {})} : raw, after});
           this.hold(group, [document]); history.groups++;
           let owned = item;
           const cleanup = group.cleanup;
