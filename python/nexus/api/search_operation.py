@@ -103,6 +103,12 @@ async def run_search_operation[T](
             pg_severity=getattr(diagnostic, "severity_nonlocalized", None),
             mono_ns=time.monotonic_ns(),
         )
-        raise ApiError(ApiErrorCode.E_SEARCH_TIMEOUT, "Search timed out") from exc
+        if (
+            getattr(diagnostic, "message_primary", None)
+            == "canceling statement due to statement timeout"
+            and asyncio.get_running_loop().time() >= deadline
+        ):
+            raise ApiError(ApiErrorCode.E_SEARCH_TIMEOUT, "Search timed out") from exc
+        raise
     finally:
         logger.info("search.budget.end", mono_ns=time.monotonic_ns())
