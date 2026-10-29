@@ -87,8 +87,9 @@ identity; other unavailable identities retain explicit recovery choices.
 new saved reasoning presentation uses the same mode/effort labels. history reads
 its saved presentation verbatim, including older descriptive labels. the combined
 label bound is 131 characters, accommodating two 64-character labels and the
-separator. the catalog cut rides unreleased wire 17; no database migration or
-provider/kernel pin change is needed.
+separator. the controls use unreleased wire 17. catalog publication adds no wire
+change or database migration; provider, kernel and native host contracts must
+remain compatible through their exact dependency pins.
 
 The strict Chat selection is one tagged value:
 
@@ -100,7 +101,7 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection, validated against the current catalog at
 admission, and never submits dispatch strings, credentials, capabilities,
-defaults, or fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
+defaults, or fallback order. The developer-owned Codex Personal / GPT-6.1-Sol / xhigh
 seed initializes a new composer only; it is not a saved user preference and
 does not override a causal or explicit per-run selection.
 
