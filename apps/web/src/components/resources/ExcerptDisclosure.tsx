@@ -74,7 +74,7 @@ export function FullResourceBody({ item, historical = false }: { item: ResourceI
 }
 
 /** A sibling action, never a listbox option or part of resource activation. */
-export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes }: { item: ResourceItem | null; returnFocus?: () => HTMLElement | null; triggerAttributes?: Pick<ComponentProps<typeof Button>, "tabIndex" | "onFocus" | "onBlur"> }) {
+export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes }: { item: ResourceItem | null; returnFocus?: () => HTMLElement | null; triggerAttributes?: Pick<ComponentProps<typeof Button>, "tabIndex" | "onFocus" | "onBlur" | "aria-label"> }) {
   const [opened, setOpened] = useState<ResourceItem | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const candidate = item?.preview.body.kind === "passage" && item.preview.body.capture_revision !== null ? item : null;

@@ -472,6 +472,17 @@ query execution applies eligibility and clipped lexical matching before paging;
 its excerpt is separate from canonical content. both sqlite hosts use the same
 fts tokenizer; native compound search rechecks the store revision before returning.
 
+launcher `search_preview` is a compound nonpaged read with at most eight rows and
+null cursors. bounded literal-name reads precede ordinary lexical filling and
+reuse the same scope/evidence admission. exact, prefix and substring names are
+ranked before truncation; prose remains evidence. firefox serializes the whole
+read and android applies its store-revision fence to the entire operation.
+`SEARCH_READ_SQL` owns its finite packaged native statements. ordinary `search`
+retains its cursor and full-search/picker contract.
+`search_admission` reuses that compound admission for at most eight held refs,
+including current query membership and scoped evidence. it returns null cursors
+and avoids a corpus scan; resource existence alone cannot prove scoped admission.
+
 `workspace_member` identifies readings admitted by canonical global search;
 independent retained-source readability does not add workspace membership.
 global search keeps ordinary owned rows available during hydration and validates

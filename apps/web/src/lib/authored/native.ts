@@ -97,7 +97,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
   const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(corpusChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
-    if (query.kind !== "search" && query.kind !== "source_alias" && query.kind !== "excerpt") {
+    if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       const result = await call<QueryResult>("query", {query,...await nativeQueryPlan(query)});
       return {...result, canonical_source_ref: null, rows: result.rows.map(row => ({...row, activation_ref: null}))};
     }
