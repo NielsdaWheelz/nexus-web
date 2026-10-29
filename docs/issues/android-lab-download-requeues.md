@@ -15,3 +15,10 @@ reproduce with two
 real article downloads on an owned emulator, inspect the job stop reason and
 transfer failure, and resolve when queued copies complete or report an actionable
 failure without stalling.
+
+run `20261028-213644-490ad0adf70b` narrowed the failure: transfer job
+`1314407500` called `jobFinished` after 226 ms and rescheduled with one failure;
+there was no os stop reason. `OfflineJobService.kt:304-306` converts its
+`IOException` into retryable network failure without retaining the cause. the api
+logged no reading-copy request. diagnose that exception before changing retry or
+scheduling policy.

@@ -404,18 +404,14 @@ export function candidateRows(input: {
     });
   }).sort((a, b) => TIERS.indexOf(a.row.rank.tier) - TIERS.indexOf(b.row.rank.tier)
     || a.ordinal - b.ordinal || a.source - b.source || (a.row.key < b.row.key ? -1 : a.row.key > b.row.key ? 1 : 0));
+  const paneTargets = new Set(ranked.flatMap(({ row }) => {
+    const pane = panes.find(candidate => row.key === `Pane:${candidate.id}`);
+    const value = pane ? recentValueForHref(pane.href) : null;
+    return value ? [recentTargetKey(value.target)] : [];
+  }));
   const targets = new Set<string>();
-  const recentTargets = new Map<string, boolean>();
   const updates = ranked.flatMap(({ row }) => {
-    const action = row.action.kind === "Available" ? row.action.target : null;
-    const pane = action?.kind === "PaneOpen" ? panes.find(candidate => candidate.id === action.paneId) : undefined;
-    const identity = row.recentEntry?.target ?? (pane ? recentValueForHref(pane.href)?.target : null);
-    if (identity) {
-      const key = recentTargetKey(identity);
-      const previous = recentTargets.get(key);
-      if (previous !== undefined && (previous || !!row.recentEntry)) return [];
-      recentTargets.set(key, !!row.recentEntry);
-    }
+    if (row.recentEntry && paneTargets.has(recentTargetKey(row.recentEntry.target))) return [];
     const target = row.recentEntry && row.key.startsWith("Recent:")
       ? row.key : row.action.kind === "Available" && row.action.target.kind === "InternalHref"
         ? resolveWorkspaceActivationRouteId(row.action.target.href) : row.key;

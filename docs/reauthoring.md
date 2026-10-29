@@ -54,8 +54,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-recent resources against `b73ef1d3d`: +925 net authored runtime lines
-(1,273 added, 348 deleted): web +601, android +352, python -28. device-local
+recent resources against `b73ef1d3d`: +921 net authored runtime lines
+(1,269 added, 348 deleted): web +597, android +352, python -28. device-local
 ordered use replaces server palette-selection recency; existing navigation,
 playback, reading leases and presentation batches retain their responsibilities.
 held targets remain in metadata queries until the palette releases them.
