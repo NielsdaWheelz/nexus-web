@@ -7,7 +7,7 @@ import { projectConsumptionUndoActions, projectDownloadActions, projectPlaybackA
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useActionRuntime, useBusyActionIds, resourceActionRequiresRemote } from "@/lib/actions/ResourceActionsProvider";
-import { installedApp, remoteReady, remoteGeneration } from "@/lib/native/admission";
+import { installedApp, remoteAttemptAllowed, remoteGeneration } from "@/lib/native/admission";
 import { ApiError, apiFetch, apiTransportFeedback } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -43,7 +43,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     flight.current = null;
     replaced?.cancel();
     if (ref === null || request.aborted) {setLoad(null); return;}
-    if (!remoteReady()) {
+    if (!remoteAttemptAllowed()) {
       setLoad({ kind: "Failed", ref, request, error: null, feedback: { tone: "Neutral", title: "requires a connection" } });
       return;
     }
