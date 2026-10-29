@@ -116,7 +116,7 @@ function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexu
     key: `Pane:${pane.id}`, localMatch: null,
     label: pane.presentation.title,
     icon: getPaneRouteIcon(pane.href),
-    type: "Pane",
+    type: "pane",
     detail: pane.presentation.detail ?? undefined,
     state: paneState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
@@ -599,7 +599,7 @@ export function rowName(parts: readonly (string | null | undefined)[]): string {
 export function rowFacts(row: NexusRow): string {
   const state = row.state?.toLowerCase();
   if (row.item) return [resourceMetadataText(row.item, row.matchMethod), state].filter(Boolean).join(" · ");
-  const type = row.type && !["Pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : null;
+  const type = row.type && !["pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : null;
   const facts = [row.detail, type, state];
   return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
 }

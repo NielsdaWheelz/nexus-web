@@ -37,7 +37,7 @@ export function NexusPaneSortable({ controller, row, children }: {
 }) {
   const enabled = controller.paneListComplete && controller.reorder.available && controller.reorder.placement === null && row.secondary?.kind === "ClosePane";
   const paneId = row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key;
-  const sortable = useSortable({ id: paneId, disabled: !enabled, transition: null });
+  const sortable = useSortable({ id: paneId, disabled: { draggable: !enabled, droppable: !enabled }, transition: null });
   return children({ ...sortable, enabled, begin(event) {
     if (enabled && event.isPrimary && event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       event.currentTarget.dataset.dragPointer = String(event.pointerId);
