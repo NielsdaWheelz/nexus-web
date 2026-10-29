@@ -147,6 +147,11 @@ else:
         ancestor = False
     else:
         ancestor = True
+if ancestor and len(sys.argv) > 3 and sys.argv[3] and current != sys.argv[3]:
+    try:
+        tuple(scripts.iterate_revisions(current, sys.argv[3]))
+    except Exception:
+        ancestor = False
 print(json.dumps({'heads': heads, 'ancestor': ancestor}))
 """
 
@@ -166,6 +171,8 @@ class OriginalCohort(BaseModel):
     database_identity: str
     database_revision: str
     host_inputs: dict[str, str | None]
+    candidate: CandidateManifest
+    application_config_sha256: str | None
 
 
 def note(message: str) -> None:
@@ -434,17 +441,22 @@ def install_host_inputs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
+def prove_ancestry(
+    candidate: CandidateManifest, current: str, *, original_revision: str | None = None
+) -> None:
     head = candidate.expected_database_revision
     proof = json.loads(
         host(
             f"docker run --rm --entrypoint /app/.venv/bin/python {candidate.images.api}"
-            f" -c {shlex.quote(ANCESTRY)} {current} {head}",
+            f" -c {shlex.quote(ANCESTRY)} {current} {head}"
+            f"{' ' + shlex.quote(original_revision) if original_revision else ''}",
             timeout=180,
         )
     )
     if proof != {"heads": [head], "ancestor": True}:
-        raise Failure(f"database revision {current} does not descend from {head}: {proof}")
+        raise Failure(
+            f"database revision {current} is outside the candidate migration path: {proof}"
+        )
 
 
 def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEvidence:
@@ -770,8 +782,7 @@ def writer_containers() -> dict[str, str]:
     return writers
 
 
-def host_input_hashes() -> dict[str, str | None]:
-    paths = [destination for _, destination, _ in HOST_INPUTS] + [CADDYFILE]
+def file_hashes(paths: tuple[str, ...]) -> dict[str, str | None]:
     script = (
         "import hashlib,json,pathlib,sys; "
         "print(json.dumps({p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() "
@@ -811,7 +822,8 @@ def assert_original_unchanged(cohort: OriginalCohort) -> None:
         or container("postgres") != cohort.postgres
         or database_identity(psql) != cohort.database_identity
         or database_revision(psql) != cohort.database_revision
-        or host_input_hashes() != cohort.host_inputs
+        or file_hashes((*[destination for _, destination, _ in HOST_INPUTS], CADDYFILE))
+        != cohort.host_inputs
         or any(
             inspect(identifier)["Image"] != cohort.images[service]
             for service, identifier in cohort.containers.items()
@@ -897,7 +909,11 @@ def assert_generation_quiescence() -> None:
 
 def restore_original() -> None:
     cohort = original_cohort()
-    if cohort is None or cohort.state != "recoverable":
+    if (
+        cohort is None
+        or cohort.state != "recoverable"
+        or cohort.containers.keys() != {*WRITERS, CODEX_AGENT_HOST}
+    ):
         raise Failure("no recoverable original cohort; use normal forward-only recovery")
     note("restoring the captured original containers, without candidate compose/config")
     stop_writers(cohort.containers)
@@ -940,16 +956,24 @@ def restore_original() -> None:
     )
 
 
-def quiesce(starting_revision: str) -> None:
+def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
     """Close the actual writer boundary before permitting candidate mutation."""
     cohort = original_cohort()
     if cohort is not None and cohort.state == "recoverable":
         assert_original_unchanged(cohort)
+    application_config_sha256 = file_hashes((CONFIG_FILE,))[CONFIG_FILE]
+    continuation = (
+        cohort is not None
+        and cohort.state == "invalidated"
+        and cohort.candidate == candidate
+        and cohort.application_config_sha256 == application_config_sha256
+        and cohort.database_identity == database_identity(psql)
+    )
     writers = writer_containers()
     if cohort is None:
         complete = writers.keys() == {*WRITERS, CODEX_AGENT_HOST}
         cohort = OriginalCohort(
-            state="recoverable" if complete else "invalidated",
+            state="recoverable",
             containers=writers,
             images={
                 service: inspect(identifier)["Image"] for service, identifier in writers.items()
@@ -962,7 +986,11 @@ def quiesce(starting_revision: str) -> None:
             postgres=container("postgres"),
             database_identity=database_identity(psql),
             database_revision=starting_revision,
-            host_inputs=host_input_hashes(),
+            host_inputs=file_hashes(
+                (*[destination for _, destination, _ in HOST_INPUTS], CADDYFILE)
+            ),
+            candidate=candidate,
+            application_config_sha256=application_config_sha256,
         )
         if complete and (cohort.source_sha is None or SHA.fullmatch(cohort.source_sha) is None):
             raise Failure(
@@ -977,15 +1005,21 @@ def quiesce(starting_revision: str) -> None:
     )
     stop_writers(writers)
     assert_no_writers(writers, clean_exit=True)
-    if starting_revision:
+    if continuation:
+        prove_ancestry(
+            candidate, database_revision(psql), original_revision=cohort.database_revision
+        )
+        note("continuing the same immutable candidate/config; retaining its compatible queued work")
+    elif starting_revision:
         assert_generation_quiescence()
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
         raise Failure(
             "the database holds tables but no Alembic revision; repair it before releasing"
         )
-    if cohort.state == "recoverable":
-        cohort.state = "invalidated"
-        save_original(cohort)
+    cohort.state = "invalidated"
+    cohort.candidate = candidate
+    cohort.application_config_sha256 = application_config_sha256
+    save_original(cohort)
 
 
 def release(source_sha: str, workspace: Path) -> None:
@@ -1011,7 +1045,7 @@ def release(source_sha: str, workspace: Path) -> None:
     starting_revision = database_revision(psql)
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
-    quiesce(starting_revision)
+    quiesce(candidate, starting_revision)
     install_host_inputs()
     install_caddy()
     if starting_revision:

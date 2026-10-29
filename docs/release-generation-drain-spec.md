@@ -102,10 +102,20 @@ mutation. it survives controller loss. an invalidated record stays invalidated
 across forward retries; no retry recaptures old containers against changed host
 files. the controller removes it only after successful health/isolation and
 current-pointer publication. incomplete original cohorts cannot be restored.
+invalidation binds the candidate manifest and published application config
+fingerprint only after the strict final census. a retry may retain compatible
+queued work for that exact candidate/config, unchanged database identity and a
+revision on the original-to-target migration path. this permits migration-created
+index jobs and work admitted by a partially started compatible candidate to settle
+after forward recovery. other targets/config require strict zero before rebinding;
+neither an invalidated flag nor equal schema alone establishes compatibility.
+application config changes conservatively require strict zero before rebinding.
+backup credentials are outside this compatibility identity; their ordinary
+backup/preflight checks remain authoritative.
 recovery stops partially restored originals, excludes competing nexus one-offs
 and all other database client sessions, then starts codex, api and both workers
 in dependency order with health and api runtime identity checks. operator writers
-outside controller ownership must remain stopped.
+outside controller ownership and configuration publishers must remain stopped.
 
 strongest objection: shutdown itself can interrupt/reschedule accepted work, and
 an earlier idle census can race a periodic producer. the conservative final gate

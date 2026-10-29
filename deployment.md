@@ -253,7 +253,9 @@ host backup lock from before preflight until it exits (see
    stop those exact writers (30s grace, 45s for codex) and verify clean exits,
    no active nexus application/one-off container and no other database client
    session. require zero nonterminal chats, open llm calls and all
-   pending/failed/running jobs. any residual work refuses with bounded ids/kinds,
+   pending/failed/running jobs before a new cutover. a continuation of the exact
+   already-authorized candidate/config retains its compatible queued work only
+   on the original-to-candidate migration path. other residual work refuses with bounded ids/kinds,
    before input installation or schema mutation. see [refusal recovery](#refusal-recovery).
 4. **inputs and backup** — durably invalidate original-cohort restoration, then
    install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
@@ -298,8 +300,8 @@ off-host, postgres prerequisites converge, and only then does the schema move.
 
 ### refusal recovery
 
-before releasing, commit/sync device writing, close clients and stop operator
-and maintenance writers. the controller cannot prevent an operator from opening
+before releasing, commit/sync device writing, close clients and stop operator,
+maintenance and configuration publishers. the controller cannot prevent an operator from opening
 a new writer outside its ownership. the all-jobs census deliberately also refuses
 unrelated unfinished work. historical running tool receipts on terminal calls are
 not active generations and are never rewritten by this procedure.
@@ -325,6 +327,16 @@ before host/Caddy installation or postgres mutation and survives failed forward
 retries; those retries never recapture old ids against changed inputs. restoration
 refuses missing/changed originals or an invalidated record. an incomplete initial
 cohort also has no restoration path. after mutation, repair and recover forward.
+the record also binds the authorized candidate manifest and the actual published
+application configuration fingerprint. after migration or partial startup,
+the same immutable candidate/config can continue only with unchanged database
+identity and a revision on its original-to-target path. migrations may themselves
+enqueue indexing; these compatible jobs do not block finishing that same cutover.
+a different target/config must pass the strict zero census before rebinding the
+record. an invalidated flag or matching schema alone never authorizes continuation.
+application configuration changes conservatively require strict zero before
+rebinding, even if a particular edit would be harmless. backup credential rotation
+does not change application-work compatibility; normal backup/preflight owns it.
 the record is removed only after successful health/isolation and current-pointer
 publication. do not delete it to make restoration or a census pass.
 

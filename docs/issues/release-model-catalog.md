@@ -51,6 +51,10 @@ configuration. recovery starts that exact cohort only while postgres identity,
 revision and host inputs are unchanged; candidate mutation invalidates it before
 installation and keeps it invalid across failed forward retries. do not recreate
 the old cohort from candidate compose or use an old deployment script.
+forward continuation retains migration-created or newly admitted compatible work
+only for the exact authorized candidate manifest/config, unchanged database
+identity and an original-to-target revision. any other target must pass strict
+zero before rebinding; no row or counter is cleared to make that pass.
 
 proof and exact tested source cohorts belong in the pr. delete this release
 record after the deployed cohort and drain are verified; laboratory success does
