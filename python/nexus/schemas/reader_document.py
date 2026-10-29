@@ -60,7 +60,7 @@ class ReaderXPostOut(_Out):
 
 class ReaderXCaptureOut(_Out):
     scope: Literal["author_thread", "post"]
-    saved_at: datetime
+    saved_at: datetime | None
     primary_post_count: int = Field(ge=0)
     root_revision_id: str | None
     search_exhausted: bool | None

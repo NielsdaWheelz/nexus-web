@@ -11533,11 +11533,8 @@ export interface components {
             primary_post_count: number;
             /** Root Revision Id */
             root_revision_id: string | null;
-            /**
-             * Saved At
-             * Format: date-time
-             */
-            saved_at: string;
+            /** Saved At */
+            saved_at: string | null;
             /**
              * Scope
              * @enum {string}

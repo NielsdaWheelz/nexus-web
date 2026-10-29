@@ -36,7 +36,7 @@ export function localResourceHref(resource: ResourceProjection,
 export function highlightSourceHref(resource: ResourceProjection, activationRef: ResourceRef | null = null): string | null {
   if (resource.kind !== "highlight") return null;
   const own = parseResourceRef(resource.ref);
-  if (resource.selection?.publication?.kind === "x_capture" && own && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.selection.publication.capture_id}#highlight-${own.id}`;
+  if (resource.selection?.locator.type === "x_capture_offsets" && own && (!activationRef || parseResourceRef(activationRef)?.scheme !== "media")) return `/x/captures/${resource.selection.locator.capture_id}#highlight-${own.id}`;
   const sourceRef = activationRef ?? resource.source_ref;
   const source = sourceRef ? routeFor(sourceRef) : null;
   return source && own ? `${source}#highlight-${own.id}` : null;

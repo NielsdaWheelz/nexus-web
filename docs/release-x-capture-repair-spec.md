@@ -30,8 +30,8 @@ identify a unique corrupt record.
 affected relations include six highlights, one attached annotation note,
 57 thread memberships, 68 incoming embeds, 42 library entries, 186 incident
 resource edges, four retrievals and one reader-state row. counts overlap and
-exclude json-embedded destination inspection. exact census/hashes live in the
-[issue record](issues/production-backup-x-capture-migration.md); no private text
+exclude json-embedded destination inspection. exact census/hashes are retained
+privately; no private text
 or provider payload is copied into this plan.
 
 full 0317-to-current-head qualification remains blocked. no restore or conversion
@@ -171,7 +171,6 @@ pending device writing and downloads. final proof uses the frozen integrated
 candidate, canonical lab/recovery path and
 [verification rules](local-rules/testing-standards.md).
 
-issue owners: [production refusal](issues/production-backup-x-capture-migration.md),
-[x cutover](issues/release-x-captures.md),
+issue owners: [x cutover](issues/release-x-captures.md),
 [annotation cutover](issues/release-highlight-annotations.md).
 release execution remains in [deployment.md](../deployment.md).

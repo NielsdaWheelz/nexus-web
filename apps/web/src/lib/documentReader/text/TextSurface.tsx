@@ -429,7 +429,7 @@ export default function TextSurface({
       >
         {doc.xCapture ? <header className={styles.capture} data-reader-metadata="">
           {view.showCaptureTitle !== false ? <h1>{doc.title}</h1> : null}
-          <p>{doc.xCapture.primary_post_count} {doc.xCapture.primary_post_count === 1 ? "post" : "posts"} · saved {new Date(doc.xCapture.saved_at).toLocaleDateString()}</p>
+          <p>{doc.xCapture.primary_post_count} {doc.xCapture.primary_post_count === 1 ? "post" : "posts"}{doc.xCapture.saved_at !== null ? ` · saved ${new Date(doc.xCapture.saved_at).toLocaleDateString()}` : null}</p>
           {doc.xCapture.limits.length ? <p>capture limit reached</p> : null}
           {doc.xCapture.unresolved_parent_count > 0 ? <p>some reply connections could not be checked</p> : null}
           {doc.xCapture.unchecked_post_count > 0 ? <p>{doc.xCapture.unchecked_post_count} saved {doc.xCapture.unchecked_post_count === 1 ? "post was" : "posts were"} not checked in this refresh</p> : null}
