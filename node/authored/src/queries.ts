@@ -432,7 +432,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
 
 type QueryRead = (plan: CompiledQuery) => Promise<Record<string, unknown>[]>;
 type SearchReading = ScopeReading & { linked_allowed: boolean; intervals: ScopeInterval[] };
-type SearchText = { literal: string; lexical: string; activation_ref: string };
+type SearchText = { literal: string; lexical: string; activation_ref: string | null };
 type PassageMembership = { activation_ref: string | null } | false;
 
 /** Active published source identity only; this proves no reading permission. */
@@ -638,7 +638,8 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
       const located=locator.type==="pdf_page_geometry" || highlightFitsReading([
         {fragment_id:locator.fragment_id,start_offset:locator.start_offset,end_offset:locator.end_offset},
       ],reading.intervals);
-      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" "), activation_ref: located?reading.reading_ref:resource.ref}];
+      // Full-source admission survives a retired anchor; only a proved location names a reading target.
+      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" "), activation_ref: located?reading.reading_ref:null}];
     }
     highlightTexts.set(key, variants);
     return variants;
