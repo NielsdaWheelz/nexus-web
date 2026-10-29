@@ -26,7 +26,6 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    highlight_readability_sql,
     highlight_visibility_sql,
     requested_media_ids_cte_sql,
     visible_content_credit_rows_sql,
@@ -48,7 +47,6 @@ from nexus.services.media_text_scope import (
 )
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.context import context_facts_sql
-from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.locations import (
     media_passages,
@@ -308,6 +306,23 @@ SOURCES: dict[str, str] = {
             CASE WHEN m.id IS NULL OR m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
         WHERE {highlight_visibility_sql("h")}
           AND (m.id IS NOT NULL OR (f.x_post_capture_id IS NOT NULL AND f.x_post_capture_id IN ({readable_x_capture_ids_sql()}))) {{where}}""",
+    "highlight_annotation": f"""SELECT 'highlight' AS type,h.id,h.annotation_body_text AS label,
+            to_tsvector('english',h.annotation_body_text) AS doc,ann.cosine,
+            h.annotation_body_text AS text,h.annotation_body_text AS span_text,h.exact,
+            COALESCE(h.color,'yellow') AS color,'annotation' AS citation_label,
+            h.anchor_media_id AS media_id,COALESCE(m.kind,'highlight') AS media_kind,
+            COALESCE(m.title,'Highlight') AS media_title,m.original_published_date,
+            jsonb_build_object('type','highlight_annotation_offsets','highlight_id',h.id,
+                'start_offset',0,'end_offset',char_length(h.annotation_body_text),
+                'body_sha256',encode(digest(convert_to(h.annotation_body_text,'UTF8'),'sha256'),'hex'),
+                'text_quote_selector',jsonb_build_object('exact',h.annotation_body_text,'prefix',NULL,'suffix',NULL)) AS locator
+        FROM highlights h LEFT JOIN media m ON m.id=h.anchor_media_id
+            AND m.id IN (SELECT media_id FROM visible_media)
+        LEFT JOIN (SELECT cc.owner_id,max(ann.cosine) AS cosine FROM {_ANN}
+            JOIN content_chunks cc ON cc.id=ann.id AND cc.owner_kind='highlight'
+            GROUP BY cc.owner_id) ann ON ann.owner_id=h.id
+        WHERE h.user_id=:viewer_id AND h.authored_visible
+          AND h.annotation_body_pm_json IS NOT NULL AND h.annotation_body_text<>'' {{where}}""",
     "message": """SELECT 'message' AS type, ms.id, NULL AS label, ms.content_tsv AS doc,
             ms.content AS text, ms.conversation_id, ms.seq,
             'Conversation message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
@@ -390,7 +405,7 @@ SOURCES: dict[str, str] = {
         FROM evidence_spans es LEFT JOIN media source_m ON es.owner_kind='media' AND source_m.id=es.owner_id
         CROSS JOIN LATERAL (SELECT CASE WHEN es.owner_kind='media' THEN ({_SPAN_OWNER}) END AS media_id) reading
         LEFT JOIN media m ON m.id=reading.media_id
-        WHERE (reading.media_id IS NOT NULL OR (es.owner_kind='note_block'
+        WHERE (reading.media_id IS NOT NULL OR (es.owner_kind='highlight' AND es.owner_id IN (SELECT h.id FROM highlights h JOIN content_index_states cis ON cis.owner_kind='highlight' AND cis.owner_id=h.id WHERE h.user_id=:viewer_id AND h.authored_visible AND h.annotation_body_pm_json IS NOT NULL AND cis.lexical_revision=cis.revision)) OR (es.owner_kind='note_block'
             AND es.owner_id IN (SELECT id FROM note_blocks
                 WHERE user_id=:viewer_id AND authored_visible))) {{where}}""",
     "gutenberg": """SELECT 'gutenberg' AS type, pg.ebook_id AS id, pg.title AS label,
@@ -419,6 +434,7 @@ SOURCES: dict[str, str] = {
             pa.selector #>> '{{quote,exact}}' AS label, pa.selector #>> '{{quote,exact}}' AS text,
             to_tsvector('english', COALESCE(pa.selector #>> '{{quote,exact}}', '')) AS doc
         FROM passage_anchors pa
+        LEFT JOIN highlights annotation_h ON pa.owner_scheme='highlight' AND annotation_h.id=pa.owner_id
         LEFT JOIN media_parts anchor_part ON pa.owner_scheme='media' AND anchor_part.media_id=pa.owner_id
         LEFT JOIN LATERAL (
             SELECT candidate.media_id FROM ({_ADMITTED} UNION {_exact_candidates("ref.scheme='passage_anchor' AND ref.id=pa.id")}) candidate
@@ -430,6 +446,7 @@ SOURCES: dict[str, str] = {
           AND ((pa.owner_scheme = 'media' AND m.id IS NOT NULL)
             OR (pa.owner_scheme = 'note_block' AND pa.owner_id IN (SELECT id FROM note_blocks
                 WHERE user_id = :viewer_id))
+            OR (pa.owner_scheme='highlight' AND annotation_h.user_id=:viewer_id AND annotation_h.authored_visible AND annotation_h.annotation_body_pm_json IS NOT NULL)
             OR (pa.owner_scheme = 'fragment' AND EXISTS (
                 SELECT 1 FROM fragments f JOIN ({readable_x_capture_ids_sql()}) readable
                   ON readable.capture_id=f.x_post_capture_id
@@ -443,18 +460,13 @@ SOURCES: dict[str, str] = {
 }
 CREDITED = {"media": "m.id", "podcast": "p.id", "contributor": "vc", "content_chunk": "m.id"}
 SEMANTIC = {
+    "highlight_annotation": """cc.owner_kind='highlight' AND EXISTS (SELECT 1 FROM highlights h
+        WHERE h.id=cc.owner_id AND h.user_id=:viewer_id
+        AND h.authored_visible AND h.annotation_body_pm_json IS NOT NULL {where})""",
     "note_block": """cc.owner_kind = 'note_block' AND EXISTS (SELECT 1 FROM note_blocks nb
         WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id AND nb.authored_visible {where})""",
     "content_chunk": f"cc.owner_kind IN ('media','fragment') AND {_CHUNK_MEMBER}",
 }
-# A note attached to a readable highlight by any live authored link, either direction.
-_HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
-    JOIN highlights h ON (edge.source_scheme = 'highlight' AND h.id = edge.source_id
-            AND edge.target_scheme = 'note_block' AND edge.target_id = nb.id)
-        OR (edge.target_scheme = 'highlight' AND h.id = edge.target_id
-            AND edge.source_scheme = 'note_block' AND edge.source_id = nb.id)
-    WHERE edge.user_id = :viewer_id AND {authored_link_sql("edge")}
-      AND {edge_live_sql("edge")} AND {highlight_readability_sql("h")})"""
 
 
 class Hit(NamedTuple):
@@ -478,7 +490,6 @@ class Retrieval:
     contributor_ids: list[UUID] | None = None
     roles: tuple[str, ...] = ()
     embedding: Embedding | None = None
-    highlight_notes_only: bool = False
     exclude_viewer_authored: bool = False
 
 
@@ -638,12 +649,7 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
             Hit("passage_anchor", row["id"], row["label"], row["score"], owner)
             for row, owner in _saved_passages(db, r)
         ]
-    where = (
-        cell[0]
-        + filters
-        + _STRICT_ADMISSION.get(family, "")
-        + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
-    )
+    where = cell[0] + filters + _STRICT_ADMISSION.get(family, "")
     escaped = escape_like(r.terms)
     semantic = SEMANTIC.get(family)
     params = cell[1] | {
@@ -683,12 +689,32 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
             LIMIT :k"""),
         params,
     )
-    return [Hit(row[0], row[1], row[2], row[3], row[4]) for row in rows]
+    return [
+        Hit(
+            "highlight_annotation" if family == "highlight_annotation" else row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+        )
+        for row in rows
+    ]
 
 
 def merge(hits: Iterable[Hit]) -> list[Hit]:
     """The one cross-family order: score desc, then label, then id (as ``rank`` orders them)."""
-    return sorted(hits, key=lambda hit: (-hit.score, hit.label, str(hit.id)))
+    selected = []
+    highlights = set()
+    for hit in sorted(
+        hits,
+        key=lambda hit: (-hit.score, hit.type == "highlight_annotation", hit.label, str(hit.id)),
+    ):
+        if hit.type in {"highlight", "highlight_annotation"}:
+            if hit.id in highlights:
+                continue
+            highlights.add(hit.id)
+        selected.append(hit)
+    return sorted(selected, key=lambda hit: (-hit.score, hit.label, str(hit.id)))
 
 
 def hydrate(
@@ -738,8 +764,15 @@ class DiscoveryHit:
     reading_media_id: UUID | None = None
 
     @property
-    def order(self) -> tuple[int, int, float, str, str]:
-        return (-self.name_tier, -self.lexical, -self.relevance, self.sort_label, self.ref.uri)
+    def order(self) -> tuple[int, int, float, int, str, str]:
+        return (
+            -self.name_tier,
+            -self.lexical,
+            -self.relevance,
+            int(self.family == "highlight_annotation"),
+            self.sort_label,
+            self.ref.uri,
+        )
 
 
 def _discovery_predicates(
@@ -764,11 +797,12 @@ def _discovery_predicates(
     _, scope_params = _ctes(r)
     where = cell[0] + filters
     if r.exclude_viewer_authored:
-        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(family)
+        scheme = "highlight" if family == "highlight_annotation" else family
+        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(scheme)
         if authored is not None:
             where += f""" AND NOT EXISTS(SELECT 1 FROM authored_resources authored
                 WHERE authored.account_id=:viewer_id
-                  AND authored.ref='{family}:' || {authored}.id::text)"""
+                  AND authored.ref='{scheme}:' || {authored}.id::text)"""
         elif family == "passage_anchor":
             where += """ AND NOT EXISTS(SELECT 1 FROM authored_passages authored
                 WHERE authored.account_id=:viewer_id AND authored.anchor_id=pa.id::text)"""
@@ -854,7 +888,7 @@ def discovery_eligible(
     ctes, bindings = _ctes(r, scope_sql=scopes)
     branches = []
     params: dict[str, Any] = {"viewer_id": r.viewer_id} | bindings | dict(scopes.bindings)
-    prose = {"note_block", "highlight", "passage_anchor", "message"}
+    prose = {"note_block", "highlight", "highlight_annotation", "passage_anchor", "message"}
     for family in families:
         predicates = _discovery_predicates(r, family, scopes.cell(family))
         if predicates is None:
@@ -918,18 +952,22 @@ def discovery_eligible(
                 0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id
                 FROM {source} WHERE {condition} {where}""")
             continue
-        scheme = {"web_result": "external_snapshot"}.get(family, family)
+        scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
+            family, family
+        )
         ref = f"'{scheme}:' || s.id::text"
         key = (
             "'contributor:' || CAST(:viewer_id AS text) || ':' || s.id::text"
             if family == "contributor"
             else ref
         )
+        if family == "highlight_annotation":
+            key = "'highlight:annotation:' || s.id::text"
         if family == "highlight":
             key = "'highlight:' || COALESCE(s.reading_media_id::text,'source') || ':' || s.id::text"
         owner = "'conversation:' || s.conversation_id::text" if family == "message" else ref
         admission = key
-        if family == "note_block":
+        if family in ("note_block", "highlight_annotation"):
             admission += " || ':' || encode(digest(convert_to(s.text,'UTF8'),'sha256'),'hex')"
         name = "NULL::text" if family in prose else "s.label"
         tier = f"CASE WHEN lower({name})=lower(:q) THEN 3 WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"
@@ -974,7 +1012,10 @@ def discovery_semantic_hits(
     return [
         DiscoveryHit(
             family,
-            ResourceRef(cast(ResourceScheme, family), row.id),
+            ResourceRef(
+                "highlight" if family == "highlight_annotation" else cast(ResourceScheme, family),
+                row.id,
+            ),
             ResourceRef("media", row.owner_id) if row.owner_id else None,
             0,
             False,
@@ -1051,7 +1092,12 @@ def discovery_browse(db: Session, r: Retrieval, families: Sequence[str]) -> list
         hits.extend(
             DiscoveryHit(
                 family,
-                ResourceRef(cast(ResourceScheme, family), row.id),
+                ResourceRef(
+                    "highlight"
+                    if family == "highlight_annotation"
+                    else cast(ResourceScheme, family),
+                    row.id,
+                ),
                 None,
                 0,
                 False,

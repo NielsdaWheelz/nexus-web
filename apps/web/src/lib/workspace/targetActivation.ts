@@ -36,13 +36,8 @@ export type WorkspacePaneEntry =
   | { readonly kind: "EditPageTitle"; readonly pageId: string }
   // note pane: focus the body
   | { readonly kind: "EditNoteBody"; readonly noteBlockId: string }
-  // media pane: one highlight; a null note block adds a note
   | { readonly kind: "EditHighlight"; readonly highlightId: string }
-  | {
-      readonly kind: "EditHighlightNote";
-      readonly highlightId: string;
-      readonly noteBlockId: string | null;
-    }
+  | { readonly kind: "EditHighlightAnnotation"; readonly highlightId: string }
   | { readonly kind: "EditHighlightBounds"; readonly highlightId: string }
   | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
   // chat pane: one message of the loaded transcript

@@ -37,7 +37,7 @@ _STATIC_PREFIXES = {
     "oracle_reading": "/oracle",
     "podcast": "/podcasts",
 }
-_OWNER_PREFIXES = {"media": "/media", "note_block": "/notes"}
+_OWNER_PREFIXES = {"media": "/media", "note_block": "/notes", "highlight": "/highlights"}
 _PASSAGE_ANCHORS = {
     "evidence_span": "evidence",
     "content_chunk": "chunk",
@@ -166,16 +166,44 @@ def _activations_from_resolved_passages(
             routes[ref.uri] = f"/media/{passage.owner.id}#{fragment}-{ref.id}"
         else:
             routes.pop(ref.uri, None)
+    owned_highlights = list(
+        db.scalars(
+            text(
+                "SELECT id FROM highlights WHERE id=ANY(:ids) AND user_id=:viewer_id AND authored_visible"
+            ),
+            {
+                "ids": [ref.id for ref in visible if ref.scheme == "highlight"],
+                "viewer_id": viewer_id,
+            },
+        )
+    )
+    for id_ in owned_highlights:
+        uri = f"highlight:{id_}"
+        if uri not in routes:
+            routes[uri] = f"/highlights/{id_}"
     external = _external_urls(db, viewer_id=viewer_id, refs=by_scheme["external_snapshot"])
     activations: dict[str, ResourceActivationOut] = {}
     for uri in unique:
         if (href := routes.get(uri)) is not None:
-            owner = scoped[uri].owner.uri if uri in scoped else uri
-            activations[uri] = ResourceActivationOut(resource_ref=owner, kind="route", href=href)
+            owner = (
+                scoped[uri].owner.uri
+                if uri in scoped and not href.startswith("/highlights/")
+                else uri
+            )
+            field = None
+            if href.startswith("/highlights/") and unique[uri].scheme != "highlight":
+                owner = "highlight:" + href.split("/", 2)[2].split("#", 1)[0]
+                field = "annotation"
+            activations[uri] = ResourceActivationOut(
+                field=field, resource_ref=owner, kind="route", href=href
+            )
         elif (url := external.get(uri)) is not None:
-            activations[uri] = ResourceActivationOut(resource_ref=uri, kind="external", href=url)
+            activations[uri] = ResourceActivationOut(
+                field=None, resource_ref=uri, kind="external", href=url
+            )
         else:
             activations[uri] = ResourceActivationOut(
+                field=None,
                 resource_ref=uri,
                 kind="none",
                 href=None,
@@ -233,13 +261,21 @@ def _dynamic_routes(
         "SELECT id, handle FROM contributors WHERE id = ANY(:ids)", by_scheme["contributor"]
     ):
         routes[f"contributor:{id_}"] = f"/authors/{quote(str(handle), safe='')}"
+    for scheme, table in (("content_chunk", "content_chunks"), ("evidence_span", "evidence_spans")):
+        for id_, owner_id in rows(
+            f"SELECT body.id,body.owner_id FROM {table} body JOIN highlights h ON h.id=body.owner_id JOIN content_index_states state ON state.owner_kind='highlight' AND state.owner_id=h.id WHERE body.id=ANY(:ids) AND body.owner_kind='highlight' AND h.user_id=:viewer_id AND h.authored_visible AND h.annotation_body_pm_json IS NOT NULL AND state.lexical_revision=state.revision",
+            by_scheme[scheme],
+        ):
+            routes[f"{scheme}:{id_}"] = f"/highlights/{owner_id}#annotation"
     anchors = rows(
         "SELECT id, owner_scheme, owner_id, selector FROM passage_anchors"
         " WHERE id = ANY(:ids) AND user_id = :viewer_id AND owner_scheme != 'media'",
         by_scheme["passage_anchor"],
     )
     sources = (
-        locator_resolver.read_passage_sources(db, [(row[1], row[2]) for row in anchors])
+        locator_resolver.read_passage_sources(
+            db, [(row[1], row[2]) for row in anchors], viewer_id=viewer_id
+        )
         if anchors
         else None
     )

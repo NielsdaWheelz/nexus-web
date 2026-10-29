@@ -66,6 +66,7 @@ _FAMILIES = (
     "page",
     "note_block",
     "highlight",
+    "highlight_annotation",
     "conversation",
     "message",
     "reader_apparatus_item",
@@ -96,7 +97,9 @@ def _source(
     """The shared twelve-column shape hides only repetitive nullable SQL slots."""
     assert fields.keys() <= set(TEXT_FIELDS)
     _SOURCE_IDS[family] = identity
-    scheme = {"web_result": "external_snapshot"}.get(family, family)
+    scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
+        family, family
+    )
     ref = f"'{scheme}:' || ({identity})::text"
     key = key or (
         f"'contributor:' || CAST(:projection_viewer_id AS text) || ':' || ({identity})::text"
@@ -233,6 +236,15 @@ _SOURCES = {
         + highlight_in_reading_scope_sql("h.id", "reading.media_id")
         + "))",
     ),
+    "highlight_annotation": _source(
+        "highlight_annotation",
+        "highlights h",
+        identity="h.id",
+        key="'highlight:annotation:' || h.id::text",
+        admission="'highlight:annotation:' || h.id::text || ':' || encode(digest(convert_to(h.annotation_body_text,'UTF8'),'sha256'),'hex')",
+        fields={"body": "h.annotation_body_text"},
+        where="h.authored_visible AND h.annotation_body_pm_json IS NOT NULL AND h.annotation_body_text<>''",
+    ),
     "conversation": _source(
         "conversation",
         "conversations c",
@@ -325,7 +337,9 @@ _PUBLISHED_CONTENT_CHUNKS = _source(
 def _withdraw_batch(
     db: Session, family: str, identities: Sequence[UUID], *, viewer_id: UUID | None
 ) -> None:
-    scheme = {"web_result": "external_snapshot"}.get(family, family)
+    scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
+        family, family
+    )
     refs = [f"{scheme}:{identity}" for identity in identities]
     if family == "highlight":
         while True:
@@ -343,7 +357,9 @@ def _withdraw_batch(
                 break
         return
     keys = (
-        [f"contributor:{viewer_id}:{identity}" for identity in identities]
+        [f"highlight:annotation:{identity}" for identity in identities]
+        if family == "highlight_annotation"
+        else [f"contributor:{viewer_id}:{identity}" for identity in identities]
         if family == "contributor"
         else refs
     )

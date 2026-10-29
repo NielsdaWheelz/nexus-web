@@ -1,6 +1,6 @@
 # authored notes
 
-titled pages, one-block notes, independent annotations and undirected links form
+titled pages, one-block notes, annotated highlights and undirected links form
 one account-scoped authored graph. the same local query and commit owners serve
 writing online and offline. source downloads, chat, imports and account operations
 retain their separate owners.
@@ -98,10 +98,9 @@ without inserting that default into the title crdt. title storage has no display
 length ceiling.
 
 links are relationships, never ownership. explicit unlink preserves endpoints;
-deleting a page, note or highlight never consumes an independent note. attached
-annotation notes are ordinary independent notes and links, including multiple
-notes and independently overlapping highlights. pdf resizing keeps the exact
-highlight id and its note links.
+deleting a page, note or highlight never consumes an independent related note.
+a highlight owns its single annotation body; ordinary note links confer no
+annotation meaning. pdf resizing preserves the highlight id, annotation and links.
 
 source stubs retain literal references when a source disappears, including a
 deleted conversation. source deletion does not unlink the authored graph; a
@@ -154,10 +153,15 @@ removed in that exact prestate. this command’s removals cannot supply that pro
 it never imports other prestate lanes or covers a live intervening same-replica
 edit merely because text is unchanged.
 
-ordinary and attached-note editing autosave locally. annotation creation retains
+ordinary note and bound highlight annotation editing autosave locally. annotation creation retains
 its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
 writing retains the loss guard and retry/copy affordance. committed unsynchronized
 writing survives app termination and does not acquire an exit warning.
+
+a first annotation save locks its submitted clone until the reserved command
+settles. the existing retained draft owns that lock through navigation; durability
+clears the same clone and revision even while its editor is absent. subsequent
+body editing uses the ordinary autosave owner.
 
 split copies the observed suffix into a new note and removes only its observed
 source ranges. join inserts the observed source at its destination anchor, then
@@ -428,7 +432,7 @@ introduced. the runtime's unpinned document cache remains a separate owner.
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-3`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-4`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -502,9 +506,12 @@ ranked before truncation; prose remains evidence. firefox serializes the whole
 read and android applies its store-revision fence to the entire operation.
 `SEARCH_READ_SQL` owns its finite packaged native statements. ordinary `search`
 retains its cursor and full-search/picker contract.
-`search_admission` reuses that compound admission for at most eight held refs,
-including current query membership and scoped evidence. it returns null cursors
-and avoids a corpus scan; resource existence alone cannot prove scoped admission.
+`search_admission` reuses that compound admission for at most eight held
+`{ref, field}` targets, including current query membership and scoped evidence.
+it proves the held field itself: a quotation cannot admit a cleared annotation,
+and a stronger quotation cannot revoke an annotation that still matches.
+it returns null cursors and avoids a corpus scan; resource existence alone cannot
+prove scoped admission.
 
 `workspace_member` identifies readings admitted by canonical global search;
 independent retained-source readability does not add workspace membership.

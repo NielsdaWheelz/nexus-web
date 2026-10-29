@@ -59,7 +59,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
-      const kicker = ref ? KICKERS[ref.kind] : tool.activity.verb;
+      const kicker = ref?.field === "annotation" ? "Annotated" : ref ? KICKERS[ref.kind] : tool.activity.verb;
       const target = ref?.label ?? tool.activity.subject;
       const reverted = tool.reverted_at !== null || (tool.id !== null && undone.has(tool.id));
       return <div key={tool.tool_call_index} className={styles.write} role="listitem">

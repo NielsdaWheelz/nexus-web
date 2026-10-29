@@ -15,7 +15,7 @@ export default function AuthoredReadFailure({error, occurrence, retry, pending =
     announcement="Polite" actions={[{label: "retry", onClick: retry, busy: pending}]}/>;
 }
 
-export function DocumentReadFailure({document}: {document: WritingDocument}) {
+export function DocumentReadFailure({document, title}: {document: WritingDocument; title?: string}) {
   const read = useWritingDocumentRead(document);
-  return <AuthoredReadFailure {...read} pending={read.retrying} retry={document.retryRead}/>;
+  return <AuthoredReadFailure {...read} pending={read.retrying} retry={document.retryRead} title={title}/>;
 }

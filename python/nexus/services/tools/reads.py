@@ -26,6 +26,7 @@ from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
+from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
@@ -206,9 +207,14 @@ def _evidence(
     material: Any,
     citation: RetrievalCitation | None,
     content: str | None = None,
+    *,
+    field: ResourceField = None,
 ) -> NexusEvidence:
     """What the model was shown, fixed: its target, locator, content hash and authorship."""
 
+    if citation is not None and citation.captured_evidence.target.field == "annotation":
+        field = "annotation"
+        uri = citation.captured_evidence.target.owner_ref or uri
     locator = None
     if citation is not None and citation.locator is not None:
         locator = json.dumps(citation.locator, sort_keys=True, separators=(",", ":"))
@@ -219,6 +225,7 @@ def _evidence(
     except ValueError:
         excerpt_id = None
     return NexusEvidence(
+        field=field,
         admission_scope="conversation_context" if call.run.chat_run_id else "generation_scope",
         citation_target=(citation.citation_target if citation else None) or uri,
         content_sha256=hashlib.sha256(content.encode()).hexdigest()
@@ -227,7 +234,9 @@ def _evidence(
         context_ref=uri,
         excerpt_id=excerpt_id,
         locator=locator,
-        machine_authorship=assistant_writes.authorship_for_target(call.db, call.principal, uri),
+        machine_authorship=assistant_writes.authorship_for_target(
+            call.db, call.principal, uri, field=field
+        ),
         observed_at=None,
         resource_uri=uri,
         snapshot_revision=None if content is not None else _sha256(material),
@@ -247,7 +256,7 @@ def _budgeted[T](items: Sequence[T], limit: int, budget: int, size: Callable[[T]
 
 
 def _cite(
-    call: Call, result_type: str | None, source_id: str, uri: str
+    call: Call, result_type: str | None, source_id: str, uri: str, *, field: ResourceField = None
 ) -> RetrievalCitation | None:
     """Stage the one citation of a single-resource read, if the resource is citable."""
 
@@ -255,7 +264,11 @@ def _cite(
         return None
     try:
         result = reopen_search_result(
-            call.db, viewer_id=call.principal, result_type=result_type, source_id=source_id
+            call.db,
+            viewer_id=call.principal,
+            result_type=result_type,
+            source_id=source_id,
+            field=field,
         )
     except ApiError as exc:
         # A passage whose body moved during the read has no provable citation.
@@ -413,12 +426,14 @@ def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
     get_repeatable_read_db(call.db)
     try:
         admit(call, value.uri, derived_read=True)
-        kind, body, cited, next_cursor = _read(call.db, call.principal, value.uri, value.cursor)
+        kind, body, cited, next_cursor = _read(
+            call.db, call.principal, value.uri, value.cursor, field=value.field
+        )
         if len(body) > READ_DOCUMENT_MAX_CHARS:
             refuse("TooLarge")
-        citation = _cite(call, *cited, value.uri) if cited else None
+        citation = _cite(call, *cited, value.uri, field=value.field) if cited else None
         return ResourceReadSuccess(
-            evidence=_evidence(call, value.uri, None, citation, content=body),
+            evidence=_evidence(call, value.uri, None, citation, content=body, field=value.field),
             kind=kind,
             text=body,
             uri=value.uri,
@@ -429,10 +444,29 @@ def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
 
 
 def _read(
-    db: Session, viewer_id: UUID, uri: str, cursor: str | None
+    db: Session, viewer_id: UUID, uri: str, cursor: str | None, *, field: ResourceField
 ) -> tuple[Any, str, tuple[str | None, str] | None, str | None]:
     """(contract kind, exact text, citable (result type, id), next cursor) of one read."""
 
+    if field == "annotation":
+        ref = _parse(uri)
+        if ref.scheme != "highlight":
+            refuse("InvalidInput")
+        if cursor is not None:
+            refuse("InvalidCursor")
+        from nexus.services.highlights import read_highlight_annotations
+
+        annotation = read_highlight_annotations(
+            db, viewer_id=viewer_id, highlight_ids=[ref.id]
+        ).get(ref.id)
+        if annotation is None:
+            refuse("ResourceUnavailable")
+        return (
+            "section",
+            annotation.body_text,
+            ("highlight", str(ref.id)) if annotation.body_text else None,
+            None,
+        )
     pages = parse_page_range(uri)
     if pages is not None:
         if cursor is not None:
@@ -473,6 +507,15 @@ def _read(
         refuse("ResourceUnavailable")
     cited = capability(ref.scheme).citable_result_type
     citation = None if cited is None else (cited, str(ref.id))
+    if ref.scheme == "content_chunk":
+        annotation_span = db.scalar(
+            text(
+                "SELECT primary_evidence_span_id FROM content_chunks WHERE id=:id AND owner_kind='highlight'"
+            ),
+            {"id": ref.id},
+        )
+        if annotation_span is not None:
+            citation = ("evidence_span", str(annotation_span))
     if ref.scheme == "highlight":
         assert loaded.quote is not None  # the highlight loader always sets its visible quote
         return "quote", loaded.quote.exact, citation, None

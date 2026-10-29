@@ -5,12 +5,12 @@ import { useEffect, useId, useRef, useState } from "react";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useConnectionAttachments } from "@/components/connections/useConnectionAttachments";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
-import { ResourceIndexBody } from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -22,8 +22,6 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/links";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { authoredPreview } from "@/lib/notes/presentation";
-import { localResourceHref } from "@/lib/resources/localResource";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { useContextItem } from "@/lib/chat/contextItems";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -72,7 +70,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   afterRemoval: () => HTMLElement | null;
   entry: Schema<"ContextOut">["items"][number]; conversationId: string; onChanged: () => Promise<void>;
 }) {
-  const { item, authored, annotations } = useContextItem(entry.item);
+  const { item, authored, annotation } = useContextItem(entry.item);
   const pane = usePaneRuntime();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof connectionMutationErrorMessage> | null>(null);
@@ -83,8 +81,6 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const removeButton = useRef<HTMLButtonElement>(null);
   const reasonId = useId();
   const occurrence = useFeedbackOccurrence(failure !== null || busy, entry.item.ref);
-  const readOccurrence = useFeedbackOccurrence(!!authored?.error, entry.item.ref);
-  const notesOccurrence = useFeedbackOccurrence(!!annotations?.error, entry.item.ref);
   const runtime = useWritingRuntime();
   useActionFocusRecovery(removeButton, afterRemoval);
   if (defect) throw defect.error;
@@ -123,27 +119,21 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   // justify-defect: admitted context refs must satisfy the canonical resource grammar.
   if (parsed === null) throw new Error(`Invalid context ref: ${entry.item.ref}`);
   const type = resourceTypeLabel(parsed.scheme).toLowerCase();
-  const label = item?.label ?? `${type} unavailable`;
-  const status = authored?.error || authored?.data ? `${type} unavailable` : type;
-  const notes = annotations?.data?.rows ?? [];
+  const label = item?.label ?? entry.item.label;
+  const status = authored?.data ? `${type} unavailable` : type;
   const supporting = <>
-    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" actions={[{label: stale ? "refresh future context" : "retry removing", onClick: () => {if (stale) {refreshRequested.current = true; void onChanged();} else void remove();}, busy}]} /> : null}
-    {authored?.error ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: authored.retry }]} /> : authored?.data && item === null ? <span>not available on this device</span> : null}
-    {notes.map(({ resource }) => {
-      const preview = authoredPreview(resource);
-      const href = localResourceHref(resource);
-      // justify-defect: the query returns visible note resources with canonical routes.
-      if (!href) throw new Error(`Attached note has no route: ${resource.ref}`);
-      return <a key={resource.ref} className={styles.note} href={href} data-workspace-rich-target="true"
-        onClick={event => activateTargetLink({ event, runtime: pane, target: { href, labelHint: preview.label } })}
-        onKeyDown={event => activateTargetLink({ event, runtime: pane, target: { href, labelHint: preview.label } })}>
-        <span className={styles.notePrefix}>note: </span><ResourceIndexBody body={preview.body} />
-      </a>;
-    })}
-    {annotations?.error ? <FeedbackFailure scope="Local" occurrence={notesOccurrence} content={{ tone: "Warning", title: "couldn’t load attached notes" }} announcement="Polite" actions={[{ label: "retry", onClick: annotations.retry }]} /> : null}
+    {authored?.data && item === null ? <span>not available on this device</span> : null}
+    {annotation ? <a className={styles.note} href={`/highlights/${parsed.id}#annotation`} data-workspace-rich-target="true"
+      onClick={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}
+      onKeyDown={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}>
+      <span className={styles.notePrefix}>annotation: </span>{annotation.body_text || "rich annotation"}
+    </a> : null}
   </>;
-  const hasSupport = Boolean(failure || authored?.error || authored?.data && item === null || notes.length || annotations?.error || annotations && !annotations.data);
-  return <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
+  const hasSupport = Boolean(authored?.data && item === null || annotation);
+  return <>
+    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" actions={[{label: stale ? "refresh future context" : "retry removing", onClick: () => {if (stale) {refreshRequested.current = true; void onChanged();} else void remove();}, busy}]} /> : null}
+    {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item" /> : null}
+    <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     attention={failure ? [failure.title, failure.message].filter(Boolean).join(" · ") : undefined}
     primaryControl={entry.mutation ? <>
       <Button ref={removeButton} iconOnly icon={stale ? <RefreshCw /> : <Minus />}
@@ -153,5 +143,6 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
         onClick={() => { if (stale) { refreshRequested.current = true; void onChanged(); } else void remove(); }} />
       {runtime === null ? <span id={reasonId} className="sr-only">local writing is unavailable</span> : null}
     </> : undefined}
-  />;
+    />
+  </>;
 }

@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.resource_evidence import ResourceField
 
 _INT32 = (1 << 31) - 1
 TargetKind = Literal["library_entry", "note_block", "highlight", "resource_edge", "queue_item"]
@@ -24,6 +25,14 @@ class MachineAuthorshipOut(_Out):
 
     target_kind: TargetKind
     target_id: UUID
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        if self.field == "annotation" and self.target_kind != "highlight":
+            raise ValueError("annotation field requires a highlight")
+        return self
+
     generation_id: UUID
     generation_seq: int = Field(strict=True, ge=1, le=_INT32)
     tool_position: int = Field(strict=True, ge=1, le=_INT32)
@@ -48,6 +57,14 @@ class CreatedRefOut(BaseModel):
     kind: Literal["entry", "note_block", "highlight", "edge", "queue"]
     id: UUID
     label: str
+    field: ResourceField
+
+    @model_validator(mode="after")
+    def validate_field(self):
+        if self.field == "annotation" and self.kind != "highlight":
+            raise ValueError("annotation field requires a highlight")
+        return self
+
     order_revision: OrderRevision | None = None
 
     @model_validator(mode="before")

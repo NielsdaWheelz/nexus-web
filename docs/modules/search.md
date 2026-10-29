@@ -164,8 +164,13 @@ independent source publication. operational qualification remains
 required by [release-search](../issues/release-search.md).
 
 the browser kinds are documents, notes, highlights, conversations, people, web,
-libraries, readings and saved passages. highlights does not implicitly
-add annotation notes. libraries/readings are global-only. web snapshots
+libraries, readings and saved passages. highlights includes quotation and private
+annotation evidence; notes excludes consumed annotations. the internal
+`highlight_annotation` family admits the owner and current liveness before
+matching, scoring or excerpt generation. quotation and annotation witnesses
+coalesce by highlight using the strongest eligible evidence and deterministic
+ties. `matched_field` and activation retain the winning field.
+ libraries/readings are global-only. web snapshots
 are external resources; links and citations are relationships, not extra results.
 
 scopes are all, media, library and conversation, not generic ancestry. each row

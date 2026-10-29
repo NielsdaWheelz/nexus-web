@@ -603,7 +603,7 @@ function PaneView({
             data-pane-refresh-eligible={pull || undefined}
           >
             <div ref={contentRef} className={styles.routeContent}>
-              {route.locator !== null && route.id !== "media" && route.id !== "note" && route.id !== "conversation" ? <WholeSourceArrival resourceRef={body?.resourceRef ?? null} paneRef={paneRef} /> : null}
+              {route.locator !== null && route.id !== "media" && route.id !== "note" && route.id !== "highlight" && route.id !== "conversation" ? <WholeSourceArrival resourceRef={body?.resourceRef ?? null} paneRef={paneRef} /> : null}
               {children}
             </div>
             {refresh.indicator}

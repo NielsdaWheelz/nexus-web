@@ -6,6 +6,7 @@ and locators stay canonical (source fragment ids and offsets).
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -70,11 +71,14 @@ class PassageSourceReads:
     ranges: dict[UUID, list[tuple[UUID, int, int]]]
     sources: dict[UUID, list[text_quote.NormalizedOwnerSource]]
     note_texts: dict[UUID, str]
+    annotation_texts: dict[UUID, str]
     pdf_texts: dict[UUID, text_quote.NormalizedText]
     pdf_pages: dict[UUID, list[tuple[int, int, int]]]
 
 
-def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> PassageSourceReads:
+def read_passage_sources(
+    db: Session, owners: Sequence[tuple[str, UUID]], *, viewer_id: UUID | None = None
+) -> PassageSourceReads:
     """Load each source family once for a page of quote selectors; callers prove
     visibility.
 
@@ -86,6 +90,7 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
     """
     media_ids = list({id_ for scheme, id_ in owners if scheme == "media"})
     note_ids = list({id_ for scheme, id_ in owners if scheme == "note_block"})
+    highlight_ids = list({id_ for scheme, id_ in owners if scheme == "highlight"})
     media = (
         db.execute(
             text(
@@ -244,6 +249,18 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
         if note_ids
         else {}
     )
+    annotations = (
+        dict(
+            db.execute(
+                text(
+                    "SELECT id,annotation_body_text FROM highlights WHERE id=ANY(:ids) AND user_id=:viewer_id AND authored_visible AND annotation_body_pm_json IS NOT NULL"
+                ),
+                {"ids": highlight_ids, "viewer_id": viewer_id},
+            ).tuples()
+        )
+        if highlight_ids
+        else {}
+    )
     pages: dict[UUID, list[tuple[int, int, int]]] = {id_: [] for id_ in pdfs}
     if pdfs:
         for owner, page, start, end in db.execute(
@@ -253,7 +270,7 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
             {"ids": list(pdfs)},
         ):
             pages[owner].append((page, start, end))
-    return PassageSourceReads(kinds, canonical, ranges, sources, notes, pdfs, pages)
+    return PassageSourceReads(kinds, canonical, ranges, sources, notes, annotations, pdfs, pages)
 
 
 def permitted_note_ranges(db: Session, scope: MediaTextScope) -> dict[UUID, tuple[UUID, int, int]]:
@@ -413,8 +430,10 @@ def resolve_passage_selector(
             return _resolve_pdf_passage(
                 reads, media_id=owner_id, exact=exact, prefix=prefix, suffix=suffix, hint=hint
             )
-    if owner_scheme == "note_block":
-        words = reads.note_texts.get(owner_id)
+    if owner_scheme in ("note_block", "highlight"):
+        words = (reads.note_texts if owner_scheme == "note_block" else reads.annotation_texts).get(
+            owner_id
+        )
         if words is None:
             return PassageSelectorResolution(QuoteStatus.no_match, "", "", None)
         sources = [
@@ -426,17 +445,26 @@ def resolve_passage_selector(
             sources, exact=exact, prefix=prefix, suffix=suffix
         )
         match = text_quote.project_note_match(words, match, exact=exact)
-    else:
-        match = text_quote.match_quote_in_sources(
-            reads.sources.get(owner_id, []), exact=exact, prefix=prefix, suffix=suffix
-        )
+        if match.status is not QuoteStatus.unique:
+            return PassageSelectorResolution(match.status, "", "", None)
+        locator: dict[str, Any] = {
+            "kind": "text",
+            "start_offset": match.raw_start,
+            "end_offset": match.raw_end,
+        }
+        if owner_scheme == "highlight":
+            locator |= {
+                "kind": "highlight_annotation_text",
+                "highlight_id": str(owner_id),
+                "body_sha256": hashlib.sha256(words.encode("utf-8")).hexdigest(),
+            }
+        return PassageSelectorResolution(QuoteStatus.unique, match.prefix, match.suffix, locator)
+    match = text_quote.match_quote_in_sources(
+        reads.sources.get(owner_id, []), exact=exact, prefix=prefix, suffix=suffix
+    )
     if match.status is not QuoteStatus.unique:
         return PassageSelectorResolution(match.status, "", "", None)
-
-    locator: dict[str, Any]
-    if owner_scheme == "note_block":
-        locator = {"kind": "text", "start_offset": match.raw_start, "end_offset": match.raw_end}
-    elif hint.get("kind") == "time" and match.t_start_ms is not None:
+    if hint.get("kind") == "time" and match.t_start_ms is not None:
         # Times are recomputed from the matched fragment, not trusted from the hint.
         locator = {"kind": "time", "t_start_ms": match.t_start_ms, "t_end_ms": match.t_end_ms}
     else:
@@ -563,8 +591,9 @@ def evidence_resolution(
                 "t_end_ms": t_end_ms,
                 "text_quote": quote,
             }
-    elif resolver_kind == "note":
-        note_block_id = selector.get("note_block_id")
+    elif resolver_kind in ("note", "highlight_annotation"):
+        owner_key = "note_block_id" if resolver_kind == "note" else "highlight_id"
+        note_block_id = selector.get(owner_key)
         if (
             isinstance(note_block_id, str)
             and isinstance(start_offset, int)
@@ -574,9 +603,9 @@ def evidence_resolution(
         ):
             status = "resolved"
             highlight = {
-                "kind": "note_text",
+                "kind": "note_text" if resolver_kind == "note" else "highlight_annotation_text",
                 "evidence_span_id": span_id,
-                "note_block_id": note_block_id,
+                owner_key: note_block_id,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "text_quote": quote,
@@ -674,16 +703,20 @@ def locator_from_resolution(
             "t_end_ms": selector.get("t_end_ms"),
             "text_quote_selector": quote_selector,
         }
-    elif kind == "note":
+    elif kind in ("note", "highlight_annotation"):
         locator = {
-            "type": "note_block_offsets",
-            "block_id": selector.get("note_block_id"),
+            "type": "note_block_offsets" if kind == "note" else "highlight_annotation_offsets",
+            "block_id" if kind == "note" else "highlight_id": selector.get(
+                "note_block_id" if kind == "note" else "highlight_id"
+            ),
             "text_quote_selector": quote_selector,
             "start_offset": selector.get("start_offset"),
             "end_offset": selector.get("end_offset"),
         }
     else:
         raise AssertionError("Resolved evidence has unsupported resolver kind")
+    if kind == "highlight_annotation":
+        locator["body_sha256"] = selector["body_sha256"]
 
     validated = retrieval_locator_json(locator)
     if validated is None:

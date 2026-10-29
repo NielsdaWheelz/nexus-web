@@ -386,6 +386,7 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
     {resource.excerpt !== null ? <ResourceBody body={authoredItem(resource, match.readingRef).preview.body} /> : null}
     <ExcerptDisclosure item={authoredItem(resource, match.readingRef)} />
     {excerpt ? <p className={styles.evidence}>
+      {match.matchedField === "annotation" ? <span>annotation: </span> : null}
       {excerpt.before ? "…" : null}
       {excerpt.marks.reduce<{ at: number; parts: ReactNode[] }>((acc, [start, end], index) => ({ at: end,
         parts: [...acc.parts, excerpt.text.slice(acc.at, start), <mark key={index}>{excerpt.text.slice(start, end)}</mark>] }), { at: 0, parts: [] }).parts}
@@ -417,6 +418,7 @@ function SearchResult({ row, selection, podcastSubject, afterRemoval }: { row: R
     case "media": case "named": break;
     default: assertNever(body);
   }
+  if (evidence.matched_field === "annotation" && excerpt) excerpt = <><span>annotation: </span>{excerpt}</>;
   const href = item.activation.href;
   const displayItem = row.item.ref === selection?.ref ? { ...row.item, activation: selection.activation } : row.item;
   return <ResourceIndexRow

@@ -117,6 +117,7 @@ persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
 gecko bridge accepts that permission without applying it; the helper verifies the
 grant and real storage persistence before returning. on macos its app-data home
 also stays inside the owned temporary root. no global profile or trust changes.
+its optional profile proxy covers shared-worker traffic with end-to-end tls.
 `restart(offline)` closes the actual browser process and reopens its exact profile;
 callers use the returned context/page. offline mode is supplied at context creation,
 before restored pages or shared workers can reconnect.

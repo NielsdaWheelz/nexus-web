@@ -153,8 +153,9 @@ export function useNexusController() {
     : null;
   const listIdentity = JSON.stringify([accountId, rootMode, viewport.isMobile, query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && (!viewport.isMobile || rootMode !== "Overview");
-  const retainedLocalRefs = list.identity === listIdentity ? list.groups.flatMap(group => group.rows).flatMap(row => row.localMatch ? [row.localMatch.resource.ref] : []) : [];
-  const find = useNexusFind({ open: finding && !composing, query: parsed, retainedLocalRefs });
+  const retainedLocalTargets = list.identity === listIdentity ? list.groups.flatMap(group => group.rows).flatMap(row => row.localMatch
+    ? [{ref: row.localMatch.resource.ref, field: row.localMatch.matchedField === "annotation" ? "annotation" as const : null}] : []) : [];
+  const find = useNexusFind({ open: finding && !composing, query: parsed, retainedLocalTargets });
   const panes = useMemo<NexusPane[]>(
     () =>
       state.panes.map((pane) => ({
@@ -306,7 +307,8 @@ export function useNexusController() {
     }
     if (action.kind === "Unavailable") { setAnnouncement(action.reason); return null; }
     if (row?.localMatch && (find.missingLocal.has(row.localMatch.resource.ref)
-      || !find.local.some(match => match.resource.ref === row.localMatch?.resource.ref) && !find.localValidationReady)) {
+      || !find.local.some(match => match.resource.ref === row.localMatch?.resource.ref
+        && (match.matchedField === "annotation") === (row.localMatch?.matchedField === "annotation")) && !find.localValidationReady)) {
       setAnnouncement(find.missingLocal.has(row.localMatch.resource.ref) ? "selection no longer available" : "checking availability…");
       return null;
     }

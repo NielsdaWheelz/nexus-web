@@ -47,10 +47,8 @@ def _state_sql(table: str) -> str:
     if table != "authored_resources":
         return "state"
     return (
-        "state || CASE WHEN state->>'kind' IN ('note','page') THEN "
-        "jsonb_build_object(CASE state->>'kind' WHEN 'note' THEN 'body_state' ELSE 'title_state' END,"
-        "rtrim(translate(replace(encode(merge_bytes,'base64'),E'\\n',''),'+/','-_'),'=')) "
-        "ELSE '{}'::jsonb END"
+        "state || jsonb_build_object(CASE state->>'kind' WHEN 'page' THEN 'title_state' ELSE 'body_state' END,"
+        "rtrim(translate(replace(encode(merge_bytes,'base64'),E'\\n',''),'+/','-_'),'='))"
     )
 
 
@@ -81,11 +79,13 @@ def lock_account(db: Session, account_id: UUID) -> int:
 
 
 def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> AcceptedChanges:
-    if request.format_revision != 3:
+    if request.format_revision != 4:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
     if request.replica_id in {
         uuid5(account_id, "authored:server"),
         uuid5(account_id, "authored:server:2"),
+        uuid5(account_id, "authored:server:3"),
+        uuid5(account_id, "authored:server:4"),
     }:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reserved server replica")
     with transaction(db):
@@ -93,12 +93,12 @@ def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> Accep
         db.execute(
             text(
                 "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) "
-                "VALUES (:a,:r,0,3) ON CONFLICT DO NOTHING"
+                "VALUES (:a,:r,0,4) ON CONFLICT DO NOTHING"
             ),
             {"a": account_id, "r": request.replica_id},
         )
         accepted = _accepted(db, account_id, request.replica_id)
-        _require_current_replica(db, account_id, request.replica_id)
+        require_current_replica(db, account_id, request.replica_id)
     return AcceptedChanges(accepted_command_seq=str(accepted), head_cursor=str(cursor))
 
 
@@ -200,6 +200,8 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
     if request.replica_id in {
         uuid5(account_id, "authored:server"),
         uuid5(account_id, "authored:server:2"),
+        uuid5(account_id, "authored:server:3"),
+        uuid5(account_id, "authored:server:4"),
     }:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reserved server replica")
     if len(_json(request.model_dump(mode="json")).encode()) > MAX_ENVELOPE_BYTES:
@@ -210,7 +212,7 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
     with transaction(db):
         cursor = lock_account(db, account_id)
         accepted = _accepted(db, account_id, request.replica_id)
-        _require_current_replica(db, account_id, request.replica_id)
+        require_current_replica(db, account_id, request.replica_id)
         frontier = {
             str(replica): int(sequence)
             for replica, sequence in db.execute(
@@ -282,18 +284,24 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
     return AcceptedChanges(accepted_command_seq=str(accepted), head_cursor=str(cursor))
 
 
-def _require_current_replica(db: Session, account_id: UUID, replica_id: UUID) -> None:
+def require_current_replica(db: Session, account_id: UUID, replica_id: UUID) -> None:
     revision = db.scalar(
         text("SELECT format_revision FROM authored_replicas WHERE account_id=:a AND replica_id=:r"),
         {"a": account_id, "r": replica_id},
     )
-    if revision != 3:
+    if revision != 4:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
 
 
 def _validate_capture_sources(db: Session, account_id: UUID, changes: list[Change]) -> None:
-    from nexus.schemas.retrieval import XCaptureOffsetsLocator
+    from nexus.schemas.retrieval import HighlightAnnotationOffsetsLocator, XCaptureOffsetsLocator
 
+    created_highlights = {
+        resource.ref
+        for change in changes
+        for resource in change.resources
+        if resource.kind == "highlight"
+    }
     for change in changes:
         captures = [
             (r.source_ref, r.selection.value) for r in change.resources if r.kind == "highlight"
@@ -301,6 +309,24 @@ def _validate_capture_sources(db: Session, account_id: UUID, changes: list[Chang
         captures += [(p.source_ref, p.capture.value) for p in change.passages]
         for source_ref, capture in captures:
             locator = capture.locator
+            if isinstance(locator, HighlightAnnotationOffsetsLocator) or source_ref.startswith(
+                "highlight:"
+            ):
+                if isinstance(locator, HighlightAnnotationOffsetsLocator) and source_ref != (
+                    f"highlight:{locator.highlight_id}"
+                ):
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST, "Annotation capture identity mismatch"
+                    )
+                if source_ref not in created_highlights and not db.scalar(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM authored_resources WHERE account_id=:a "
+                        "AND ref=:r AND state->>'kind'='highlight')"
+                    ),
+                    {"a": account_id, "r": source_ref},
+                ):
+                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
+                continue
             if not isinstance(locator, XCaptureOffsetsLocator):
                 continue
             if (
@@ -438,11 +464,47 @@ def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> No
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Identity belongs to another account"
             )
+    highlight_states = {state.ref: state for state in result.resources if state.kind == "highlight"}
+    previous_highlights = (
+        {
+            row.ref: row
+            for row in db.execute(
+                text(
+                    "SELECT ref,state,visible FROM authored_resources WHERE account_id=:a "
+                    "AND ref=ANY(:refs)"
+                ),
+                {"a": account_id, "refs": list(highlight_states)},
+            )
+        }
+        if highlight_states
+        else {}
+    )
+    public_highlight_changes: set[UUID] = set()
+    for item in result.projections:
+        if item.kind != "highlight":
+            continue
+        old = previous_highlights.get(item.ref)
+        current = highlight_states[item.ref]
+        if (
+            (old is None and item.visible)
+            or (old is not None and old.visible != item.visible)
+            or (
+                old is not None
+                and item.visible
+                and (
+                    old.state["source_ref"] != current.source_ref
+                    or old.state["selection"]["value"]
+                    != current.selection.value.model_dump(mode="json")
+                    or old.state["color"]["value"] != current.color.value
+                )
+            )
+        ):
+            public_highlight_changes.add(require_ref(item.ref).id)
     for name, (table, key) in TABLES.items():
         for state in getattr(result, name):
             value = state.model_dump(mode="json")
-            if name == "resources" and value["kind"] in ("note", "page"):
-                encoded = value.pop("body_state" if value["kind"] == "note" else "title_state")
+            if name == "resources":
+                encoded = value.pop("title_state" if value["kind"] == "page" else "body_state")
                 merge_bytes = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
                 db.execute(
                     text(
@@ -484,7 +546,7 @@ def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> No
         )
     from nexus.services.authored.projections import project
 
-    project(db, account_id, result)
+    project(db, account_id, result, public_highlight_changes=public_highlight_changes)
 
 
 def read_states(
@@ -570,10 +632,10 @@ def server_command(
     synthesize a stale replacement body: edits carry an actual Yjs baseline delta.
     """
     cursor = lock_account(db, account_id)
-    replica = uuid5(account_id, "authored:server:2")
+    replica = uuid5(account_id, "authored:server:4")
     db.execute(
         text(
-            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,3) "
+            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,4) "
             "ON CONFLICT DO NOTHING"
         ),
         {"a": account_id, "r": replica},
@@ -756,7 +818,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
     )
     yield (
         _json(
-            {"type": "header", "format_revision": 3, "head_cursor": watermark, "lamport": lamport}
+            {"type": "header", "format_revision": 4, "head_cursor": watermark, "lamport": lamport}
         )
         + "\n"
     )
@@ -782,7 +844,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         _json(
             {
                 "type": "footer",
-                "format_revision": 3,
+                "format_revision": 4,
                 "head_cursor": watermark,
                 "lamport": lamport,
                 "counts": counts,

@@ -26,7 +26,7 @@ interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resource
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string) => void;
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
-  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? (resource.kind === "highlight" ? localResourceLabel(resource) : ""), local_date: resource.local_date} : null;
+  return resource ? {ref: resource.ref, title: resource.title ?? (resource.kind === "highlight" ? localResourceLabel(resource) : resource.body_text?.split("\n")[0] ?? ""), local_date: resource.local_date} : null;
 }
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */

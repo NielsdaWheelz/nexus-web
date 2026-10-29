@@ -17,6 +17,7 @@ locator is unavailable; a piece audience still requires every canonical anchor.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -898,6 +899,7 @@ def media_passages(
     anchor_sources = locator_resolver.read_passage_sources(
         db,
         list({(owner.scheme, owner.id) for owners in anchor_owners.values() for owner in owners}),
+        viewer_id=viewer_id,
     )
     located_anchors: list[
         tuple[Any, LocationQuote, UUID | None, list[tuple[ResourceRef, dict[str, Any] | None]]]
@@ -1045,6 +1047,7 @@ class LocationReads:
     pdfs: dict[UUID, Any]
     pages: list[Any]
     notes: dict[UUID, NoteRead]
+    annotations: dict[UUID, Any]
     messages: dict[UUID, Any]
     passages: locator_resolver.PassageSourceReads
 
@@ -1141,6 +1144,14 @@ def location_reads(
     from nexus.services.note_bodies import read_notes
 
     notes = read_notes(db, viewer_id=viewer_id, note_ids=note_ids)
+    from nexus.services.highlights import read_highlight_annotations
+
+    annotations = read_highlight_annotations(
+        db,
+        viewer_id=viewer_id,
+        highlight_ids=[ref.id for ref in owners if ref.scheme == "highlight"],
+    )
+
     messages = (
         {
             row.id: row
@@ -1160,6 +1171,7 @@ def location_reads(
         pdfs=pdfs,
         pages=pages,
         notes=notes,
+        annotations=annotations,
         messages=messages,
         passages=passages,
     )
@@ -1261,6 +1273,47 @@ def current_locator(
         ):
             return None
         return _with_words(raw, words)
+    if kind == "highlight_annotation_offsets":
+        annotation = reads.annotations.get(owner.id)
+        if (
+            owner.scheme != "highlight"
+            or target.field != "annotation"
+            or str(owner.id) != raw["highlight_id"]
+            or annotation is None
+            or exact is None
+        ):
+            return None
+        words = annotation.body_text
+        digest = hashlib.sha256(words.encode("utf-8")).hexdigest()
+        start, end = raw["start_offset"], raw["end_offset"]
+        if (
+            raw["body_sha256"] == digest
+            and 0 <= start < end <= len(words)
+            and words[start:end] == exact
+        ):
+            return raw
+        match = text_quote.match_quote_in_sources(
+            [
+                text_quote.NormalizedOwnerSource(
+                    None, None, None, text_quote.normalize_for_match(words)
+                )
+            ],
+            exact=_normal(exact),
+            prefix=_normal(prefix),
+            suffix=_normal(suffix),
+        )
+        match = text_quote.project_note_match(words, match, exact=_normal(exact))
+        if match.status is not text_quote.QuoteStatus.unique:
+            return None
+        return _with_words(
+            {
+                **raw,
+                "start_offset": match.raw_start,
+                "end_offset": match.raw_end,
+                "body_sha256": digest,
+            },
+            words[match.raw_start : match.raw_end],
+        )
     if kind == "note_block_offsets":
         note = reads.notes.get(owner.id)
         if note is None or exact is None:
@@ -1383,6 +1436,15 @@ def resolve_quote(
     if found is None:
         return None
     selector = {"exact": quote.exact, "prefix": quote.prefix or "", "suffix": quote.suffix or ""}
+    if owner.scheme == "highlight":
+        return {
+            "type": "highlight_annotation_offsets",
+            "highlight_id": str(owner.id),
+            "start_offset": found["start_offset"],
+            "end_offset": found["end_offset"],
+            "text_quote_selector": selector,
+            "body_sha256": found["body_sha256"],
+        }
     if owner.scheme == "note_block":
         return {
             "type": "note_block_offsets",
@@ -1513,6 +1575,7 @@ def current_passages(
         target = (
             CapturedPassageTarget.model_validate(
                 {
+                    "field": "annotation" if owner.scheme == "highlight" else None,
                     "owner_ref": owner.uri,
                     "locator": locator,
                     "precision": "exact",

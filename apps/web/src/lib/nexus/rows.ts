@@ -397,7 +397,7 @@ export function candidateRows(input: {
       const owner = ref ? visible.find(candidate => candidate.key === `Resource:${ref}` && candidate.item && !candidate.localMatch) : null;
       if (!owner || !row.item || !row.matchMethod || suppressed.has(row.key)) continue;
       const at = composed.indexOf(owner);
-      composed[at] = { ...owner, matchingPassage: owner.matchingPassage ?? { item: row.item, match: row.match ?? null, match_method: row.matchMethod } };
+      composed[at] = { ...owner, matchingPassage: owner.matchingPassage ?? { item: row.item, match: row.match ?? null, match_method: row.matchMethod, matched_field: row.item.activation.field === "annotation" ? "annotation" : null } };
       suppressed.add(row.key);
       changed = true;
     }

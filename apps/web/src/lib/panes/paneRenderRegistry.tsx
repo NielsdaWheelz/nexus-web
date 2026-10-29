@@ -33,6 +33,7 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
+  highlight: () => import("@/app/(authenticated)/highlights/[id]/HighlightPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),

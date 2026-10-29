@@ -11,7 +11,7 @@ import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEA
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -45,7 +45,6 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        writeFileSync(path.join(outDir, "authored-retired-formats.json"), JSON.stringify(RETIRED_FORMAT_TABLES));
         const cursor = JSON.stringify(["a0", ""]);
         type SingleQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const samples: Record<SingleQuery["kind"], SingleQuery[]> = {
@@ -62,8 +61,6 @@ export default defineConfig({
           daily: [{ kind: "daily", local_date: "" }],
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
-          highlight_notes: [{ kind: "highlight_notes", ref: "" }],
-          annotation_notes: [{ kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
           adjacency: [null, cursor].map(cursor => ({ kind: "adjacency", ref: "", cursor, limit: 100 })),
@@ -106,6 +103,6 @@ self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key
 self.addEventListener("message",event=>{if(event.data?.op==="ready")event.waitUntil((async()=>{const cache=await caches.open(CACHE);const ready=(await Promise.all(ASSETS.map(asset=>cache.match(asset)))).every(Boolean);event.ports[0]?.postMessage({ready});})());});
 self.addEventListener("fetch",event=>{const request=event.request,url=new URL(request.url);if(request.method!=="GET"||url.origin!==self.location.origin)return;
 if(ASSETS.includes(url.pathname)){event.respondWith((async()=>{const cache=await caches.open(CACHE);return await cache.match(url.pathname)||fetch(request);})());return;}
-if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
+if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|highlights\/[^/]+$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
 event.respondWith((async()=>{const cached=await(await caches.open(CACHE)).match("/_nexus/app/index.html");if(!cached)throw Error("offline workspace shell incomplete");const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));const html=(await cached.text()).replaceAll("__NEXUS_NONCE__",nonce);return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Content-Security-Policy":POLICY.replaceAll("__NEXUS_NONCE__",nonce),"Cache-Control":"no-store"}});})());});`;
 }

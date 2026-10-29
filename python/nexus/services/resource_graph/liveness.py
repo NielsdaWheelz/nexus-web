@@ -10,13 +10,13 @@ outlives its source note or media and grants no access to either. Nothing physic
 deletes an authored row; readers compose these predicates instead.
 """
 
-# Origins of authored link projections: seeded attachments keep theirs; new links are user.
-AUTHORED_LINK_ORIGINS = ("user", "highlight_note", "link_note")
+# Every authored link projects as a user edge.
+AUTHORED_LINK_ORIGINS = ("user",)
 
 
 def authored_link_sql(alias: str) -> str:
     """SQL boolean: the ``resource_edges`` row ``alias`` projects an authored link."""
-    return f"{alias}.origin IN ('user', 'highlight_note', 'link_note')"
+    return f"{alias}.origin = 'user'"
 
 
 def ref_live_sql(scheme: str, ident: str) -> str:

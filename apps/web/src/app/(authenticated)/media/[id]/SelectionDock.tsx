@@ -14,7 +14,8 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
-import { AttachedNotes, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
+import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
@@ -342,8 +343,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     });
     // a failed local commit is retried as the same frozen command, never saved again.
     const saveAction = failed ? command("RetryPassageSave", "Retry saving", <Save size={16} aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
-      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "Save highlight" : "Save note",
-        <Save size={16} aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write a note to add it to this highlight." : null));
+      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save annotation",
+        <Save size={16} aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write an annotation." : null));
     const newLabel = hasMessage ? "Send in new chat" : "Open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
@@ -379,7 +380,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
       {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
         : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
-      <SelectionAction action={saveAction} help={failed ? "retry the pending save" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} />
+      {draft.bodyRole === "annotation_or_question" || failed ? <SelectionAction action={saveAction} help={failed ? "retry the pending save" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} /> : null}
       {canQuote ? <>
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} />
         {!isMobile ? <div className={styles.highlightControl}>
@@ -405,17 +406,17 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : null}
         {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
-        {annotation ? <AttachedNotes annotation={annotation} /> : null}
+        {draft.highlightId && draft.bodyRole === "question" ? <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} /> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
             <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`} containingNoteRef={null}
-              body={draft.body} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
-              reference={composer.reference()} placeholder={isMobile ? opening.mode === "Ask" ? "ask about this passage" : annotation?.notes.length ? "add another note…" : "write a note…" : "note or question…"} compact editable
+              body={draft.body} revision={draft.revision} label={draft.bodyRole === "question" ? "question about passage" : "annotation"}
+              reference={composer.reference()} placeholder={draft.bodyRole === "question" || opening.mode === "Ask" ? "ask about this passage…" : "write an annotation…"} compact editable
               focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
               onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-              onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
+              onSave={draft.bodyRole === "question" ? undefined : composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
               onContinueChat={canQuote ? () => composer.continueChat() : undefined}
             />
           </PaneReturnVisitScope>
@@ -475,7 +476,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           const own = store.annotation(mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
             {own ? own.excerpt.kind === "content" ? excerptTextParts(own.excerpt.body).exact : "table excerpt" : "highlight"}
-            <span>{mark.color} · {own ? `your highlight${own.notes.length ? ` · ${own.notes.length === 1 ? "1 note" : `${own.notes.length} notes`}` : ""}` : "shared highlight"}</span>
+            <span>{mark.color} · {own ? `your highlight${own.body ? " · annotation" : ""}` : "shared highlight"}</span>
           </button>;
         })}
       </div>

@@ -99,13 +99,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       const result = await call<QueryResult>("query", {query,...await nativeQueryPlan(query)});
-      return {...result, canonical_source_ref: null, rows: result.rows.map(row => ({...row, activation_ref: null}))};
+      return {...result, canonical_source_ref: null, rows: result.rows.map(row => ({...row, activation_ref: null, matched_field: null, activation_field: null}))};
     }
     for (;;) {
       const before = await call<ReplicaState>("replica");
       const read = async (plan: CompiledQuery) => (await call<{rows: Record<string, unknown>[]}>("search_read", await nativeSearchPlan(plan))).rows;
       const result = query.kind === "excerpt" ? await excerptQuery(read,query) : query.kind === "source_alias" ? await sourceAliasQuery(read, query)
-        : await searchQuery(read, query, async (text, expression) => (await call<{matched: boolean}>("search_match", {text,expression})).matched);
+        : await searchQuery(read, query, async (text, expression) => (await call<{score: number|null}>("search_match", {text,expression})).score);
       const after = await call<ReplicaState>("replica");
       if (before.store_revision === after.store_revision) return {store_revision:after.store_revision,...result};
     }

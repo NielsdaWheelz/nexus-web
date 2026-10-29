@@ -53,9 +53,11 @@ export interface ComposerDraft {
   passage: Passage & { quote: string; excerpt: ExcerptBody | null; excerpt_start: number | null; excerpt_end: number | null };
   /** A new selection's frozen local capture; null when the draft opened an existing highlight. */
   capture: Capture | null;
-  /** The annotated highlight, once it exists. Its notes are its own resources, never this draft. */
+  /** The highlight whose permanent annotation is independent from this question draft. */
   highlightId: string | null;
-  /** The unsubmitted new note. Saving commits it locally; dismissal discards it. */
+  bodyRole: "annotation_or_question" | "question";
+  annotationBase: string | null;
+  /** Unsubmitted annotation-or-question input. Intentional loss uses the work guard. */
   body: Body;
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;
