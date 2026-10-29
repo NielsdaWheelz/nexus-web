@@ -7,21 +7,20 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { ComponentProps } from "react";
-import {FeedbackFailure, FeedbackBusy} from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, FeedbackNotice, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import Button from "@/components/ui/Button";
-import {apiTransportFeedback} from "@/lib/api/client";
+import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
+import { excerptTextParts } from "@nexus/authored/excerpt";
+import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
-import ResourceBody, { ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
+import ResourceBody, { ExcerptText, ResourceIndexBody, ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import type { ResourceItem } from "@/lib/resources/items";
-import { MediaFacts } from "@/components/media/MediaIdentity";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
-import { resourceMetadataText } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { PANE_TITLES_FAILED, useWorkspacePresentations } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
@@ -29,22 +28,36 @@ import styles from "./Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
-type DisclosureControls = Pick<ComponentProps<typeof ExcerptDisclosure>, "triggerAttributes" | "returnFocus">;
 type RowActions = Pick<NexusController, "activate" | "closePane" | "destinationHref"> & { mobile: boolean; picker: boolean };
+type Body = Schema<"ResourceItemOut">["preview"]["body"];
 
-export function NexusRowBody({ row, desktop, disclosure }: { row: NexusRow; desktop: boolean; disclosure?: DisclosureControls }) {
+/** A capture's displayed literal: its selected text and selection omission marks. null paints a placeholder. */
+function selectedLiteral(body: Extract<Body, { kind: "passage" }>): Schema<"ExcerptOut"> | null {
+  if (body.excerpt.kind !== "content") return null;
+  const exact = excerptTextParts(body.excerpt.body).exact;
+  return exact ? { text: exact, truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after } : null;
+}
+
+/** Compact rows paint a capture's selected literal, with ranges when the match is that literal; the full excerpt is an explicit disclosure. */
+function RowContent({ body, match }: { body: Body; match: Schema<"SearchMatchOut"> | null }) {
+  if (body.kind !== "passage") return <ResourceBody body={body} match={match} />;
+  const literal = selectedLiteral(body);
+  return <span data-resource-primary>{literal ? <ExcerptText excerpt={literal} match={match} /> : <ResourceIndexBody body={body} />}</span>;
+}
+
+/** Mobile rows are one native button, so only phrasing content belongs here; evidence follows it. */
+export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
   const Icon = row.icon;
   const Content = desktop ? "div" : "span";
-  const facts = rowFacts(row, desktop);
-  const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
+  const facts = rowFacts(row);
   return (
     <>
       <span className={`${collection.adornment} ${styles.rowIcon}`} aria-hidden="true">
         <Icon size={18} aria-hidden="true" />
       </span>
       <Content className={`${collection.content} ${styles.rowBody}`}>
-        {row.item ? <NexusResourceContent item={row.item} row={row} excerptId={excerptId} desktop={desktop} disclosure={disclosure} /> : <>
-          <span className={styles.rowLabel}>{row.label}</span>
+        {row.item && desktop ? <NexusResourceContent item={row.item} row={row} facts={facts} /> : <>
+          <span className={styles.rowLabel} title={nexusRowPrimaryText(row)}>{row.item ? <RowContent body={row.item.preview.body} match={row.match ?? null} /> : row.label}</span>
           {facts ? <span className={collection.detail}>{facts}</span> : null}
         </>}
         {row.action.kind === "Unavailable" ? <span className={collection.detail}>{row.action.reason}</span> : null}
@@ -53,52 +66,75 @@ export function NexusRowBody({ row, desktop, disclosure }: { row: NexusRow; desk
   );
 }
 
-function NexusResourceContent({ item: supplied, row, excerptId, desktop, disclosure }: { item: ResourceItem; row: NexusRow; excerptId: string | undefined; desktop: boolean; disclosure?: DisclosureControls }) {
-  const item = useResolvedResourceItem(supplied);
-  const body = item.preview.body;
-  const metadata = resourceMetadataText(item, row.matchMethod);
-  const evidence = separateMatchEvidence(body, row.match ?? null);
-  const summary = body.kind === "media" ? body.media_summary : null;
-  if (!desktop) return <>
-    <span className={styles.rowLabel}>{body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : item.preview.source?.title ?? row.type ?? "resource"}</span>
-    <span className={collection.detail}>{metadata}{summary ? <>{metadata ? " · " : null}<MediaFacts summary={summary} /></> : null}{row.state ? ` · ${row.state.toLowerCase()}` : ""}</span>
-  </>;
+/** Names and tooltips describe the literal primary content the row actually paints. */
+export function nexusRowPrimaryText(row: NexusRow): string {
+  const literal = (excerpt: Schema<"ExcerptOut">) => `${excerpt.truncated_before ? "…" : ""}${excerpt.text}${excerpt.truncated_after ? "…" : ""}`;
+  const body = row.item?.preview.body;
+  if (!body) return row.label;
+  switch (body.kind) {
+    case "named": return body.title || "untitled";
+    case "prose": return body.excerpt.text ? literal(body.excerpt) : row.label;
+    case "passage": return body.excerpt.kind === "content" ? literal({ text: excerptTextParts(body.excerpt.body).exact || "selected region",
+      truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }) : "table excerpt";
+    case "images": return [body.count === 1 ? "image" : `${body.count} images`, ...body.alts.flatMap(alt => alt ? [literal(alt)] : [])].join("\n");
+    case "reference": return body.label?.text ? `reference · ${literal(body.label)}` : "embedded resource";
+    case "media": return body.media_summary.title;
+  }
+}
+
+/** Evidence is separate unless it is exactly the literal `RowContent` already paints with its ranges. */
+function bodyEvidence(body: Body, match: Schema<"SearchMatchOut"> | null): Schema<"SearchMatchOut"> | null {
+  if (body.kind === "media" && match?.excerpt.text === body.media_summary.title
+    && !match.excerpt.truncated_before && !match.excerpt.truncated_after) return null;
+  if (body.kind === "passage" && match?.excerpt.text && match.excerpt.text === selectedLiteral(body)?.text) return null;
+  return separateMatchEvidence(body, match);
+}
+
+/** A matching passage replaces the row's own evidence. */
+function rowEvidence(row: NexusRow): Schema<"SearchMatchOut"> | null {
+  if (row.matchingPassage) return bodyEvidence(row.matchingPassage.item.preview.body, row.matchingPassage.match);
+  return row.item ? bodyEvidence(row.item.preview.body, row.match ?? null) : null;
+}
+
+/** Supplemental evidence excludes a complete literal already spoken as the primary name. */
+export function nexusRowEvidenceText(row: NexusRow): string | null {
+  if (row.matchingPassage) return row.matchingPassage.match?.excerpt.text ?? row.matchingPassage.item.label;
+  return rowEvidence(row)?.excerpt.text ?? null;
+}
+
+function RowEvidence({ row, evidence }: { row: NexusRow; evidence: Schema<"SearchMatchOut"> | null }) {
+  return evidence ? <ResourceMatchEvidence match={evidence} />
+    : row.matchingPassage ? <RowContent body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /> : null;
+}
+
+function NexusResourceContent({ item, row, facts }: { item: ResourceItem; row: NexusRow; facts: string }) {
+  const evidence = rowEvidence(row);
   return <>
-    <div className={styles.rowLabel} id={row.matchingPassage || evidence ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
-    <ExcerptDisclosure item={item} {...disclosure} />
-    <span className={collection.detail}>{metadata}
-      {summary ? <>{metadata ? " · " : null}<MediaFacts summary={summary} /></> : null}
-      {row.state ? ` · ${row.state.toLowerCase()}` : null}
-    </span>
-    {evidence ? <div className={`${collection.detail} ${styles.rowSnippet}`} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={evidence} /></div> : null}
-    {row.matchingPassage ? <NexusMatchingPassage passage={row.matchingPassage} excerptId={excerptId} disclosure={disclosure} /> : null}
+    <div className={styles.rowLabel} title={nexusRowPrimaryText(row)}><RowContent body={item.preview.body} match={row.match ?? null} /></div>
+    {facts || row.matchingPassage || evidence ? <div className={styles.rowSupplement}>
+      {facts ? <span className={styles.rowMetadata} title={facts}>{facts}</span> : null}
+      {row.matchingPassage || evidence ? <div className={styles.rowSnippet}><RowEvidence row={row} evidence={evidence} /></div> : null}
+    </div> : null}
   </>;
 }
 
-function NexusMatchingPassage({ passage, excerptId, disclosure }: { passage: NonNullable<NexusRow["matchingPassage"]>; excerptId: string | undefined; disclosure?: DisclosureControls }) {
-  const metadata = resourceMetadataText(passage.item, passage.match_method);
-  const evidence = separateMatchEvidence(passage.item.preview.body, passage.match);
-  return <div className={styles.rowPassage} id={excerptId}>
-    <div className={`${collection.detail} ${styles.rowSnippet}`}><ResourceBody body={passage.item.preview.body} match={passage.match} /></div>
-    <ExcerptDisclosure item={passage.item} {...disclosure} />
-    {evidence ? <div className={`${collection.detail} ${styles.rowSnippet}`}><ResourceMatchEvidence match={evidence} /></div> : null}
-    <span className={collection.detail}>{metadata}</span>
-  </div>;
+/** The row's capture: its matching passage when one was absorbed, else its own item. */
+export function nexusRowExcerptItem(row: NexusRow): ResourceItem | null {
+  return row.matchingPassage?.item ?? row.item ?? null;
 }
 
-/** Mobile evidence is selectable flow content beside its native activation button. */
+/** The visible copy stays "show excerpt"; its name carries the row's complete primary identity. */
+export function nexusRowExcerptName(row: NexusRow): string {
+  return `show excerpt for ${nexusRowPrimaryText(row)}`;
+}
+
+/** Mobile evidence is selectable flow content after the native activation button and its options. */
 export function NexusRowEvidence({ row }: { row: NexusRow }) {
   if (!row.item) return null;
-  const body = row.item.preview.body;
-  const evidence = separateMatchEvidence(body, row.match ?? null);
-  if (body.kind === "media" || body.kind === "named") {
-    if (!evidence && !row.matchingPassage) return null;
-  }
-  return <div className={styles.mobileEvidence} id={`mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}>
-    {body.kind !== "media" && body.kind !== "named" ? <ResourceBody body={body} match={row.match} /> : null}
-    <ExcerptDisclosure item={row.item} />
-    {evidence ? <ResourceMatchEvidence match={evidence} /> : null}
-    {row.matchingPassage ? <NexusMatchingPassage passage={row.matchingPassage} excerptId={undefined} /> : null}
+  const evidence = rowEvidence(row);
+  return <div className={styles.mobileEvidence}>
+    {row.matchingPassage || evidence ? <div className={styles.rowSnippet} id={`mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}><RowEvidence row={row} evidence={evidence} /></div> : null}
+    <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{ "aria-label": nexusRowExcerptName(row) }} />
   </div>;
 }
 
@@ -106,7 +142,7 @@ function TargetMenu({ row, menuProps, activate, closePane, destinationHref, mobi
   const secondary = row.secondary;
   const ownOptions: ActionDescriptor[] = [];
   if (row.matchingPassage) {
-    const action = resourceAction(row.matchingPassage.item);
+    const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
     const href = action.kind === "Available" && action.target.kind === "Resource" && (action.target.activation.kind === "route" || (!picker && action.target.activation.kind === "external")) ? action.target.activation.href : null;
     if (href) ownOptions.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
       onActivate: action.kind === "Available" && action.target.kind === "Resource" && action.target.activation.kind === "external" ? undefined : (event) => {
@@ -153,35 +189,54 @@ export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; me
     : null;
 }
 
-/** The screen owns its live region; this visible status does not announce twice. */
-export function NexusSearchStatus({ controller, returnFocus }: {
-  controller: NexusController;
-  returnFocus: () => HTMLElement | null;
-}) {
-  const admission = useRemoteAdmission();
-  const {text,action} = controller.searchProgress;
-  return <>
-    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending}/>
-    <AuthoredReadFailure {...controller.localSearchFailure} title="couldn’t search this device"/>
-    {[...controller.searchFailures].map(([source,failure]) => {
-      const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
-        : source === "Hybrid" ? "related matches aren’t available" : source === "Direct" ? "couldn’t find this destination" : "couldn’t search your content";
-      const blocked = ["E_INVALID_REQUEST","E_NOT_FOUND","E_CONVERSATION_NOT_FOUND"].includes(failure.error.code);
-      return <FeedbackFailure key={source} scope="Local" occurrence={failure.occurrence}
-        content={apiTransportFeedback(failure.error,title) ?? {tone:"Warning",title,requestId:failure.error.requestId}}
-        announcement="Polite" returnFocus={returnFocus}
-        actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
-          onClick: () => {if (admission !== "Ready") void checkSession(); else controller.retry(source);}, busy:controller.retrying.has(source)}]}/>;
-    })}
-    {text ? <p className={styles.searchStatus}>{text}</p> : null}
-    {action === "refresh" ? <Button reserveIcon onClick={() => {controller.refreshResults(); returnFocus()?.focus({preventScroll:true});}}>refresh results</Button> : null}
-  </>;
+/** The compact query keeps one permanently reserved recovery/busy control. */
+export function NexusQueryStatus() {
+  return <span className={styles.queryStatus}><FeedbackRecoveryControl className={styles.queryStatusButton} /></span>;
 }
 
-export function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
+function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
   const presentations = useWorkspacePresentations();
   const failure = presentations.titleFailure;
   return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence}
     content={apiTransportFeedback(failure.error,PANE_TITLES_FAILED) ?? {tone:"Warning",title:PANE_TITLES_FAILED}} announcement="Polite"
-    actions={[{label:"retry",onClick:presentations.retryTitles,busy:failure.pending}]} returnFocus={returnFocus}/> : null;
+    actions={isStaleBuild(failure.error) ? undefined : [{label:"retry",onClick:presentations.retryTitles,busy:failure.pending}]} returnFocus={returnFocus}/> : null;
+}
+
+/** Domain notices follow candidates; operational failures use the same host's recovery. */
+export function NexusNotices({ controller, returnFocus, id }: {
+  controller: NexusController; returnFocus: () => HTMLElement | null; id: string;
+}) {
+  const admission = useRemoteAdmission();
+  const { kind, text, action } = controller.searchProgress;
+  const recent = controller.recentRead;
+  return <>
+    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending || recent.pending} />
+    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}
+    {[...controller.searchFailures].map(([source, failure]) => {
+      const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
+        : source === "Hybrid" ? "related matches aren’t available" : source === "Direct" ? "couldn’t find this destination" : "couldn’t search your content";
+      const blocked = isStaleBuild(failure.error) || ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code);
+      return <FeedbackFailure key={source} scope="Local" occurrence={failure.occurrence} announcementOccurrence={failure.error}
+        content={apiTransportFeedback(failure.error, title) ?? {tone: "Warning", title, requestId: failure.error.requestId}}
+        announcement="Polite" returnFocus={returnFocus}
+        actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
+          onClick: () => { if (admission !== "Ready") void checkSession(); else controller.retry(source); }, busy: controller.retrying.has(source)}]} />;
+    })}
+    {recent.error !== null ? <FeedbackFailure scope="Local" occurrence={recent.occurrence} announcementOccurrence={recent.error}
+      content={apiTransportFeedback(recent.error, "couldn’t load recent picks") ?? {tone: "Warning", title: "couldn’t load recent picks", requestId: recent.error.requestId}}
+      announcement="Polite" actions={isStaleBuild(recent.error) ? undefined : [{label: "retry", onClick: recent.retry, busy: recent.retrying}]} returnFocus={returnFocus} /> : null}
+    <NexusTitleFailure returnFocus={returnFocus} />
+    {controller.noticeText !== null ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
+      {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
+      {kind === "Notice" ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
+        actions={action === null ? undefined : [{label: SEARCH_ACTION_LABELS[action], onClick: () => {
+          if (action === "refresh") controller.refreshResults();
+          else if (action === "related") controller.retryRelated();
+          else controller.retrySearch();
+          returnFocus()?.focus({preventScroll: true});
+        }, busy: controller.retrying.size > 0}]} /> : null}
+      {controller.resultsHeld ? <FeedbackNotice content={{tone: "Info", title: "search update ready"}} announcement="None"
+        actions={[{label: SEARCH_ACTION_LABELS.refresh, onClick: () => { controller.refreshResults(); returnFocus()?.focus({preventScroll: true}); }}]} /> : null}
+    </section> : null}
+  </>;
 }

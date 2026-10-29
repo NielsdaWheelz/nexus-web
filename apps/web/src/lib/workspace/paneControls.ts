@@ -12,13 +12,12 @@ export type PaneControl = {
 
 /** Pure pane-management content; presenters own dispatch and focus. */
 export function paneControls({
-  state, paneId, title, desktopMaximized, isMobile,
+  state, paneId, title, desktopMaximized,
 }: {
   readonly state: WorkspaceState;
   readonly paneId: string;
   readonly title: string;
   readonly desktopMaximized: boolean;
-  readonly isMobile: boolean;
 }): PaneControl[] {
   const pane = state.panes.find((item) => item.id === paneId);
   if (!pane) return [];
@@ -31,9 +30,9 @@ export function paneControls({
     disabledReason: null,
   } as const;
   const controls: PaneControl[] = [];
-  if (!isMobile && minimized) {
+  if (minimized) {
     controls.push({ slot: "visibility", ...restore });
-  } else if (!minimized) {
+  } else {
     controls.push({
       slot: "visibility",
       command: "minimize",
@@ -44,18 +43,16 @@ export function paneControls({
         ? "keep at least one pane visible" : null,
     });
   }
-  if (!isMobile) {
-    controls.push(desktopMaximized && state.active_primary_pane_id === paneId
-      ? { slot: "layout", ...restore }
-      : {
-          slot: "layout",
-          command: "maximize",
-          icon: Square,
-          label: `Maximize ${title}`,
-          tooltip: "show this pane alone",
-          disabledReason: null,
-        });
-  }
+  controls.push(desktopMaximized && state.active_primary_pane_id === paneId
+    ? { slot: "layout", ...restore }
+    : {
+        slot: "layout",
+        command: "maximize",
+        icon: Square,
+        label: `Maximize ${title}`,
+        tooltip: "show this pane alone",
+        disabledReason: null,
+      });
   controls.push({
     slot: "close",
     command: "close",

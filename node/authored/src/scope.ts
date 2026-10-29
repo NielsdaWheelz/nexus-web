@@ -1,7 +1,8 @@
 /** Read-only search inputs. A revision publishes only after bounded metadata and
  * authorized text pages finish. These facts grant no reader or authored ownership. */
 export type SearchScope = { kind: "all"; id: null } | { kind: "media" | "library" | "conversation"; id: string };
-export type SearchFamily = "notes" | "highlights" | "saved_passages" | "documents" | "conversations" | "people" | "libraries" | "readings";
+export const SEARCH_FAMILIES = ["notes", "highlights", "saved_passages", "documents", "conversations", "people", "libraries", "readings"] as const;
+export type SearchFamily = typeof SEARCH_FAMILIES[number];
 export interface ScopeReading {
   kind: "reading"; reading_ref: string; source_ref: string; source_kind: string;
   body_generation: number | null; source_generation: number | null;

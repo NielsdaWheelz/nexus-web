@@ -53,13 +53,13 @@ background completion remains required.
 ## browser discovery
 
 `GET /search/preview` requires `phase=direct|lexical|hybrid`. each returns
-`{phase, resources, saved, passages, semantic_status}`: at most four directly matched
-primary resources, two saved occurrences, and two passages with distinct owners.
+`{phase, resources, saved, passages, semantic_status}`: at most eight directly matched
+primary resources, eight saved occurrences, and eight passages with distinct owners.
 direct searches literal canonical titles/names and contributor aliases across media,
 podcasts, contributors, pages, conversations, libraries and readings.
 it returns only primary resources: saved/passages are empty and children are null.
 unicode casefold matching orders exact, prefix, then substring; canonical display
-label and ref break ties. choose each ref's best witness before the four-result
+label and ref break ties. choose each ref's best witness before the eight-result
 limit; within a ref prefer its canonical name over an equally ranked alias.
 canonical eligibility owns visibility, scope and filters. selected hydration keeps
 canonical bodies and activation; evidence quotes the matched original literal with
@@ -317,36 +317,46 @@ remain content. canonical refs use the existing resolver instead of text search;
 pending enter waits, and unavailable refs keep their exact disabled target.
 full search treats commands and refs as content.
 
-ordinary find shows optional best match, actions, resources, saved passages and
-inside sources. home caps are 4/4/2/2; promotion consumes its home slot and unused
-capacity is not reassigned. explicit intent wins promotion, then an exact visible
-action label, then an exact resource name. aliases admit suggestions but do not
-beat resource names. local fuzzy matching and frecency stay within navigation.
-query actions sit outside these budgets and never become automatic defaults.
+ordinary find composes at most eight principal results, then two continuations:
+`search all results` and `use this text…`. relevance precedes truncation: explicit
+intent, exact name, prefix/token, substring, literal evidence, fuzzy/synonym
+navigation, semantic evidence. each tier interleaves stream ordinals, then fixed
+navigation/local/resources/saved/passages order and key; unrelated scores never
+mix. canonical authority chooses duplicate ownership, not relevance. local
+writing wins over server projections; readable remote resources replace source
+stubs. source/passage deduplication preserves exact matching-passage activation.
 
-local rows appear immediately. independent preview delays are direct80/lexical120/
-hybrid160 ms; one codepoint uses direct immediately. hybrid requires two codepoints
-and an eligible semantic family. canonical refs bypass textual requests. newer
-complete phases replace lower phases until result interaction; afterward they are
-held without changing rows/evidence and expose explicit refresh. closed/hidden
-surfaces abort their reads; composition dispatches only committed input.
+launcher local acquisition uses the nonpaged authored `search_preview` query.
+it inspects bounded literal-name batches before truncation, reuses scoped/evidence
+admission, then fills remaining slots from lexical evidence. one host revision
+covers the compound read. local name matching uses trim and unicode lowercase;
+remote names retain unicode casefold. cross-source unicode equivalence is not
+promised. ordinary full-search/picker `search` retains its existing cursor.
+server preview excludes viewer-authored projections before its limits.
 
-canonical resource refs deduplicate pane and server rows; evidence enriches the
-row without changing its primary whole-resource target. filtered/scoped queries
-require server admission. unfiltered pane placeholders follow server resources.
-pane close actions stay in the merged row's menu. reconcile passages against the
-final surviving resources, including pinned rows, without refill requests.
+local capture candidates resolve their scoped frozen excerpt before consuming an
+admission slot. preview and held-ref admission use the same resolution as ordinary
+search, within the same host revision; unresolved captures consume no result slot.
+an unfiltered preview means the shared discovery-family vocabulary. unsupported
+source-stub families cannot consume its bounded slots and disappear in the renderer.
 
-text, filters, scope and intent form query identity. a new query resets selection.
-late results preserve the active key and primary target. deliberate selection
-freezes the visible prefix and its groups; pinned rows consume home capacity.
-capped omission does not mean deletion. explicit unavailability disables the same
-target; actual removal clears selection without choosing another automatic row.
-desktop enter follows admitted selection; fresh absence submits intent/full search,
-while retired selection consumes enter until fresh navigation/query change. mobile
-keyboard submit follows intent/full search; explicit row activation opens the row.
-composition/repeat guards and shift opening remain. plain space edits the input;
-secondary options retain native tab/enter/space activation.
+independent preview delays are direct80/lexical120/hybrid160 ms; one codepoint
+uses direct immediately. hybrid requires two codepoints and an eligible semantic
+family. canonical refs bypass textual requests. retain proven direct names
+omitted by richer phases. duplicate refs choose one whole snapshot: strongest
+name tier, then later phase; explicit unavailability supersedes old evidence.
+never splice activation and evidence from different snapshots. closed/hidden
+surfaces abort reads; composition dispatches only committed input.
+
+account, raw text, filters, scope and intent form query identity. before interaction,
+results and defaults can improve. afterward the whole displayed list holds its
+identity, order, evidence and geometry until explicit refresh/new query/reopen.
+explicit pane operations retain their own committed successor/focus rules.
+capped omission does not mean deletion; the bounded local `search_admission` query distinguishes
+revoked query/scope/evidence admission from preview omission. unavailable/removal never selects a
+replacement action. desktop enter acts on the displayed eligible selection;
+mobile input retains parsed-intent/full-search submission. repeat/composition
+never activate; shift retains its captured opening disposition.
 
 command and lookup views are separate from retrieval. exact slash heads accept
 end-of-input or whitespace; unknown heads retain command lookup, never search.
@@ -371,8 +381,10 @@ generation on invalidation. adoption commits rows/phase/view/cursor together;
 interaction freezes phase adoption, while ordinary source invalidation remains
 active. visit restoration preserves accepted phase, generation, latch and prefix.
 explicit refresh replaces page one and resets selection/scroll after success;
-pending/failed refresh retains old rows. visible progress uses one polite atomic
-live region per surface with delayed reveal. source titles open the whole work; child excerpts open
+pending/failed refresh retains old rows. foreground waiting uses fixed controls;
+request failures use the scoped recovery surface described in
+[signals](visual-system.md#signals), without moving results or narrating refresh.
+source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening
 bullet. saved quotes retain source attribution and an independent source link.
 the launcher offers matching-passage activation in the resource's existing menu.

@@ -72,8 +72,9 @@ retrievable without becoming permanent navigation items.
 
 Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
 opens the keyboard-down overview with heading focus; explicitly entering search
-focuses its query. Choose Create, Choose Browse, Manage Panes, Add, and recovery
-pages replace one another inside one opaque viewport-fixed dialog.
+focuses its query. choose create, choose browse and add replace root inside one
+opaque viewport-fixed dialog. pane expansion and
+recently-closed recovery are inline disclosures, not pages.
 mobile's `new pane…` beside the open-pane heading enters `NewPane` in the same
 root, retaining and selecting the query. its heading and dialog name are
 `open in new pane`; `cancel` replaces account/close. entry and cancellation
@@ -148,23 +149,29 @@ overlay contract is documented in
 
 ## Nexus content grammar
 
-Nexus is one typed intent router with platform-native renderers. Its input is
-always labelled and placeholdered **Find anything…**. Blank desktop order is
-Open, optional Continue, Recent, Quick Actions. Blank mobile order is Open,
-Quick Actions, optional Continue, Recent, Places; mobile renders every group as
-one sectioned vertical list inside a single content scroller. Independent caps
-prevent one group from erasing another. Quick Actions are Quick Note, Today,
-New Chat, New Page, New Library, and Import.
-the Open group always ends with Manage panes, including a one-pane workspace.
+nexus is one typed intent router with platform-native renderers. its input is
+labelled and placeholdered **find anything…**. blank desktop shows `tabs · {total}`,
+up to three `recent picks`, then `actions`: quick note, new chat, import, and
+resume only for paused playback. recent picks retains the palette-selection
+history owner and existing route/open-target deduplication. unknown history is
+not empty; failure exposes retry while usable rows remain visible.
 
-ordinary search shows optional best match, actions, resources, saved passages and
-inside sources, with home caps 4/4/2/2. promotion consumes its home slot. query
-continuations remain outside those caps and are never automatic defaults.
+the tabs heading discloses the complete ordered pane list. complete lists allow
+drag or one-shot numbered placement, with only close as a row accessory.
+recently closed uses native buttons outside query candidates. see
+[panes](panes.md#mobile-contract) for disclosure and interaction lifetimes.
+
+ordinary search shows at most eight principal results in one list. two rows sit
+outside that cap: `search all results` and `use this text…`. the latter snapshots
+its text and opening disposition, focuses a heading, and offers ask nexus, add
+to today, browse and create. entering it performs no write or provider call.
+browse/create return to that page; library returns through create; root return
+restores query, selection and scroll. both platforms use this choice owner.
 
 the command registry owns exact case-insensitive slash tokens followed by end of
 input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b` select note,
-page, chat, library, import and browse. commands show their prepared action and a
-deliberate literal-search escape. `/` and unknown heads show all six commands,
+page, chat, library, import and browse. recognized commands show their prepared action without generic continuations.
+`/` and unknown heads retain a literal-search escape and show all six commands,
 without a default; selecting one starts it empty. unknown text is never attached
 to a guessed command or automatically sent to corpus search. unavailable preparation retains
 the input and reason. import draft validation and capacity belong to add.
@@ -182,32 +189,37 @@ authors. match visible action labels and canonical names/keywords. resource
 labels and exact activations remain authoritative. generic place/command badges
 are omitted; meaningful hints and argument previews remain on both surfaces.
 
-A result has one required primary label. It may add only facts already carried
-by its projection, in this hierarchy:
+a result has one dominant canonical title or prose body. include only already
+projected distinguishing facts: source, author, location, current/minimized state
+or literal evidence. suppress generic pane/place/command/recent badges and ordinary open state; never
+fetch metadata to decorate a row. preserve source paragraph boundaries, omission
+marks and literal match ranges. essential identity and refusal reasons may wrap;
+secondary evidence stays bounded, without selection-driven expansion.
 
-1. a factual type label;
-2. an owner or source;
-3. `Open` only for an existing workspace pane;
-4. an existing matched excerpt.
+captured highlights and passages use the admitted frozen excerpt and reading.
+their primary is the selected literal; identical match evidence highlights there,
+while distinct context uses the evidence line. `show excerpt` opens the existing
+full-excerpt dialog explicitly. it is a separate native control after options,
+outside the primary action's disabled state, with the row identity in its name.
+opening it does not navigate or enrich the held row.
 
-The primary label remains dominant. Nexus never invents a summary, confidence,
-activity state, or type decoration merely to fill a row. Search-source failures
-say either **Couldn’t search your resources** or **Couldn’t search inside your
-library**, retain successful rows, and expose a source-specific **Retry** outside
-the Results grid. External retrieval leaves Nexus through a typed Browse target.
-Article and Podcast discovery target their explicit Browse kinds; no ambiguous
-query invokes a provider-spending bare All query. Browse candidates open owned
-content directly or a read-only Preview. They are never silently ingested.
+desktop is at most 640px wide with a 48px query and 36px ordinary rows; coarse
+pointer targets remain 44px and mobile targets 48px. one scrollport owns results
+and following lookup/scope guidance. a reserved query slot shows delayed busy or explicit recovery
+access. no visible tutorial or empty status band. one polite owner announces
+operational feedback through the shared scoped presenter; failure recovery remains
+outside the result flow and never automatically steals focus or scroll.
+external retrieval uses existing typed browse/preview owners without implicit ingest.
 
 desktop uses a combobox with a one-column grid popup. each candidate cell
 contains its primary region and a native options or close control. the controller
-owns initial selection: an available explicit intent first, otherwise an eligible
-existing result. command lookup has no default. preserve established selection
-and exact target; deliberate movement pins the visible prefix. raw query/scope
-changes invalidate preceding actions immediately.
+owns initial selection: an available explicit intent first, otherwise the first available
+principal result, then visible search-all when none exists. command lookup has no
+default. deliberate interaction holds the whole displayed list and exact target.
+raw query/scope/account changes invalidate preceding actions immediately.
 
 both query inputs invoke the controller's submit capability. desktop accepts its
-admitted selected row; fresh absence submits parsed intent/full search. a retired
+admitted selected row. a retired
 same-context selection consumes enter and announces `selection no longer available`
 until navigation or query change. disabled targets explain their refusal without
 fallthrough. mobile input submits parsed intent/full search regardless of prior
@@ -220,15 +232,17 @@ space always edits the input; home/end and modified editing retain native meanin
 there is no editing/browsing mode or space-release command. only the selected
 secondary is a result tab stop; tab followed by native enter/space operates it.
 secondary focus selects its row. hover selects only while the query owns focus.
-direct close focuses the query before removal; live removal repairs only lost
-focus and yields to surviving controls/overlays. menus retain query and selection.
+direct close retains its native initiator until the controller selects the
+committed displayed successor; query is the missing-target fallback. live removal
+repairs only lost focus and yields to surviving controls/overlays. menus retain query and selection.
 `aria-activedescendant` names the mounted candidate whenever the query has focus.
 
-lookup guidance is visible outside the grid/list and uses the existing polite
-status owner. unknown heads show a 32-codepoint preview so guidance leaves choices
-reachable; the full input and literal-search payload remain intact.
-command/lookup views omit the mobile use-text menu; literal search
-is an explicit row. mobile keeps sibling action buttons and 48 px targets.
+lookup guidance follows the grid/list inside its scrollport and uses the same
+polite status owner. lookup retains its literal-search recovery row. mobile keeps
+sibling action buttons and 48px targets. desktop root escape closes empty,
+whitespace and typed queries; child workflows and active pane moves retain their
+guarded back/cancel precedence. enabled secondary menus never inherit primary
+unavailability from an aria-disabled ancestor.
 renderers project prepared content and forward gestures; they do not interpret
 commands, choose defaults or repair navigation.
 
@@ -361,14 +375,14 @@ related link gestures still work. The rendered anchor always retains a real
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
 the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
-own close/minimize/layout commands stay in place on root or manage panes,
-including final close; primary open and recently closed restore dismiss it and
+own close/reorder commands stay in place, including final close;
+primary open and recently closed restore dismiss it and
 focus the destination. external navigation still dismisses the task. the desktop Account
 menu retains its existing focus contract.
 
-manage-panes shares direct control content with the desktop strip. there are no
-management menus or move-earlier/later commands. mobile omits layout controls and
-reorder; its minimized title restores through ordinary activation. see
+pane rows share the workspace command owners with the desktop strip. mobile
+omits layout/minimize controls; its minimized title restores through ordinary
+activation. both nexus presenters support full-order rearrangement. see
 [panes](panes.md) for the state table and focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,

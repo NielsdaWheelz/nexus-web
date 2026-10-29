@@ -171,9 +171,9 @@ Mobile mode:
 - presents the companion as a full-screen task (the same `Companion`)
 - presents sequential adjacent pane switching through a primary-touch
   horizontal swipe on the Nexus control
-- presents random pane access, recently closed restoration, and minimized-pane
-  restore through the shell-mounted full-screen Nexus task and its dedicated
-  Manage Panes page
+- presents random pane access, complete-order rearrangement, recently closed
+  restoration and minimized-pane restore through inline disclosures in the
+  shell-mounted full-screen Nexus task
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -216,7 +216,7 @@ for deleted media shows the body's own not-found. editors that open a typed link
 ## workspace titles
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
-account-scoped projection for nexus, all panes, pane chrome and the document title.
+account-scoped projection for nexus, pane chrome and the document title.
 `useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
 status; `name` is the real name the title shows, or null while the title is a
 placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
@@ -830,11 +830,11 @@ body never publishes that surface, the host shows its publication's default.
 
 there is no pane-count cap or eviction. activation commits directly; close and
 minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
-only its own close/minimize/restore selection into its navigation baseline;
+only its own close selection into its navigation baseline;
 outside navigation or target activation dismisses it, including activation of
 the current target. root pane results expose direct close;
-held enter cannot close surviving rows repeatedly. manage panes remains
-available at every pane count.
+held enter cannot close surviving rows repeatedly. its inline open-pane list
+and recently-closed recovery work at every pane count.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a

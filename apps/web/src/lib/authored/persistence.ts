@@ -75,7 +75,7 @@ export class Persistence {
       const result = await sourceAliasQuery(plan => this.db.all(plan.sql, plan.params), query);
       return {store_revision:(await this.replica()).store_revision,...result};
     }
-    if (query.kind === "search") {
+    if (query.kind === "search" || query.kind === "search_preview" || query.kind === "search_admission") {
       const result = await searchQuery(plan => this.db.all(plan.sql, plan.params), query, async (text, expression) => {
         await this.db.run(SEARCH_MATCH_SQL.search_match_create);
         await this.db.run(SEARCH_MATCH_SQL.search_match_clear);
