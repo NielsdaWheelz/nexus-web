@@ -37,6 +37,8 @@ from nexus.services.search import discovery, projection
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
+from nexus.services.reader_excerpts import plain_excerpt
+from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
 from nexus.services import authored, highlights, library_entries, library_members, libraries
@@ -113,7 +115,9 @@ def await_current_text(owner, *, witness, preparation):
 
 def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, end, words, prefix, suffix, publication):
     """One canonical authored highlight; its projection owns rows and search publication."""
-    selection = {"publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
+    frozen = (plain_excerpt(words, prefix, suffix) if publication is None else
+              source_excerpts(db, [SourceExcerptRequest(reading_id=media_id, fragment_id=fragment_id, start=start, end=end)])[0])
+    selection = {"excerpt": frozen.model_dump(mode="json"), "publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
                  "locator": {"type": "web_text_offsets", "media_id": str(media_id), "fragment_id": str(fragment_id),
                              "start_offset": start, "end_offset": end, "media_kind": "web_article",
                              "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix}}}
@@ -581,8 +585,8 @@ try {
   await staleLink.click();
   await page.waitForURL(url => url.pathname === staleTarget.href && url.hash === "", { timeout: 15_000 });
   const highlightPane = page.locator('[data-pane-shell="true"][data-active="true"]');
-  await highlightPane.locator("article blockquote mark").filter({ hasText: fixture.stale_quote }).waitFor({ state: "visible", timeout: 15_000 });
-  assert.equal(await highlightPane.locator("article blockquote mark").first().textContent(), fixture.stale_quote, "durable pane changed the retained literal quote");
+  await highlightPane.locator("article [data-resource-primary] mark").filter({ hasText: fixture.stale_quote }).waitFor({ state: "visible", timeout: 15_000 });
+  assert.equal(await highlightPane.locator("article [data-resource-primary] mark").first().textContent(), fixture.stale_quote, "durable pane changed the retained literal quote");
   assert.equal(await highlightPane.locator("[data-reader-text]").count(), 0, "durable capture invented a source reading");
   facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true,
     durable_capture_opened: true, source_location_unavailable: true };
