@@ -1,20 +1,21 @@
 "use client";
 
 import { CloudOff } from "lucide-react";
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 import { useCallback, useState } from "react";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import { ActionMenuHost, ActionMenuInvocation, type ActionMenuProps, type ActionMenuSession } from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneSubject } from "@/lib/panes/paneChrome";
-import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor, MenuContent, MenuOption, MenuSource, TrailingState } from "@/lib/ui/actionDescriptor";
+
+export type DisplayedNavigation = {
+  readonly key: string;
+  readonly fork: Extract<ActionDescriptor, { kind: "link" }> | null;
+};
 
 export interface ContextActionSection {
   readonly id: "Pane" | "Occurrence" | "View";
@@ -22,9 +23,9 @@ export interface ContextActionSection {
 }
 
 /**
- * One composer for a place and its resource principal. Publishes local pane,
- * occurrence or view choices and authoritative resource verbs as one complete
- * result; an optional source label names that principal. A supplied disabled
+ * A caller's known navigation and occurrence/view choices publish immediately.
+ * Authoritative resource verbs retain their prepared snapshot and source label.
+ * A supplied disabled
  * reason blocks commands. An owned authored principal publishes its local verbs as
  * soon as one local read settles; the server's verbs for it settle separately in the
  * menu's trailing region (loading, ready or failed), never gating, reordering or
@@ -40,7 +41,7 @@ type ContextualMenuProps = Pick<ActionMenuProps,
   readonly resourceRef?: CanonicalResourceRef;
   readonly omitResourceActions?: readonly string[];
   readonly showSourceSubject?: boolean;
-  readonly displayedActivation?: ResourceActivation;
+  readonly navigation: DisplayedNavigation | null;
   readonly commandDisabledReason?: string;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
@@ -48,7 +49,7 @@ type ContextualMenuProps = Pick<ActionMenuProps,
 
 export default function ContextualActionMenu(props: ContextualMenuProps) {
   const pane = usePaneRuntime();
-  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${JSON.stringify(props.displayedActivation ?? null)}`;
+  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${props.navigation?.key ?? "resource-only"}`;
   return <ActionMenuHost {...props} title={props.title} subjectKey={subjectKey}>{session =>
     <ContextualMenuInvocation {...props} subjectKey={subjectKey} session={session} />
   }</ActionMenuHost>;
@@ -57,11 +58,9 @@ export default function ContextualActionMenu(props: ContextualMenuProps) {
 /** Authoritative facts and client subscriptions belong only to an invocation. */
 function ContextualMenuInvocation({
   sections, resourceRef, title, subjectKey, onDefect, actionFocus,
-  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, session, ...props
+  omitResourceActions = [], showSourceSubject = false, navigation, commandDisabledReason, session, ...props
 }: ContextualMenuProps & { readonly session: ActionMenuSession }) {
-  const pane = usePaneRuntime();
   const paneSubject = usePaneSubject();
-  const coarse = useTouchCapable();
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
   const client = useClientActions(resourceRef ?? null, title);
@@ -73,23 +72,13 @@ function ContextualMenuInvocation({
     prepareAuthored(signal);
     prepareRemote(signal);
   }, [prepareAuthored, prepareRemote]);
-  const groups: MenuContent["sections"][number][] = sections
-    .filter((section) => section.actions.length > 0)
-    .map((section) => ({ id: section.id, label: null, options: section.actions }));
-  if (coarse && displayedActivation?.kind === "route" && displayedActivation.href && pane) {
-    const href = displayedActivation.href;
-    groups.push({ id: "Navigation", label: null, options: [{
-      kind: "link", id: "Row.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label, icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />, href,
-      disabled: Boolean(commandDisabledReason), disabledReason: commandDisabledReason,
-      restoreFocusOnClose: false,
-      onActivate: event => {
-        const result = activateTargetLink({ event, target: { href, labelHint: title },
-          runtime: { activateTarget: input => pane.activateTarget({ ...input, disposition: { kind: "Fork" } }) },
-        });
-        return result === "handled-default" ? "handled-new-pane" : result;
-      },
-    }] });
-  }
+  const blocked = (action: MenuOption): MenuOption => commandDisabledReason && action.kind === "command"
+    ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
+  const initial: MenuContent = { sections: [
+    ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions.map(blocked) })),
+    ...(navigation?.fork ? [{ id: "Navigation", label: null, options: [navigation.fork] }] : []),
+  ] };
+  const groups: MenuContent["sections"][number][] = [];
   // An owned authored resource publishes its local verbs once the local read settles; the
   // server's facts settle separately in the trailing region and cannot gate them.
   const local = request !== null && authored.read?.request === request ? authored.read : null;
@@ -102,7 +91,7 @@ function ContextualMenuInvocation({
     groups.push({ id: "Resource", label: showSourceSubject ? `source: ${local.label}` : null, options: verbs });
   } else {
     if (remote?.kind === "Ready") {
-      const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
+      const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
       if (options.length > 0) groups.push({
         id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : null, options,
       });
@@ -116,8 +105,6 @@ function ContextualMenuInvocation({
   const remoteIds = new Set(!owned && remote?.kind === "Ready" ? remote.options.map(action => action.id) : []);
   const device = client.filter(action => !remoteIds.has(action.id) && !omitResourceActions.includes(action.id));
   if (device.length > 0) groups.push({ id: "Device", label: null, options: device });
-  const blocked = (action: MenuOption): MenuOption => commandDisabledReason && action.kind === "command"
-    ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const blockedRemote = (action: ActionDescriptor): ActionDescriptor => commandDisabledReason && action.kind === "command"
     ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const content: MenuContent = { sections: groups.map((section) => ({
@@ -128,14 +115,14 @@ function ContextualMenuInvocation({
   const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
     kind: "Ready", request, label: showSourceSubject && owned ? `source: ${local.label}` : null,
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
-      !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
+      !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
   } : remote?.kind === "Failed" ? {
     kind: "Failed", request, feedback: remote.connectionRequired ? { tone: "Neutral", title: "requires a connection" } : remote.feedback,
   } : { kind: "Loading", request };
-  const source: MenuSource = !resourceRef ? { ...identity, kind: "Immediate", content }
-    : owned && local !== null ? { ...identity, kind: "Prepared", prepare, state: { kind: "Ready", request: local.request, content }, trailing }
+  const source: MenuSource = !resourceRef ? { ...identity, kind: "Immediate", content: initial }
+    : owned && local !== null ? { ...identity, kind: "Prepared", initial, prepare, state: { kind: "Ready", request: local.request, content }, trailing }
     : {
-      ...identity, kind: "Prepared", prepare,
+      ...identity, kind: "Prepared", initial, prepare,
       state: request === null ? null : local === null ? { kind: "Loading", request }
         : remote?.kind === "Ready" || remote?.kind === "Failed" && remote.connectionRequired ? { kind: "Ready", request, content } : remote,
     };

@@ -14,6 +14,7 @@ import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import type { ResourceItem } from "@/lib/resources/items";
 import { MediaFacts } from "@/components/media/MediaIdentity";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
@@ -24,7 +25,7 @@ import styles from "./Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
-type RowActions = Pick<NexusController, "activate" | "closePane">;
+type RowActions = Pick<NexusController, "activate" | "closePane" | "destinationHref"> & { mobile: boolean; picker: boolean };
 
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
   const Icon = row.icon;
@@ -73,34 +74,53 @@ function NexusMatchingPassage({ passage, excerptId }: { passage: NonNullable<Nex
   </div>;
 }
 
-function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
+function ResourceMenu({ row, menuProps, activate, closePane, destinationHref, mobile, picker }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
   const secondary = row.secondary;
   const ownOptions: ActionDescriptor[] = [];
   if (row.matchingPassage) {
     const action = resourceAction(row.matchingPassage.item);
-    ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "Open matching passage", icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
-      disabled: action.kind === "Unavailable", disabledReason: action.kind === "Unavailable" ? action.reason : undefined,
-      onSelect: ({ openIntent }) => activate(action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
+    const href = action.kind === "Available" && action.target.kind === "Resource" && (action.target.activation.kind === "route" || (!picker && action.target.activation.kind === "external")) ? action.target.activation.href : null;
+    if (href) ownOptions.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
+      onActivate: action.kind === "Available" && action.target.kind === "Resource" && action.target.activation.kind === "external" ? undefined : (event) => {
+        const intent = workspaceTargetActivationIntent(event);
+        if (intent.kind === "Unowned") return "unhandled";
+        event.preventDefault();
+        if (intent.kind === "Consume") return "consumed";
+        const fork = picker || intent.intent === "new_pane";
+        const result = activate(action, { disposition: { kind: fork ? "Fork" : "Follow" } });
+        return result && result.kind !== "Cancelled" ? fork ? "handled-new-pane" : "handled-default" : "consumed";
+      },
+    });
+    else if (action.kind === "Unavailable") ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage", icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
+      disabled: true, disabledReason: action.reason, onSelect: () => undefined,
     });
   }
-  if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
+  if (!picker && secondary?.kind === "TargetMenu") for (const pane of secondary.closePanes)
     ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
-  const target = row.action.kind === "Available" ? row.action.target : null;
-  const activation = row.item?.activation ?? (target?.kind === "Resource" ? target.activation : {
-    kind: target?.kind === "InternalHref" ? "route" as const : "none" as const,
-    href: target?.kind === "InternalHref" ? target.href : null,
-    resource_ref: secondary?.kind === "ResourceMenu" ? secondary.resourceRef : row.key,
-    unavailable_reason: null,
-  });
+  const href = destinationHref(row);
+  const fork: Extract<ActionDescriptor, { kind: "link" }> | null = mobile && !picker && href ? {
+    kind: "link", id: "Nexus.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label.toLowerCase(), href,
+    icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
+    onActivate: (event) => {
+      const intent = workspaceTargetActivationIntent(event);
+      if (intent.kind === "Unowned") return "unhandled";
+      event.preventDefault();
+      if (intent.kind === "Consume") return "consumed";
+      const result = activate(row.action, { disposition: { kind: "Fork" } }, row);
+      return result && result.kind !== "Cancelled" ? "handled-new-pane" : "consumed";
+    },
+  } : null;
+  if (picker && ownOptions.length === 0) return null;
+  const resourceRef = !picker && secondary?.kind === "TargetMenu" ? secondary.resourceRef : null;
   return <ContextualActionMenu {...menuProps} title={row.label} subjectKey={`nexus:${row.key}`}
-    resourceRef={secondary?.kind === "ResourceMenu" ? secondary.resourceRef : undefined}
+    resourceRef={resourceRef ?? undefined}
     showSourceSubject={row.item !== undefined && row.item.action_ref !== row.item.ref}
-    displayedActivation={activation} sections={[{ id: "Occurrence", actions: ownOptions }]} />;
+    navigation={{ key: JSON.stringify([row.key, row.action, href]), fork }}
+    sections={[{ id: "Occurrence", actions: ownOptions }]} />;
 }
 
-/** Only a resource action is a menu; direct pane close keeps its native button. */
 export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
-  return row.secondary?.kind === "ResourceMenu"
+  return row.secondary?.kind === "TargetMenu" || (actions.picker && row.matchingPassage)
     ? <ResourceMenu row={row} menuProps={menuProps} {...actions} />
     : null;
 }

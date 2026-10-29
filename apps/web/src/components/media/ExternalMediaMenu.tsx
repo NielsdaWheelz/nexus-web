@@ -27,7 +27,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ trigger: triggerEl, returnFocus, afterRemoval: returnFocus }),
   }));
-  return <ContextualActionMenu
+  return <ContextualActionMenu navigation={null}
     title={subject.title} subjectKey={subjectKey}
     sections={[{ id: "View", actions: [...commands, ...viewActions] }]}
     triggerRef={setTrigger}

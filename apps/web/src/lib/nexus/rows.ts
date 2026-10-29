@@ -37,6 +37,7 @@ import type {
   NexusRecent,
   NexusRow,
   NexusRootMode,
+  NexusTarget,
 } from "./model";
 import { newChatTarget, NEXUS_COMMANDS, nexusBrowseTarget, type BrowseKind, type NexusQuery } from "./query";
 
@@ -177,7 +178,7 @@ function appendToToday(text: string): NexusAction {
   };
 }
 
-function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
+function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency, picker: boolean): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
   if (intent.kind === "ImportUrl") {
@@ -249,7 +250,7 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
     const place = [...unique.values()].find((candidate) => candidate.action.kind === "Available"
       && candidate.action.target.kind === "InternalHref"
       && resolveWorkspaceActivationRouteId(candidate.action.target.href) === resolveWorkspaceActivationRouteId(pane.href));
-    if (place) unique.set(place.key, { ...place, state: row.state, secondary: row.secondary });
+    if (place && !picker) unique.set(place.key, { ...place, state: row.state, secondary: { kind: "TargetMenu", resourceRef: null, closePanes: [...(place.secondary?.kind === "TargetMenu" ? place.secondary.closePanes : []), { id: pane.id, label: pane.current ? "close current pane" : "close pane" }] } });
     else unique.set(row.key, row);
   }
   return [...unique.values()].sort(compareRows).map((row) => ({ ...row, placement: { home: "Commands", promoted: false } }));
@@ -262,10 +263,10 @@ export function resourceAction(item: ResourceItem): NexusAction {
     : { kind: "Available", target: { kind: "Resource", activation: item.activation, label: item.label } };
 }
 
-function resourceMenu(ref: string, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "ResourceMenu" }> {
+function resourceMenu(ref: string, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "TargetMenu" }> {
   return {
-    kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(ref),
-    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "Close current pane" : panes.length > 1 ? `Close pane ${index + 1}` : "Close pane" })),
+    kind: "TargetMenu", resourceRef: assumeCanonicalResourceRef(ref),
+    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${index + 1}` : "close pane" })),
   };
 }
 
@@ -307,6 +308,7 @@ export function candidateRows(input: {
   readonly query: NexusQuery;
   readonly panes: readonly NexusPane[];
   readonly frecency: Frecency;
+  readonly picker: boolean;
   readonly preview: Schema<"SearchPreviewResponse"> | null;
   readonly reference: ResourceItem | null;
   readonly referenceFailed: boolean;
@@ -328,7 +330,7 @@ export function candidateRows(input: {
     } satisfies Partial<NexusRow>;
     return [{ ...row, rank: { tier: "ExplicitIntent", score: 0, frecency: 0 } }];
   }
-  const rows = localRows(query, panes, frecency);
+  const rows = localRows(query, panes, frecency, input.picker);
   for (const match of input.local) rows.push(localRow(match, "Resources", panes));
   for (const result of [...(preview?.resources ?? []), ...(preview?.saved ?? [])]) {
     rows.push({
@@ -348,7 +350,7 @@ export function candidateRows(input: {
       rows.push({
         ...paneRow(pane, "CurrentContext", frecency), key: `Resource:${pane.resourceRef}`,
         state: paneState(matching.find((pane) => pane.current) ?? pane),
-        action: { kind: "Available", target: { kind: "InternalHref", href: resolvePaneRouteModel(pane.href).pathname, labelHint: pane.presentation.title } },
+        action: { kind: "Available", target: { kind: "InternalHref", href: input.picker ? pane.href : resolvePaneRouteModel(pane.href).pathname, labelHint: pane.presentation.title } },
         secondary: resourceMenu(pane.resourceRef, matching),
         placement: { home: "Resources", promoted: false },
       });
@@ -365,6 +367,31 @@ export function candidateRows(input: {
     rows.push({ ...previous, state: current.state, secondary: current.secondary });
   }
   return rows;
+}
+
+/** Picker admission and pane projection share the same target contract as activation. */
+export function pickerTarget(target: NexusTarget, panes: readonly NexusPane[]): NexusTarget | null {
+  switch (target.kind) {
+    case "PaneOpen": {
+      const pane = panes.find((candidate) => candidate.id === target.paneId);
+      return pane ? { kind: "InternalHref", href: pane.href, labelHint: pane.presentation.title } : null;
+    }
+    case "Resource": return target.activation.kind === "route" ? target : null;
+    case "InternalHref": case "OpenDailyPage": case "CreatePage": case "CreateLibrary": case "ChooseCreate": case "ChooseBrowse": return target;
+    case "OpenAcceptedSource": case "OpenAdd": case "ResumeCurrentPlayback": case "ManagePanes": return null;
+  }
+}
+
+export function pickerRows(rows: readonly NexusRow[], panes: readonly NexusPane[]): NexusRow[] {
+  return rows.flatMap((row) => {
+    const passage = row.matchingPassage ? resourceAction(row.matchingPassage.item) : null;
+    const projected = { ...row, state: undefined, secondary: undefined,
+      matchingPassage: passage?.kind === "Available" && pickerTarget(passage.target, panes) === null ? null : row.matchingPassage };
+    if (row.action.kind === "Unavailable") return [projected];
+    const target = pickerTarget(row.action.target, panes);
+    if (!target) return [];
+    return [{ ...projected, action: { kind: "Available" as const, target } }];
+  });
 }
 
 /** A moved prefix keeps both its displayed section and primary target. */
@@ -496,9 +523,9 @@ export function nexusGroups(input: {
     return [
       ...(["BestMatch", ...SECTIONS] as const).flatMap((id) => group(id, SECTION_LABELS[id],
         input.list.rows.filter((row) => (row.placement?.promoted ? "BestMatch" : row.placement?.home) === id)
-          .map((row) => desktop ? row : mobileRow(row)))),
+          .map((row) => desktop && input.mobileMode !== "NewPane" ? row : mobileRow(row)))),
       ...group("QuickActions", desktop ? "Do with query" : "", desktop
-        ? query.intent.kind === "ImportUrl" ? [] : actions
+        ? query.intent.kind === "ImportUrl" ? [] : input.mobileMode === "NewPane" ? actions.map(mobileRow) : actions
         : actions.filter((row) => row.key === "Continuation:SeeAll").map((row) => ({ ...row, label: "search all results", type: undefined, detail: undefined }))),
     ];
   }
@@ -515,7 +542,7 @@ export function nexusGroups(input: {
       rank: UNRANKED,
     } satisfies NexusRow,
   ];
-  const seen = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
+  const seen = new Set(input.mobileMode === "NewPane" ? [] : panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   const recent = input.recent.flatMap((entry): NexusRow[] => {
     const routeId = resolveWorkspaceActivationRouteId(entry.target_href);
     if (seen.has(routeId)) return [];
@@ -541,6 +568,11 @@ export function nexusGroups(input: {
     command("Nexus.Quick.Library"),
     command("Nexus.Quick.Import"),
   ];
+  if (input.mobileMode === "NewPane") return [
+    ...group("Recent", "recent", recent.slice(0, RECENT_CAP).map(mobileRow)),
+    ...group("Places", "places", MOBILE_PLACES.map((id) => mobileRow(placeRow(getDestination(id), "CurrentContext", frecency)))),
+    ...group("QuickActions", "create and open", [command("Nexus.Quick.Note"), command("Nexus.Quick.Page"), command("Nexus.Quick.Chat"), command("Nexus.Quick.Library")].map(mobileRow)),
+  ];
   const openGroup = group("Open", "Open", open);
   const continueGroup = group("Continue", "Continue", input.playback ? [input.playback] : []);
   const recentGroup = group("Recent", "Recent", recent.slice(0, RECENT_CAP).map(plain));
@@ -551,12 +583,15 @@ export function nexusGroups(input: {
 }
 
 function mobileRow(row: NexusRow): NexusRow {
-  if (row.key.startsWith("Pane:") || row.key.startsWith("Resource:")) return row;
+  const target = row.action.kind === "Available" ? row.action.target : null;
+  const direct = !row.key.startsWith("QuickAction:") && (target?.kind === "InternalHref" || target?.kind === "OpenDailyPage" || (target?.kind === "Resource" && target.activation.kind === "route"));
+  const secondary = row.secondary ?? (direct ? { kind: "TargetMenu" as const, resourceRef: null, closePanes: [] } : undefined);
+  if (row.key.startsWith("Pane:") || row.key.startsWith("Resource:")) return { ...row, secondary };
   return {
-    ...row,
+    ...row, secondary,
     label: row.key.startsWith("QuickAction:") || row.key.startsWith("Destination:")
       ? row.label.toLowerCase()
-      : row.label.replace(/^Ask Nexus/, "ask nexus").replace(/^Browse/, "browse").replace(/^Import URL/, "import url"),
+      : row.label.replace(/^Ask Nexus/, "ask nexus").replace(/^Browse/, "browse").replace(/^Import URL/, "import url").replace(/^Add /, "add ").replace(/^See /, "see ").replace(/^Create /, "create ").replace(/^New…$/, "create…").replace(/ to Today$/, " to today"),
     detail: row.key.startsWith("ImportUrl:") ? row.detail : undefined,
   };
 }
@@ -575,7 +610,7 @@ function mobileOverview(input: {
     { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
     { id: "QuickActions", label: "", rows: [
       place("today"),
-      { key: "QuickAction:New", existing: false, label: "new…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },
+      { key: "QuickAction:New", existing: false, label: "create…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },
       mobileRow(commandRow("Nexus.Quick.Import", "CurrentContext", "")),
     ] },
     ...(input.playback ? [{ id: "Continue", label: "", rows: [{ ...input.playback, label: `resume ${input.playback.label}`, type: undefined }] } satisfies NexusGroup] : []),

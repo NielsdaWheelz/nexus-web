@@ -11,7 +11,7 @@ import { usePodcastMenuActions } from "@/lib/actions/usePodcastActions";
 
 /** Discovery has current supplied facts; canonical menus retain their prepared read. */
 export default function PodcastMenu({ subject, metadataSubject, actionFocus, sections = [], ...props }: Omit<
-  ComponentProps<typeof ContextualActionMenu>, "title" | "resourceRef" | "actionFocus" | "sections"
+  ComponentProps<typeof ContextualActionMenu>, "title" | "resourceRef" | "actionFocus" | "sections" | "navigation"
 > & {
   readonly subject: PodcastActionSubject;
   readonly metadataSubject?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;
@@ -20,11 +20,11 @@ export default function PodcastMenu({ subject, metadataSubject, actionFocus, sec
 }) {
   const { ctx, run } = useActionRuntime();
   const commands = usePodcastMenuActions(subject, actionFocus);
-  if (subject.facts.kind === "Ready" && subject.facts.resolution.kind === "Canonical") return <ContextualActionMenu {...props} title={subject.title}
+  if (subject.facts.kind === "Ready" && subject.facts.resolution.kind === "Canonical") return <ContextualActionMenu {...props} navigation={null} title={subject.title}
     sections={sections} actionFocus={actionFocus} resourceRef={canonicalResourceRef({ scheme: "podcast", id: subject.facts.resolution.podcast_id })} />;
   const actions = [...commands, ...(metadataSubject ? projectPodcastDiscoveryActions({ subject: metadataSubject, ctx, run, returnFocus: props.returnFocusTo ?? actionFocus.returnFocus }) : [])];
   const hasView = sections.some(section => section.id === "View");
-  return <ContextualActionMenu {...props} title={subject.title}
+  return <ContextualActionMenu {...props} navigation={null} title={subject.title}
     sections={hasView ? sections.map(section => section.id === "View" ? { ...section, actions: [...section.actions, ...actions] } : section)
       : [...sections, { id: "View", actions }]} />;
 }

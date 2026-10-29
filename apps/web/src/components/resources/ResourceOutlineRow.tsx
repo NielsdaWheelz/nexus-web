@@ -32,6 +32,8 @@ import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
 import type {WritingRuntime} from "@/lib/notes/runtime";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {connectionMutationErrorMessage, mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
 import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
@@ -256,6 +258,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   const identity = resourceTypeLabel(parsed.scheme).toLowerCase();
   const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={parsed.scheme}/>;
   const runtime = usePaneRuntime();
+  const touch = useTouchCapable();
   const writing = useWritingRuntime();
   const outline = useContext(ResourceOutlineContext);
   const branch = useContext(ResourceBranch);
@@ -410,7 +413,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref} data-writing={writingRow || undefined}>
       <div className={styles.head}>
         {!writingRow ? disclosure : null}
-        {commands.length || writingRow ? <ContextualActionMenu title={label} subjectKey={`relationship:${occurrenceKey}`}
+        {commands.length || writingRow ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]} commandDisabledReason={commandDisabledReason}
           label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({})}
         <div className={styles.content}>
@@ -429,7 +432,11 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
         </div>
         {writingRow ? disclosure : <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
-          displayedActivation={item?.activation} showSourceSubject={item !== null && item.action_ref !== item.ref}
+          navigation={item === null ? null : {
+            key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
+            fork: touch && runtime && item.activation.kind === "route" && item.activation.href !== null
+              ? paneForkLink({ runtime, target: { href: item.activation.href, labelHint: label }, disabledReason: commandDisabledReason ?? null }) : null,
+          }} showSourceSubject={item !== null && item.action_ref !== item.ref}
           commandDisabledReason={commandDisabledReason} sections={[]} label={`more actions for ${label}`}/></div>}
       </div>
       {nestedContent || open ? <div className={styles.children} data-outline-children="true">{nestedContent}{open ?
