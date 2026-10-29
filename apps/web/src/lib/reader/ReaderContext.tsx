@@ -31,6 +31,8 @@ export interface ReaderProfileCapability {
   readonly editable: boolean;
   readonly saving: boolean;
   readonly failureOccurrence: object;
+  readonly connectionOccurrence: object | null;
+  readonly unavailableReason: string | null;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
   setFocusMode(value: ReaderProfile["focus_mode"]): void;
@@ -53,7 +55,13 @@ export function ReaderProvider({
 }) {
   const refreshSettings = useSettingsRefresh();
   const feedback = useFeedback();
-  const editable = useRemoteAdmission() === "Ready";
+  const admission = useRemoteAdmission();
+  const editable = admission === "Ready";
+  const blockedOccurrence = useFeedbackOccurrence(admission !== "Ready" && admission !== "Checking");
+  const connectionOccurrence = admission === "Unavailable" ? blockedOccurrence : null;
+  const unavailableReason = admission === "Ready" ? null : admission === "Checking" ? "checking whether reader settings can be changed"
+    : admission === "SignInRequired" ? "sign in to change reader settings"
+    : admission === "UpdateRequired" ? "update nexus to change reader settings" : "changing reader settings requires a connection";
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
@@ -135,6 +143,8 @@ export function ReaderProvider({
       editable,
       saving,
       failureOccurrence: occurrence,
+      connectionOccurrence,
+      unavailableReason,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
       setFocusMode: (focus_mode) => intend({ focus_mode }),
@@ -144,7 +154,7 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [editable, intend, persistence, profile, send, saving, occurrence],
+    [editable, intend, persistence, profile, send, saving, occurrence, connectionOccurrence, unavailableReason],
   );
   if (defect) throw defect.error;
   return (

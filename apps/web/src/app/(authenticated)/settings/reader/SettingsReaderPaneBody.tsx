@@ -1,7 +1,8 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { useId } from "react";
+import { FeedbackFailure } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -29,16 +30,17 @@ const FOCUS_MODES: readonly {
 export default function SettingsReaderPaneBody() {
   const reader = useReaderContext();
   const p = reader.profile;
+  const connectionReason = useId();
   usePaneReturnReady(true);
 
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
         <ReaderSettingsFailure />
-        {!reader.editable ? (
-          <FeedbackNotice content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" />
-        ) : null}
-        <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable}>
+        {reader.connectionOccurrence !== null && reader.persistence.state !== "SaveFailed" ? <FeedbackFailure scope="Local" occurrence={reader.connectionOccurrence}
+          content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" /> : null}
+        {reader.unavailableReason !== null ? <span id={connectionReason} className="sr-only">{reader.unavailableReason}</span> : null}
+        <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable} aria-describedby={!reader.editable ? connectionReason : undefined}>
           <RadioGroup
             label="Theme"
             presentation="Segmented"

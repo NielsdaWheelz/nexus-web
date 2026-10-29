@@ -11,12 +11,15 @@ import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthor
 import { discardFailedAuthoredSetup } from "./signOut";
 import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL } from "./status";
 import { AuthoredSetupError, openAuthoredStore } from "./client";
-import { FeedbackFailure, FeedbackState, useFeedbackOccurrence, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackFailure, FeedbackRecoveryControl, FeedbackState, useFeedbackOccurrence, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { sessionSignIn } from "@/lib/native/client";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Dialog from "@/components/ui/Dialog";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { Scope } from "@/components/feedback/scope";
+import styles from "./provider.module.css";
 const SignInContext = createContext<{ signIn: () => void; busy: boolean } | null>(null);
 export function useAuthoredSignIn() { const value = useContext(SignInContext); if (!value) throw new Error("authored sign-in owner is missing"); return value; }
 const AccountContext = createContext<string | null>(null);
@@ -45,8 +48,10 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const [ready, setReady] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [opening, setOpening] = useState(true);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const fail = useCallback((error: unknown) => {
+    setOpening(false);
     const title = "couldn’t open your notes on this device";
     const content = error instanceof AuthoredSetupError ? { tone: "Warning" as const, title,
       message: error.reason === "Persistence" ? "allow persistent storage for nexus, then retry." : "open nexus in a browser with shared worker support." }
@@ -63,13 +68,13 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
     if (!["sign_in_required", "saving", "local_error", "preparing"].includes(status)) setSignInResult(null);
   }, [status]);
   const signIn = () => {
-    if (signInRunning.current) return;
+    if (signInRunning.current || !ready && opening) return;
     if (host === "shelf") { void localCall("open_hosted", { path: "/downloads" }).catch(reportError); return; }
     if (host === "share") { window.location.assign("nexus-share://open?path=%2Fdownloads"); return; }
     if (!installedApp) { window.location.assign(ready ? loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)) : "/login?switch_account=1"); return; }
     signInRunning.current = true; setSigningIn(true); setSignInResult(null);
     void sessionSignIn().then(result => {
-      if (!ready) retry(value => value + 1);
+      if (!ready && result === "Restored") { setOpening(true); retry(value => value + 1); }
       if (result === "DifferentAccount") setSignInResult({ content: { tone: "Warning", title: "use the account already open here", message: SIGN_IN_SYNC_DETAIL }, occurrence: {} });
       else if (result === "Failed") setSignInResult({ content: { tone: "Warning", title: "couldn’t sign in", message: "connect and try signing in again." }, occurrence: {} });
     }, error => { reportError(error); setSignInResult({ content: { tone: "Warning", title: "couldn’t sign in", message: "try signing in again." }, occurrence: {} }); })
@@ -91,25 +96,32 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
     window.addEventListener("nexus:authored-retired", retired);
     let live = true;
     let publishedReady = false;
+    let currentDetail: string | null = null;
     let opened: AuthoredStore | null = null;
     let unsubscribe: (() => void) | null = null;
-    setStore(null); setReady(false); setDetail(null); setFailure(null); setStatus("preparing");
+    setStore(null); setReady(false); setOpening(true); setStatus("preparing");
     void openAuthoredStore(accountId).then(value => {
       opened = value;
       if (!live) { void value.close(); return; }
       unsubscribe = value.sync_status((next, cause) => {
         if (!live) return;
-        setStatus(next); setDetail(cause);
-        if (publishedReady || next === "preparing") return;
+        currentDetail = cause;
+        setStatus(next);
+        if (publishedReady) { setDetail(cause); return; }
+        if (cause !== null) setDetail(cause);
+        if (next === "preparing" && cause === null) return;
         void value.readReplica().then(replica => {
           if (!live || publishedReady) return;
           publishedReady = replica.provisioning_complete; setReady(publishedReady);
+          if (publishedReady) setDetail(currentDetail);
+          if (publishedReady || currentDetail !== null) { setFailure(null); setOpening(false); }
         }, error => { if (live && !publishedReady) fail(error); });
       });
       setStore(value);
     }, error => { if (live) fail(error); });
     return () => { window.removeEventListener("nexus:authored-retired", retired); releaseAccount(); releaseAdmission(); live = false; unsubscribe?.(); if (opened) void (explicitlyRetired ? discardWritingRuntime(accountId) : closeWritingRuntime(accountId)).then(() => opened?.close()).catch(reportError); };
   }, [accountId, attempt, host, fail]);
+  const retrySetup = () => { if (opening) return; setOpening(true); retry(value => value + 1); };
   if (defect) throw defect.error;
   if (failure) {
     const leave = () => {
@@ -117,16 +129,36 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
       else if (host === "share") window.location.assign("nexus-share://open?path=%2Fdownloads");
       else void discardFailedAuthoredSetup(accountId).catch(error => fail(error));
     };
-    return <FeedbackState content={failure} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: host === "workspace" ? "sign out on this device" : "open workspace", onClick: leave }]} />;
+    return <SetupFeedback content={failure} subject={accountId} waiting={false} announcement="Polite" actions={[{ label: "retry", onClick: retrySetup, busy: opening }, { label: host === "workspace" ? "sign out on this device" : "open workspace", onClick: leave }]} />;
   }
   if (!store || !ready) {
     const actions: FeedbackActions | undefined = detail === null ? undefined
-      : detail === SIGN_IN_SYNC_DETAIL ? [{ label: host !== "workspace" ? "open workspace to sign in" : "sign in", onClick: signIn, busy: signingIn }]
+      : detail === SIGN_IN_SYNC_DETAIL ? [{ label: host !== "workspace" ? "open workspace to sign in" : "sign in", onClick: signIn, busy: signingIn || opening }]
       : detail === UPDATE_SYNC_DETAIL ? installedApp || host !== "workspace" ? undefined : [{ label: "reload", onClick: () => window.location.reload() }]
-      : [{ label: "retry", onClick: () => retry(value => value + 1) }];
-    return <FeedbackState content={{ tone: "Neutral", title: "preparing your notes", message: detail === SIGN_IN_SYNC_DETAIL || detail === UPDATE_SYNC_DETAIL ? detail : detail === null ? undefined : "retry preparing your notes." }} announcement={detail === null ? "None" : "Polite"} actions={host === "workspace" ? [...(actions ?? []), { label: "sign out on this device", onClick: () => { void discardFailedAuthoredSetup(accountId).catch(error => fail(error)); } }] : actions} />;
+      : [{ label: "retry", onClick: retrySetup, busy: opening }];
+    return <SetupFeedback subject={accountId} waiting={opening && detail === null}
+      content={detail === SIGN_IN_SYNC_DETAIL && signInResult !== null ? signInResult.content : { tone: detail === null ? "Neutral" : "Warning", title: detail === null ? "your notes on this device"
+        : detail === SIGN_IN_SYNC_DETAIL ? "sign in to open your notes" : detail === UPDATE_SYNC_DETAIL ? "update nexus to open your notes" : "couldn’t prepare your notes on this device",
+        message: detail === SIGN_IN_SYNC_DETAIL || detail === UPDATE_SYNC_DETAIL ? detail : detail === null ? undefined : "retry preparing your notes." }}
+      announcement={detail === null ? "None" : "Polite"} actions={host === "workspace" ? [...(actions ?? []), { label: "sign out on this device", onClick: () => { void discardFailedAuthoredSetup(accountId).catch(error => fail(error)); } }] : actions} />;
   }
   return <SignInContext value={{ signIn, busy: signingIn }}><AccountContext value={accountId}><StoreContext value={store}><StatusContext value={status}><DetailContext value={detail}><AccountFailure accountId={accountId} status={status} detail={detail} signIn={signIn} signingIn={signingIn} signInResult={signInResult} host={host} />{children}</DetailContext></StatusContext></StoreContext></AccountContext></SignInContext>;
+}
+
+/** Entry setup uses its existing standalone host, or owns the workspace entry surface. */
+function SetupFeedback({ content, actions, announcement, waiting, subject }: {
+  content: FeedbackContent; actions?: FeedbackActions; announcement: "None" | "Polite"; waiting: boolean; subject: string;
+}) {
+  const scope = useContext(Scope);
+  const [bounds, setBounds] = useState<HTMLElement | null>(null);
+  const feedback = <><FeedbackBusy pending={waiting} subject={subject} /><FeedbackState content={content} actions={actions} announcement={announcement} /></>;
+  if (scope !== null) return feedback;
+  return <section ref={setBounds} tabIndex={-1} className={styles.setup}>
+    <FeedbackSurface bounds={bounds} interaction={null} modal={null} active protectedTargets={() => []} returnFocus={() => bounds}>
+      <FeedbackRecoveryControl className={styles.recovery} />
+      {feedback}
+    </FeedbackSurface>
+  </section>;
 }
 
 /** The account's only failure projection. The command/store remains the recovery owner. */

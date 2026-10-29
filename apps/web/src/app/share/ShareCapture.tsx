@@ -65,7 +65,7 @@ class CaptureAdmissionError extends Error {}
 type ShareAccount = { user_id: string; calendar_time_zone: string; capture: {noteId: string; localDate: string} | null };
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
   const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  return <FeedbackProvider><div ref={setBounds} className={styles.capture}>
+  return <FeedbackProvider><div ref={setBounds} tabIndex={-1} className={styles.capture}>
     <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
       protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("[data-feedback-controls]")] : []} returnFocus={() => bounds}>
       <span className={styles.recoverySlot} data-feedback-controls="true"><FeedbackRecoveryControl /></span>

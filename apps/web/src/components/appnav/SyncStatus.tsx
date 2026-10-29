@@ -1,9 +1,7 @@
 "use client";
 
-// The account's one sync status: current state only, closed copy, never a counter
-// or event list. A local save failure is repaired beside the affected writing; here it
-// is only the current state. Failures add the store's current cause; remote failures
-// keep the local fact and announce once.
+// The on-demand account row shows current sync state and its verified local fact.
+// The authored account adapter owns persistent recovery and failure announcements.
 import { Check, CircleAlert, CloudOff, LoaderCircle, LogIn } from "lucide-react";
 import type { SyncStatus } from "@nexus/authored/types";
 import Button from "@/components/ui/Button";

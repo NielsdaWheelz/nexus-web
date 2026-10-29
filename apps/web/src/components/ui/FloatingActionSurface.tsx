@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { Scope } from "@/components/feedback/scope";
+import { Scope, Session } from "@/components/feedback/scope";
 import { cx } from "@/lib/ui/cx";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { OverlayContext, focusableElements, useOverlay, useOverlayContainer, type Layer } from "@/lib/ui/overlay";
@@ -86,6 +86,7 @@ export default function FloatingActionSurface({
   const shown = open && anchor !== null;
   const modal = useContext(OverlayContext);
   const feedbackScope = useContext(Scope);
+  const session = useContext(Session);
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
   const mobileViewport = useMobileViewport();
   const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
@@ -201,7 +202,7 @@ export default function FloatingActionSurface({
         if (preservePointerSelection) event.preventDefault();
       }}
     >
-      {feedback ? typeof children === "function" ? children(position.placed, position.anchorState) : children :
+      {feedback || session === null ? typeof children === "function" ? children(position.placed, position.anchorState) : children :
         <FeedbackSurface bounds={surfaceElement} interaction={layer} modal={modal} active={shown}
           protectedTargets={() => trigger ? [trigger] : []} returnFocus={() => trigger}>
           {typeof children === "function" ? children(position.placed, position.anchorState) : children}

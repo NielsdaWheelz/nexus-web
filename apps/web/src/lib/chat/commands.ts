@@ -69,13 +69,14 @@ export type CommandOutcome =
   | { readonly kind: "Settled" | "Gone" | "Pending" | "Handled" }
   | { readonly kind: "Accepted"; readonly receipt: AcceptedReceipt }
   | { readonly kind: "Failed"; readonly feedback: FeedbackContent; readonly rejection: RejectionCode | null };
-/** `feedback` is the last one shown for the command; a retry keeps it until it settles. */
+/** The incident survives landing changes; feedback is the last outcome and stays through retry. */
 export type CommandState =
   | { readonly kind: "Idle" }
-  | { readonly kind: "Busy"; readonly command: ChatCommand; readonly feedback: FeedbackContent | null }
+  | { readonly kind: "Busy"; readonly command: ChatCommand; readonly occurrence: object; readonly feedback: FeedbackContent | null }
   | {
       readonly kind: "Unconfirmed" | "RefreshRequired";
       readonly command: ChatCommand;
+      readonly occurrence: object;
       readonly feedback: FeedbackContent;
     };
 export type ConversationCommands = ReturnType<typeof createCommands>;
@@ -248,6 +249,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   let state: CommandState = IDLE_COMMAND;
   let pending: {
     command: ChatCommand;
+    occurrence: object;
     body: string | null;
     unconfirmed: boolean;
     /**
@@ -273,7 +275,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   };
   const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent, preserveCopy = false): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
-    set({ kind, command: pending.command, feedback: kind === "Unconfirmed" && !preserveCopy && feedback !== STALE_BUILD_FEEDBACK
+    set({ kind, command: pending.command, occurrence: pending.occurrence, feedback: kind === "Unconfirmed" && !preserveCopy && feedback !== STALE_BUILD_FEEDBACK
       ? { ...feedback, title: "change not confirmed", message: "the request may have succeeded." }
       : feedback });
     return PENDING;
@@ -299,7 +301,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   const reconcile = async (): Promise<CommandOutcome> => {
     const attempt = pending;
     if (conversationId === null) return { kind: "Settled" };
-    if (attempt) set({ kind: "Busy", command: attempt.command, feedback: state.kind === "Idle" ? null : state.feedback });
+    if (attempt) set({ kind: "Busy", command: attempt.command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
     try {
       const tree = await readConversationTree(conversationId);
       if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
@@ -365,7 +367,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     const attempt = pending;
     if (!attempt) return { kind: "Settled" };
     const command = attempt.command;
-    set({ kind: "Busy", command, feedback: state.kind === "Idle" ? null : state.feedback });
+    set({ kind: "Busy", command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
     let submitted = false;
     try {
       let deleted = false;
@@ -489,7 +491,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         : null;
       const authored_prefix=accountId!==null && (command.kind==="Send"||command.kind==="Repeat") ? getWritingRuntime(accountId).committedPrefix() : null;
       void authored_prefix?.catch(()=>{});
-      pending = { command, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
+      pending = { command, occurrence: {}, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
       return run(send);
     },
     /** Unconfirmed resends the frozen command; RefreshRequired rereads the tree. */

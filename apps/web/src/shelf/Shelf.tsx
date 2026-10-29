@@ -48,7 +48,7 @@ export default function Shelf() {
     void localMutation("remove", { media_id: item.media_id }).then(back,
       () => setFailure({ kind: "Remove", title: "removal not confirmed" }));
   };
-  return <FeedbackProvider><main ref={setBounds} className={`${styles.shell} ${styles.readerShell}`}>
+  return <FeedbackProvider><main ref={setBounds} tabIndex={-1} className={`${styles.shell} ${styles.readerShell}`}>
     <FeedbackSurface bounds={bounds} interaction={null} modal={null} active protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
     <header className={styles.readerHeader}>
       <Button onClick={back}>downloads</Button>

@@ -55,7 +55,7 @@ function PendingCommand({ observation, remove, fail }: {
     if (!current) remove(id);
   }, [current, id, remove]);
   if (!current?.feedback) return null;
-  return <FeedbackFailure scope="Local" occurrence={current.command} announcementOccurrence={current.feedback}
+  return <FeedbackFailure scope="Local" occurrence={current.occurrence} announcementOccurrence={current.feedback}
     content={{...current.feedback, message: [title, current.feedback.message].filter(Boolean).join(" · ")}}
     announcement="Polite" actions={[{label: "check chat change", busy: current.kind === "Busy", onClick: intent => {
       if (owner.getSnapshot() !== current || current.kind === "Busy") return;

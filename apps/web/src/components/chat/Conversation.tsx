@@ -458,7 +458,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         />
       ) : null}
       {recovery?.feedback ? (
-        <FeedbackFailure scope="Local" occurrence={recovery.command} announcementOccurrence={recovery.feedback}
+        <FeedbackFailure scope="Local" occurrence={recovery.occurrence} announcementOccurrence={recovery.feedback}
           content={recovery.feedback}
           announcement="Assertive"
           actions={recovery.kind === "Unconfirmed" && recovery.command.kind === "Send"

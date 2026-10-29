@@ -83,7 +83,7 @@ export function FeedbackFailure({ scope: placement, ...failure }: FeedbackFailur
   const scope = useContext(Scope);
   const [token] = useState(() => ({}));
   const owner = placement === "Account" ? session?.account : scope;
-  if (!owner) throw new Error("feedback failure has no presentation owner");
+  if (!session || !owner) throw new Error("feedback failure has no presentation owner");
   useLayoutEffect(() => { owner.publish(token, failure); });
   useLayoutEffect(() => () => owner.withdraw(token), [owner, token]);
   return null;
@@ -279,7 +279,7 @@ export function Signal({
     {disclosure === "Anchored" ? <FloatingActionSurface
       open={open}
       id={id}
-      feedback
+      feedback={scope !== null}
       disclosure
       anchor={summaryElement}
       disclosureTrigger={anchor}
@@ -418,13 +418,13 @@ export function Announcement({ text, level: requestedLevel, deferred = false, oc
 function Diagnostics({ requestId }: { requestId: string }) {
   const copy = useCopyFeedback(requestId);
   const [failure, setFailure] = useState<{ requestId: string; occurrence: object } | null>(null);
-  const failed = failure?.requestId === requestId;
-  const occurrence = useFeedbackOccurrence(failed, requestId);
+  const failed = failure !== null && failure.requestId === requestId;
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const text = useRef<HTMLElement>(null);
   if (defect) throw defect.error;
   const select = () => {
     if (!text.current) return;
+    text.current.focus({ preventScroll: true });
     const range = document.createRange(); range.selectNodeContents(text.current);
     const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
   };
@@ -436,11 +436,11 @@ function Diagnostics({ requestId }: { requestId: string }) {
   };
   return <div className={styles.diagnostics}>
     <div className={styles.diagnosticsBody}>
-      <code ref={text}>request id: {requestId}</code>
+      <code ref={text} tabIndex={-1}>request id: {requestId}</code>
       <Button className={styles.control} icon={copy.copied ? <Check /> : <span />} onClick={onCopy}>copy diagnostics</Button>
     </div>
     {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
-    {failed ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure?.occurrence} content={{ tone: "Warning", title: "couldn’t copy diagnostics" }}
+    {failed ? <FeedbackNotice occurrence={failure.occurrence} content={{ tone: "Warning", title: "couldn’t copy diagnostics" }}
       announcement="Polite" actions={[{ label: "select request id", onClick: select }]} /> : null}
   </div>;
 }

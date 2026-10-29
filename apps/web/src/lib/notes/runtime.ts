@@ -518,7 +518,6 @@ export class WritingRuntime {
     const failed = (error: unknown) => {
       if (!current()) return;
       cached.read_attempt++;
-      if (!isAuthoredStorageFailure(error)) {reportError(error); return;}
       cached.publishRead({retrying: false, error, occurrence: cached.readSnapshot().occurrence ?? {}});
     };
     if (retrying) cached.publishRead({...cached.readSnapshot(), retrying: true});

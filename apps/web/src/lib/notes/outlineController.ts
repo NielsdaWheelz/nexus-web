@@ -113,7 +113,10 @@ export class OutlineController {
     const pending = read?.pending === true || this.scheduled.has(parent_id) && (request?.foreground === true || !this.windows.has(parent_id));
     return {pending, error: read?.error ?? failed?.error ?? null, occurrence: read?.occurrence ?? failed?.occurrence ?? null,
       retry: () => {
-        if (request) request.foreground = true;
+        if (!request || this.requests.get(parent_id) !== request) return;
+        request.foreground = true;
+        // renew navigation without replacing the collector's request identity.
+        if (request.navigation) request.navigation.lease = this.lease();
         if (read?.error !== null && read?.error !== undefined) read.retry();
         else if (failed) {const window = this.proposals.get(parent_id); if (window) this.accept(parent_id, window);}
       }};
@@ -1056,7 +1059,7 @@ export class OutlineController {
     for (const [parent, window] of this.proposals) {
       const request = this.requests.get(parent);
       if (request) request.foreground = true;
-      if (request?.navigation) this.requests.set(parent, {...request, navigation: {...request.navigation, lease: this.lease()}});
+      if (request?.navigation) request.navigation.lease = this.lease();
       this.accept(parent, window);
     }
     this.notify();

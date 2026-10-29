@@ -152,12 +152,12 @@ function Repeat({ message, operation, openIntent, onClose }: {
     else if (outcome?.kind === "Failed") setFailure(outcome.feedback);
   };
   const shown = own?.feedback ?? failure;
-  const occurrence = useFeedbackOccurrence(shown !== null || own?.kind === "Busy", own?.command);
+  const occurrence = useFeedbackOccurrence(failure !== null);
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
       {reason ? <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" /> : null}
-      {shown ? <FeedbackFailure scope="Local" occurrence={occurrence} content={shown} announcement="Polite" /> : null}
+      {shown ? <FeedbackFailure scope="Local" occurrence={own?.occurrence ?? occurrence} announcementOccurrence={shown} content={shown} announcement="Polite" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button
