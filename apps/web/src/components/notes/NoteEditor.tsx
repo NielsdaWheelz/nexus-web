@@ -123,8 +123,7 @@ export interface StructuralKeys {
 }
 
 /** The outline can preserve an occurrence's caret without reaching into its view. */
-export interface NoteEditorHandle {
-  clear?(): void;
+export interface TextEditorHandle {
   readText(): string;
   encodedBytes(): number;
   readSelection(): { anchor: number; head: number };
@@ -134,6 +133,11 @@ export interface NoteEditorHandle {
   canArrange(): boolean;
   settleNativeInput(): boolean;
   localHistory(command: "undo" | "redo"): {enabled: boolean; execute(): void} | null;
+}
+export interface NoteEditorHandle extends TextEditorHandle {
+  clear(): void;
+  setInputMode(mode: "text" | "blocks" | "controls"): void;
+  refuse(message: string): void;
 }
 
 /** prosemirror-view 1.41.8 exposes no public DOM reconciliation operation.
@@ -329,6 +333,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [embeds, setEmbeds] = useState<ReadonlyMap<HTMLElement, {ref: string; field: "annotation" | null; label: string | null; row_id: string | null; key: string}>>(() => new Map());
   const embedSerial = useRef(0);
   const [toolbar, setToolbar] = useState(false);
+  const inputMode = useRef<"text" | "blocks" | "controls">("text");
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [presentation, setPresentation] = useState<"title" | "prose" | "code">("prose");
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
@@ -454,7 +459,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (
       !view ||
-      !latest.current.editable ||
+      !latest.current.editable || inputMode.current !== "text" ||
       view.composing || compositionBase.current !== null
     )
       return false;
@@ -490,7 +495,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (
       !view ||
       !box ||
-      !latest.current.editable ||
+      !latest.current.editable || inputMode.current !== "text" ||
       view.composing || compositionBase.current !== null
     )
       return false;
@@ -632,7 +637,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         unsubscribe();
         signal.removeEventListener("abort", abort);
         busy.current = false;
-        if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable });
+        if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable && inputMode.current === "text" });
       }
     },
     [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost, schema.nodes.body, schema.nodes.resource_embed],
@@ -652,7 +657,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     // would briefly disable and blur this body during canonical binding.
     latest.current = { ...latest.current, editable: props.editable && referenceRef.current.isReady() };
     viewRef.current?.setProps({
-      editable: () => latest.current.editable && !busy.current,
+      editable: () => latest.current.editable && !busy.current && inputMode.current === "text",
     });
     const view = viewRef.current;
     if (view) notifySelection(view.state);
@@ -728,6 +733,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       }
       if (latest.current.history) {
+        releaseNativeInput(current);
         if (redo) latest.current.history.redo(); else latest.current.history.undo();
         return true;
       }
@@ -904,7 +910,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             : styles.view,
           role: activeReference(state) !== null ? "combobox" : "textbox",
           "aria-readonly": String(
-            !latest.current.editable || busy.current,
+            !latest.current.editable || busy.current || inputMode.current !== "text",
           ),
           ...(activeReference(state) !== null
             ? {
@@ -915,7 +921,7 @@ function NoteEditorContent(props: NoteEditorProps) {
                 "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
               }
             : latest.current.projection && latest.current.editable && !busy.current
-              ? {tabindex: nativeEntry ? "0" : "-1"}
+              ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
           "aria-label": latest.current.label,
           "aria-multiline": "true",
@@ -952,7 +958,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         ...latest.current.projection?.nodeViews,
       },
       editable: () =>
-        latest.current.editable && !busy.current,
+        latest.current.editable && !busy.current && inputMode.current === "text",
       clipboardTextSerializer: slice => clipboardPlainText(slice.content),
       transformPasted: (slice, current) => latest.current.projection || current.state.selection.$from.parent.attrs.presentation === "code"
         ? slice : (oneBlock(slice, schema) ?? slice),
@@ -1010,6 +1016,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             event.target.closest("input, textarea, select, button")
           )
             return true;
+          if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
           beginNativeInput(current, event);
           // Returning true leaves the browser event alone while stopping PM's
           // keymap/capture fallback from turning composition into a newline.
@@ -1228,6 +1235,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       dispatchTransaction(tr) {
         const projectionSource = tr.getMeta(outlineTransactionSource);
         const external = tr.getMeta(SOURCE) === "external" || projectionSource === "projection" || projectionSource === "semantic";
+        if (inputMode.current !== "text" && !external && (tr.docChanged || tr.selectionSet && !(tr.selection instanceof NodeSelection && typeof tr.selection.node.attrs.row_id === "string"))) return;
         const first = tr.steps[0]?.toJSON();
         const changed = first && typeof first.from === "number" && view.state.doc.type.name === "outline_doc" ? fieldAt(view.state.doc, first.from) : editingField(view.state);
         const query = referenceRef.current.getState();
@@ -1339,6 +1347,12 @@ function NoteEditorContent(props: NoteEditorProps) {
         view.dispatch(preventScroll ? transaction : transaction.scrollIntoView());
         view.focus();
       },
+      setInputMode(mode) {
+        inputMode.current = mode;
+        view.setProps({editable: () => latest.current.editable && !busy.current && inputMode.current === "text"});
+        if (mode !== "text") {setToolbar(false); setLinkVisible(false);}
+      },
+      refuse(message) {warn("outline unchanged", message);},
       canArrange() {
         return latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
           compositionBase.current === null && referenceRef.current.getState() === null;
@@ -1516,7 +1530,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           />
         </div>
       ) : null}
-      {props.editable && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
+      {props.editable && inputMode.current === "text" && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
         <div
           className={styles.toolbar}
           role="toolbar"
@@ -1538,7 +1552,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           <Button iconOnly icon={<Code2 size={16} aria-hidden="true" />} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
-              const view=viewRef.current;if(!view||!latest.current.editable||view.composing||compositionBase.current!==null)return;
+              const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
               flushNativeDOM(view);syncNativeSelection(view);
               if(activeReference(view.state)!==null)return;
               const field=editingField(view.state);if(!field||field.kind!=="body")return;

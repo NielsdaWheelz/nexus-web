@@ -27,29 +27,79 @@ export function endpointForResource(ref: string): LinkTarget | null {
 }
 /** Fetch only the adjacent keys. A collision expands to its observed tie run,
  * never to the endpoint's resource bodies or unrelated relationships. */
-export async function preparePosition(runtime: WritingRuntime, ref: string, id: string, after: string | null, before: string | null): Promise<{ value: string; moves: Intent[]; previous: LinkState[] }> {
-  const store = await runtime.store;
-  const at = before !== null ? {kind:"neighbors" as const,link_id:before,side:"before" as const} : after !== null ? {kind:"neighbors" as const,link_id:after,side:"after" as const} : {kind:"tail" as const};
-  let siblings = (await store.query({kind:"positions",ref,exclude_link_id:id,at})).positions;
-  const key = (link:LinkState) => (link.endpoint_a===ref?link.position_a:link.position_b)!.value;
-  const anchor = before ?? after;
-  if (anchor !== null && !siblings.some(link=>link.link_id===anchor)) throw new Error("The selected insertion position is no longer available");
-  let index = before !== null ? siblings.findIndex(link=>link.link_id===before) : after !== null ? siblings.findIndex(link=>link.link_id===after)+1 : siblings.length;
-  if (index>0 && index<siblings.length && key(siblings[index-1]!)===key(siblings[index]!)) {
-    const position=key(siblings[index]!);
-    const run:LinkState[]=[];
-    let cursor:string|null=null;
-    do {
-      const page=await store.query({kind:"positions",ref,exclude_link_id:id,at:{kind:"tie",position,cursor,limit:100}});
-      run.push(...page.positions);
-      cursor=page.next_cursor;
-    } while(cursor!==null);
-    const bounds=(await store.query({kind:"positions",ref,exclude_link_id:id,at:{kind:"bounds",position}})).positions;
-    siblings=[...bounds.filter(link=>key(link)<position),...run,...bounds.filter(link=>key(link)>position)];
-    index=siblings.findIndex(link=>link.link_id===anchor)+(before!==null?0:1);
+export async function preparePosition(runtime: WritingRuntime, ref: string, id: string, after: string | null, before: string | null): Promise<{ value: string; moves: Extract<Intent, {kind: "move_link"}>[]; previous: LinkState[] }> {
+  const prepared = await preparePositions(runtime, ref, [{link_id: id, after, before}]);
+  if (prepared.kind === "refusal") {
+    switch (prepared.reason) {
+      case "unavailable": throw new Error("The selected insertion position is no longer available");
+      case "capacity": throw new Error("The selected insertion position exceeds this editing window");
+    }
   }
-  const positions=insertionPositions(siblings.map(link=>({link_id:link.link_id,position:key(link)})),index,id);
-  return {value:positions.find(item=>item.link_id===id)!.position,previous:siblings,moves:positions.filter(item=>item.link_id!==id).map(item=>({kind:"move_link",link_id:item.link_id,endpoint_ref:ref,position:item.position}))};
+  return {value: prepared.values.get(id)!, moves: prepared.moves, previous: prepared.previous};
+}
+/** Allocate a complete destination batch against one bounded original graph.
+ * Planned anchors enter only the virtual order; no placement is published here. */
+export async function preparePositions(runtime: WritingRuntime, ref: string,
+  insertions: readonly {link_id: string; after: string | null; before: string | null}[],
+): Promise<{kind: "ready"; values: ReadonlyMap<string, string>; moves: Extract<Intent, {kind: "move_link"}>[]; previous: LinkState[]} | {kind: "refusal"; reason: "unavailable" | "capacity"}> {
+  const store = await runtime.store, original = new Map<string, LinkState>(), planned = new Set(insertions.map(item => item.link_id));
+  const requested = new Set<string>(), ties = new Set<string>();
+  const key = (link: LinkState) => (link.endpoint_a === ref ? link.position_a : link.position_b)!.value;
+  let bytes = 2;
+  const remember = (links: readonly LinkState[]) => {
+    for (const link of links) if (!planned.has(link.link_id) && !original.has(link.link_id)) {
+      original.set(link.link_id, link); bytes += new TextEncoder().encode(JSON.stringify(link)).byteLength + 1;
+    }
+    return bytes <= 16 * 1024 * 1024;
+  };
+  for (const item of insertions) {
+    const anchor = item.before ?? item.after;
+    if (anchor !== null && planned.has(anchor)) continue;
+    const request = item.before !== null ? "before:" + item.before : item.after !== null ? "after:" + item.after : "tail";
+    if (requested.has(request)) continue;
+    requested.add(request);
+    const at = item.before !== null ? {kind: "neighbors" as const, link_id: item.before, side: "before" as const}
+      : item.after !== null ? {kind: "neighbors" as const, link_id: item.after, side: "after" as const} : {kind: "tail" as const};
+    const neighbors = (await store.query({kind: "positions", ref, exclude_link_id: item.link_id, at})).positions;
+    if (anchor !== null && !neighbors.some(link => link.link_id === anchor)) return {kind: "refusal", reason: "unavailable"};
+    if (!remember(neighbors)) return {kind: "refusal", reason: "capacity"};
+    const index = item.before !== null ? neighbors.findIndex(link => link.link_id === item.before)
+      : item.after !== null ? neighbors.findIndex(link => link.link_id === item.after) + 1 : neighbors.length;
+    if (index > 0 && index < neighbors.length && key(neighbors[index - 1]!) === key(neighbors[index]!)) {
+      const position = key(neighbors[index]!);
+      if (ties.has(position)) continue;
+      ties.add(position);
+      let cursor: string | null = null;
+      do {
+        const page = await store.query({kind: "positions", ref, exclude_link_id: item.link_id, at: {kind: "tie", position, cursor, limit: 100}});
+        if (!remember(page.positions)) return {kind: "refusal", reason: "capacity"};
+        cursor = page.next_cursor;
+      } while (cursor !== null);
+      if (!remember((await store.query({kind: "positions", ref, exclude_link_id: item.link_id, at: {kind: "bounds", position}})).positions))
+        return {kind: "refusal", reason: "capacity"};
+    }
+  }
+  const order = [...original.values()].sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.link_id < b.link_id ? -1 : 1)
+    .map(link => ({link_id: link.link_id, position: key(link)}));
+  const values = new Map<string, string>();
+  for (const item of insertions) {
+    const anchor = item.before ?? item.after;
+    const index = item.before !== null ? order.findIndex(link => link.link_id === item.before)
+      : item.after !== null ? order.findIndex(link => link.link_id === item.after) + 1 : order.length;
+    if (anchor !== null && !order.some(link => link.link_id === anchor)) return {kind: "refusal", reason: "unavailable"};
+    const positions = insertionPositions(order, index, item.link_id);
+    for (const position of positions) {
+      const current = order.find(link => link.link_id === position.link_id);
+      if (current) current.position = position.position;
+      else order.splice(index, 0, position);
+    }
+  }
+  for (const item of insertions) values.set(item.link_id, order.find(link => link.link_id === item.link_id)!.position);
+  const moves: Extract<Intent, {kind: "move_link"}>[] = order.flatMap(item => {
+    const previous = original.get(item.link_id);
+    return previous && item.position !== key(previous) ? [{kind: "move_link" as const, link_id: item.link_id, endpoint_ref: ref, position: item.position}] : [];
+  });
+  return {kind: "ready", values, moves, previous: [...original.values()]};
 }
 export async function prepareLink(runtime: WritingRuntime, input: LinkRequest, sourcePlacement?: {value:string;moves:Intent[]}): Promise<{ link_id: string; intents: Intent[] }> {
   const store = await runtime.store;

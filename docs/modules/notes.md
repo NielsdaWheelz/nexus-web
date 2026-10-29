@@ -220,8 +220,24 @@ an item; a second escape returns to its bullet. native traversal skips item
 text in either direction and can return to the admitted root or insertion field.
 root text, insertion fields and annotation bodies retain native tab behavior.
 idle editable item text reserves tab/shift-tab and the move chord for outline
-structure; unavailable moves are silently refused. native links and buttons keep
-their own keys.
+structure; unavailable single-item moves are silently refused. native links and
+buttons keep their own keys.
+shift-click across item text or row background selects the inclusive visible
+range from a fixed occurrence anchor. only the descendant view's active text
+selection supplies a text anchor; header and control focus cannot reuse its
+dormant caret. same-row text selection stays native;
+bullet links keep their navigation. selection excludes root/insertion fields,
+keeps embedded scopes separate, refuses paging gaps, and retains exact membership
+across incoming updates. it never identifies occurrences by resource ref.
+block mode disables native text editing while retaining focus and structural
+commands. typing, composition, return, paste, formatting and cut are inert;
+copy retains visible-row semantics: editable bodies by value, reference
+appearances by reference. plain text click or f2 resumes editing;
+escape returns to the endpoint bullet. single-item movement remains separate.
+row controls keep the host read-only until pointer, f2 or certified native-tab
+entry admits text editing. selection observation never enables editing.
+selection and history announcements use the outline's existing polite status;
+each gesture publishes one event even when its selection count is unchanged.
 the existing focus request owns a plain-tab entry certificate while the host is
 unfocused. actual native focus installs its authorized insertion caret
 synchronously before selection observation; pointer and later keyboard intent
@@ -247,8 +263,20 @@ nested item outdents. an empty top-level item stays empty. backward/forward
 deletion at a boundary joins adjacent notes; deleting an empty item unlinks its
 occurrence. code return remains an
 in-note break. its native DOM parser preserves literal newlines; clipboard slices
-retain their separate existing import policy. explicit block removal unlinks
-exactly the selected relationships.
+retain their separate existing import policy. block commands normalize selected
+ancestors and descendants to topmost occurrences. indent/outdent plans complete
+sibling runs against one snapshot; removal unlinks only those roots' incoming
+relationships. resources, internal links and independent relationships survive.
+the relationship menu still names one exact edge. range removal enters the next
+survivor's text start, otherwise the previous survivor's end or empty insertion
+field. read-only survivors receive block selection. the removal press remains
+fenced through keyup across internal focus transfer, including the same session's
+separate root header.
+uncommitted annotation input uses the same loss decision for relationship-menu
+unlink and range removal, covering affected edge aliases and their descendants.
+the decision is synchronous at the gesture; admitted work still settles, and
+drafts keep their existing visit ownership. only actual uncommitted work retains
+extra row ancestry; retired clean associations do not expand the editing window.
 title return and shift-return enter the root's first item or create the following
 item for a title occurrence. pasting literal title text remains separate from
 that keyboard command.
@@ -264,6 +292,28 @@ and their real undo managers; no receipt-time body replay or inverse snapshot
 restore is involved. deferred graph preparation waits for a predecessor's
 eventual receipt, while its first failure remains visible through the original
 error owner. exact immutable retry stays with the runtime.
+
+range history separates input bookmarks from occurrence placement/proof data.
+each gesture pins its selection and predecessor proofs, reserves the existing
+runtime tail, and prepares one complete graph batch under its account lease.
+canonical metadata checks hidden destination collisions and position allocation
+at one revision. expected refusal publishes no placements, consumes no sequence,
+and never enters the save-failure lane. exact byte/retention limits refuse the
+whole command; both stored replay directions must fit the atomic command limit.
+replay also reserves within the existing total editing budget before moving its
+history group. accepted work uses the existing immutable persistence recovery.
+
+provisional history suspends the captured redo branch until acceptance or
+refusal. undo/redo chooses its group synchronously, before waiting for receipts;
+an inverse aimed at a refused gesture is a no-op. later real writing still
+retires its old redo branch. replay uses stored endpoints and guarded inverses,
+preserves independent causal membership and positional ownership, and restores
+surviving original selection members. final committed state corrects accepted
+placements without claiming independently removed descendants or relationships.
+an independently surviving incoming relationship remains visible. semantic
+projection repairs a newer selection's missing endpoints without taking focus.
+newer meaningful input revokes delayed focus; inert block input does not.
+session undo is not persisted.
 
 receipt adoption acknowledges only its admission. it never overwrites later
 writing, placement or the editing host. canonical settlement also clears the

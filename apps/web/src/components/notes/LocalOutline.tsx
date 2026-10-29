@@ -17,6 +17,7 @@ import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
+import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {useWorkGuard} from "@/lib/unsavedWork";
 import {LocalCommitError, isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {emptyBody} from "@nexus/authored/body";
@@ -71,6 +72,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
  * own collectors. Canonical root metadata survives paging and refresh failure. */
 export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
+  const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
   const inherited = useContext(ResourceBranch);
   const branch = useMemo(() => inherited.ancestors.has(rootRef) ? inherited : {...inherited, ancestors: new Map(inherited.ancestors).set(rootRef, {kind: "root"} as const)}, [inherited, rootRef]);
@@ -102,13 +104,13 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   useLayoutEffect(() => {
     if (!runtime) return;
     const history = new OutlineHistory(runtime, setFailure);
-    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed);
+    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard);
     setMounted({id: crypto.randomUUID(), controller});
     if (apiRef) apiRef.current = controller;
     return () => {if (apiRef?.current === controller) apiRef.current = null; controller.close(); history.close();};
     // Presentation and latent-page props update the mounted session below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, input, rootRef, branch, notify, changed]);
+  }, [runtime, input, rootRef, branch, notify, changed, guard]);
   const presentation = useAuthoredPaneRoot(current?.controller ?? null, configuredField);
   const wrap = (node: ReactNode) => <SharedOutline value={current?.controller ?? null}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
   const rootEditor = presentation.rootEditor;
@@ -129,6 +131,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   rootRead: ReturnType<typeof useOutlineWindow>; onReady(controller: OutlineController | null): void;
 }) {
   const resources = useContext(ResourceOutlineContext);
+  controller.platform = useRenderEnvironment().platform;
   const guard = useWorkGuard();
   const [manualCopy, setManualCopy] = useState<{text: string; label: string; open: boolean; occurrence: object} | null>(null);
   const copied = useCopyFeedback(pending.owner);
@@ -144,7 +147,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   useLayoutEffect(() => {if (rootRead.window) controller.accept(pending.value.input.root_id, rootRead.window);}, [controller, pending.value.input.root_id, rootRead.window]);
   useEffect(() => {
     const intent = (event: Event) => {
-      if (!event.isTrusted) return;
+      if (!event.isTrusted || controller.inertInput(event)) return;
       controller.revoke();
       controller.revealTouchCommands(event);
       if (event instanceof KeyboardEvent && event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing)
@@ -173,10 +176,10 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   if (error !== null && !(error instanceof OutlineActionRefusal) && !isAuthoredStorageFailure(error)) throw error;
   return <SharedOutline value={controller}>
     <div data-outline-session={pending.value.input.root_id} onFocusCapture={event => {
-      if (event.target instanceof Element && event.target.matches('[contenteditable="true"]')) controller.setFocused(true);
+      if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
-      if (!(next instanceof Element && (event.currentTarget.contains(next) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
+      if (!(next instanceof Element && (next.closest(`[data-outline-session="${pending.value.input.root_id}"]`) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
     }}>
       {error !== null && incident ? <FeedbackFailure scope="Local" occurrence={incident.occurrence}
         content={{tone: "Warning", title: error instanceof OutlineActionRefusal ? error.message : pendingError !== null ? "couldn’t apply this writing" : "couldn’t open linked resources"}}
@@ -200,6 +203,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items"
         placeholder="write or @ to link" compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} onEditorReady={editorReady}/>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
     </div>
   </SharedOutline>;

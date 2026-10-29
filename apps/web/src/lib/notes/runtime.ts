@@ -6,12 +6,11 @@
  * documents before their committed listeners run. Unsynchronized committed
  * work needs no loss warning. */
 import * as Y from "yjs";
-import { prepareChange, createNoteIntent, type Intent } from "@nexus/authored/commands";
+import { prepareChange, createNoteIntent, type Intent, type CommandContext } from "@nexus/authored/commands";
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import { CommandTooLargeError } from "@nexus/authored/types";
-import type { AuthoredStore, Change, CommitFrame, Corpus, QueryResult, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
+import { MAX_COMMAND_BYTES, CommandTooLargeError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface DocumentReadSnapshot { retrying: boolean; error: unknown | null; occurrence: object | null }
@@ -36,6 +35,8 @@ export interface LocalCommit {
   command_seq: string; store_revision: string; change: Change;
   before: { resources: { ref: string; touch_vv: Vector; delete_vv: Vector }[]; links: { link_id: string; add_vv: Vector; remove_vv: Vector }[] };
 }
+export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
+export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
 interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; publishRead(state: DocumentReadSnapshot): void; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
@@ -45,7 +46,7 @@ interface FailedCommit {
   prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
   store: AuthoredStore | null; held: boolean; attempting: boolean;
   settled: Promise<LocalCommit>; resolve(receipt: LocalCommit): void; reject(error: Error): void;
-  result: Promise<LocalCommit>; refuse(error: unknown): void; retry_failure: ((error: unknown) => void) | null;
+  result: Promise<LocalCommit>; accept(receipt: LocalCommit): void; refuse(error: unknown): void; retry_failure: ((error: unknown) => void) | null;
   ready: Promise<void>; release(): void; faulted: boolean; fault: unknown;
   created_refs: readonly string[];
   prepare_graph: (() => Promise<void>) | null;
@@ -81,7 +82,7 @@ export class WritingRuntime {
   private retired = false;
   private state: SaveState = { saving: false, error: null, error_occurrence: null, error_refs: [], revision: 0 };
   private pending = 0;
-  private readonly pending_commands = new Map<Promise<LocalCommit>, FailedCommit>();
+  private readonly pending_commands = new Map<Promise<LocalCommit | null>, FailedCommit | null>();
   private capture_scope: { owner: FailedCommit; origins: Map<string, unknown>; mutated: Set<string>; offending: Map<string,{document:CachedDocument;updates:string[]}> } | null = null;
   constructor(private readonly accountId: string) {}
   snapshot = (): SaveState => this.state;
@@ -119,6 +120,68 @@ export class WritingRuntime {
     owner.release();
     this.publish({ saving: true });
     return owner.result;
+  }
+  /** Reserve graph-only admission on the same account tail. Expected refusal
+   * precedes sequence allocation, placement publication and the save-failure lane. */
+  admitGraph<R>(args: {
+    prepare(): Promise<{kind: "ready"; intents: readonly GraphIntent[]; selection: Partial<StateSelection>; preflight_revision: string | null; accepted(states: MergeResult): void} | {kind: "refusal"; reason: R}>;
+    active(): boolean; retired: R; changed: R; capacity: R | null;
+  }): {result: Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>; committed: Promise<LocalGraphCommit | null>} {
+    if (this.capture_scope) throw new Error("A compound mutation cannot submit another command");
+    let accept: (value: {kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}) => void = () => {};
+    let reject: (error: unknown) => void = () => {};
+    const result = new Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>((resolve, refuse) => {accept = resolve; reject = refuse;});
+    let settle: (receipt: LocalGraphCommit | null) => void = () => {};
+    let fail: (error: unknown) => void = () => {};
+    const committed = new Promise<LocalGraphCommit | null>((resolve, refuse) => {settle = resolve; fail = refuse;});
+    void committed.catch(() => {});
+    const refuse = (reason: R): null => {accept({kind: "refusal", reason}); return null;};
+    this.pending++; this.pending_commands.set(committed, null); this.publish({saving: true});
+    const operation = this.tail.then(async () => {
+      if (this.retired || !args.active()) return refuse(args.retired);
+      const store = await this.store;
+      return store.withCommand(async () => {
+        if (this.retired || !args.active()) return refuse(args.retired);
+        const prepared = await args.prepare();
+        if (prepared.kind === "refusal") return refuse(prepared.reason);
+        if (this.retired || !args.active()) return refuse(args.retired);
+        const graph = structuredClone([...prepared.intents]), intent: Intent = {kind: "batch", intents: graph};
+        const selection = intentSelection(intent), requested = selectStates(prepared.selection);
+        for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) selection[key] = [...new Set([...selection[key], ...requested[key]])];
+        const snapshot = await store.readSnapshot(selection);
+        if (prepared.preflight_revision !== null && snapshot.replica.store_revision !== prepared.preflight_revision) return refuse(args.changed);
+        if (this.retired || !args.active()) return refuse(args.retired);
+        const context = {replica_id: snapshot.replica.replica_id, command_seq: (BigInt(snapshot.replica.command_seq) + 1n).toString(), lamport: (BigInt(snapshot.replica.lamport) + 1n).toString()};
+        const lowered = lowerGraph(context, graph, snapshot.states);
+        if (!lowered) {
+          if (args.capacity === null) throw new Error("An admitted graph inverse exceeds its reserved command capacity");
+          return refuse(args.capacity);
+        }
+        const {change, states} = lowered;
+        const owner = this.commandOwner();
+        this.pending_commands.set(committed, owner);
+        owner.intent = intent; owner.selection = selection; owner.change = change; owner.store = store;
+        owner.prepared = {before: commitBefore(change, snapshot.states, selection), frame: {expected_store_revision: snapshot.replica.store_revision, replica_id: snapshot.replica.replica_id, change, states}};
+        owner.release(); owner.held = true; owner.attempting = true; this.failed = owner;
+        void owner.result.catch(reject);
+        try {
+          prepared.accepted(states);
+          let receipt: LocalCommit;
+          try {receipt = await this.prepareAndPersist(owner, store);}
+          catch (error) {owner.attempting = false; this.reportFailure(owner, error); receipt = await owner.settled;}
+          owner.resolve(receipt); owner.accept(receipt);
+          if (this.failed === owner) this.failed = null;
+          this.publish({error: null, error_occurrence: null, error_refs: []});
+          const graphReceipt: LocalGraphCommit = {...receipt, states: owner.prepared!.frame.states};
+          accept({kind: "committed", receipt: graphReceipt});
+          return graphReceipt;
+        } finally {owner.held = false; owner.attempting = false;}
+      });
+    });
+    this.tail = operation.then(settle, error => {reject(error); fail(error);}).finally(() => {
+      this.pending_commands.delete(committed); this.pending--; this.publish({saving: this.pending > 0});
+    });
+    return {result, committed};
   }
   /** Reserve one command before exposing new documents or running synchronous
    * structural edits. Only actual updates from the declared live documents enter
@@ -217,7 +280,7 @@ export class WritingRuntime {
     if (!owner.faulted) owner.prepare_graph = async () => {
       // The reserved tail already orders every participant's pending local command.
       const graph = structuredClone(await args.prepare(created.map(document=>document.ref)));
-      for (const intent of graph) if (intent.kind === "batch" || intent.kind === "create_note" || intent.kind === "create_page" || intent.kind === "edit_body" || intent.kind === "edit_title") {
+      for (const intent of graph) if (intent.kind === "batch" || intent.kind === "create_note" || intent.kind === "create_page" || intent.kind === "create_highlight" || intent.kind === "edit_body" || intent.kind === "edit_title") {
         owner.faulted = true;
         owner.fault = new TypeError("Compound preparation may return graph intents only");
         throw owner.fault;
@@ -232,9 +295,7 @@ export class WritingRuntime {
     this.publish({ saving: true });
     return {created,result:owner.result};
   }
-  private reserve(): FailedCommit {
-    this.pending++;
-    this.state = { ...this.state, saving: true };
+  private commandOwner(): FailedCommit {
     let accept: (receipt: LocalCommit) => void = () => {};
     let refuse: (error: unknown) => void = () => {};
     const result = new Promise<LocalCommit>((resolve, reject) => { accept = resolve; refuse = reject; });
@@ -244,7 +305,13 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { occurrence: {}, reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = { occurrence: {}, reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    return owner;
+  }
+  private reserve(): FailedCommit {
+    this.pending++;
+    this.state = { ...this.state, saving: true };
+    const owner = this.commandOwner(), {result, settled} = owner;
     this.pending_commands.set(result, owner);
     const operation = this.tail.then(async () => {
       if (this.retired) throw new Error("Writing account is closed");
@@ -263,11 +330,11 @@ export class WritingRuntime {
       owner.resolve(receipt);
       return receipt;
     });
-    this.tail = operation.then(accept, error => {
+    this.tail = operation.then(owner.accept, error => {
       owner.reject(error instanceof Error ? error : new Error("Writing command did not settle"));
       if (!this.retired) this.publish(error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null
         ? { error: null, error_occurrence: null, error_refs: [] } : { error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
-      refuse(error);
+      owner.refuse(error);
     }).finally(() => {
       this.pending_commands.delete(result);
       this.pending--; this.publish({ saving: this.pending > 0 });
@@ -315,7 +382,7 @@ export class WritingRuntime {
       const before = commitBefore(owner.change, states, owner.selection);
       owner.prepared = { before, frame: { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) } };
     }
-    const receipt = await this.persist(owner.prepared, store, owner.created_refs);
+    const receipt = await this.persist(owner.prepared, store, owner.created_refs, owner.selection);
     // Subscriptions may arrive after the receipt. Install the complete committed
     // baseline before a later edit can reference identities introduced by it.
     for (const resource of owner.prepared.frame.states.resources) {
@@ -330,7 +397,7 @@ export class WritingRuntime {
     }
     return receipt;
   }
-  private async persist(prepared: { frame: CommitFrame; before: LocalCommit["before"] }, store: AuthoredStore, created_refs: readonly string[]): Promise<LocalCommit> {
+  private async persist(prepared: { frame: CommitFrame; before: LocalCommit["before"] }, store: AuthoredStore, created_refs: readonly string[], selection: StateSelection): Promise<LocalCommit> {
     const { frame } = prepared;
     for (;;) {
       let result;
@@ -341,13 +408,11 @@ export class WritingRuntime {
         throw error;
       }
       if (result.kind === "committed") return { command_seq: result.command_seq, store_revision: result.store_revision, change: frame.change, before: prepared.before };
-      if (result.states.resources.some(resource=>created_refs.includes(resource.ref))) throw new TypeError("New writing identity already exists");
-      prepared.before = commitBefore(frame.change, result.states, {
-        refs: frame.change.resources.map(resource => resource.ref),
-        link_ids: frame.change.links.map(link => link.link_id),
-      });
-      frame.expected_store_revision = result.store_revision;
-      frame.states = mergeChanges(result.states, [frame.change]);
+      const current = await store.readSnapshot(selection);
+      if (current.states.resources.some(resource=>created_refs.includes(resource.ref))) throw new TypeError("New writing identity already exists");
+      prepared.before = commitBefore(frame.change, current.states, selection);
+      frame.expected_store_revision = current.replica.store_revision;
+      frame.states = mergeChanges(current.states, [frame.change]);
     }
   }
   retry(): Promise<void> {
@@ -392,7 +457,7 @@ export class WritingRuntime {
       }
       else if (intent.kind === "create_page") texts.set(intent.ref, intent.title);
     };
-    for (const owner of this.pending_commands.values()) if (owner.intent) creation(owner.intent);
+    for (const owner of this.pending_commands.values()) if (owner?.intent) creation(owner.intent);
     for (const [ref, entry] of this.documents) if (entry.value && entry.value.text_pending.size > 0) {
       const { doc } = entry.value;
       texts.set(ref, doc.share.has("title") ? doc.getText("title").toString() : text(readBody(doc)));
@@ -613,4 +678,19 @@ function intentSelection(intent: Intent): StateSelection {
   }
   visit(intent);
   return selection;
+}
+
+/** Lower one complete graph payload without making oversized work exceptional.
+ * Shared with reversible-capacity admission; no sequence is consumed here. */
+export function lowerGraph(context: CommandContext, intents: readonly GraphIntent[], corpus: Corpus): {change: Change; states: MergeResult} | null {
+  const change: Change = {command_seq: context.command_seq, lamport: context.lamport, resources: [], links: [], passages: [], source_stubs: []};
+  let states = mergeChanges(corpus, []);
+  for (const intent of intents) {
+    const patch = prepareChange(context, intent, states);
+    change.resources.push(...patch.resources); change.links.push(...patch.links);
+    change.passages.push(...patch.passages); change.source_stubs.push(...patch.source_stubs);
+    if (new TextEncoder().encode(JSON.stringify(change)).byteLength > MAX_COMMAND_BYTES) return null;
+    states = mergeChanges(states, [patch]);
+  }
+  return {change, states};
 }

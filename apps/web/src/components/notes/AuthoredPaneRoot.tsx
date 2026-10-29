@@ -8,7 +8,7 @@ import type {WritingDocument} from "@/lib/notes/runtime";
 import type {OutlineController, RootField} from "@/lib/notes/outlineController";
 import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {hasActiveInteractionOwner, overlayOwnsHistoryTraversal, ownsOverlayFocus, useInteractionOwner} from "@/lib/ui/overlay";
-import type {NoteEditorHandle} from "./NoteEditor";
+import type {TextEditorHandle} from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
 import BoundPageTitleEditor from "./BoundPageTitleEditor";
 import styles from "./AuthoredPaneRoot.module.css";
@@ -21,7 +21,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const expanded = visit.controller === controller && visit.expanded;
   const visitRef = useRef(visit); visitRef.current = visit;
   const root = controller?.rootDocument ?? null;
-  const [bound, setBound] = useState<{controller: OutlineController; document: WritingDocument; handle: NoteEditorHandle} | null>(null);
+  const [bound, setBound] = useState<{controller: OutlineController; document: WritingDocument; handle: TextEditorHandle} | null>(null);
   const handle = bound?.controller === controller && bound.document === root ? bound.handle : null;
   const history = controller?.rootHistory() ?? null;
   const [, changed] = useState(0);
@@ -61,14 +61,14 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const collapse = useCallback((focus: boolean) => {
     pendingCollapse.current = true; returnFocus.current = focus; attemptCollapse();
   }, [attemptCollapse]);
-  const ready = useCallback((next: NoteEditorHandle | null) => {
+  const ready = useCallback((next: TextEditorHandle | null) => {
     setBound(next && controller && root ? {controller, document: root, handle: next} : null);
   }, [controller, root]);
   const selectionChanged = useCallback((at: {anchor: number; head: number}) => {
     if (ownsFocus()) ownedFocus.current = true;
     controller?.onRootSelectionChange(at); attemptCollapse();
   }, [controller, attemptCollapse, ownsFocus]);
-  const visible = useCallback((editor: NoteEditorHandle) => {
+  const visible = useCallback((editor: TextEditorHandle) => {
     if (controller && inspection && !inspection.signal.aborted) shownInspection.current = {controller, activationId: inspection.activationId};
     if (firstFocus.current) {
       firstFocus.current = false; ownedFocus.current = true;
@@ -129,6 +129,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   useEffect(() => {if (inspection && !inspection.restored && !inspection.signal.aborted) reveal();}, [inspection, reveal]);
   if (!controller || !field || !root || !history) return {rootEditor: null, rootTitle: null, rootReady: false};
   const page = controller.rootRef.startsWith("page:");
+
   if (page) return {rootTitle: root.doc.getText("title").toString() || field.placeholder || "untitled page", rootReady: handle !== null,
     rootEditor: {kind: "Inline", feedback: null, content: <RootAttachment controller={controller} handle={handle} visible ownsFocus={ownsFocus} reveal={reveal}><div ref={region} className={styles.title} data-outline-session={controller.pending.root_id} onFocusCapture={focus} onBlurCapture={blur}>
       <BoundPageTitleEditor header pageRef={controller.rootRef} document={root} history={history} label="page title" placeholder={field.placeholder}
@@ -143,7 +144,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const title = blank ? body.content.size ? "note" : "empty note" : line;
   const preview = title + (omitted || line.length < text.length ? "…" : "");
   return {rootTitle: title, rootReady: handle !== null, rootEditor: {kind: "Expandable", feedback: null, regionId, expanded,
-    control: <button ref={disclosure} type="button" className={styles.disclosure} aria-label={expanded ? "collapse note" : `edit note: ${title}`}
+    control: <button ref={disclosure} type="button" className={styles.disclosure} data-outline-session={controller.pending.root_id} aria-label={expanded ? "collapse note" : `edit note: ${title}`}
       aria-controls={regionId} aria-expanded={expanded} onClick={() => {
         if (expandedRef.current) collapse(true);
         else {firstFocus.current = true; reveal();}
@@ -159,8 +160,8 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
 /** Published nodes commit in the chrome subtree. The route's layout effect
  * precedes that commit, so only this retained attachment can certify visibility. */
 function RootAttachment({controller, handle, visible, ownsFocus, reveal, onVisible, children}: {
-  controller: OutlineController; handle: NoteEditorHandle | null; visible: boolean;
-  ownsFocus(): boolean; reveal(): void; onVisible?(editor: NoteEditorHandle): void; children: ReactNode;
+  controller: OutlineController; handle: TextEditorHandle | null; visible: boolean;
+  ownsFocus(): boolean; reveal(): void; onVisible?(editor: TextEditorHandle): void; children: ReactNode;
 }) {
   useLayoutEffect(() => {
     if (!handle) return;

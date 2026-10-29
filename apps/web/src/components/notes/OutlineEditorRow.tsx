@@ -3,8 +3,7 @@
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
-import {useRef} from "react";
-import {useWorkGuard} from "@/lib/unsavedWork";
+import type {TextEditorHandle} from "./NoteEditor";
 import {createPortal} from "react-dom";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
@@ -36,17 +35,17 @@ export interface OutlineRowChrome {
   open: boolean;
   terminal: boolean;
   selected: boolean;
+  workOwners(owners: readonly string[]): void;
+  editorReady(editor: TextEditorHandle | null): void;
   toggle(): void;
   select(): void;
   unlink(): void;
   reveal(): void;
 }
-export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement}
+export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement; input: TextEditorHandle | null}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
-  const guard = useWorkGuard();
-  const owners = useRef(new Map<string, readonly string[]>());
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row) return [];
@@ -57,18 +56,19 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const identity = resourceTypeLabel(scheme).toLowerCase();
     const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
     const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
-    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => {if (guard.confirmLoss({scopes: [], ownerIds: owners.current.get(row.row_id) ?? []})) row.unlink();}});
+    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
+    // native keyboard traversal uses the glyph as the row's tab stop.
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
       onContextMenu={event => event.stopPropagation()}>
       <ContextualActionMenu navigation={null} title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
         sections={[{id: "Occurrence", actions}]} renderContextAnchor={context => row.href ? <a {...context}
-          className={`${styles.control} ${styles.bullet}`} href={row.href} data-outline-bullet="true" data-row-focusable="true"
+          className={`${styles.control} ${styles.bullet}`} href={row.href} tabIndex={0} data-outline-bullet="true" data-row-focusable="true"
           aria-label={`open ${identity}: ${row.label}`} data-workspace-rich-target="true"
           onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}
           onKeyDown={event => {context.onKeyDown(event); if (!event.defaultPrevented) activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}});}}>{marker}</a>
-          : <button {...context} type="button" className={`${styles.control} ${styles.bullet}`} data-outline-bullet="true"
+          : <button {...context} type="button" className={`${styles.control} ${styles.bullet}`} tabIndex={0} data-outline-bullet="true"
             data-row-focusable="true" aria-label={`actions for ${identity}: ${row.label}`}>{marker}</button>}/>
     </span>;
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"
@@ -83,7 +83,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
       </> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={ids => owners.current.set(row.row_id, ids)}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
         mount.content, `${row.row_id}:content`)] : [])];
   });
 }

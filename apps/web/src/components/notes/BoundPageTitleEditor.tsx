@@ -11,12 +11,12 @@ import type { EditorHistory } from "@/lib/notes/structure";
 import {FeedbackBusy} from "@/components/feedback/Feedback";
 import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
 import Textarea from "@/components/ui/Textarea";
-import type { NoteEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
+import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, history: suppliedHistory, structuralKeys, onEditorReady, onSelectionChange, header }: {
   document?: WritingDocument; header?: true;
-  history?: EditorHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: NoteEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
+  history?: EditorHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: TextEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
   pageRef: string; label?: string; editable?: boolean; placeholder?: string;
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -94,6 +94,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     const release = () => {if (!retired) {nativeFlight.current = false; latest.current.onSelectionChange?.(selection());}};
     nativeRelease.current = release;
     const begin = (event: Event) => {
+      if (event instanceof KeyboardEvent && ["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return;
       nativeFlight.current = true;
       queueMicrotask(() => {if (event.defaultPrevented) release();});
     };
@@ -121,7 +122,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   }, [document, ref, selection, step]);
   useLayoutEffect(() => {
     if (!document || !ref.current) return;
-    const handle: NoteEditorHandle = {
+    const handle: TextEditorHandle = {
       encodedBytes: () => baseline.current ? Y.encodeStateAsUpdate(baseline.current).byteLength : 0,
       readText: () => ref.current?.value ?? "",
       readSelection: () => selection(),
@@ -132,7 +133,14 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
         const head = Y.createRelativePositionFromTypeIndex(text, Math.min(text.length, at.head - 1));
         return target => ({anchor: (Y.createAbsolutePositionFromRelativePosition(anchor, target.doc)?.index ?? at.anchor - 1) + 1, head: (Y.createAbsolutePositionFromRelativePosition(head, target.doc)?.index ?? at.head - 1) + 1});
       },
-      focus: (requested, preventScroll) => {const at = typeof requested === "function" ? requested(document) : requested; const input = ref.current; if (!input) return; const a = at === "end" ? input.value.length : Math.max(0, at.anchor - 1), b = at === "end" ? a : Math.max(0, at.head - 1); input.focus({preventScroll}); input.setSelectionRange(a,b);},
+      focus: (requested, preventScroll) => {
+        const at = typeof requested === "function" ? requested(document) : requested, input = ref.current;
+        if (!input) return;
+        const text = (baseline.current ?? document.doc).getText("title").toString();
+        const a = at === "end" ? text.length : Math.max(0, Math.min(text.length, at.anchor - 1)), b = at === "end" ? a : Math.max(0, Math.min(text.length, at.head - 1));
+        input.focus({preventScroll}); input.setSelectionRange(a, b);
+        if (input.value !== text) pendingSelection.current = {input, anchor: a, head: b, intent: inputIntent.current};
+      },
       canArrange: () => !composing.current && !nativeFlight.current && !applying.current && pendingSelection.current === null && ref.current?.value === baseline.current?.getText("title").toString(),
       localHistory: command => {
         if (!handle.canArrange()) return {enabled: false, execute: () => undefined};
