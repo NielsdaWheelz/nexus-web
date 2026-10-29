@@ -216,7 +216,7 @@ for deleted media shows the body's own not-found. editors that open a typed link
 ## workspace titles
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
-account-scoped projection for nexus, all panes, pane chrome and the document title.
+account-scoped projection for nexus, pane chrome and the document title.
 `useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
 status; `name` is the real name the title shows, or null while the title is a
 placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
