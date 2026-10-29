@@ -8,12 +8,13 @@ the installed app on webview 155 passed real emulator ime suppression, keyboard
 dismissal, retained undo and activity bounds at `d42cf6dd6`. physical hardware
 and enlarged-text safe-area behavior still need their own observation.
 
-owners: `components/feedback/{Activity,WorkspaceFeedback,Feedback}.tsx`,
+owners: `components/feedback/{FeedbackLayer,Feedback}.tsx`,
 `lib/mobileShell/viewport.tsx`, `components/ui/SurfaceHeader.tsx`.
 
-on a supported physical phone, exercise finish receipts with hidden reader chrome,
-enlarged text, the real keyboard, activity and its return focus. check safe-area
-clearance and that notifications never move the player/reader or reveal controls.
+on a supported physical phone, exercise unresolved recovery and finish receipts
+with hidden reader chrome, enlarged text and the real keyboard. check safe-area
+clearance, minimized recovery and withdrawal focus in workspace, shelf and capture.
+feedback must not move the player/reader or reveal controls.
 spoken qualification is tracked in `workspace-feedback-repeat-announcement.md`.
 
 resolved when the current build passes those interactions, recording exact

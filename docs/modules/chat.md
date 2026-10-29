@@ -188,7 +188,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   message, delete chat. a command freezes its body, run uuid, observed revision and, for
   a send or repeat, its opening intent (a retry may upgrade it to a new pane, never back);
   a send names its pane. its state is `Idle | Busy | Unconfirmed | RefreshRequired`; the
-  last feedback shown rides through a retry. `recoveryOf(state, owns)` tells a surface
+  last feedback shown rides through a retry. the reserved command owns one incident
+  occurrence through landing changes, shared by pane, repeat-dialog and menu recovery;
+  its last feedback object identifies the deliberate outcome for speech.
+  `recoveryOf(state, owns)` tells a surface
   whether the pending command is its own (a composer owns only its pane's sends); the pane
   notice, the repeat dialog and the workspace condition of a menu deletion or repeat
   render it. an accepted existing-chat write reads the canonical tree, checks that it

@@ -35,6 +35,14 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+quiet feedback against `aac38e09a`: +840 authored runtime lines (3,019 added,
+2,179 deleted), all web source. scoped passive layers replace the workspace-only
+portal, cold skeletons, request-status rows and duplicated copy timers. the
+existing authored runtime separates document-read recovery from failed writes;
+command owners retain exact retry and loss protection. mounted controls and
+content geometry stay with their existing hosts. docs, generated output and
+disposable cases are excluded; earlier area totals retain their stated bases.
+
 mobile nexus header icons against `492d01595`: +5 authored runtime lines
 (32 added, 27 deleted), all workspace/navigation web source. one account-owned
 mark replaces desktop-local icon/badge anatomy; mobile account and dismissal use

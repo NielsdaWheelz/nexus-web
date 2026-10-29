@@ -67,11 +67,16 @@ offers the exact retry and exports only actual endangered writing, never clean
 text from a failed graph operation. locally committed pending synchronization is
 already saved and acquires no loss guard. pending outline input remains its own
 buffer, export and recovery owner.
+while a command is pending, its runtime owns the failure occurrence; a transient
+store status cannot create a second stopped-store incident for that command.
 
 branch collectors publish read and admission state into their existing controller
 request. row chrome consumes that projection without starting another read. the
 existing disclosure slot carries foreground waiting; root waiting uses pane
 chrome. selection and routine autosave produce no narration or success notice.
+failed admission retains its request, proposal and recovery through selection
+and blur. automatic reconciliation resumes deferred healthy proposals only;
+explicit retry renews the failed request's navigation lease before admission.
 
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.
