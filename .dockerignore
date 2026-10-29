@@ -16,6 +16,9 @@
 !migrations/**
 
 !node/
+!node/codex/
+!node/codex/package.json
+!node/codex/bun.lock
 !node/authored/
 !node/authored/helper.mjs
 !node/ingest/
