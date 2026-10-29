@@ -194,8 +194,11 @@ internal class OfflineBridge(
                 "opened" -> if (!leases.containsKey(generation to mediaId(request)) || leaseLifetimes[generation to mediaId(request)] != lifetime) return@command failure("NotFound")
                 "close" -> {
                     val key = generation to mediaId(request)
-                    acknowledged.remove(key); leaseLifetimes.remove(key)
-                    leases[key]?.let { lease -> lease.close(); leases.remove(key, lease) }
+                    leases[key]?.let { lease ->
+                        lease.close()
+                        leases.remove(key, lease)
+                        acknowledged.remove(key); leaseLifetimes.remove(key)
+                    }
                 }
                 "save" -> {
                     val error = store.save(mediaId(request), request.getJSONObject("locator"), request.getLong("base_revision"),

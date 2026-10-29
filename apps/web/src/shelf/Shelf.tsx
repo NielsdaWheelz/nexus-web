@@ -40,7 +40,9 @@ export default function Shelf() {
     if (opened === null || opened.media_id !== mediaId) return;
     let sent = false;
     const acknowledge = () => {
-      if (sent || document.visibilityState !== "visible") return;
+      // Hash changes can precede their React state update; the held native lease alone
+      // does not prove this is still the desired reader.
+      if (sent || document.visibilityState !== "visible" || window.location.hash !== `#open=${opened.media_id}`) return;
       sent = true;
       void localCall("opened", { media_id: opened.media_id }).catch(() => undefined);
     };

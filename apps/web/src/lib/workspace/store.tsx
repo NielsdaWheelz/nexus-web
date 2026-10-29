@@ -564,7 +564,7 @@ function createWorkspaceStore(
       const previousForeground = find(data.state.active_primary_pane_id);
       commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null,
         materializing ? { visitId: visit.id, previousRoute: previousRoute.routeKey, routeKey: resolvePaneRouteModel(target).routeKey } : null);
-      if (options.activate !== false) record(find(paneId), previousForeground);
+      if (options.activate !== false || materializing && state.active_primary_pane_id === paneId) record(find(paneId), previousForeground);
       else if (options.replace) {
         const from = recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint);
         const to = recentValueForHref(target, options.labelHint ?? null);
