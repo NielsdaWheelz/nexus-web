@@ -116,7 +116,7 @@ function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexu
     key: `Pane:${pane.id}`, existing: true,
     label: pane.presentation.title,
     icon: getPaneRouteIcon(pane.href),
-    type: "Pane",
+    type: "pane",
     detail: pane.presentation.detail ?? undefined,
     state: paneState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
@@ -617,11 +617,11 @@ export function rowName(parts: readonly (string | null | undefined)[]): string {
     .map((part, index, kept) => index === kept.length - 1 || /[….?!]$/.test(part) ? part : `${part}.`).join(" ");
 }
 
-/** "type · detail · parent · state", deduped, without the default "Open" state; mobile omits the parent and generic types. */
+/** "type · detail · parent · state", deduped; mobile omits the parent and generic types. */
 export function rowFacts(row: NexusRow, desktop: boolean): string {
   if (row.item) return [resourceMetadataText(row.item, row.matchMethod), row.state?.toLowerCase()].filter(Boolean).join(" · ");
   if (!desktop) {
-    const type = row.type && !["Pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : undefined;
+    const type = row.type && !["pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : undefined;
     const facts = [row.detail, type, row.state?.toLowerCase()];
     return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
   }
