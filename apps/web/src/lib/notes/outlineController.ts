@@ -13,17 +13,20 @@ import {classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, t
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import type {NoteEditorHandle, NoteEditorProjection, StructuralKeys} from "@/components/notes/NoteEditor";
 import type {OutlineRowChrome, OutlineRowMount} from "@/components/notes/OutlineEditorRow";
+import type {PlatformKind} from "@/lib/renderEnvironment/types";
+import {outlineHistoryCommand, outlineStructuralCommand, usesMeta} from "@/lib/shortcuts";
+import {planRange, rangeSelection, rangeReasonMessage, type BlockRange, type InputBookmark, type RangePlan, type RangeSnapshot, type RangeCommand} from "./outlineSelection";
 import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {buttonClassName} from "@/components/ui/control";
 import {isTextEntryTarget} from "@/lib/ui/eventTarget";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
 import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
 import {OutlinePendingInput, type PendingOutlineField} from "./outlinePending";
-import {OutlineHistory, type DisplayedWriting, type OutlineBookmark} from "./structure";
+import {OutlineHistory, type DisplayedWriting, type OccurrenceBookmark, type OutlineVisibility} from "./structure";
 import type {LocalCommit, WritingDocument, WritingRuntime} from "./runtime";
 import type {OutlineWindow, OutlineEdge} from "./useOutlineWindow";
 import type {FocusSelection, NoteEdit, OutlineCommand} from "./editorTypes";
-import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
+import {clipboardPlainText, writeOutlineClipboard, type ClipItem} from "./clipboard";
 
 interface ChildProof {descriptor: string; store_revision: string; available: boolean | null}
 export interface OutlineRow {
@@ -38,11 +41,8 @@ export interface BranchRequest {parent_id: string; ref: string; branch: OutlineB
 interface Held {document: WritingDocument; captureBytes: number; release(): void}
 interface EmbeddedBranch {owner: string; projection: {ref: string; branch: OutlineBranch} | null}
 export interface RootField {label: string; placeholder?: string; initialTitle?: string; inspection?: import("@/components/notes/NoteEditor").NoteInspection | null}
-type Arrangement = Exclude<OutlineCommand, "undo" | "redo">;
 type ProjectionReason = "initial" | "projection" | "semantic";
-type ArrangementPlan = {kind: "move"; row: OutlineRow; peer: OutlineRow | OutlineEdge; direction: "up" | "down"}
-  | {kind: "indent"; row: OutlineRow; peer: OutlineRow | OutlineEdge}
-  | {kind: "outdent"; row: OutlineRow; parent: OutlineRow};
+type MovePlan = {row: OutlineRow; peer: OutlineRow | OutlineEdge; direction: "up" | "down"};
 const MAX_REFS = 64, MAX_BYTES = 16 * 1024 * 1024;
 
 export class OutlineController {
@@ -53,7 +53,13 @@ export class OutlineController {
   readonly requests = new Map<string, BranchRequest>();
   readonly documents = new Map<string, Held>();
   readonly mounts = new Map<string, OutlineRowMount & {sync(): void}>();
-  readonly selected = new Set<string>();
+  private blockRange: BlockRange | null = null;
+  get selected(): ReadonlySet<string> {return new Set(this.blockRange?.row_ids ?? []);}
+  announcement = "";
+  announcementId = 0;
+  platform: PlatformKind = "other";
+  private removalKey: string | null = null;
+  private removalPress: string | null = null;
   private readonly identities = new Map<string, {id: string; origin: unknown}>();
   private readonly tailIds = new Map<string, string>();
   private readonly opened = new Set<string>();
@@ -96,6 +102,8 @@ export class OutlineController {
   private connect(): void {
     this.disconnect = this.pending.connect({
       history: this.history, notify: this.pendingChanged, capture: () => this.capture(),
+      canRetain: () => this.refs().size <= MAX_REFS && this.bytes() <= MAX_BYTES,
+      rangeSnapshot: () => this.rangeSnapshot(), installRange: (plan, mayFocus, action) => this.installRange(plan, mayFocus, action),
       document: ref => this.writing(ref),
       occurrence: id => this.retained(id),
       prepared: (row, document) => {
@@ -117,11 +125,9 @@ export class OutlineController {
     });
     for (const row of this.pending.fields.values()) if (row.link && (row.link.endpoint_a === row.ref ? row.link.endpoint_b : row.link.endpoint_a) === row.parent_ref)
       this.transfer(row.row_id, row.parent_id!, row.link.link_id, row.origin);
-    this.unbindFocus = this.history.bindFocus({publish: (documents, target, source, mayFocus, committed) => this.publishWriting(documents, committed, target, source, mayFocus), capture: () => this.capture(), prepare: (target, source, mayFocus, visibility) => this.prepare(target, source, mayFocus, visibility), restore: (bookmark, mayFocus) => {
-      if (mayFocus && !mayFocus()) return Promise.resolve();
-      const document = this.documents.get(bookmark.ref)?.document;
-      return this.focus(bookmark.key, bookmark.selection === null ? null : bookmark.resolve && document ? bookmark.resolve(document) : bookmark.selection, mayFocus ?? this.lease());
-    }, lease: () => this.lease()});
+    this.unbindFocus = this.history.bindFocus({publish: (documents, target, source, mayFocus, committed) => this.publishWriting(documents, committed, target, source, mayFocus),
+      capture: () => this.capture(), prepare: (targets, sources, mayFocus, visibility) => this.prepare(targets, sources, mayFocus, visibility),
+      lease: () => this.lease()});
   }
   lease = () => {const at = this.intent; return () => this.active && at === this.intent;};
   revoke(): void {this.intent++; this.waiting?.resolve(); this.waiting = null;}
@@ -138,10 +144,15 @@ export class OutlineController {
     this.waiting = {row_id: row.row_id, selection: {anchor: selection.anchor - field.from + 1, head: selection.head - field.from + 1},
       lease: this.lease(), resolve() {}, native: {ref: row.ref, kind: field.kind}};
   }
-  setHandle(handle: NoteEditorHandle | null): void {this.handle = handle; if (handle) this.refresh();}
+  setHandle(handle: NoteEditorHandle | null): void {this.handle = handle; if (handle) {handle.setInputMode(this.blockRange ? "blocks" : "text"); this.refresh();}}
   setView(view: EditorView | null): void {
     this.view = view;
     if (view) {
+      view.dom.addEventListener("keydown", this.blockKey, true);
+      for (const name of ["beforeinput", "compositionstart", "paste", "cut", "drop"])
+        view.dom.addEventListener(name, this.blockInput, true);
+      window.addEventListener("keydown", this.removalFence, true); window.addEventListener("beforeinput", this.removalFence, true);
+      window.addEventListener("keyup", this.releaseRemoval, true); window.addEventListener("blur", this.releaseRemoval);
       if (!this.disconnect) this.connect();
       this.project("initial");
       if (this.selectionRow === null && !this.selected.size) {
@@ -150,17 +161,17 @@ export class OutlineController {
       }
       this.tryFocus();
     }
-    else {this.disconnect?.(); this.disconnect = null; this.unbindFocus?.(); this.unbindFocus = null;}
+    else {this.releaseRemoval(); window.removeEventListener("keydown", this.removalFence, true); window.removeEventListener("beforeinput", this.removalFence, true); window.removeEventListener("keyup", this.releaseRemoval, true); window.removeEventListener("blur", this.releaseRemoval); this.disconnect?.(); this.disconnect = null; this.unbindFocus?.(); this.unbindFocus = null;}
   }
-  setFocused(value: boolean): void {this.focused = value; if (value) this.touchCommandsDismissed = false; else this.refresh(); this.notify();}
-  withdraw(): void {this.focused = false; this.selected.clear(); this.refresh(); this.syncMetadata(); this.notify();}
+  setFocused(value: boolean): void {this.focused = value; if (value) this.touchCommandsDismissed = false; else {this.releaseRemoval(); this.refresh();} this.notify();}
+  withdraw(): void {this.releaseRemoval(); this.announcement = ""; this.focused = false; this.blockRange = null; this.handle?.setInputMode("text"); this.refresh(); this.syncMetadata(); this.notify();}
   onSelectionChange = (row_id: string, at: {anchor: number; head: number}) => {
     // Keyup and composition/query release retry the same certified entry. Its
     // dispatch notifies with the settled selection; this call's old args do not.
     if (this.waiting?.native) {this.tryFocus(); return;}
-    if (!(this.view?.state.selection instanceof NodeSelection)) {
+    if (this.blockRange === null) {
       if (this.selectionRow !== row_id) this.history.boundary();
-      this.selectionRow = row_id; this.selection = at; this.selected.clear();
+      this.selectionRow = row_id; this.selection = at;
     }
     this.focused = this.view?.hasFocus() ?? false; this.syncMetadata(); this.notify(); if (this.deferred) this.refresh(); else this.project();
   };
@@ -179,7 +190,7 @@ export class OutlineController {
     try {
       document.doc.transact(() => text.insert(0, rootField.initialTitle!), editor.origin);
       editor.record({selectionBefore: {anchor: 1, head: 1}, selectionAfter: {anchor: text.length + 1, head: text.length + 1}}, undefined,
-        {key: this.pending.root_id, ref: this.rootRef, selection: {anchor: text.length + 1, head: text.length + 1}});
+        {kind: "text", row_id: this.pending.root_id, ref: this.rootRef, range: {anchor: text.length + 1, head: text.length + 1}, resolve: null});
     } finally {release();}
   }
   /** IME visibility controls presentation, never DOM focus or input authority. */
@@ -216,62 +227,59 @@ export class OutlineController {
     if (!field || field.kind === "reference" || !document) return;
     this.pending.freeze(field, document);
   }
-  private prepare(bookmark: OutlineBookmark | null, source: OutlineBookmark | null, mayFocus: () => boolean,
-    visibility?: {show: readonly OutlineBookmark[]; hide: readonly OutlineBookmark[]}): (committed: Promise<LocalCommit>) => void {
-    if (visibility) {
-      const acknowledge = [
-        ...[...visibility.hide].sort((a, b) => (this.occurrences.get(b.key)?.depth ?? 0) - (this.occurrences.get(a.key)?.depth ?? 0)).map(row => this.prepare(null, row, () => false)),
-        ...[...visibility.show].sort((a, b) => (this.occurrences.get(a.key)?.depth ?? 0) - (this.occurrences.get(b.key)?.depth ?? 0)).map(row => this.prepare(row, null, () => false)),
-        this.prepare(bookmark, source, mayFocus),
-      ];
-      for (const row of visibility.show) if (row.selection === null && this.rows.has(row.key)) this.selected.add(row.key);
-      this.syncMetadata();
-      return committed => {for (const accept of acknowledge) accept(committed);};
-    }
-    if (!bookmark) {
-      const row = source ? this.rows.get(source.key) ?? this.occurrences.get(source.key) : null;
-      if (!row?.ref || row.root) return () => {};
-      const moveSelection = this.selectionRow === row.row_id || this.selected.has(row.row_id);
-      const receiptOwner = {};
-      this.pending.fields.set(row.row_id, {...this.pending.fields.get(row.row_id), row_id: row.row_id, parent_id: row.parent_id, parent_ref: row.parent_ref,
-        after_id: null, ref: row.ref, link: row.link, kind: row.kind, resource: row.resource, body: this.body(row.row_id), pending: true, hidden: true,
-        origin: row.origin, settledRevision: undefined, receiptOwner});
+  private prepare(targets: readonly OccurrenceBookmark[], sources: readonly OccurrenceBookmark[], _mayFocus: () => boolean,
+    visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void {
+    const acknowledgements: ((committed: Promise<LocalCommit>) => void)[] = [];
+    const shown = [...targets, ...visibility.show], hidden = [...sources, ...visibility.hide].filter(source => !shown.some(target => target.row_id === source.row_id));
+    for (const target of [...hidden, ...shown]) {
+      const row = this.rows.get(target.row_id) ?? this.occurrences.get(target.row_id);
+      if (!row || row.root || !row.ref) continue;
+      const placement = shown.includes(target) ? target.placement : null, current = this.pending.fields.get(row.row_id), receiptOwner = {};
+      const parent_id = placement?.parent_id ?? row.parent_id, parent_ref = placement?.parent_ref ?? row.parent_ref;
+      const observed = target.link && "link_id" in target.link ? target.link : null;
+      const compatible = row.link && (row.link.endpoint_a === row.ref ? row.link.endpoint_b : row.link.endpoint_a) === parent_ref ? row.link : null;
+      this.pending.fields.set(row.row_id, {...current, row_id: row.row_id, ref: row.ref, parent_id, parent_ref,
+        after_id: placement?.after_id ?? null, before_id: placement?.before_id ?? undefined, link: observed ?? compatible,
+        kind: row.kind, resource: row.resource, body: current?.body ?? this.body(row.row_id), pending: row.kind !== "reference", hidden: placement === null,
+        origin: row.origin, relocating: placement ? crypto.randomUUID() : undefined, previousParent: current?.relocating ? current.previousParent : row.parent_id,
+        previousParentRef: current?.relocating ? current.previousParentRef : row.parent_ref, settledRevision: undefined, receiptOwner});
       this.protectField(row.row_id);
-      this.selected.delete(row.row_id); if (moveSelection) this.selectionRow = null;
-      this.changed("semantic");
-      if (moveSelection && mayFocus()) {
-        const next = [...this.rows.values()].find(candidate => candidate.tail && candidate.parent_id === row.parent_id)
-          ?? [...this.rows.values()].find(candidate => candidate.tail || candidate.root);
-        if (next) void this.focus(next.row_id, next.kind === "reference" ? null : "end", mayFocus); else this.view?.dom.blur();
+      if (placement) {
+        this.pending.place(row.row_id, placement.after_id, placement.before_id);
+        if (target.link) this.pending.restoreRelationship(row.row_id, target.link);
+        if (observed) this.transfer(row.row_id, placement.parent_id, observed.link_id, row.origin);
+        if (placement.parent_id !== this.pending.root_id) this.opened.add(placement.parent_id);
       }
-      return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
+      acknowledgements.push(committed => this.pending.acknowledge(row.row_id, receiptOwner, committed));
     }
-    const occurrence = bookmark.occurrence;
-    const row = this.rows.get(bookmark.key) ?? this.occurrences.get(bookmark.key);
-    if (!occurrence || !row) return () => {};
-    const parent_id = occurrence.parent_id ?? (occurrence.parent_ref === this.rootRef ? this.pending.root_id : [...this.occurrences.values()].find(row => row.ref === occurrence.parent_ref)?.row_id);
-    if (!parent_id) return () => {};
-    const token = crypto.randomUUID(), current = this.pending.fields.get(row.row_id), receiptOwner = {};
-    const sameParent = (current ?? row).ref === bookmark.ref && (current ?? row).parent_id === parent_id && (current ?? row).parent_ref === occurrence.parent_ref;
-    const relationship = sameParent ? this.pending.observedLink(row.row_id) ?? row.link : occurrence.link;
-    const withdrawal = current?.relocating ? current : null;
-    const positioned = occurrence.after_id !== undefined || occurrence.before_id !== undefined;
-    if (occurrence.link_id) this.transfer(row.row_id, parent_id, occurrence.link_id, row.origin);
-    const observed = occurrence.link && "link_id" in occurrence.link ? occurrence.link : null;
-    const retained = current?.link ?? row.link;
-    const compatible = retained && (retained.endpoint_a === bookmark.ref ? retained.endpoint_b : retained.endpoint_a) === occurrence.parent_ref ? retained : null;
-    const relation = observed ?? [...this.windows.values()].flatMap(window => window.rows).find(candidate => candidate.link?.link_id === occurrence.link_id)?.link ?? compatible;
-    this.pending.fields.set(row.row_id, {...current, row_id: row.row_id, parent_id, parent_ref: occurrence.parent_ref, after_id: positioned ? occurrence.after_id ?? null : current?.after_id ?? null,
-      ref: bookmark.ref, link: relation, kind: row.kind, resource: row.resource, before_id: positioned ? occurrence.before_id ?? undefined : current?.before_id, body: current?.body ?? this.body(row.row_id), pending: true, hidden: false,
-      origin: row.origin, relocating: token, previousParent: withdrawal ? withdrawal.previousParent : row.parent_id,
-      previousParentRef: withdrawal ? withdrawal.previousParentRef : row.parent_ref, settledRevision: undefined, receiptOwner});
-    if (positioned) this.pending.place(row.row_id, occurrence.after_id ?? null, occurrence.before_id ?? null);
-    this.protectField(row.row_id);
-    if (relationship) this.pending.restoreRelationship(row.row_id, relationship);
-    if (parent_id !== this.pending.root_id && !this.opened.has(parent_id)) this.toggle(parent_id, true);
     this.changed("semantic");
-    if (!this.documents.has(bookmark.ref)) {const owner = this.windows.has(parent_id) ? parent_id : this.pending.root_id; const window = this.windows.get(owner); if (window) this.accept(owner, window);}
-    return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
+    return committed => {for (const acknowledge of acknowledgements) acknowledge(committed);};
+  }
+  private installRange(plan: RangePlan, mayFocus: () => boolean, action: "undo" | "redo" | null): void {
+    if (!this.active) return;
+    if (mayFocus()) for (const change of plan.changes) if (change.after && change.after.parent_id !== this.pending.root_id) this.opened.add(change.after.parent_id);
+    this.changed("semantic");
+    if (mayFocus()) {
+      void this.restoreInput(plan.selection_after, mayFocus);
+      if (action !== null && !this.blockRange) this.announce(action === "undo" ? "outline change undone" : "outline change redone");
+      else if (action === null && plan.command === "remove")
+        this.announce(`removed from this outline${this.blockRange ? `. ${this.announcement}` : ""}`);
+    }
+    this.notify();
+  }
+  private restoreInput(bookmark: InputBookmark, mayFocus = this.lease()): Promise<void> {
+    if (!mayFocus()) return Promise.resolve();
+    if (bookmark?.kind === "blocks") {
+      const row_ids = bookmark.row_ids.filter(id => this.rows.has(id) && !this.pending.fields.get(id)?.hidden);
+      if (row_ids.length) {
+        this.setRange({anchor_id: row_ids.includes(bookmark.anchor_id) ? bookmark.anchor_id : row_ids[0]!,
+          head_id: row_ids.includes(bookmark.head_id) ? bookmark.head_id : row_ids[row_ids.length - 1]!, row_ids});
+        return Promise.resolve();
+      }
+    } else if (bookmark && this.rows.has(bookmark.row_id) && !this.pending.fields.get(bookmark.row_id)?.hidden) return this.focus(bookmark.row_id, bookmark.resolve ?? bookmark.range, mayFocus);
+    this.blockRange = null; this.handle?.setInputMode("text");
+    const fallback = [...this.rows.values()].find(row => row.tail && row.parent_id === this.pending.root_id) ?? this.rows.get(this.pending.root_id);
+    return fallback ? this.focus(fallback.row_id, {anchor: 1, head: 1}, mayFocus) : Promise.resolve();
   }
   private tailId(parent: string): string {
     let id = this.tailIds.get(parent); if (!id) {id = crypto.randomUUID(); this.tailIds.set(parent, id);} return id;
@@ -285,7 +293,7 @@ export class OutlineController {
     return {row_id: id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null, ref: row.ref, link: row.link, kind: row.kind,
       resource: row.resource, body: row.kind === "reference" ? emptyBody() : this.binding.body(id), hidden: false, pending: false, origin: row.origin};
   }
-  private publishWriting(documents: readonly WritingDocument[], committed: Promise<LocalCommit>, target?: OutlineBookmark | null, source?: OutlineBookmark | null, mayFocus = this.lease()): void {
+  private publishWriting(documents: readonly WritingDocument[], committed: Promise<LocalCommit>, target?: InputBookmark, source?: InputBookmark, mayFocus = this.lease()): void {
     if (!this.active || !this.view) return;
     const active = this.selectionRow ? this.rows.get(this.selectionRow) : null, resolve = active && this.handle?.captureSelection();
     for (const document of documents) {
@@ -303,18 +311,7 @@ export class OutlineController {
       this.selection = at === "end" ? {anchor: end, head: end} : at;
     }
     this.changed("semantic");
-    if (target && mayFocus()) {
-      const selected = [...this.selected];
-      void this.focus(target.key, target.resolve ?? target.selection, mayFocus);
-      if (target.selection === null && selected.includes(target.key)) {
-        for (const id of selected) if (this.rows.has(id)) this.selected.add(id);
-        this.syncMetadata(); this.notify();
-      }
-    }
-    else if (target === null && source && mayFocus() && this.selectionRow === source.key) {
-      const next = [...this.rows.values()].find(row => row.tail || row.root);
-      if (next) void this.focus(next.row_id, "end", mayFocus);
-    }
+    if (target !== undefined && mayFocus()) void this.restoreInput(target, mayFocus);
   }
   private body(row_id: string): NoteBody {
     const pending = this.pending.fields.get(row_id);
@@ -574,7 +571,7 @@ export class OutlineController {
         this.configure(this.rootField);
         const initial = this.windows.size === 0;
         this.windows.clear(); for (const [id, part] of next) this.windows.set(id, part);
-        for (const field of placements) if (field.parent_id && selected.has(field.parent_id) && next.get(field.parent_id) === selected.get(field.parent_id) && this.sourceConfirmed(field, next)) {
+        for (const field of placements) if (!this.pending.rangeHeld(field.row_id) && field.parent_id && selected.has(field.parent_id) && next.get(field.parent_id) === selected.get(field.parent_id) && this.sourceConfirmed(field, next)) {
           const current = this.pending.fields.get(field.row_id)!;
           this.pending.fields.set(field.row_id, {...current, relocating: undefined, previousParent: undefined, previousParentRef: undefined});
         }
@@ -619,7 +616,7 @@ export class OutlineController {
     for (const element of this.view?.dom.querySelectorAll<HTMLElement>("[data-outline-field]") ?? []) {
       const row = this.rows.get(element.dataset.outlineField!);
       const unbound = row && row.kind !== "reference" && !row.tail && !this.pending.fields.get(row.row_id)?.pending && this.binding.document(row.row_id) !== this.documents.get(row.ref ?? "")?.document;
-      if (this.blockedRows.has(element.dataset.outlineField!) || row && !this.editableReady(row) || unbound) element.contentEditable = "false";
+      if (this.blockRange !== null || this.blockedRows.has(element.dataset.outlineField!) || row && !this.editableReady(row) || unbound) element.contentEditable = "false";
       else if (element.getAttribute("contenteditable") === "false" && row?.kind !== "reference") element.removeAttribute("contenteditable");
     }
   }
@@ -627,7 +624,7 @@ export class OutlineController {
   private retireWithdrawnPlacements(): void {
     const entered = new Set<string>(), actual = this.reachable(this.windows, entered), protectedWriting = this.protectedRows(false);
     for (const [id, field] of this.pending.fields) {
-      if (!field.relocating || field.pending || !field.settledRevision || !field.parent_id || entered.has(field.parent_id) || protectedWriting.has(id) || !this.sourceConfirmed(field, actual)) continue;
+      if (!field.relocating || this.pending.rangeHeld(id) || field.pending || !field.settledRevision || !field.parent_id || entered.has(field.parent_id) || protectedWriting.has(id) || !this.sourceConfirmed(field, actual)) continue;
       let ancestor = this.parent(field.parent_id);
       while (ancestor && !entered.has(ancestor)) ancestor = this.parent(ancestor);
       const proof = ancestor ? actual.get(ancestor) : null;
@@ -648,7 +645,7 @@ export class OutlineController {
       const acknowledged = !!field.settledRevision && !!window && BigInt(window.data.store_revision) >= BigInt(field.settledRevision);
       const present = window?.rows.some(row => row.link?.link_id === field.link!.link_id) === true;
       const unused = field.settledRevision !== undefined && !previousRows.has(id) && !protectedRows.has(id) && !historyOccurrences.has(id);
-      if (unused || (field.hidden ? acknowledged : present)) this.pending.fields.delete(id);
+      if (!this.pending.rangeHeld(id) && (unused || (field.hidden ? acknowledged : present))) this.pending.fields.delete(id);
     }
     this.rows.clear();
     const root = this.pending.root_id;
@@ -728,6 +725,17 @@ export class OutlineController {
         // Relocation invalidates availability, but an older admitted window
         // must not resurrect a proof already superseded before relocation.
         else if (newer) row.children = {descriptor, store_revision: proof.store_revision, available: null};
+      }
+    }
+    if (reason === "semantic" && this.blockRange) {
+      const previous = this.blockRange, row_ids = previous.row_ids.filter(id => this.rows.has(id) && !this.pending.fields.get(id)?.hidden);
+      if (row_ids.length) {
+        this.blockRange = {anchor_id: row_ids.includes(previous.anchor_id) ? previous.anchor_id : row_ids[0]!,
+          head_id: row_ids.includes(previous.head_id) ? previous.head_id : row_ids[row_ids.length - 1]!, row_ids};
+        this.selectionRow = this.blockRange.head_id;
+        if (row_ids.length !== previous.row_ids.length) this.announceSelection();
+      } else {
+        this.blockRange = null; this.selectionRow = null; this.announcement = ""; this.handle?.setInputMode("text");
       }
     }
     this.pending.order = [...this.rows.keys(), ...this.pending.order.filter(id => !this.rows.has(id) && this.pending.fields.get(id)?.pending)];
@@ -835,7 +843,7 @@ export class OutlineController {
   keys = (row_id: string): StructuralKeys | null => {
     const row = this.rows.get(row_id); if (!row || row.gap || this.filter.trim() || this.blockedRows.has(row_id)) return null;
     const arrangement: StructuralKeys = row.root || row.tail ? {} : {indent: at => this.arrangePrepared(row_id, "indent", at), outdent: at => this.arrangePrepared(row_id, "outdent", at),
-      move: (direction, at) => this.arrangePrepared(row_id, direction === "up" ? "move_up" : "move_down", at), selectBlock: () => this.select(row_id)};
+      move: (direction, at) => this.arrangePrepared(row_id, direction === "up" ? "move_up" : "move_down", at), selectBlock: () => this.selectPrepared(row_id)};
     if (row.kind === "reference") return arrangement;
     return {...arrangement, split: (left, right, displayed) => {
       if (!this.admitNew()) return;
@@ -852,7 +860,7 @@ export class OutlineController {
       if (row.parent_id === this.pending.root_id || row.root) return;
       this.arrangePrepared(row_id, "outdent", {anchor: 1, head: 1});
     },
-      emptyDelete: direction => {this.remove([row_id], direction);}, join: direction => {this.join(row_id, direction);}};
+      emptyDelete: direction => {this.removeEmpty(row_id, direction);}, join: direction => {this.join(row_id, direction);}};
   };
   private async appendAfter(row: OutlineRow): Promise<void> {
     if (!this.admitNew()) return;
@@ -883,89 +891,130 @@ export class OutlineController {
     const selection = this.pending.join(destination.row_id, source.row_id, this.capture(), displayed);
     this.changed("semantic"); void this.focus(destination.row_id, selection);
   }
+  rangeSnapshot(): RangeSnapshot {
+    const scope = (row: OutlineRow): string => {
+      let parent = row.parent_id;
+      while (parent !== null) {if (this.embedded.has(parent)) return parent; parent = this.parent(parent);}
+      return this.pending.root_id;
+    };
+    const rows = [...this.rows.values()].map(row => ({row_id: row.row_id, ref: row.ref, link_id: row.link?.link_id ?? null,
+      parent_id: row.parent_id, parent_ref: row.parent_ref, scope_id: scope(row), kind: row.kind, root: row.root, tail: row.tail,
+      selectable: !row.root && !row.tail && !row.gap, eligible_parent: row.kind === "body" && !row.terminal && !row.gap,
+      ready: !this.filter.trim() && !this.blockedRows.has(row.row_id) && (row.kind === "reference" || this.editableReady(row)), gap: row.gap === "before" || row.gap === "after"}));
+    if (!this.rows.has(this.pending.root_id)) rows.push({row_id: this.pending.root_id, ref: this.rootRef, link_id: null, parent_id: null,
+      parent_ref: this.rootRef, scope_id: this.pending.root_id, kind: "reference", root: true, tail: false, selectable: false, eligible_parent: false, ready: false, gap: false});
+    for (const [id, embedded] of this.embedded) if (embedded.projection) rows.push({row_id: id, ref: embedded.projection.ref, link_id: null,
+      parent_id: embedded.owner, parent_ref: embedded.projection.ref, scope_id: id, kind: "reference", root: true, tail: false, selectable: false, eligible_parent: false, ready: false, gap: false});
+    return {rows};
+  }
   select(row_id: string, extend = false): void {
-    const order = [...this.rows.keys()].filter(id => !this.rows.get(id)!.gap), anchor = [...this.selected][0] ?? row_id;
-    if (!extend) this.selected.clear();
-    const from = order.indexOf(anchor), to = order.indexOf(row_id);
-    for (const id of extend ? order.slice(Math.min(from, to), Math.max(from, to) + 1) : [row_id]) this.selected.add(id);
-    this.selectionRow = row_id; this.focused = true;
-    if (this.view) {let at = 0; this.view.state.doc.forEach((node, offset) => {if (node.attrs.row_id === row_id) at = offset;}); this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, at))); this.view.focus();}
+    if (!this.handle?.settleNativeInput()) return;
+    this.selectPrepared(row_id, extend);
+  }
+  private selectPrepared(row_id: string, extend = false): void {
+    const snapshot = this.rangeSnapshot();
+    const textRow = this.view?.state.selection instanceof TextSelection ? fieldAt(this.view.state.doc, this.view.state.selection.anchor)?.row_id : null;
+    const textAnchor = snapshot.rows.find(row => row.row_id === textRow && row.selectable)?.row_id;
+    const anchor = extend ? this.blockRange?.anchor_id ?? textAnchor ?? row_id : row_id;
+    const result = rangeSelection(snapshot, anchor, row_id);
+    if (result.kind === "refusal") {this.handle?.refuse(rangeReasonMessage(result.reason)); return;}
+    this.history.boundary(); this.setRange(result.selection);
+  }
+  private setRange(range: BlockRange): void {
+    this.blockRange = range; this.selectionRow = range.head_id; this.focused = true;
+    this.handle?.setInputMode("blocks");
+    if (this.view) {
+      this.view.state.doc.forEach((node, at) => {if (node.attrs.row_id === range.head_id) this.view!.dispatch(this.view!.state.tr.setSelection(NodeSelection.create(this.view!.state.doc, at)));});
+      this.view.dom.focus({preventScroll: true}); this.view.focus();
+    }
+    this.announceSelection();
     this.syncMetadata(); this.notify();
   }
-  private clearSelection(row_id = this.selectionRow): void {
-    this.selected.clear(); this.focused = false; this.syncMetadata(); this.notify();
-    if (row_id) this.mounts.get(row_id)?.leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
-    this.restoreNativeEntry();
+  private announce(message: string): void {this.announcement = message; this.announcementId++;}
+  private announceSelection(): void {
+    const count = this.blockRange?.row_ids.length ?? 0;
+    this.announce(`${count} ${count === 1 ? "item" : "items"} selected`);
   }
-  remove(ids: readonly string[], direction?: "backward" | "forward"): void {
-    const candidates = ids.flatMap(id => {const row = this.rows.get(id); return row && !row.root && !row.tail && (row.link || this.pending.fields.get(id)?.pending) ? [row] : [];});
-    const removing = new Set(candidates.map(row => row.row_id));
-    for (const id of new Set([...this.rows.keys(), ...this.pending.fields.keys()])) {
-      const field = this.pending.fields.get(id);
-      if (removing.has(id) || field?.hidden || !(field?.pending || field?.relocating || this.selected.has(id) || this.view?.hasFocus() && this.selectionRow === id)) continue;
-      let parent = field ? field.parent_id : this.parent(id);
+  private clearSelection(row_id = this.blockRange?.head_id ?? this.selectionRow): void {
+    // controls retain a read-only host: firefox cannot keep glyph focus inside
+    // an editable host. native tab admission or explicit text entry restores it.
+    if (this.view) {
+      const tr = this.view.state.tr.setMeta(outlineTransactionSource, "projection");
+      if (this.setNativeEntry(tr)) this.view.dispatch(tr);
+    }
+    this.announcement = "";
+    this.blockRange = null; this.handle?.setInputMode("controls"); this.focused = false; this.syncMetadata(); this.notify();
+    if (row_id) this.mounts.get(row_id)?.leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
+    this.armNativeEntry();
+  }
+  private runRange(command: RangeCommand, row_id = this.selectionRow): void {
+    if (!this.handle || !row_id) return;
+    const selection = this.capture(), snapshot = this.rangeSnapshot();
+    const input = selection ?? {kind: "blocks" as const, anchor_id: row_id, head_id: row_id, row_ids: [row_id]};
+    const result = planRange(command, snapshot, input);
+    if (result.kind === "refusal") {this.handle?.refuse(rangeReasonMessage(result.reason)); return;}
+    this.submitRange(result.plan);
+  }
+  private removeEmpty(row_id: string, direction: "backward" | "forward"): void {
+    const row = this.rows.get(row_id); if (!row?.ref || row.root || row.tail || row.gap) return;
+    const previous = this.visiblePeer(row, "before"), following = this.visiblePeer(row, "after");
+    const next = direction === "backward" ? previous ?? following : following ?? previous;
+    const result = planRange("remove", this.rangeSnapshot(), {kind: "text", row_id, ref: row.ref, range: this.selection, resolve: null});
+    if (result.kind === "refusal") {this.handle?.refuse(rangeReasonMessage(result.reason)); return;}
+    const selection_after: InputBookmark = next?.ref ? next.kind === "reference"
+      ? {kind: "blocks", anchor_id: next.row_id, head_id: next.row_id, row_ids: [next.row_id]}
+      : {kind: "text", row_id: next.row_id, ref: next.ref, range: direction === "forward" && next === following ? {anchor: 1, head: 1} : "end", resolve: null}
+      : result.plan.selection_after;
+    this.removalKey = this.removalPress;
+    this.submitRange({...result.plan, selection_after});
+  }
+  private submitRange(plan: RangePlan): void {
+    if (plan.command === "remove" && this.removalBlocked(new Set(plan.changes.map(change => change.before.row_id)))) return;
+    this.pending.range(plan, {refused: reason => {if (this.active) this.handle?.refuse(rangeReasonMessage(reason));}});
+  }
+  private unlink(row_id: string): void {
+    const row = this.rows.get(row_id);
+    if (!row || row.root || row.tail || !row.link && !this.pending.fields.has(row_id)) return;
+    if (this.removalBlocked(new Set([row_id]))) return;
+    this.pending.unlink(row_id, reason => {if (this.active) this.handle?.refuse(rangeReasonMessage(reason));});
+  }
+  private removalBlocked(roots: ReadonlySet<string>): boolean {
+    for (const field of this.pending.fields.values()) {
+      if (!field.pending || field.hidden || roots.has(field.row_id)) continue;
+      let parent = field.parent_id;
       while (parent) {
-        if (removing.has(parent)) {this.error = new Error("finish the writing in this branch before unlinking it"); this.notify(); return;}
+        if (roots.has(parent)) {this.handle?.refuse("finish the writing in this branch before removing it"); return true;}
         parent = this.parent(parent);
       }
     }
-    const row = candidates[0]; if (!row) return;
-    const previous = this.visiblePeer(row, "before"), following = this.visiblePeer(row, "after");
-    const next = direction === "backward" ? previous ?? following : following ?? previous;
-    const movesFocus = candidates.some(candidate => candidate.row_id === this.selectionRow);
-    if (movesFocus) {this.selected.clear(); this.selectionRow = null;}
-    for (const candidate of candidates) if (candidate.kind !== "reference") this.retainField(candidate);
-    this.pending.unlink(candidates.map(candidate => candidate.row_id)); this.changed("semantic");
-    if (movesFocus && next) void this.focus(next.row_id, direction === "forward" && next === following ? {anchor: 1, head: 1} : "end");
+    return false;
   }
-
   arrange(row_id: string, command: "indent" | "outdent" | "move_up" | "move_down"): void {
     if (!this.handle?.settleNativeInput()) return;
-    this.arrangePrepared(row_id, command, this.selected.size ? null : this.selection);
+    this.arrangePrepared(row_id, command, this.blockRange ? null : this.selection);
   }
-  private arrangementPlan(row_id: string, command: Arrangement): ArrangementPlan | null {
+  private movePlan(row_id: string, command: "move_up" | "move_down"): MovePlan | null {
     const row = this.rows.get(row_id);
     if (!row || row.root || row.tail || row.gap || this.filter.trim() || this.selected.size > 1 || this.blockedRows.has(row_id) ||
       row.kind !== "reference" && !this.editableReady(row) || !row.link && !this.pending.fields.has(row_id)) return null;
-    if (command === "move_up" || command === "move_down") {
-      const peer = this.peer(row, command === "move_up" ? "before" : "after");
-      return peer && (peer.link || "row_id" in peer && this.pending.fields.has(peer.row_id)) ? {kind: "move", row, peer, direction: command === "move_up" ? "up" : "down"} : null;
-    }
-    if (command === "outdent") {
-      const parent = row.parent_id ? this.rows.get(row.parent_id) : null;
-      return parent?.parent_id ? {kind: "outdent", row, parent} : null;
-    }
-    const peer = this.peer(row, "before");
-    if (!peer) return null;
-    if ("row_id" in peer) return peer.kind === "body" && !peer.terminal ? {kind: "indent", row, peer} : null;
-    return peer.resource.kind === "note" && classifyOutlineOccurrence({branch: row.branch, targetRef: peer.resource.ref, edgeId: peer.link.link_id}).kind === "resource" ? {kind: "indent", row, peer} : null;
+    const peer = this.peer(row, command === "move_up" ? "before" : "after");
+    return peer && (peer.link || "row_id" in peer && this.pending.fields.has(peer.row_id)) ? {row, peer, direction: command === "move_up" ? "up" : "down"} : null;
   }
   private arrangePrepared(row_id: string, command: "indent" | "outdent" | "move_up" | "move_down", selection: FocusSelection | null): void {
-    const plan = this.arrangementPlan(row_id, command); if (!plan) return;
-    const {row} = plan;
-    const retain = () => {
-      if (row.kind !== "reference") this.retainField(row);
-      else if (!this.pending.fields.has(row_id)) this.pending.fields.set(row_id, {row_id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null,
-        ref: row.ref, link: row.link, kind: "reference", resource: row.resource, body: emptyBody(), hidden: false, pending: false, origin: row.origin});
-    };
-    if (plan.kind === "move") {
-      const other = plan.peer;
-      const id = "row_id" in other ? other.row_id : this.id(row.parent_id!, other.link.link_id);
-      if (!("row_id" in other)) {
-        const terminal = classifyOutlineOccurrence({branch: row.branch, targetRef: other.resource.ref, edgeId: other.link.link_id}).kind !== "resource";
-        this.pending.fields.set(id, {row_id: id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null,
-          ref: other.resource.ref, link: other.link, kind: terminal || other.resource.kind !== "note" && other.resource.kind !== "page" ? "reference" : other.resource.kind === "page" ? "title" : "body",
-          resource: other.resource, body: emptyBody(), hidden: false, pending: false, origin: this.origin(id)});
-      }
-      retain(); this.pending.move(row_id, {row_id: id, link: other.link}, plan.direction, selection); this.changed("semantic"); return;
+    if (command === "indent" || command === "outdent") {this.runRange(command, row_id); return;}
+    if (this.selected.size > 1) {this.handle?.refuse("select one item to move"); return;}
+    const plan = this.movePlan(row_id, command); if (!plan) return;
+    const {row} = plan, other = plan.peer;
+    const id = "row_id" in other ? other.row_id : this.id(row.parent_id!, other.link.link_id);
+    if (!("row_id" in other)) {
+      const terminal = classifyOutlineOccurrence({branch: row.branch, targetRef: other.resource.ref, edgeId: other.link.link_id}).kind !== "resource";
+      this.pending.fields.set(id, {row_id: id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null,
+        ref: other.resource.ref, link: other.link, kind: terminal || other.resource.kind !== "note" && other.resource.kind !== "page" ? "reference" : other.resource.kind === "page" ? "title" : "body",
+        resource: other.resource, body: emptyBody(), hidden: false, pending: false, origin: this.origin(id)});
     }
-    const parent = plan.kind === "outdent" ? plan.parent : "row_id" in plan.peer ? plan.peer : this.visiblePeer(row, "before");
-    if (!parent) return;
-    const destination = plan.kind === "indent" ? parent.ref ?? parent.parent_ref : parent.parent_ref, parent_id = plan.kind === "indent" ? parent.row_id : parent.parent_id!;
-    retain();
-    if (plan.kind === "indent") this.opened.add(parent_id);
-    this.pending.relink(row_id, parent_id, destination, plan.kind === "indent" ? null : parent.row_id, selection);
-    this.changed("semantic");
+    if (row.kind !== "reference") this.retainField(row);
+    else if (!this.pending.fields.has(row_id)) this.pending.fields.set(row_id, {...this.retained(row_id)!});
+    this.pending.move(row_id, {row_id: id, link: other.link}, plan.direction, selection); this.changed("semantic");
   }
   toggle(row_id: string, force?: boolean): void {
     const row = this.rows.get(row_id); if (!row?.ref || row.terminal) return;
@@ -1024,10 +1073,10 @@ export class OutlineController {
     }
     this.notify();
   }
-  capture(): OutlineBookmark | null {
+  capture(): InputBookmark {
+    if (this.blockRange) return {kind: "blocks", ...this.blockRange};
     const row = this.selectionRow ? this.retained(this.selectionRow) : null;
-    const bookmark = row ? this.pending.bookmark(row, this.selected.size ? null : this.selection) : null;
-    return bookmark ? {...bookmark, ...(!this.selected.size && this.handle ? {resolve: this.handle.captureSelection()} : {})} : null;
+    return row?.ref ? {kind: "text", row_id: row.row_id, ref: row.ref, range: this.selection, resolve: this.handle?.captureSelection() ?? null} : null;
   }
 
   focus(row_id: string, selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection) = "end", lease = this.lease()): Promise<void> {
@@ -1044,7 +1093,7 @@ export class OutlineController {
       }
       if (!this.view.hasFocus() || !this.handle?.canArrange()) return;
     }
-    if (!this.view.editable) return;
+    if (!this.handle?.canArrange()) return;
     if (typeof request.selection === "function") {
       const document = row?.ref ? this.documents.get(row.ref)?.document : null;
       if (!document) return;
@@ -1055,8 +1104,7 @@ export class OutlineController {
       let at: number | null = null;
       this.view.state.doc.forEach((node, offset) => {if (node.attrs.row_id === request.row_id) at = offset;});
       if (at === null) return;
-      this.waiting = null; this.selectionRow = request.row_id; this.selected.clear(); this.selected.add(request.row_id);
-      this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, at))); this.view.focus(); request.resolve(); this.notify(); return;
+      this.waiting = null; this.setRange({anchor_id: request.row_id, head_id: request.row_id, row_ids: [request.row_id]}); request.resolve(); return;
     }
     const field = fieldById(this.view.state.doc, request.row_id);
     if (!field) {
@@ -1066,6 +1114,7 @@ export class OutlineController {
       return;
     }
     if (!row || !this.editableReady(row)) return;
+    this.blockRange = null; this.handle?.setInputMode("text"); this.syncReadOnly();
     const at = request.selection === "end" ? {anchor: field.to, head: field.to} : {anchor: field.from + request.selection.anchor - 1, head: field.from + request.selection.head - 1};
     this.waiting = null; this.selectionRow = request.row_id; this.selection = request.selection === "end" ? {anchor: field.to - field.from + 1, head: field.to - field.from + 1} : request.selection;
     this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, Math.min(field.to, at.anchor), Math.min(field.to, at.head)))); this.view.focus(); request.resolve();
@@ -1138,7 +1187,13 @@ export class OutlineController {
     }
     const row = this.selectionRow ? this.rows.get(this.selectionRow) : null;
     if (!row || !this.handle?.canArrange()) return {enabled: false, reason: "select one item to arrange"};
-    const enabled = this.arrangementPlan(row.row_id, command) !== null;
+    if (command === "indent" || command === "outdent") {
+      const input = this.blockRange ? {kind: "blocks" as const, ...this.blockRange} : {kind: "text" as const, row_id: row.row_id, ref: row.ref ?? row.parent_ref, range: this.selection, resolve: null};
+      const result = planRange(command, this.rangeSnapshot(), input);
+      return {enabled: result.kind === "plan", reason: result.kind === "refusal" ? rangeReasonMessage(result.reason) : null};
+    }
+    if (this.selected.size > 1) return {enabled: false, reason: "select one item to move"};
+    const enabled = this.movePlan(row.row_id, command) !== null;
     return {enabled, reason: enabled ? null : "no item available"};
   }
   publication() {return this.focused || this.selected.size ? {session: `outline:${this.pending.root_id}`, touchVisible: this.selected.size > 0 || !this.touchCommandsDismissed, commandState: (command: OutlineCommand) => this.commandState(command), executeCommand: (command: OutlineCommand) => {
@@ -1152,7 +1207,7 @@ export class OutlineController {
       href: row.resource ? localResourceHref(row.resource) : row.ref ? `/${row.kind === "title" ? "pages" : "notes"}/${row.ref.split(":")[1]}` : null,
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
       childrenAvailable: row.children?.available === true, open: row.open, terminal: row.terminal, root: row.root || row.tail || !!row.gap, selected: this.selected.has(row.row_id),
-      toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id), unlink: () => this.remove([row.row_id]), reveal: () => {
+      toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id), unlink: () => this.unlink(row.row_id), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
           else if (ancestor?.kind === "occurrence" && this.rows.has(ancestor.key)) void this.focus(ancestor.key); else if (ancestor) this.revealExternal?.(ancestor);}
       }}]));
@@ -1170,14 +1225,27 @@ export class OutlineController {
     dom.className = rowStyles.row; head.className = rowStyles.head; leading.className = rowStyles.leading; trailing.className = rowStyles.trailing; content.className = rowStyles.content;
     leading.contentEditable = "false"; trailing.contentEditable = "false"; content.dataset.outlineField = id;
     head.append(leading, content, trailing); dom.append(head);
+    dom.addEventListener("pointerdown", event => {
+      const target = event.target, row = this.rows.get(id);
+      if (event.button !== 0 || !(target instanceof Element) || target.closest(".ProseMirror") !== this.view?.dom || target.closest("[data-outline-occurrence]") !== dom ||
+        target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed") || !row || row.gap) return;
+      if (event.shiftKey) {
+        if (row.root || row.tail) return;
+        if (!this.blockRange && this.view?.state.selection instanceof TextSelection && fieldAt(this.view.state.doc, this.view.state.selection.anchor)?.row_id === id) return;
+        event.preventDefault(); event.stopPropagation(); this.select(id, true);
+      } else if (this.view?.editable === false && (this.editableItem(row) || (row.root || row.tail) && !this.blockedRows.has(id) && this.editableReady(row))) {
+        if (!this.handle?.settleNativeInput()) {event.preventDefault(); return;}
+        this.blockRange = null; this.announcement = ""; this.handle.setInputMode("text"); this.selectionRow = id; this.syncMetadata(); this.notify();
+      }
+    }, true);
     head.addEventListener("keydown", event => {
       const target = event.target, row = this.rows.get(id);
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey ||
         !(target instanceof Element) || target.closest("[data-outline-occurrence]") !== dom || content.contains(target) || !row || !this.handle?.canArrange()) return;
       if (event.key === "F2" && !event.shiftKey && this.editableItem(row)) {
         event.preventDefault(); event.stopPropagation();
-        if (!event.repeat) {this.selected.clear(); void this.focus(id, "end"); this.syncMetadata(); this.notify();}
-      } else if (event.key === " " && !event.shiftKey && target === leading) {
+        if (!event.repeat) {this.blockRange = null; this.handle?.setInputMode("text"); void this.focus(id, "end"); this.syncMetadata(); this.notify();}
+      } else if (event.key === " " && !event.shiftKey && (target === leading || target.matches("a[data-outline-bullet]"))) {
         event.preventDefault(); event.stopPropagation(); if (!event.repeat) this.select(id);
       } else if (event.key === "Escape" && !event.shiftKey && this.selected.size) {
         event.preventDefault(); event.stopPropagation(); this.clearSelection(id);
@@ -1189,7 +1257,7 @@ export class OutlineController {
       dom.dataset.depth = String(row.depth); dom.style.setProperty("--outline-depth", String(row.depth));
       dom.dataset.root = String(row.root);
       leading.hidden = row.root || row.tail || !!row.gap;
-      leading.tabIndex = leading.hidden ? -1 : 0;
+      leading.tabIndex = -1;
       if (!leading.hidden) {
         leading.dataset.outlineTarget = "true"; leading.setAttribute("role", "group"); leading.setAttribute("aria-label", `outline item: ${this.label(row)}`);
       } else {delete leading.dataset.outlineTarget; leading.removeAttribute("role"); leading.removeAttribute("aria-label");}
@@ -1227,30 +1295,79 @@ export class OutlineController {
       ignoreMutation: mutation => mutation.type !== "selection" && (!content.contains(mutation.target) || mutation.type === "attributes" && mutation.target === content || this.rows.get(id)?.kind === "reference"),
       destroy: () => {if (this.mounts.get(id) === mount) {this.mounts.delete(id); this.notify();}}};
   };
+  inertInput(event: Event): boolean {
+    if (!this.blockRange || !(event.target instanceof Element) || event.target.closest(".ProseMirror") !== this.view?.dom ||
+      event.target.closest("button, a[href], input, textarea, select, .note-object-embed")) return false;
+    if (event instanceof InputEvent) return event.inputType !== "historyUndo" && event.inputType !== "historyRedo";
+    if (!(event instanceof KeyboardEvent)) return false;
+    if (outlineHistoryCommand(event, this.platform) || outlineStructuralCommand(event, this.platform)) return false;
+    if (event.shiftKey && ["Delete", "Backspace", "Escape", "F2"].includes(event.key)) return true;
+    const active = this.selectionRow ? this.rows.get(this.selectionRow) : null;
+    if (event.key === "F2" && (!active || !this.editableItem(active))) return true;
+    if (["ArrowUp", "ArrowDown", "Delete", "Backspace", "Escape", "F2"].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) return false;
+    const primary = usesMeta(this.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    if (primary && event.shiftKey && !event.altKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) return false;
+    if (!usesMeta(this.platform) && event.altKey && !event.metaKey && !event.ctrlKey && ["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return false;
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", "Enter"].includes(event.key)) return true;
+    return !event.metaKey && !event.ctrlKey && !event.altKey || primary && !event.altKey && (event.shiftKey
+      ? event.key.toLowerCase() === "s" : ["a", "b", "i", "u", "e", "x", "v", "c"].includes(event.key.toLowerCase()));
+  }
+  private releaseRemoval = (event?: Event): void => {
+    if (!(event instanceof KeyboardEvent) || event.key === this.removalKey || event.key === this.removalPress) {this.removalKey = null; this.removalPress = null;}
+  };
+  private removalFence = (event: Event): void => {
+    if (!this.removalKey || !(event.target instanceof Node) || !this.view?.dom.contains(event.target)) return;
+    if (event instanceof KeyboardEvent ? event.key === this.removalKey : event instanceof InputEvent && event.inputType.startsWith("delete")) {
+      event.preventDefault(); event.stopImmediatePropagation();
+    }
+  };
+  private blockInput = (event: Event): void => {
+    if (!this.blockRange || !(event.target instanceof Element) || event.target.closest(".ProseMirror") !== this.view?.dom) return;
+    if (event.target.closest("button, a[href], input, textarea, select, .note-object-embed")) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (event instanceof InputEvent && (event.inputType === "historyUndo" || event.inputType === "historyRedo")) {
+      if (event.inputType === "historyUndo") this.history.undo(); else this.history.redo();
+    }
+  };
+  private blockKey = (event: KeyboardEvent): void => {
+    if (event.target instanceof Element && event.target.closest(".ProseMirror") === this.view?.dom &&
+      !event.target.closest("button, a[href], input, textarea, select, .note-object-embed") &&
+      !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "Delete" || event.key === "Backspace")) this.removalPress = event.key;
+    if (!this.blockRange || !(event.target instanceof Element) || event.target.closest(".ProseMirror") !== this.view?.dom || event.target.closest("button, a[href], input, textarea, select, .note-object-embed")) return;
+    const history = outlineHistoryCommand(event, this.platform), structural = outlineStructuralCommand(event, this.platform);
+    const key = event.key.toLowerCase();
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      if (!history && !structural && (!this.inertInput(event) || key === "c")) return;
+    }
+    if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (event.isComposing || event.keyCode === 229) return;
+    if (history) {if (!event.repeat) {if (history === "undo") this.history.undo(); else this.history.redo();} return;}
+    if (structural) {if (!event.repeat && this.selectionRow) this.arrange(this.selectionRow, structural); return;}
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (event.key === "Delete" || event.key === "Backspace") {
+      if (!event.repeat) {this.removalKey = event.key; this.runRange("remove");}
+      return;
+    }
+    if (event.key === "Escape") {this.clearSelection(); return;}
+    if (event.key === "F2") {
+      const row = this.selectionRow ? this.rows.get(this.selectionRow) : null;
+      if (!event.repeat && row && this.editableItem(row)) {this.announcement = ""; void this.focus(row.row_id, "end");}
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      const snapshot = this.rangeSnapshot(), head = snapshot.rows.find(row => row.row_id === this.blockRange!.head_id);
+      const order = snapshot.rows.filter(row => row.scope_id === head?.scope_id && (row.selectable || row.gap));
+      const at = order.findIndex(row => row.row_id === head?.row_id), next = order[at + (event.key === "ArrowDown" ? 1 : -1)];
+      if (next?.gap) this.handle?.refuse(rangeReasonMessage("gap")); else if (next) this.selectPrepared(next.row_id, event.shiftKey);
+    }
+  };
   private syncMetadata(): void {for (const mount of this.mounts.values()) mount.sync(); this.syncReadOnly();}
   readonly projection: NoteEditorProjection = {
     schema: outlineEditorSchema, doc: () => this.doc(), binding: this.binding,
     nodeViews: {note_row: this.nodeView, title_row: this.nodeView, reference_row: this.nodeView},
     plugins: [new Plugin({props: {handleDOMEvents: {
-      copy: (_view, event) => this.copy(event, false), cut: (_view, event) => this.copy(event, true),
-      paste: (_view, event) => {
-        if (!this.selected.size) return false; event.preventDefault();
-        const row = this.selectionRow ? this.rows.get(this.selectionRow) : null; if (!row) return true;
-        try {
-          const items = readOutlineClipboard(event.clipboardData!), bookmark = this.capture();
-          const admitted = this.history.paste({placement: {parent_ref: row.parent_ref, parent: this.writing(row.parent_ref), after_ref: row.ref, before_ref: null},
-            items, change: {before: bookmark, after: () => bookmark}});
-          void admitted.result.catch(error => {this.error = error; this.notify();});
-        } catch (error) {this.error = error; this.notify();}
-        return true;
-      },
-      keydown: (_view, event) => {
-        if (!this.selected.size || event.isComposing || event.altKey || event.metaKey || event.ctrlKey) return false;
-        if (event.key === "Escape") {event.preventDefault(); this.clearSelection(); return true;}
-        if (event.key === "Delete" || event.key === "Backspace") {event.preventDefault(); this.remove([...this.selected]); return true;}
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {event.preventDefault(); const rows = [...this.rows.values()].filter(row => !row.gap && !row.tail && !row.root), at = rows.findIndex(row => row.row_id === this.selectionRow), next = rows[at + (event.key === "ArrowDown" ? 1 : -1)]; if (next) this.select(next.row_id, event.shiftKey); return true;}
-        if (event.key === "Enter" && this.selectionRow) {event.preventDefault(); const row = this.rows.get(this.selectionRow); if (row && !event.repeat) void this.appendAfter(row); return true;} return false;
-      },
+      copy: (_view, event) => this.copy(event),
     }}})], keys: this.keys, itemText: this.itemText, onFocus: () => {if (this.waiting?.native) this.tryFocus();},
     onEdit: this.onEdit, onSelectionChange: this.onSelectionChange, onViewReady: view => this.setView(view),
     context: row_id => {
@@ -1270,7 +1387,7 @@ export class OutlineController {
       }};
     },
   };
-  private copy(event: ClipboardEvent, cut: boolean): boolean {
+  private copy(event: ClipboardEvent): boolean {
     if (!this.selected.size || !event.clipboardData) return false;
     const rows = [...this.rows.values()].filter(row => this.selected.has(row.row_id) && !row.tail && !row.gap && (row.kind === "body" || row.ref)), items: ClipItem[] = [];
     for (const row of rows) {
@@ -1278,10 +1395,10 @@ export class OutlineController {
       items.push(row.kind === "body" ? {kind: "note", body: this.pending.fields.get(row.row_id)?.pending ? this.body(row.row_id) : this.binding.body(row.row_id), parent: parent < 0 ? null : parent}
         : {kind: "resource", ref: row.ref!, label: row.resource ? localResourceLabel(row.resource) : row.ref!, parent: parent < 0 ? null : parent});
     }
-    event.preventDefault(); writeOutlineClipboard(event.clipboardData, items); if (cut) this.remove(rows.map(row => row.row_id)); return true;
+    event.preventDefault(); writeOutlineClipboard(event.clipboardData, items); return true;
   }
   close(): void {
-    this.active = false; this.revoke(); this.disconnect?.(); this.unbindFocus?.(); this.view = null;
+    this.setView(null); this.active = false; this.revoke(); this.disconnect?.(); this.unbindFocus?.(); this.view = null;
     for (const held of this.documents.values()) held.release(); this.documents.clear();
     for (const release of this.historyLeases.values()) release(); this.historyLeases.clear();
   }

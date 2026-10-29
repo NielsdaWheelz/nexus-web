@@ -7,10 +7,12 @@ its implementation contract is split between
 the six fixed commands, native editing, focus and session history are implemented
 and qualified. that does not establish complete parity with either product.
 
-no editor-focused contract reconciles the original target with the implemented
-behavior, deliberate differences and remaining gaps. for example,
-[selected-range arrangement](outline-range-arrangement.md) is unsupported.
-this leaves completion claims broader than the actual specification and proof.
+the bounded range contract now covers selection, indent/outdent, branch removal
+and session undo. it deliberately excludes
+[bulk up/down movement](outline-range-arrangement.md) and
+[branch cut/paste](outline-block-cut-needs-branch-clipboard-contract.md).
+that contract does not establish full roam or obsidian replication. broader
+parity claims still need an explicit behavior and presentation target.
 
 resolve by defining the bounded editor behavior and presentation target,
 reconciling the original requirements with the current interaction contract, and

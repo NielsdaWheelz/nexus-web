@@ -46,17 +46,18 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
     const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
     if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
+    // native keyboard traversal uses the glyph as the row's tab stop.
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
       onContextMenu={event => event.stopPropagation()}>
       <ContextualActionMenu title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
         sections={[{id: "Occurrence", actions}]} renderContextAnchor={context => row.href ? <a {...context}
-          className={`${styles.control} ${styles.bullet}`} href={row.href} data-outline-bullet="true" data-row-focusable="true"
+          className={`${styles.control} ${styles.bullet}`} href={row.href} tabIndex={0} data-outline-bullet="true" data-row-focusable="true"
           aria-label={`open ${identity}: ${row.label}`} data-workspace-rich-target="true"
           onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}
           onKeyDown={event => {context.onKeyDown(event); if (!event.defaultPrevented) activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}});}}>{marker}</a>
-          : <button {...context} type="button" className={`${styles.control} ${styles.bullet}`} data-outline-bullet="true"
+          : <button {...context} type="button" className={`${styles.control} ${styles.bullet}`} tabIndex={0} data-outline-bullet="true"
             data-row-focusable="true" aria-label={`actions for ${identity}: ${row.label}`}>{marker}</button>}/>
     </span>;
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"

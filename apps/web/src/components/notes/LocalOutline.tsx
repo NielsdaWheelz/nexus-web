@@ -14,6 +14,7 @@ import {useOutlineWindow} from "@/lib/notes/useOutlineWindow";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError, copyText} from "@/lib/ui/copyText";
+import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {useWorkGuard} from "@/lib/unsavedWork";
 import {writingStoreStopped} from "@/lib/notes/runtime";
 import {emptyBody} from "@nexus/authored/body";
@@ -114,6 +115,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
   rootRead: ReturnType<typeof useOutlineWindow>; onReady(controller: OutlineController | null): void;
 }) {
   const resources = useContext(ResourceOutlineContext);
+  controller.platform = useRenderEnvironment().platform;
   const saved = useSyncExternalStore(runtime.subscribe, runtime.snapshot, runtime.snapshot);
   const guard = useWorkGuard();
   const [manualCopy, setManualCopy] = useState<{text: string; label: string} | null>(null);
@@ -126,7 +128,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
   useLayoutEffect(() => {if (rootRead.window) controller.accept(pending.value.input.root_id, rootRead.window);}, [controller, pending.value.input.root_id, rootRead.window]);
   useEffect(() => {
     const intent = (event: Event) => {
-      if (!event.isTrusted) return;
+      if (!event.isTrusted || controller.inertInput(event)) return;
       controller.revoke();
       controller.revealTouchCommands(event);
       if (event instanceof KeyboardEvent && event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing)
@@ -148,7 +150,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
   const pendingCopyAvailable = error !== null && guard.readCopyText({scopes: [], ownerIds: [pending.owner]}) !== null;
   return <SharedOutline value={controller}>
     <div data-outline-session={pending.value.input.root_id} onFocusCapture={event => {
-      if (event.target instanceof Element && event.target.matches('[contenteditable="true"]')) controller.setFocused(true);
+      if (event.target instanceof Element && event.target.matches('.ProseMirror')) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
       if (!(next instanceof Element && (event.currentTarget.contains(next) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
@@ -169,6 +171,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label={rootField?.label ?? "edit outline"}
         placeholder={rootField?.placeholder ?? "write or @ to link"} compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} inspection={rootField?.inspection} onEditorReady={editorReady}/>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
     </div>
   </SharedOutline>;

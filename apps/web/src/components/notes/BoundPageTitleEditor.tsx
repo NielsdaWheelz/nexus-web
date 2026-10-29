@@ -14,9 +14,10 @@ import Textarea from "@/components/ui/Textarea";
 import type { NoteEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+type TitleEditorHandle = Pick<NoteEditorHandle, "readSelection" | "captureSelection" | "focus" | "canArrange" | "settleNativeInput" | "localHistory">;
 export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, prelude = [], initialTitle = "", session, structuralKeys, onEditorReady, onSelectionChange }: {
   document?: WritingDocument;
-  session?: OutlineHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: NoteEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
+  session?: OutlineHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: TitleEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
   prelude?: readonly Intent[]; initialTitle?: string;
   pageRef: string; label?: string; editable?: boolean; placeholder?: string;
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
@@ -121,7 +122,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   }, [document, ref, selection, step]);
   useLayoutEffect(() => {
     if (!document || !ref.current) return;
-    const handle: NoteEditorHandle = {
+    const handle: TitleEditorHandle = {
       readSelection: () => selection(),
       settleNativeInput: () => !composing.current && !nativeFlight.current && !applying.current && pendingSelection.current === null && ref.current?.value === baseline.current?.getText("title").toString(),
       captureSelection: () => {
