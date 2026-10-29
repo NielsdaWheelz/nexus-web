@@ -17,6 +17,7 @@ import type { Schema } from "@/lib/api/wire";
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
 import {
   getPaneRouteIcon,
+  recentValueForHref,
   resolvePaneRouteModel,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
@@ -404,7 +405,17 @@ export function candidateRows(input: {
   }).sort((a, b) => TIERS.indexOf(a.row.rank.tier) - TIERS.indexOf(b.row.rank.tier)
     || a.ordinal - b.ordinal || a.source - b.source || (a.row.key < b.row.key ? -1 : a.row.key > b.row.key ? 1 : 0));
   const targets = new Set<string>();
+  const recentTargets = new Map<string, boolean>();
   const updates = ranked.flatMap(({ row }) => {
+    const action = row.action.kind === "Available" ? row.action.target : null;
+    const pane = action?.kind === "PaneOpen" ? panes.find(candidate => candidate.id === action.paneId) : undefined;
+    const identity = row.recentEntry?.target ?? (pane ? recentValueForHref(pane.href)?.target : null);
+    if (identity) {
+      const key = recentTargetKey(identity);
+      const previous = recentTargets.get(key);
+      if (previous !== undefined && (previous || !!row.recentEntry)) return [];
+      recentTargets.set(key, !!row.recentEntry);
+    }
     const target = row.recentEntry && row.key.startsWith("Recent:")
       ? row.key : row.action.kind === "Available" && row.action.target.kind === "InternalHref"
         ? resolveWorkspaceActivationRouteId(row.action.target.href) : row.key;
@@ -471,7 +482,7 @@ export function mergeResults(previous: NexusList, identity: string, incoming: re
     // Explicit expansion, reordering and pane closure remain owned by the pane list.
     if (group.id === "Open" && current && group.rows.map(row => row.key).join("\0") !== current.rows.map(row => row.key).join("\0")) return [current];
     const rows = group.rows.flatMap(old => {
-      const row = next.get(old.key) ?? (old.recentEntry ? [...next.values()].find(candidate => candidate.recentEntry && (recentTargetKey(candidate.recentEntry.target) === recentTargetKey(old.recentEntry!.target) || candidate.recentEntry.used_revision === old.recentEntry!.used_revision)) : undefined);
+      const row = next.get(old.key);
       if (removed.has(old.key)) return [];
       if (!row) return [old];
       return [{ ...old, ...(old.recentEntry ? { label: row.label, detail: row.detail, icon: row.icon } : {}), state: row.state, secondary: row.secondary,

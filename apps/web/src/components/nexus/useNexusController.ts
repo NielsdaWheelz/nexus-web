@@ -321,7 +321,7 @@ export function useNexusController() {
   const previousActive = list.active?.context === searchContext ? list.active : null;
   const explicit = candidates.find(row => row.rank.tier === "ExplicitIntent");
   const initialKey = parsed.intent.kind === "CommandLookup" ? null : explicit?.key
-    ?? candidates.find(row => row.action.kind === "Available" && (row.key.startsWith("Pane:") || row.key.startsWith("Resource:") || row.key.startsWith("Recent:") || row.key.startsWith("Destination:")))?.key
+    ?? candidates.find(row => row.action.kind === "Available" && !row.key.startsWith("Continuation:"))?.key
     ?? candidates.find(row => row.key === "Continuation:SeeAll" && row.action.kind === "Available")?.key ?? null;
   const desiredKey = !admitted ? null : !list.moved ? initialKey
     : previousActive?.key !== null && candidates.some(row => row.key === previousActive?.key) ? previousActive?.key ?? null : null;
@@ -671,7 +671,7 @@ export function useNexusController() {
   }
 
   function interact() {
-    if (!parsed.text && !list.moved) presentations.holdRecent(list.groups.find(group => group.id === "Recent")?.rows.flatMap(row => row.recentEntry ? [row.recentEntry] : []) ?? []);
+    if (!list.moved) presentations.holdRecent(list.groups.flatMap(group => group.rows).flatMap(row => row.recentEntry ? [row.recentEntry] : []));
     setList(current => current.identity === listIdentity && !current.moved ? { ...current, moved: true } : current);
   }
 
@@ -785,7 +785,7 @@ export function useNexusController() {
   const resultsHeld = list.identity === listIdentity && list.pending;
   const titlesFailed = panes.some(pane => pane.presentation.status === "Failed");
   const noticeText = [find.progress.kind === "Notice" ? find.progress.text : null, resultsHeld ? "search update ready" : null,
-    !query && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !query && recent.snapshot === null ? "loading recent…" : !query && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !query && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, titlesFailed ? "pane titles unavailable" : null, lookupGuidance].filter(Boolean).join(" ") || null;
+    !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, titlesFailed ? "pane titles unavailable" : null, lookupGuidance].filter(Boolean).join(" ") || null;
   return {
     interactionLayer,
     open,
@@ -801,7 +801,7 @@ export function useNexusController() {
     explicitIntent: parsed.intent.kind !== "Search",
     lookupGuidance,
     failures: find.failures,
-    recentStatus: { snapshot: recent.snapshot, readFailure: recent.readFailure, writeFailure: recent.writeFailure, read: recent.read },
+    recentStatus: { blank: !parsed.text, snapshot: recent.snapshot, readFailure: recent.readFailure, writeFailure: recent.writeFailure, read: recent.read },
     searchProgress: find.progress,
     resultsHeld,
     noticeText,

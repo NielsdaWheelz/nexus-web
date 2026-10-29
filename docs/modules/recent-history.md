@@ -77,6 +77,8 @@ the existing batched presentation endpoint in a separate read behind the current
 authored upload watermark; this cannot delay other titles or reader feedback.
 canonical candidates coalesce before caps; authoritative titles determine
 relevance. filtered search uses structured sources, never guessed hint metadata.
+accepted use revalidates the existing metadata batches against its use revision;
+this costs another read when remote targets are present, without metadata clocks.
 after interaction, blank-list membership/order and activation remain fixed until
 reopen, query change or refresh. metadata updates in place; confirmed deletion
 removes the row and its activation without selecting a replacement.

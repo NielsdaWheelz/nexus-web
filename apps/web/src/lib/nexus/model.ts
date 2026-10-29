@@ -98,7 +98,7 @@ export interface NexusRow {
   readonly secondary?:
     | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "ClosePane"; readonly paneId: string };
-  /** Present iff an accepted selection of this row contributes to server selection ranking. */
+  /** Whether an accepted selection of this row contributes to server selection ranking. */
   readonly learns_selection?: boolean;
   readonly recentEntry?: RecentEntry;
   readonly rank: { readonly stream: "Navigation" | "Local" | "Resources" | "Saved" | "Passages"; readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
