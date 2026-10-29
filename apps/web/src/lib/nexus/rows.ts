@@ -8,7 +8,6 @@ import {
   Library,
   Link as LinkIcon,
   MessageSquarePlus,
-  PanelLeft,
   Play,
   Search,
 } from "lucide-react";
@@ -52,7 +51,7 @@ const TIERS: readonly NexusRankTier[] = [
   "FuzzyOrSynonym",
   "MetadataOrFullText",
 ];
-const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "ManagePanes", "Continuation"];
+const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "Continuation"];
 const UNRANKED = { tier: "CurrentContext", score: 0, frecency: 0 } as const;
 const MOBILE_PLACES: readonly DestinationId[] = ["lectern", "libraries", "browse", "podcasts", "chats", "notes"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
@@ -107,8 +106,8 @@ function compareRows(left: NexusRow, right: NexusRow): number {
   );
 }
 
-export function paneState(pane: NexusPane): "Current" | "Open" | "Minimized" {
-  return pane.current ? "Current" : pane.visibility === "minimized" ? "Minimized" : "Open";
+function paneState(pane: NexusPane): "Current" | "Minimized" | undefined {
+  return pane.current ? "Current" : pane.visibility === "minimized" ? "Minimized" : undefined;
 }
 
 function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): NexusRow {
@@ -459,6 +458,7 @@ export function nexusGroups(input: {
   readonly query: NexusQuery;
   readonly list: NexusList;
   readonly panes: readonly NexusPane[];
+  readonly panesExpanded: boolean;
   readonly playback: NexusRow | null;
   readonly recent: readonly NexusRecent[];
   readonly frecency: Frecency;
@@ -479,17 +479,7 @@ export function nexusGroups(input: {
     ];
   }
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
-  const open = [
-    ...panes.slice(0, OPEN_CAP).map((pane) => paneRow(pane, "CurrentContext", frecency)),
-    {
-      key: "ManagePanes", existing: false,
-      label: "manage panes…",
-      icon: PanelLeft,
-      detail: "close, minimize, or restore",
-      action: { kind: "Available", target: { kind: "ManagePanes" } },
-      rank: UNRANKED,
-    } satisfies NexusRow,
-  ];
+  const open = (input.panesExpanded ? panes : nexusPanePreview(panes, false)).map((pane) => paneRow(pane, "CurrentContext", frecency));
   const seen = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   const recent = input.recent.flatMap((entry): NexusRow[] => {
     const routeId = resolveWorkspaceActivationRouteId(entry.target_href);
@@ -516,7 +506,7 @@ export function nexusGroups(input: {
     command("Nexus.Quick.Library"),
     command("Nexus.Quick.Import"),
   ];
-  const openGroup = group("Open", "open", open);
+  const openGroup = group("Open", `open panes · ${panes.length}`, open);
   const continueGroup = group("Continue", "continue", input.playback ? [input.playback] : []);
   const recentGroup = group("Recent", "recent", recent.slice(0, RECENT_CAP).map(plain));
   const quickGroup = group("QuickActions", "quick actions", quick);
@@ -529,17 +519,23 @@ function mobileRow(row: NexusRow): NexusRow {
   return row.key.startsWith("Pane:") || row.key.startsWith("Resource:") ? row : { ...row, type: undefined };
 }
 
+export function nexusPanePreview<T extends Pick<NexusPane, "visibility" | "current">>(panes: readonly T[], mobile: boolean): readonly T[] {
+  if (!mobile) return panes.slice(0, OPEN_CAP);
+  const visible = panes.filter((pane) => pane.visibility === "visible");
+  const current = visible.findIndex((pane) => pane.current);
+  const start = Math.max(0, Math.min(current - 1, visible.length - 3));
+  return visible.slice(start, start + 3);
+}
+
 function mobileOverview(input: {
   readonly panes: readonly NexusPane[];
+  readonly panesExpanded: boolean;
   readonly frecency: Frecency;
   readonly playback: NexusRow | null;
 }): NexusGroup[] {
-  const visible = input.panes.filter((pane) => pane.visibility === "visible");
-  const current = visible.findIndex((pane) => pane.current);
-  const start = Math.max(0, Math.min(current - 1, visible.length - 3));
   const place = (id: DestinationId) => mobileRow(placeRow(getDestination(id), "CurrentContext", input.frecency));
   return [
-    { id: "Open", label: "open panes", rows: visible.slice(start, start + 3).map((pane) => paneRow(pane, "CurrentContext", input.frecency)) },
+    { id: "Open", label: `open panes · ${input.panes.length}`, rows: (input.panesExpanded ? input.panes : nexusPanePreview(input.panes, true)).map((pane) => paneRow(pane, "CurrentContext", input.frecency)) },
     { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
     { id: "QuickActions", label: "", rows: [
       place("today"),
@@ -593,6 +589,6 @@ export function rowFacts(row: NexusRow, desktop: boolean): string {
     const facts = [row.detail, type, row.state && row.state !== "Open" ? row.state.toLowerCase() : undefined];
     return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
   }
-  const facts = [row.type, row.detail, row.parent?.label, row.state !== "Open" ? row.state : undefined];
+  const facts = [row.type, row.detail, row.parent?.label, row.state?.toLowerCase()];
   return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
 }
