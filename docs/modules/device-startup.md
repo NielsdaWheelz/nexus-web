@@ -12,6 +12,14 @@ trust; apk trust does not provision that browser. release uses normal system
 trust. the [canonical web edge](../local-rules/codebase.md#web-production-build)
 requires http2; packaged assets retain their local delivery below.
 
+`MainActivity` owns the usable web viewport. its edge-to-edge native frame keeps
+the protection background while the webview excludes system bars, display
+cutouts and the visible keyboard. overlapping bottom insets take their maximum;
+applied insets are consumed before reaching the webview. browser layout/visual
+viewport measurements therefore reflect usable space without a second keyboard
+height channel. the existing native visibility signal still describes whether
+the keyboard is shown.
+
 ## ownership
 
 `DeviceSession` is the native account authority. one private `AtomicFile` holds

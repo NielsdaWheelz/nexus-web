@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler, type RefObject } from "react";
 import { podcastTargetKey } from "@/lib/podcasts/api";
 import ResourceActions from "@/components/resources/ResourceActions";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
@@ -16,6 +16,7 @@ import {
   useMobileChrome,
   useMobileChromeState,
   useMobileChromeSurface,
+  useMobileChromeHold,
 } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { PaneCompanionAction, PanePrimaryAction } from "@/lib/panes/paneChrome";
@@ -69,6 +70,8 @@ export default function SurfaceHeader({
   resourceRef,
   navigation,
   onMouseDown,
+  editor,
+  frameRef,
 }: {
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
@@ -88,6 +91,8 @@ export default function SurfaceHeader({
   resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
   onMouseDown?: MouseEventHandler<HTMLElement>;
+  editor?: PaneChrome["editor"];
+  frameRef: RefObject<HTMLDivElement | null>;
 }) {
   const reasonId = useId();
   const paneId = usePaneRuntime()?.paneId;
@@ -101,7 +106,6 @@ export default function SurfaceHeader({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const frameRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLElement>(null);
   const actionSubjectKey = resourceActions?.kind === "Podcast" ? podcastTargetKey(resourceActions.subject.target)
     : resourceActions?.kind === "Media" ? resourceActions.subject.kind === "Stored" ? `media:${resourceActions.subject.summary.media_id}` : `external:${resourceActions.subject.target}`
@@ -118,12 +122,13 @@ export default function SurfaceHeader({
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
   useMobileChromeSurface(ref, mobile);
+  useMobileChromeHold(mobile && editor?.kind === "Expandable" && editor.expanded);
   useLayoutEffect(() => {
     const frame = frameRef.current;
     const surface = ref.current;
     if (!mobile || !frame || !surface) return;
     return viewport.registerTopSurface("Header", frame, surface);
-  }, [mobile, viewport]);
+  }, [mobile, viewport, frameRef]);
   const recovery = mobile && visibility !== null ? RECOVERY[visibility] : null;
   const actions = [...paneActions, ...menuActions];
   const displaced = narrow ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
@@ -160,7 +165,10 @@ export default function SurfaceHeader({
         <header
           ref={ref}
           className={mobile ? styles.mobile : styles.header}
-          onMouseDown={onMouseDown}
+          onMouseDown={event => {
+            if (event.target instanceof Element && event.target.closest("[data-pane-header-writing]")) return;
+            onMouseDown?.(event);
+          }}
         >
           <div className={styles.navigation}>
             <Button
@@ -184,11 +192,12 @@ export default function SurfaceHeader({
               aria-label={`Go forward${scope}`}
             />
           </div>
-          <div className={styles.identity}>
+          <div className={styles.identity} data-pane-header-writing={editor ? "true" : undefined}>
             <PaneHeaderIdentity
               id={identityId}
               model={header}
               projection={projection}
+              editor={editor?.kind === "Inline" ? editor.content : editor?.control}
             />
           </div>
           <div className={styles.trailing}>
@@ -272,6 +281,13 @@ export default function SurfaceHeader({
               />
             ) : null}
           </div>
+          {editor?.kind === "Expandable" ? (
+            <div id={editor.regionId} className={styles.editorRegion} hidden={!editor.expanded}
+              data-pane-header-editor-region="true" data-pane-header-writing="true">
+              {editor.content}
+            </div>
+          ) : null}
+          {editor?.feedback ? <div className={styles.feedback} data-pane-header-writing="true">{editor.feedback}</div> : null}
         </header>
       </div>
     </>
