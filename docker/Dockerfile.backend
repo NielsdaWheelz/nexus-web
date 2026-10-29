@@ -21,20 +21,6 @@ RUN chmod -R u=rwX,go=rX /app/nexus \
     && uv sync --frozen --no-dev --no-editable
 
 
-# The subscription-authenticated host is part of the worker release identity,
-# never the API/migration artifact.  Keep its SDK/runtime dependency out of the
-# base environment so an API compromise cannot read or use Codex credentials.
-FROM python-dependencies AS worker-python-dependencies
-
-RUN uv sync --frozen --no-dev --no-install-project --extra codex-agent
-
-FROM worker-python-dependencies AS worker-python-builder
-
-COPY python/nexus ./nexus
-RUN chmod -R u=rwX,go=rX /app/nexus \
-    && uv sync --frozen --no-dev --no-editable --extra codex-agent
-
-
 FROM python-builder AS release-metadata
 
 ARG SOURCE_SHA
@@ -54,6 +40,14 @@ FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf100
 WORKDIR /app/node/ingest
 
 COPY node/ingest/package.json node/ingest/bun.lock* ./
+RUN bun install --frozen-lockfile --production
+
+
+# Only worker targets consume this exact native host package.
+FROM node-builder AS codex-node-builder
+
+WORKDIR /app/node/codex
+COPY node/codex/package.json node/codex/bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 
@@ -131,9 +125,10 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY docker/codex-requirements.toml /etc/codex/requirements.toml
-COPY --from=worker-python-dependencies /app/.venv /app/.venv
+COPY --from=python-dependencies /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
+COPY --from=codex-node-builder /app/node/codex/node_modules ./node/codex/node_modules
 
 ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app"
 ENV NODE_ENV="production" NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
@@ -154,9 +149,9 @@ FROM worker-runtime AS worker
 RUN mkdir /workspace
 COPY docker/codex-requirements.toml /etc/codex/requirements.toml
 
-COPY --from=worker-python-builder /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
+COPY --from=codex-node-builder /app/node/codex/node_modules ./node/codex/node_modules
 COPY node/ingest/ingest.mjs ./node/ingest/ingest.mjs
 COPY node/ingest/article_extraction.mjs ./node/ingest/article_extraction.mjs
 COPY apps/worker ./apps/worker

@@ -4,6 +4,8 @@ import type { Catalog, Selection } from "./wire";
 // The exact generation a draft will run: chosen from the catalog, never
 // substituted. The browser owns no allowlist; the server rejects stale choices.
 
+export const MISSING_SELECTION = "this model or reasoning option is no longer offered. choose an available option.";
+
 export type Route = Schema<"CodexPersonalRoute"> | Schema<"ProviderApiRoute">;
 type CatalogRoute = Catalog["routes"][number];
 type CatalogModel = CatalogRoute["models"][number];
@@ -153,12 +155,8 @@ export function unavailability(
     return variant ? "default effort unavailable" : "default model unavailable";
   }
   if (draft.kind === "Uninitialized") return "loading models…";
-  if (!route || !row) return "provider unavailable. choose provider.";
   const { model, choice } = lookup(catalog, draft.selection, route);
-  if (!model)
-    return "model unavailable. choose model.";
-  if (!choice)
-    return "effort unavailable. choose effort.";
+  if (!model || !choice) return MISSING_SELECTION;
   const state = choice.chat_state;
   if (state.kind === "Selectable") return null;
   return state.explanation;

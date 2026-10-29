@@ -322,10 +322,10 @@ remain content. canonical refs use the existing resolver instead of text search;
 pending enter waits, and unavailable refs keep their exact disabled target.
 full search treats commands and refs as content.
 
-find shows optional best match, commands & places, resources, saved passages and
+ordinary find shows optional best match, actions, resources, saved passages and
 inside sources. home caps are 4/4/2/2; promotion consumes its home slot and unused
-capacity is not reassigned. explicit intent wins promotion, then an exact canonical
-local label, then an exact resource name. aliases admit suggestions but do not
+capacity is not reassigned. explicit intent wins promotion, then an exact visible
+action label, then an exact resource name. aliases admit suggestions but do not
 beat resource names. local fuzzy matching and frecency stay within navigation.
 query actions sit outside these budgets and never become automatic defaults.
 
@@ -347,9 +347,19 @@ late results preserve the active key and primary target. deliberate selection
 freezes the visible prefix and its groups; pinned rows consume home capacity.
 capped omission does not mean deletion. explicit unavailability disables the same
 target; actual removal clears selection without choosing another automatic row.
-desktop enter follows selection, otherwise intent/full search. mobile keyboard
-submit always follows intent/full search; explicit row activation opens the row.
-composition/repeat guards, shift opening and the two-cell keyboard grid remain.
+desktop enter follows admitted selection; fresh absence submits intent/full search,
+while retired selection consumes enter until fresh navigation/query change. mobile
+keyboard submit follows intent/full search; explicit row activation opens the row.
+composition/repeat guards and shift opening remain. plain space edits the input;
+secondary options retain native tab/enter/space activation.
+
+command and lookup views are separate from retrieval. exact slash heads accept
+end-of-input or whitespace; unknown heads retain command lookup, never search.
+lookup shows all six commands without a default; deliberate selection starts an
+empty command. available explicit commands are initial defaults, including creation.
+command/lookup views omit incidental query continuations. the explicit literal-search
+escape retains outer-trimmed text without parsing filters. the full interaction
+and content contract belongs to [app navigation](app-navigation.md#nexus-content-grammar).
 
 ## browser presentation
 

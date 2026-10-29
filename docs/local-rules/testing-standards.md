@@ -340,7 +340,8 @@ lab and `make worker-*` share `python/scripts/worker_checkout_image.py`. the tag
 is `nexus-worker-checkout:<first 16 hex of sha256>` over framed file names and
 contents: `docker/Dockerfile.backend`, `docker/codex-requirements.toml`,
 `python/pyproject.toml`, `python/uv.lock`, `python/README.md`,
-`node/ingest/package.json` and `node/ingest/bun.lock` when present. missing and
+`node/codex/package.json`, `node/codex/bun.lock`, `node/ingest/package.json` and
+`node/ingest/bun.lock` when present. missing and
 empty lock files differ. application edits and the git sha do not change it.
 the `worker-checkout` target installs dependencies only: no application source,
 migrations, installed nexus project, source sha or runtime identity. checkout
