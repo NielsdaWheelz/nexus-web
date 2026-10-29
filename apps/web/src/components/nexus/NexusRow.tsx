@@ -208,7 +208,8 @@ export function NexusNotices({ controller, returnFocus, id }: {
 }) {
   const admission = useRemoteAdmission();
   const { kind, text, action } = controller.searchProgress;
-  const showRecent = !controller.query && (controller.recentStatus.snapshot === null || controller.recentStatus.snapshot.entries.length === 0 || controller.recentStatus.readFailure || controller.recentStatus.writeFailure !== null);
+  const { snapshot, readFailure, writeFailure, read } = controller.recentStatus;
+  const showRecent = !controller.query && (snapshot === null || snapshot.entries.length === 0 || readFailure || writeFailure !== null);
   if (controller.noticeText === null && !showRecent) return null;
   return <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
     {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
@@ -224,19 +225,13 @@ export function NexusNotices({ controller, returnFocus, id }: {
       }, busy: controller.retrying.size > 0 }]} /> : null}
     {controller.resultsHeld ? <FeedbackNotice content={{ tone: "Info", title: "search update ready" }} announcement="None"
       actions={[{ label: SEARCH_ACTION_LABELS.refresh, onClick: () => { controller.refreshResults(); returnFocus()?.focus({ preventScroll: true }); } }]} /> : null}
-    <NexusRecentStatus controller={controller} />
+    {!controller.query ? <>
+      {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} returnFocus={returnFocus} />
+        : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
+        : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
+      {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} returnFocus={returnFocus} /> : null}
+    </> : null}
     {controller.titlesFailed ? <FeedbackNotice content={{ tone: "Warning", title: PANE_TITLES_FAILED }} announcement="None"
       actions={[{ label: "retry", onClick: controller.retryTitles }]} returnFocus={returnFocus} /> : null}
   </section>;
-}
-
-export function NexusRecentStatus({ controller }: { controller: NexusController }) {
-  const { snapshot, readFailure, writeFailure, read } = controller.recentStatus;
-  if (controller.query) return null;
-  return <>
-    {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} />
-      : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
-      : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
-    {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} /> : null}
-  </>;
 }
