@@ -164,7 +164,7 @@ Mobile mode:
 - renders no pane strip
 - renders no Companion column and ignores published reader layout
 - renders no pane resize handle
-- presents the Companion only as a sheet (the same `Companion`)
+- presents the companion as a full-screen task (the same `Companion`)
 - presents sequential adjacent pane switching through a primary-touch
   horizontal swipe on the Nexus control
 - presents random pane access, recently closed restoration, and minimized-pane
@@ -367,7 +367,7 @@ ends disclosure and transient companion results.
 pane control rows and companion/strip headers consume the shared compact density
 recipe. controls own their appearance; the shell owns layout and available space.
 companion tabs use the controlled `TabList` while retaining their guarded focus,
-column/sheet relocation, stable panel ids and active-body lifetime. active-tab
+column/sheet/full-screen relocation, stable panel ids and active-body lifetime. active-tab
 reveal observes the live header and selected tab across relocation and text zoom. pane chips
 retain intrinsic height, title ellipsis, action slots and drag ownership.
 
@@ -451,7 +451,7 @@ query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
 by icon-only results, optional return and mobile close. applied-option chips
 remain visible. options uses sliders; the results trigger and companion tab use
-the same text-search glyph. results opens its existing column/sheet and never
+the same text-search glyph. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
@@ -665,18 +665,18 @@ pane landmark without it.
 
 A pane's Companion is its one secondary region: the durable Inspector tabs the
 body publishes (`usePaneCompanion`) plus Find's transient "Search results" tab.
-`Companion.tsx` renders the committed `Column` or `Sheet` presentation and owns
+`Companion.tsx` renders the committed `Column`, `Sheet` or `FullScreen` presentation and owns
 every companion command (`createCompanionController`, exposed to bodies as the runtime's
 `requestSecondarySurface(id | null)`, `closeSecondaryPane` and
-`toggleSecondaryPane`, the inspector action's toggle). the shared `MobileSheet`
-(`scrim="soft"`, `panelId` = the region id, which is also its interaction
-scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
-dismissal and the modal contract of the overlay stack (see
-`docs/modules/overlays.md`); `Companion` owns its header, tab state and bodies.
-the sheet renders that specialized header through `renderHeader`, outside the
-scrolling retained body. its x uses the frame's dismissal request.
+`toggleSecondaryPane`, the inspector action's toggle, and `revealPrimary`).
+the shared `MobileFullScreenTask` on mobile and `MobileSheet` on constrained
+desktop retain the overlay stack's modal, keyboard and back contracts. their
+region id is also their interaction scope. `Companion` owns identity, tabs and
+bodies; its close uses the frame's dismissal request. full-screen identity uses
+the resolved pane title even without a canonical resource ref; only the resource
+menu requires that ref. mobile keeps the direct inspector button at every width.
 
-`PaneShell` commits presentation: mobile uses a sheet; ordinary desktop uses a
+`PaneShell` commits presentation: mobile uses a full-screen task; ordinary desktop uses a
 column; maximized desktop uses a column only when measured content width fits
 320 px of primary content, the reader rail and the 280 px companion minimum.
 an unmeasured maximized width retains presentation. transitions wait while
@@ -684,15 +684,15 @@ another interaction owner is active, with a live ownership check before commit.
 the effective width limit is `max(280, min(720, contentWidth - 320 - railWidth))`
 when maximized, otherwise 720 px. rendering never overwrites the stored preference.
 
-one companion-owned portal host moves between empty column and sheet slots.
+one companion-owned portal host moves between column, sheet and full-screen slots.
 each destination supplies its actual `OverlayContext`, preserving local drafts
 and dom identity while closed child layers bind to their current parent on
 admission. presentation changes retain the active body; close and tab switches
-keep their existing body lifetimes. new sheet admission waits for other owners;
-an admitted sheet stays mounted under covering overlays and retires when closed
+keep their existing body lifetimes. new modal admission waits for other owners;
+an admitted modal stays mounted under covering overlays and retires when closed
 or its pane becomes effectively hidden.
 relocation captures focus before removing the old host/header. the column
-restores it after replacement refs commit; sheet admission prefers a live retained
+restores it after replacement refs commit; modal admission prefers a live retained
 body control before its selected-tab/close default. another owner or deliberate
 focus move takes precedence.
 
@@ -701,7 +701,7 @@ The durable state is the store's `pane.secondary`
 fact `secondaryPane` is that record unchanged. A command acts only on a surface
 the pane publishes now. Restoring a workspace and publishing a Companion never
 change durable visibility or the remembered tab: while the remembered tab is
-unpublished (reader Contents before its read lands) the column shows the
+unpublished (reader contents before its read lands) the companion shows the
 default without rewriting the tab, so a later publication brings it back. Only
 the Inspector toggle, a tab, ✕/Esc and explicit requests (a target's
 `secondaryActivation`, the media `g` keys, the imports selection) open, retarget
@@ -711,9 +711,10 @@ or close it. One width law serves both groups: `companionWidthPx` clamps
 Find's results are this pane's transient tab, never persisted
 (`results: {expanded, widthPx}` in the pane store): FindBar's Results shows
 them over whatever the durable Companion was doing; picking a durable tab ends
-them and selects that tab; ✕, closing Find or leaving the source end them and
-the durable presentation returns as it was. Their width is the durable
-record's when one exists. in sheet presentation a successful preview hides it while
+them and selects that tab. column result close, closing Find or leaving the source
+ends results and restores the durable presentation. explicit covering close/back
+ends results and collapses durable visibility, retaining query and remembered tab.
+their width is the durable record's when one exists. a covering result preview hides it while
 the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
@@ -722,7 +723,11 @@ A command opening the desktop column (the record turning visible or changing
 group, Find's results expanding) scrolls it into the canvas so its ✕ is
 reachable; a restore, a late publication or a breakpoint round trip never moves
 the canvas.
-Close labels are sentence case (`Close contents`, `Close search results`).
+covering close names the task: `close inspector`, or `close search results` when
+there is no durable companion. a fresh media companion prefers connections;
+tab order and remembered/explicit selection remain independent of that default.
+`revealPrimary({focusTarget})` closes a covering companion and transfers focus
+after modality releases; a column stays open and uses guarded source focus.
 column close returns focus to its opener or explicit destination, else pane
 chrome. a sheet initially focuses its selected tab and returns without scrolling
 to a live external opener, else the pane landmark. promotion records the live

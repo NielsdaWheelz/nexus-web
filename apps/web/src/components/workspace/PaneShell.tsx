@@ -119,9 +119,9 @@ export default function PaneShell(props: PaneShellProps) {
   const state = usePaneChromeState(chrome);
   const railPx = isMobile ? 0 : Math.ceil(state.layout?.rail?.widthPx ?? 0);
   const blocked = useInteractionBlocked(paneSecondaryRegionId(pane.id));
-  const [presentation, setPresentation] = useState<CompanionPresentation>(isMobile ? "Sheet" : "Column");
+  const [presentation, setPresentation] = useState<CompanionPresentation>(isMobile ? "FullScreen" : "Column");
   const measured = !props.isMaximized || props.availableWidthPx !== null;
-  const desiredPresentation = isMobile || (
+  const desiredPresentation = isMobile ? "FullScreen" : (
     props.isMaximized && props.availableWidthPx !== null &&
     props.availableWidthPx < 320 + railPx + COMPANION_MIN_WIDTH_PX
   ) ? "Sheet" : "Column";
@@ -133,8 +133,8 @@ export default function PaneShell(props: PaneShellProps) {
   const companionMaxWidthPx = props.isMaximized && props.availableWidthPx !== null
     ? Math.max(COMPANION_MIN_WIDTH_PX, Math.min(COMPANION_MAX_WIDTH_PX, props.availableWidthPx - 320 - railPx))
     : COMPANION_MAX_WIDTH_PX;
-  const latest = useRef({ secondary: pane.secondary, presentation });
-  latest.current = { secondary: pane.secondary, presentation };
+  const latest = useRef({ secondary: pane.secondary, presentation, isVisible: props.isVisible });
+  latest.current = { secondary: pane.secondary, presentation, isVisible: props.isVisible };
   const controller = useMemo(
     () =>
       createCompanionController({

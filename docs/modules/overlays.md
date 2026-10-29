@@ -224,7 +224,7 @@ root listeners: a component's own key handler runs first and keeps a key by
 preventing its default (the Nexus inputs own Escape this way). a
 feature's own global Escape command must yield while
 `hasActiveInteractionOwner()`; the reader (`media/[id]/chrome.tsx`) does, so
-Escape with its inspector sheet on top closes only the sheet. react listens on
+escape with its covering inspector on top closes only that task. react listens on
 every portal container too: a portaled component that stops a key's
 propagation hides it from the document. `ActionMenu` stops every key, since
 react bubbles a portaled menu's keys through its owners (the linked-notes
@@ -282,9 +282,11 @@ live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
-drag. Back and Escape go through the feature's guard. mobile Nexus is its one
-user: nonblank Root clears its query first, a nested page returns to Root, dirty
-work keeps its confirmation, blank Root closes.
+drag. back and escape go through the feature's optional guard. `panelId` names
+the frame; function children receive its guarded dismissal request. mobile nexus
+retains its own query/nested-page/writing policy. all mobile companions also use
+this frame, with task close returning to primary content. the frame can remain
+mounted while hidden; companion bodies retain their own unmount policy.
 
 **ActionMenu**: a "…" or custom trigger. `MenuSource` supplies a known subject key
 and title plus immediate complete content or preparation keyed by the exact abort

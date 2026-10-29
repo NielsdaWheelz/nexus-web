@@ -26,8 +26,12 @@ import { readerDestinationHref } from "../hostedReader";
 import type { EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
-export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged }: {
+export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged, disclosureKey, open, onOpenChange, onLayout }: {
   readonly occurrenceKey: string;
+  readonly disclosureKey: string;
+  readonly open: boolean;
+  readonly onOpenChange: (key: string, open: boolean) => void;
+  readonly onLayout: (key: string, pending: boolean | null) => void;
   readonly reference: Schema<"ReaderEvidenceSourceReferenceOut">;
   readonly mediaId: string;
   readonly identity: string;
@@ -35,27 +39,28 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
   readonly reader: Reader;
   readonly onContentChanged: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const expanded = open || openRequest?.isCurrent() === true;
   const button = useRef<HTMLButtonElement>(null);
   const details = useRef<HTMLDivElement>(null);
   const id = useId();
   // The shell commits before the row acknowledges; retirement leaves it open.
-  useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
+  useLayoutEffect(() => { if (openRequest?.isCurrent() && !open) onOpenChange(disclosureKey, true); }, [disclosureKey, onOpenChange, open, openRequest]);
   const label = reference.location_label;
   return <>
     <Button ref={button} aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       data-resource-primary onClick={() => {
         if (expanded && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
-        setOpen(!expanded);
+        onOpenChange(disclosureKey, !expanded);
       }}>source text{label ? ` · ${label}` : ""}</Button>
     {expanded ? <div ref={details} id={id} className={styles.sourceTargets}>
-      <SourceNoteDetail occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
+      <SourceNoteDetail disclosureKey={disclosureKey} onLayout={onLayout} occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
     </div> : null}
   </>;
 }
 
-function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged }: {
+function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged, disclosureKey, onLayout }: {
+  readonly disclosureKey: string;
+  readonly onLayout: (key: string, pending: boolean | null) => void;
   readonly occurrenceKey: string;
   readonly referenceRef: string;
   readonly mediaId: string;
@@ -82,6 +87,11 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
       }
     },
   });
+  // A failed read is a terminal layout too; the evidence owner must not wait for success.
+  useLayoutEffect(() => {
+    onLayout(disclosureKey, detail.status === "loading");
+    return () => onLayout(disclosureKey, null);
+  }, [detail.status, disclosureKey, onLayout]);
   const announcement = paneActive ? "Polite" : "None";
   if (detail.status === "loading") return <FeedbackStatus content={{ tone: "Neutral", title: "loading source text…" }} announcement={announcement} />;
   if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackNotice content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}

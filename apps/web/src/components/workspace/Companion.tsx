@@ -26,6 +26,7 @@ import { FindResults } from "@/components/find/FindBar";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
+import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { TabList } from "@/components/ui/Tabs";
 import compact from "@/components/ui/CompactChrome.module.css";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
@@ -61,7 +62,7 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
-export type CompanionPresentation = "Column" | "Sheet";
+export type CompanionPresentation = "Column" | "Sheet" | "FullScreen";
 const ICONS: Record<TabId, LucideIcon> = {
   "resource-contents": ListTree,
   "resource-members": Users,
@@ -106,6 +107,7 @@ export function createCompanionController(input: {
   readonly latest: () => {
     readonly secondary: WorkspaceSecondaryPane | null;
     readonly presentation: CompanionPresentation;
+    readonly isVisible: boolean;
   };
   readonly requestSecondarySurface: (
     paneId: string,
@@ -117,10 +119,11 @@ export function createCompanionController(input: {
   ) => void;
 }) {
   const { paneId, chrome, latest } = input;
-  const focusLater = (target: HTMLElement | null) => {
+  const focusLater = (resolve: () => HTMLElement | null) => {
     const from = document.activeElement;
     requestAnimationFrame(() => {
-      if (!target?.isConnected || target.closest("[hidden], [inert]") ||
+      const target = resolve();
+      if (!latest().isVisible || !target?.isConnected || target.closest("[hidden], [inert]") ||
         hasActiveInteractionOwner() ||
         (document.activeElement !== from && document.activeElement !== document.body)) return;
       target.focus({ preventScroll: true });
@@ -170,9 +173,12 @@ export function createCompanionController(input: {
           ? opener
           : null;
       update({ visibility: "collapsed" });
-      // the sheet returns focus to `returnFocus` as it closes.
-      if (latest().presentation === "Sheet") return;
-      if (!chrome.skipReturnFocus) focusLater(chrome.returnFocus ?? findPaneChromeFocusTarget(paneId));
+      // a covering frame returns focus to `returnFocus` as it closes.
+      if (latest().presentation !== "Column") return;
+      if (!chrome.skipReturnFocus) {
+        const target = chrome.returnFocus;
+        focusLater(() => target ?? findPaneChromeFocusTarget(paneId));
+      }
       chrome.returnFocus = null;
     },
     /** The Inspector: closes the durable Companion shown open, else opens it. */
@@ -208,16 +214,30 @@ export function createCompanionController(input: {
       });
     },
     closeResults() {
+      chrome.skipReturnFocus = false;
+      if (latest().presentation !== "Column") {
+        // Collapse before ending Find, so its former durable tab never flashes.
+        update({ visibility: "collapsed" });
+        chrome.set({ results: null });
+        return;
+      }
       const opener = chrome.returnFocus;
       chrome.returnFocus = null;
       chrome.set({ results: null });
-      if (latest().presentation === "Column") focusLater(opener);
+      focusLater(() => opener);
     },
-    /** A match shown from a sheet hides it; the results live on. */
+    /** Revealing a source closes covering UI; a column keeps its place. */
+    revealPrimary({ focusTarget }: { readonly focusTarget: HTMLElement }) {
+      if (latest().presentation === "Column") focusLater(() => focusTarget);
+      else controller.closeSecondaryPane({ focusAfterClose: focusTarget });
+    },
+    /** A preview hides covering results and yields attention to the primary pane. */
     previewed() {
       const { results } = chrome.get();
-      if (results && latest().presentation === "Sheet")
-        chrome.set({ results: { ...results, expanded: false } });
+      if (!results || latest().presentation === "Column") return;
+      chrome.skipReturnFocus = true;
+      chrome.set({ results: { ...results, expanded: false } });
+      focusLater(() => findPaneLandmarkFocusTarget(paneId));
     },
   };
   return controller;
@@ -291,7 +311,7 @@ function CompanionSlot({
   return <div ref={slot} className={styles.slot} />;
 }
 
-/** One inspector subtree moves between a column and a sheet without losing drafts. */
+/** One inspector subtree moves between presentations without losing drafts. */
 export default function Companion(props: {
   readonly paneId: string;
   readonly presentation: CompanionPresentation;
@@ -347,8 +367,8 @@ export default function Companion(props: {
     props.maxWidthPx,
     companionWidthPx(secondary ? secondary.width_px : results?.widthPx ?? null),
   );
-  const latest = useRef({ activeId, isVisible, open });
-  latest.current = { activeId, isVisible, open };
+  const latest = useRef({ activeId, isVisible, open, presentation });
+  latest.current = { activeId, isVisible, open, presentation };
   const headerRef = useCallback((element: HTMLElement | null) => {
     if (!element) return;
     // Ref cleanup precedes DOM removal; the slot's cleanup can run afterward.
@@ -396,9 +416,9 @@ export default function Companion(props: {
     };
   }, [host, regionId]);
 
-  const wantsSheet = presentation === "Sheet" && isVisible && open;
+  const wantsCover = presentation !== "Column" && isVisible && open;
   useLayoutEffect(() => {
-    if (!wantsSheet) {
+    if (!wantsCover) {
       setAdmitted(false);
       return;
     }
@@ -412,8 +432,8 @@ export default function Companion(props: {
       chrome.returnFocus = focused;
     }
     setAdmitted(true);
-  }, [wantsSheet, admitted, blocked, regionId, chrome, host]);
-  const sheetActive = wantsSheet && admitted;
+  }, [wantsCover, admitted, blocked, regionId, chrome, host]);
+  const coveringActive = wantsCover && admitted;
 
   // a command opening the desktop column scrolls it into the canvas, so its ✕
   // is reachable. this follows what the commands wrote, not the column showing:
@@ -443,7 +463,7 @@ export default function Companion(props: {
     observer.observe(list);
     observer.observe(tab);
     return () => observer.disconnect();
-  }, [activeId, tabs.length, presentation, sheetActive, open]);
+  }, [activeId, tabs.length, presentation, coveringActive, open]);
 
   const columnKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (presentation !== "Column" || !isVisible || event.key !== "Escape" ||
@@ -462,49 +482,88 @@ export default function Companion(props: {
       tabRefs.current.get(id)?.focus({ preventScroll: true });
     }
   };
-  const header = (requestDismiss: () => void) => (
-    <header ref={headerRef} className={`${styles.header} ${compact.compact}`}>
-      {companion && activeId !== null ? (
-        <TabList
-          value={activeId}
-          aria-label="Secondary surfaces"
-          className={styles.tabs}
-          onSelect={select}
-          items={tabs.map(({ id }) => {
-            const Icon = ICONS[id];
-            return {
-              value: id,
-              id: `${baseId}-${id}-tab`,
-              panelId: `${baseId}-${id}-panel`,
-              label: title(id),
-              icon: <Icon size={16} aria-hidden="true" />,
-              ref: (element: HTMLButtonElement | null) => {
-                if (element) tabRefs.current.set(id, element);
-                else tabRefs.current.delete(id);
-              },
-            };
-          })}
-        />
-      ) : (
-        <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
-      )}
-      {presentation === "Sheet" && props.resourceRef ? (
-        <ContextualActionMenu
-          sections={[]}
-          resourceRef={props.resourceRef}
-          title={props.resourceTitle}
-          subjectKey={`companion:${paneId}:${activeId}:${props.resourceRef}`}
-        />
-      ) : null}
+  const tabList = companion && activeId !== null ? (
+    <TabList
+      value={activeId}
+      aria-label="Secondary surfaces"
+      className={styles.tabs}
+      onSelect={select}
+      items={tabs.map(({ id }) => {
+        const Icon = ICONS[id];
+        return {
+          value: id,
+          id: `${baseId}-${id}-tab`,
+          panelId: `${baseId}-${id}-panel`,
+          label: title(id),
+          icon: <Icon size={16} aria-hidden="true" />,
+          ref: (element: HTMLButtonElement | null) => {
+            if (element) tabRefs.current.set(id, element);
+            else tabRefs.current.delete(id);
+          },
+        };
+      })}
+    />
+  ) : null;
+  const header = (requestDismiss: () => void) => {
+    const resourceMenu = presentation !== "Column" && props.resourceRef ? (
+      <ContextualActionMenu
+        sections={[]}
+        resourceRef={props.resourceRef}
+        title={props.resourceTitle}
+        subjectKey={`companion:${paneId}:${activeId}:${props.resourceRef}`}
+      />
+    ) : null;
+    const closeButton = (
       <Button
         ref={closeRef}
         iconOnly
-        aria-label={activeId ? `close ${title(activeId)}` : "close inspector"}
+        aria-label={companion ? "close inspector" : "close search results"}
         data-companion-close="true"
         onClick={requestDismiss}
         icon={<X size={15} aria-hidden="true" />} />
-    </header>
-  );
+    );
+    return presentation === "FullScreen" ? (
+      <header ref={headerRef} className={`${styles.fullScreenHeader} ${compact.compact}`}>
+        <div className={styles.identity}>
+          <h2 className={styles.identityTitle}>{props.resourceTitle}</h2>
+          {resourceMenu}
+          {closeButton}
+        </div>
+        {tabList}
+      </header>
+    ) : (
+      <header ref={headerRef} className={`${styles.header} ${compact.compact}`}>
+        {tabList ?? <span className={styles.soloTitle}>{activeId && title(activeId).toLowerCase()}</span>}
+        {resourceMenu}
+        {closeButton}
+      </header>
+    );
+  };
+  const initialFocus = (container: HTMLElement) => {
+    const previous = focusAfterMove.current;
+    focusAfterMove.current = null;
+    if (previous?.isConnected && container.contains(previous) && !previous.closest("[hidden], [inert]"))
+      return previous;
+    return container.querySelector<HTMLElement>(
+      '[role="tab"][aria-selected="true"], [data-companion-close="true"]',
+    );
+  };
+  const returnFocusTo = () => {
+    const target = chrome.returnFocus;
+    // The overlay owner releases inertness after frame cleanup.
+    return target?.isConnected && !host?.contains(target) && !target.closest("[hidden]")
+      ? { element: target, preventScroll: true as const }
+      : null;
+  };
+  const returnFocusFallback = () => {
+    const target = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`)
+      ?.querySelector<HTMLElement>('[data-pane-focus-landmark="true"]');
+    return target?.isConnected && !target.closest("[hidden]")
+      ? { element: target, preventScroll: true as const }
+      : null;
+  };
+  const skipReturnFocus = (retiring: CompanionPresentation) =>
+    chrome.skipReturnFocus || !latest.current.isVisible || latest.current.presentation !== retiring;
   // every tab's panel stays in the dom; only the active one mounts its body.
   const panels = tabs.map(({ id, body }) => (
     <div
@@ -541,36 +600,40 @@ export default function Companion(props: {
           />
         </aside>
       ) : null}
-      <MobileSheet
-        active={sheetActive}
-        panelId={regionId}
-        onDismiss={close}
-        ariaLabel={activeId ? title(activeId) : "Inspector"}
-        renderHeader={({ requestDismiss }) => header(requestDismiss)}
-        scrim="soft"
-        initialFocus={(container) => {
-          const previous = focusAfterMove.current;
-          focusAfterMove.current = null;
-          if (previous?.isConnected && container.contains(previous) && !previous.closest("[hidden], [inert]"))
-            return previous;
-          return container.querySelector<HTMLElement>(
-            '[role="tab"][aria-selected="true"], [data-companion-close="true"]',
-          );
-        }}
-        returnFocusTo={() => {
-          const target = chrome.returnFocus;
-          return target?.isConnected && !host?.contains(target) &&
-            !target.closest("[hidden], [inert]")
-            ? { element: target, preventScroll: true }
-            : null;
-        }}
-        returnFocusFallback={() => findPaneLandmarkFocusTarget(paneId)}
-        skipReturnFocus={() => chrome.skipReturnFocus || !isVisible || presentation !== "Sheet" ||
-          (resultsShown && !results.expanded)}
-        focusKey={activeId}
-      >
-        <CompanionSlot presentation="Sheet" mount={mount} />
-      </MobileSheet>
+      {presentation === "Sheet" ? (
+        <MobileSheet
+          active={coveringActive}
+          panelId={regionId}
+          onDismiss={close}
+          ariaLabel={activeId ? title(activeId) : "Inspector"}
+          renderHeader={({ requestDismiss }) => header(requestDismiss)}
+          scrim="soft"
+          initialFocus={initialFocus}
+          returnFocusTo={returnFocusTo}
+          returnFocusFallback={returnFocusFallback}
+          skipReturnFocus={() => skipReturnFocus("Sheet")}
+          focusKey={activeId}
+        >
+          <CompanionSlot presentation="Sheet" mount={mount} />
+        </MobileSheet>
+      ) : presentation === "FullScreen" ? (
+        <MobileFullScreenTask
+          active={coveringActive}
+          panelId={regionId}
+          onDismiss={close}
+          ariaLabel={props.resourceTitle}
+          initialFocus={initialFocus}
+          returnFocusTo={returnFocusTo}
+          returnFocusFallback={returnFocusFallback}
+          skipReturnFocus={() => skipReturnFocus("FullScreen")}
+          focusKey={activeId}
+        >
+          {(requestDismiss) => <div className={styles.fullScreen}>
+            {header(requestDismiss)}
+            <CompanionSlot presentation="FullScreen" mount={mount} />
+          </div>}
+        </MobileFullScreenTask>
+      ) : null}
       {host && open && activeId !== null ? createPortal(
         <OverlayContext value={portalParent}>
           <div className={styles.contents} onKeyDown={columnKeyDown}>

@@ -66,8 +66,58 @@
   gap: var(--space-1);
   overflow-x: auto;
   scrollbar-width: none;
+  text-transform: lowercase;
 }
 
 .tabs::-webkit-scrollbar {
   display: none;
+}
+
+.fullScreen {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-block-start: var(--viewport-safe-top);
+  padding-inline: var(--viewport-safe-left) var(--viewport-safe-right);
+}
+
+.fullScreenHeader {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-block-end: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.identity {
+  --control-min-size: 48px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+}
+
+.identityTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: var(--space-2) 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+}
+
+.fullScreenHeader .tabs {
+  padding-inline: var(--space-3);
+}
+
+.fullScreenHeader :global([role="tab"]) {
+  min-block-size: 48px;
+  white-space: nowrap;
 }
