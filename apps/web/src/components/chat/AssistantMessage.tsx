@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
@@ -167,6 +167,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
                 },
                 action: ["Reconnect", reconnect],
               };
+  const occurrence = useFeedbackOccurrence(card !== null, id);
   const details = (
     <Button
       ref={detailsTrigger}
@@ -238,7 +239,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
         </FloatingActionSurface>
       ) : null}
       {card ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={occurrence}
           content={card.content}
           announcement={pending && phase === "Suspended" ? "Polite" : "Assertive"}
           actions={card.action ? [{

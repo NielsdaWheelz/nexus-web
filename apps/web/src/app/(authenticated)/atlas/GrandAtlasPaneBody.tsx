@@ -4,7 +4,7 @@
 // layer (?layer=readings opens it), and what a pick means: a work opens in the
 // pane; a folio's first pick traces its concordance, the second enters it.
 import { useMemo, useRef, useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import {
   usePaneFreeServerValue,
@@ -104,13 +104,15 @@ export default function GrandAtlasPaneBody() {
       activateTargetLink({ event, runtime, target: { href: star.layer === "corpus" ? `/media/${star.id}` : `/oracle/${star.id}` } });
     } else setSelected(star?.id ?? null);
   };
+  const atlasOccurrence = useFeedbackOccurrence(atlas.status !== "loading" && atlas.error !== null);
+  const readingsOccurrence = useFeedbackOccurrence(readings.status !== "loading" && readings.error !== null);
   const failure = (value: ServerValue<unknown>, title: string) =>
-    value.status === "failed" && (
-      <FeedbackNotice
+    value.status !== "loading" && value.error !== null && (
+      <FeedbackFailure scope="Local" occurrence={value === atlas ? atlasOccurrence : readingsOccurrence}
         key={title}
         content={failureCopy(value.error, title)}
         announcement="Assertive"
-        actions={[{ label: "retry", onClick: value.refetch, busy: value.retrying }]}
+        actions={[{ label: "retry", onClick: value.refetch, busy: value.status === "failed" ? value.retrying : value.refreshing }]}
         returnFocus={() => headline.current}
       />
     );

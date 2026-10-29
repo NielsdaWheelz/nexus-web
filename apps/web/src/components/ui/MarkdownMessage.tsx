@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  Children,
   createContext,
+  isValidElement,
   memo,
   useContext,
   useMemo,
@@ -17,9 +19,13 @@ import { remarkCitations } from "@/lib/chat/markdownCitations";
 import type {
   ReaderCitationData,
 } from "@/lib/resourceGraph/citations";
-import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
+import { Check, Copy } from "lucide-react";
+import Button from "./Button";
+import { useCopyFeedback } from "./useCopyFeedback";
+import { Announcement, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import styles from "./MarkdownMessage.module.css";
 
 type Components = ComponentProps<typeof ReactMarkdown>["components"];
@@ -87,6 +93,11 @@ function Code({
   );
 }
 
+function codeText(node: ReactNode): string {
+  return Children.toArray(node).map(child => isValidElement<{ children?: ReactNode }>(child)
+    ? codeText(child.props.children) : typeof child === "string" || typeof child === "number" ? String(child) : "").join("");
+}
+
 function CodeBlock({
   language,
   children,
@@ -94,34 +105,40 @@ function CodeBlock({
   language: string;
   children: ReactNode;
 }) {
-  const [copy, setCopy] = useState<"copy" | "copied" | "copy failed">("copy");
+  const text = codeText(children);
+  const [failure, setFailure] = useState<{ target: string; occurrence: object } | null>(null);
+  const failed = failure?.target === text;
+  const copy = useCopyFeedback(text);
+  const occurrence = useFeedbackOccurrence(failed, text);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const content = useRef<HTMLDivElement>(null);
   if (defect) throw defect.error;
-  const onCopy = () =>
-    copyText(content.current?.textContent ?? "")
-      .then(
-        () => setCopy("copied"),
-        (error: unknown) =>
-          error instanceof ClipboardWriteUnavailableError
-            ? setCopy("copy failed")
-            : setDefect({ error }),
-      )
-      .then(() => setTimeout(() => setCopy("copy"), 1500));
+  const onCopy = () => {
+    setFailure(null);
+    return copy.copy(text).catch((error: unknown) => {
+      if (error instanceof ClipboardWriteUnavailableError) setFailure({ target: text, occurrence: {} });
+      else setDefect({ error });
+    });
+  };
+  const select = () => {
+    if (!content.current) return;
+    const range = document.createRange(); range.selectNodeContents(content.current);
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    content.current.focus({ preventScroll: true });
+  };
   return (
     <div className={styles.codeBlock}>
       <div className={styles.codeHeader} data-pane-find-exclude="true">
         <span>{language}</span>
-        <button
-          type="button"
-          className={styles.copy}
-          onClick={() => void onCopy()}
-        >
-          {copy}
-        </button>
+        <Button iconOnly icon={copy.copied ? <Check /> : <Copy />} aria-label="copy code"
+          className={styles.copy} onClick={() => void onCopy()} />
+        {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
+        {failed ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure?.occurrence} content={{ tone: "Warning", title: "couldn’t copy code" }}
+          announcement="Polite" actions={[{ label: "select code", onClick: select }]} /> : null}
       </div>
       <div
         ref={content}
+        tabIndex={-1}
         className={styles.codeContent}
         data-pane-find-code-scroll="true"
         data-lang={language}

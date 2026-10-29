@@ -1,13 +1,15 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { useId } from "react";
+import { FeedbackFailure } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Toggle from "@/components/ui/Toggle";
 import { READER_FONT_STACKS } from "@/lib/reader/typography";
 import {
+  ReaderSettingsFailure,
   useReaderContext,
   type ReaderProfile,
 } from "@/lib/reader/ReaderContext";
@@ -28,15 +30,17 @@ const FOCUS_MODES: readonly {
 export default function SettingsReaderPaneBody() {
   const reader = useReaderContext();
   const p = reader.profile;
+  const connectionReason = useId();
   usePaneReturnReady(true);
 
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
-        {!reader.editable ? (
-          <FeedbackNotice content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" />
-        ) : null}
-        <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable}>
+        <ReaderSettingsFailure />
+        {reader.connectionOccurrence !== null && reader.persistence.state !== "SaveFailed" ? <FeedbackFailure scope="Local" occurrence={reader.connectionOccurrence}
+          content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" /> : null}
+        {reader.unavailableReason !== null ? <span id={connectionReason} className="sr-only">{reader.unavailableReason}</span> : null}
+        <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable} aria-describedby={!reader.editable ? connectionReason : undefined}>
           <RadioGroup
             label="Theme"
             presentation="Segmented"
@@ -105,9 +109,6 @@ export default function SettingsReaderPaneBody() {
             onCheckedChange={(on) => reader.setHyphenation(on ? "auto" : "off")}
             label="Hyphenation on narrow screens"
           />
-          {reader.persistence.state === "Pending" ? (
-            <FeedbackStatus content={{ tone: "Neutral", title: "saving reader settings…" }} announcement="Polite" />
-          ) : null}
         </fieldset>
       </PaneSection>
     </PaneSurface>

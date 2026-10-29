@@ -1,21 +1,19 @@
 "use client";
 /** Header presentation of the outline's retained root. Disclosure never owns a
  * document, save boundary, query draft or undo chronology. */
-import {useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type FocusEvent as ReactFocusEvent, type ReactNode} from "react";
+import {useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type ReactNode} from "react";
 import {noteBodySchema, rawBodyText} from "@nexus/authored/body";
 import {readBody} from "@nexus/authored/documents";
-import {FeedbackNotice} from "@/components/feedback/Feedback";
-import {writingStoreStopped, type WritingDocument} from "@/lib/notes/runtime";
+import type {WritingDocument} from "@/lib/notes/runtime";
 import type {OutlineController, RootField} from "@/lib/notes/outlineController";
 import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
-import {ClipboardWriteUnavailableError, copyText} from "@/lib/ui/copyText";
 import {hasActiveInteractionOwner, overlayOwnsHistoryTraversal, ownsOverlayFocus, useInteractionOwner} from "@/lib/ui/overlay";
 import type {NoteEditorHandle} from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
 import BoundPageTitleEditor from "./BoundPageTitleEditor";
 import styles from "./AuthoredPaneRoot.module.css";
 
-export function useAuthoredPaneRoot(controller: OutlineController | null, field: RootField | undefined, setFailure: (error: unknown | null) => void) {
+export function useAuthoredPaneRoot(controller: OutlineController | null, field: RootField | undefined) {
   const regionId = useId();
   const region = useRef<HTMLDivElement>(null), disclosure = useRef<HTMLButtonElement>(null);
   const [visit, setVisit] = useState({controller, expanded: false, opened: false});
@@ -129,24 +127,10 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     if (!pointer.current) queueMicrotask(() => controller?.blurRoot());
   };
   useEffect(() => {if (inspection && !inspection.restored && !inspection.signal.aborted) reveal();}, [inspection, reveal]);
-  const saved = useSyncExternalStore(controller?.runtime.subscribe ?? noSubscribe, controller?.runtime.snapshot ?? noSnapshot, controller?.runtime.snapshot ?? noSnapshot);
-  const [manualCopy, setManualCopy] = useState<string | null>(null);
-  const [copyError, setCopyError] = useState<unknown | null>(null);
-  const failure = saved && controller && saved.error_refs.includes(controller.rootRef) ? saved.error : null;
-  const copy = () => {
-    const text = controller!.rootText();
-    void copyText(text).then(() => setManualCopy(null), (error: unknown) => {
-      if (error instanceof ClipboardWriteUnavailableError) setManualCopy(text); else setCopyError(error);
-    });
-  };
   if (!controller || !field || !root || !history) return {rootEditor: null, rootTitle: null, rootReady: false};
   const page = controller.rootRef.startsWith("page:");
-  const feedback = failure || copyError || manualCopy !== null ? <>{failure ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t save on this device"}} announcement="Assertive"
-    actions={[writingStoreStopped(failure) ? {label: "restart nexus", onClick: () => window.location.reload()} : {label: "retry saving", onClick: () => {void controller.runtime.retry().then(() => setFailure(null), setFailure);}}, {label: page ? "copy title" : "copy note text", onClick: copy}]}/> : null}
-    {copyError ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t copy this text"}} announcement="Polite"/> : null}
-    {manualCopy !== null ? <><p>copying is unavailable here. select the text and copy it.</p><textarea readOnly value={manualCopy} aria-label={page ? "title text" : "note text"}/></> : null}</> : null;
   if (page) return {rootTitle: root.doc.getText("title").toString() || field.placeholder || "untitled page", rootReady: handle !== null,
-    rootEditor: {kind: "Inline", feedback, content: <RootAttachment controller={controller} handle={handle} visible ownsFocus={ownsFocus} reveal={reveal}><div ref={region} className={styles.title} data-outline-session={controller.pending.root_id} onFocusCapture={focus} onBlurCapture={blur}>
+    rootEditor: {kind: "Inline", feedback: null, content: <RootAttachment controller={controller} handle={handle} visible ownsFocus={ownsFocus} reveal={reveal}><div ref={region} className={styles.title} data-outline-session={controller.pending.root_id} onFocusCapture={focus} onBlurCapture={blur}>
       <BoundPageTitleEditor header pageRef={controller.rootRef} document={root} history={history} label="page title" placeholder={field.placeholder}
         onEnter={() => controller.focusFirst()} onEditorReady={ready} onSelectionChange={selectionChanged}/>
     </div></RootAttachment>} satisfies PaneHeaderEditor};
@@ -158,7 +142,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   body.descendants(node => {if (node.type.name === "image" || node.type.name === "resource_embed") omitted = true;});
   const title = blank ? body.content.size ? "note" : "empty note" : line;
   const preview = title + (omitted || line.length < text.length ? "…" : "");
-  return {rootTitle: title, rootReady: handle !== null, rootEditor: {kind: "Expandable", feedback, regionId, expanded,
+  return {rootTitle: title, rootReady: handle !== null, rootEditor: {kind: "Expandable", feedback: null, regionId, expanded,
     control: <button ref={disclosure} type="button" className={styles.disclosure} aria-label={expanded ? "collapse note" : `edit note: ${title}`}
       aria-controls={regionId} aria-expanded={expanded} onClick={() => {
         if (expandedRef.current) collapse(true);
@@ -171,8 +155,6 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
         onEditorReady={ready} onSelectionChange={selectionChanged}/>
     </div></RootAttachment>} satisfies PaneHeaderEditor};
 }
-const noSubscribe = () => () => undefined;
-const noSnapshot = () => null;
 
 /** Published nodes commit in the chrome subtree. The route's layout effect
  * precedes that commit, so only this retained attachment can certify visibility. */

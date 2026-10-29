@@ -1,8 +1,7 @@
 "use client";
 
-import { CloudOff } from "lucide-react";
-
 import { useCallback, useState } from "react";
+import { isStaleBuild } from "@/lib/api/client";
 import { ActionMenuHost, ActionMenuInvocation, type ActionMenuProps, type ActionMenuSession } from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
@@ -88,15 +87,10 @@ function ContextualMenuInvocation({
   if (owned && local.label === null) throw new Error("local resource actions require their resource label");
   if (owned) {
     groups.push({ id: "Resource", label: showSourceSubject ? `source: ${local.label}` : null, options: verbs });
-  } else {
-    if (remote?.kind === "Ready") {
-      const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
-      if (options.length > 0) groups.push({
-        id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : null, options,
-      });
-    }
-    if (remote?.kind === "Failed" && remote.connectionRequired) groups.push({
-      id: "Resource", label: null, options: [{ kind: "command", id: "Resource.ConnectionRequired", label: "Requires a connection", icon: <CloudOff size={16} aria-hidden="true" />, disabled: true, onSelect: () => {} }],
+  } else if (remote?.kind === "Ready") {
+    const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
+    if (options.length > 0) groups.push({
+      id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : null, options,
     });
   }
   // Client-owned facts compose beside the remote facts; a remote verb with the same id wins.
@@ -111,19 +105,23 @@ function ContextualMenuInvocation({
     options: section.options.map(blocked),
   })) };
   const identity = { title, subjectKey };
+  const trailingFailure = remote?.kind === "Failed" ? remote : remote?.kind === "Loading" ? remote.failure : null;
   const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
     kind: "Ready", request, label: showSourceSubject && owned ? `source: ${local.label}` : null,
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
       !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
-  } : remote?.kind === "Failed" ? {
-    kind: "Failed", request, feedback: remote.connectionRequired ? { tone: "Neutral", title: "requires a connection" } : remote.feedback,
+  } : trailingFailure ? {
+    kind: "Failed", request, feedback: trailingFailure.feedback, pending: remote?.kind === "Loading",
+    retry: trailingFailure.error && isStaleBuild(trailingFailure.error) ? null : () => resource.prepare(request),
   } : { kind: "Loading", request };
+  // Verified device actions remain usable while the same remote owner retries.
   const source: MenuSource = !resourceRef ? { ...identity, kind: "Immediate", content: initial }
-    : owned && local !== null ? { ...identity, kind: "Prepared", initial, prepare, state: { kind: "Ready", request: local.request, content }, trailing }
+    : local !== null && (owned || device.length > 0 && trailing?.kind === "Failed")
+      ? { ...identity, kind: "Prepared", initial, prepare, state: { kind: "Ready", request: local.request, content }, trailing }
     : {
       ...identity, kind: "Prepared", initial, prepare,
       state: request === null ? null : local === null ? { kind: "Loading", request }
-        : remote?.kind === "Ready" || remote?.kind === "Failed" && remote.connectionRequired ? { kind: "Ready", request, content } : remote,
+        : remote?.kind === "Ready" ? { kind: "Ready", request, content } : remote,
     };
   return <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} onOpenChange={props.onOpenChange} returnFocusTo={props.returnFocusTo} />;
 }

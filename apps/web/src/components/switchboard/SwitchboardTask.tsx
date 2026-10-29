@@ -3,6 +3,7 @@
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, Search, X } from "lucide-react";
+import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
 import { NexusRowBody, NexusRowEvidence, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
@@ -124,6 +125,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching && !picker ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{picker ? "open in new pane" : searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
+          {!searching ? <FeedbackRecoveryControl /> : null}
           {picker ? <Button className={styles.iconButton} onClick={controller.escape}>cancel</Button> : <><AccountMenu
             activeId={accountId}
             placement="below"
@@ -144,7 +146,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         </div>
       </header>
       <div className={styles.searchInput}>
-        <div className={styles.searchField} onPointerDownCapture={controller.interact}>
+        <div className={styles.searchField} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
           <Search size={19} aria-hidden="true" />
           <input
             ref={inputRef}
@@ -179,12 +181,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               }
             }}
           />
-          {searching ? <NexusQueryStatus controller={controller} noticeId={NOTICE_ID} /> : null}
+          {searching ? <NexusQueryStatus /> : null}
           {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
       </div>
       <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
       <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
+
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
             {group.id === "Open" && controller.paneListPresented ? <NexusPaneListHeader controller={controller} mobile /> : group.label ? <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3> : null}

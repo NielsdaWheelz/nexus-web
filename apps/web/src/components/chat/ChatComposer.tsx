@@ -2,13 +2,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackBusy, FeedbackFailure, FeedbackStatus, type FeedbackAction, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import { recoveryOf, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
+import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import type { ChatView } from "@/lib/chat/tree";
 import type { Execution, RejectionCode } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
@@ -47,7 +48,7 @@ export default function ChatComposer(props: {
   const { quote, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
   const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
-  const { read: memoryRead, enter: enterMemory, fresh: freshMemory } = useChatSelection();
+  const { read: memoryRead, failureOccurrence: memoryOccurrence, enter: enterMemory, fresh: freshMemory } = useChatSelection();
   const { delivery, claim } = usePaneEntryDelivery();
   const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
@@ -62,6 +63,7 @@ export default function ChatComposer(props: {
     ? { kind: "Selected" as const, selection: own.command.request.selection, route: own.command.selectionRoute } : null;
   const recallRequired = draft.selection.kind === "Uninitialized" && !frozen;
   const recallPending = memoryRead.status !== "ready" || !memoryRead.fresh || memoryRead.refreshing || memoryRead.error !== null;
+  const memoryFailure = memoryRead.status === "loading" ? null : memoryRead.error;
   const selection = frozen ?? (draft.selection.kind === "Uninitialized" ? recalled ?? shownMemory ?? draft.selection : draft.selection);
   const catalogRef = useRef(catalogRead);
   catalogRef.current = catalogRead;
@@ -143,6 +145,10 @@ export default function ChatComposer(props: {
   const recovery = own?.kind === "Unconfirmed" || own?.kind === "RefreshRequired";
   // shift sends (or retries) into a new pane
   const sending = recovery ? false : run ? stopping : own?.kind === "Busy";
+  const sendLabel = useRef("Send message");
+  if (own?.kind !== "Busy") sendLabel.current = own?.kind === "RefreshRequired" ? "Retry refresh"
+    : own?.kind === "Unconfirmed" ? "Retry send"
+    : run ? (stopRequested ? "Stop requested" : "Stop response") : "Send message";
   const activateSend = (event: TargetActivationEvent) => {
     if (run && !recovery) return;
     const activation = workspaceTargetActivationIntent(event);
@@ -152,11 +158,15 @@ export default function ChatComposer(props: {
     if (recovery) void store.retryCommand(activation.intent).then(present);
     else void submit(activation.intent);
   };
+  const recallRetry: FeedbackAction = {
+    label: "retry", busy: memoryRead.status === "failed" ? memoryRead.retrying : memoryRead.status === "ready" && memoryRead.refreshing,
+    onClick: enterMemory,
+  };
   return (
     <div className={styles.composer}>
       <div className={styles.shell}>
         <span className="sr-only" aria-live="polite">{target.kind === "Blocked" ? BLOCKED[target.reason] : ""}</span>
-        {error ? <FeedbackNotice content={error} announcement="Assertive" /> : null}
+        {error ? <FeedbackFailure scope="Local" occurrence={error} content={error} announcement="Assertive" /> : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
             <GitBranch size={16} aria-hidden="true" />
@@ -221,29 +231,17 @@ export default function ChatComposer(props: {
             disabled={sending || (recovery ? false : run ? stopRequested : !canSend)}
             onClick={run && !recovery ? stop : activateSend}
             onKeyDown={activateSend}
-            aria-label={
-              own?.kind === "RefreshRequired" ? "Retry refresh"
-              : own?.kind === "Unconfirmed" ? "Retry send"
-              : run ? (stopRequested ? "Stop requested" : "Stop response")
-              : own ? "Sending message" : "Send message"
-            }
+            aria-label={sendLabel.current}
+            busyKey={own?.command ?? run?.runId}
             aria-busy={sending}
             icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
         </div>
-        {recallRequired && recallPending ? (
-          (memoryRead.status === "failed" || (memoryRead.status === "ready" && memoryRead.error && !shownMemory)) ? <>
-            <FeedbackStatus content={{ tone: "Warning", title: "couldn’t restore your last model" }} announcement="Polite" />
-            <span>choose a model or retry.</span>
-            <div className={styles.row}><Button onClick={() => { enterMemory(); textarea.current?.focus({ preventScroll: true }); }}>retry</Button></div>
-          </> : memoryRead.status === "ready" && memoryRead.error ? <>
-            <FeedbackStatus content={{ tone: "Warning", title: "couldn’t refresh your last model" }} announcement="Polite" />
-            <div className={styles.row}>
-              <Button onClick={() => { enterMemory(); textarea.current?.focus({ preventScroll: true }); }}>retry</Button>
-              {shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
-                ? <Button onClick={() => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); }}>use this model</Button> : null}
-            </div>
-          </> : <FeedbackStatus content={{ tone: "Neutral", title: "restoring last model…" }} announcement="Polite" />
-        ) : null}
+        <FeedbackBusy pending={recallRequired && recallPending && memoryFailure === null} />
+        {recallRequired && memoryFailure !== null && memoryOccurrence !== null ? <FeedbackFailure scope="Local" occurrence={memoryOccurrence}
+          content={isApiError(memoryFailure) && apiTransportFeedback(memoryFailure, shownMemory ? "couldn’t refresh your last model" : "couldn’t restore your last model") || {tone: "Warning", title: shownMemory ? "couldn’t refresh your last model" : "couldn’t restore your last model"}}
+          announcement="Polite" actions={shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
+            ? [recallRetry, {label: "use this model", onClick: () => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); }}]
+            : [recallRetry]} /> : null}
         {reason && selection.kind !== "Uninitialized" && (!recallRequired || !recallPending) ? (
           <FeedbackStatus
             content={{ tone: "Neutral", title: reason }}

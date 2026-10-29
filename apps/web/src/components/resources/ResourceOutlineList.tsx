@@ -3,7 +3,8 @@
 // Native lists share one host visit's folds and reveal scope; ancestry follows occurrences.
 // Structure, selection and editing belong to the outline that renders the rows.
 import {createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode} from "react";
-import {FeedbackNotice} from "@/components/feedback/Feedback";
+import {FeedbackFailure} from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import {remoteConnectionsError} from "@/components/connections/RemoteConnections";
 import {useOutlineChildren,type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
@@ -96,8 +97,8 @@ function RootList({
         <ul ref={list} className={styles.list} aria-label={ariaLabel} aria-busy={busy} tabIndex={-1}>
           {children}
         </ul>
-        {availability.error?<FeedbackNotice content={{tone:"Warning",title:"couldn’t read linked resources on this device"}} announcement="Polite" actions={[{label:"retry",onClick:availability.retry}]}/>:null}
-        {availability.remoteError?<FeedbackNotice content={remoteConnectionsError(availability.remoteError)} announcement="Polite" actions={[{label:"retry connections",onClick:availability.retry}]}/>:null}
+        <AuthoredReadFailure error={availability.error} occurrence={availability.occurrence} pending={availability.pending} retry={availability.retry} title="couldn’t read linked resources on this device"/>
+        {availability.remoteError?<FeedbackFailure scope="Local" occurrence={availability.remoteOccurrence} content={remoteConnectionsError(availability.remoteError)} announcement="Polite" actions={[{label:"retry connections",onClick:availability.retry,busy:availability.remotePending}]}/>:null}
         {after}
       </div>
     </ResourceBranch>

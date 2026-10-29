@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  FeedbackNotice,
+  FeedbackFailure, useFeedbackOccurrence,
   FieldFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
@@ -62,6 +62,7 @@ export default function OracleLandingPaneBody() {
       }),
   });
 
+  const readOccurrence = useFeedbackOccurrence(readings.status !== "loading" && readings.error !== null);
   const length = questionLength(question);
   const submit = async (intent: OpenIntent) => {
     if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
@@ -148,17 +149,17 @@ export default function OracleLandingPaneBody() {
             <FieldFeedback id={errorId} content={submitError} />
           </form>
 
-          {readings.status === "failed" ? (
-            <FeedbackNotice
+          {readings.status !== "loading" && readings.error !== null ? (
+            <FeedbackFailure scope="Local" occurrence={readOccurrence}
               content={failureCopy(
                 readings.error,
                 "The Aleph couldn’t be loaded",
               )}
               announcement="Assertive"
-              actions={[{ label: "retry", onClick: readings.refetch, busy: readings.retrying }]}
+              actions={[{ label: "retry", onClick: readings.refetch, busy: readings.status === "failed" ? readings.retrying : readings.refreshing }]}
             />
-          ) : (
-            readings.status === "ready" &&
+          ) : null}
+          {readings.status === "ready" &&
             readings.data.data.length > 0 && (
               <div className={styles.aleph}>
                 {readings.data.data.map((reading) => {
@@ -202,7 +203,7 @@ export default function OracleLandingPaneBody() {
                 })}
               </div>
             )
-          )}
+          }
 
           {/* Shared pane anchors are handled by the containing host. */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}

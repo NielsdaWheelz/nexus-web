@@ -6,6 +6,7 @@ import { Plus } from "lucide-react";
 import { useEffect, useId, useMemo, useRef } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -81,10 +82,7 @@ export default function NotesPaneBody() {
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") { event.preventDefault(); submit(true); }
   };
-  const failure = read.error === null ? undefined : <FeedbackNotice
-    content={{ tone: "Danger", title: "couldn’t open pages on this device" }} announcement="Assertive"
-    actions={[{ label: "retry", onClick: read.retry }]}
-  />;
+  const failure = <AuthoredReadFailure {...read} title="couldn’t open pages on this device"/>;
   const emptyTitle = filter.query.trim()
     ? complete ? "no pages match this filter." : "no matching page found so far."
     : complete ? "no pages yet." : "no pages loaded so far.";
@@ -96,7 +94,7 @@ export default function NotesPaneBody() {
     notice={<>{read.data === null ? null : failure}{filter.query.trim() && !complete ? <p>filter applies to loaded pages.</p> : null}</>}
     error={read.data === null ? failure : undefined}
     empty={<FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />}
-    footer={!complete && read.data !== null ? <Button onClick={read.more}>show more pages</Button> : undefined}
+    footer={!complete && read.data !== null ? <Button reserveIcon aria-busy={read.pending} busyKey="Notes.Pages" onClick={read.more}>show more pages</Button> : undefined}
     toolbar={<>
       <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); submit(false); }} onKeyDown={submitGesture}>
         <Input ref={titleInput} value={title.value} onChange={event => title.set(event.currentTarget.value)} onInput={event => title.set(event.currentTarget.value)} placeholder="New page" aria-label="New page title" style={{ flex: 1 }} />

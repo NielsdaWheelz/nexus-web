@@ -7,7 +7,8 @@ import type {ExcerptView} from "@nexus/authored/excerpt";
 import {normalizeQuote} from "@nexus/authored/identity";
 import {bodyPassageRange} from "@/lib/notes/inspection";
 import {matchScopeQuote, normalizeScopeText} from "@nexus/authored/scope";
-import Button from "@/components/ui/Button";
+import {FeedbackBusy, FeedbackFailure, useFeedbackOccurrence} from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import type {NoteInspection} from "@/components/notes/NoteEditor";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -89,13 +90,15 @@ export default function HighlightPaneBody() {
   const resourceRef = resource ? canonicalResourceRef({scheme: "highlight", id}) : undefined;
   usePaneChrome(useMemo(() => ({resourceRef}), [resourceRef]));
   const source = resource ? highlightSourceHref(resource) : null;
+  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null, ref);
   return <article>
     {capture.current ? <ReaderExcerpt excerpt={capture.current} color={resource?.color ?? null} full /> : null}
-    {!resource ? <p>{read.data ? "this highlight is no longer available." : "opening highlight…"}</p> : null}
-    {read.error ? <div role="alert">couldn’t open this highlight on this device. <Button onClick={read.retry}>retry</Button></div> : null}
-    {source ? <a href={source} data-workspace-rich-target="true">view in source</a> : null}
+    {!resource && read.data ? <p>this highlight is no longer available.</p> : null}
+    <FeedbackBusy subject={ref} pending={read.pending}/>
+    <AuthoredReadFailure {...read} title="couldn’t open this highlight on this device"/>
+    {source ? <a href={source}>view in source</a> : null}
     {unresolved ? <blockquote aria-label="captured annotation passage">{unresolved}</blockquote> : null}
-    {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
+    {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
     <HighlightAnnotation highlightRef={ref} occurrenceKey={`detail:${ref}`} focusRequest={focus} inspection={inspection} onFocused={() => {pending.current = null;}} mayFocus={() => pending.current?.mayFocus() ?? true}/>
     {connections}
   </article>;

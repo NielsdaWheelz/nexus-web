@@ -4,7 +4,7 @@
 // transcript uses the ordinary reader with no cursor writes or playback highlighting;
 // its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { WIRE_HEADER } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
@@ -108,6 +108,8 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const [artworkFailure, setArtworkFailure] = useState(false);
   const [artworkAttempt, setArtworkAttempt] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
+  const failureOccurrence = useFeedbackOccurrence(failure !== null);
+  const artworkOccurrence = useFeedbackOccurrence(artworkFailure);
   const [retrying, setRetrying] = useState(false);
   const transcriptReady = item.extras?.transcript.kind === "Ready";
   const artworkState = item.extras?.artwork;
@@ -233,8 +235,8 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   };
   const extrasFailed = item.extras !== null && Object.values(item.extras).some(extra => extra.kind === "Failed" && extra.reason !== "Changed" && extra.reason !== "TooLarge" && extra.reason !== "E_MEDIA_NOT_READY");
   async function retryExtras() {
-    setRetrying(true); setFailure(null);
-    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); }
+    setRetrying(true);
+    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); setFailure(null); }
     catch { setFailure("missing content retry not confirmed · try again"); }
     finally { setRetrying(false); }
   }
@@ -252,17 +254,17 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     <p>downloaded · {formatByteCount(manifest.audio.byte_count)}</p>
     {loaded && player.source.kind === "Episode" && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
     <div className={styles.savedActions}><Button onClick={() => { if (loaded && player.phase === "Playing") pause(); else play(null); }}>{loaded && player.phase === "Playing" ? "pause" : "play"}</Button>
-      {extrasFailed ? <Button disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
+      {extrasFailed ? <Button reserveIcon aria-busy={retrying} disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
       {sourceUnavailable ? <Button onClick={() => void retryNativeListening(id).catch(() => setFailure("listening sync not confirmed · try again"))}>retry listening sync</Button> : null}
       {doc?.kind === "text" && doc.toc.length > 0 ? <Button aria-expanded={contents} onClick={() => { onIntent(); setContents(value => !value); }}>contents</Button> : null}
     </div>
     {fraction === null ? null : <p>{Math.round(fraction * 100)}% listened</p>}
     {sourceUnavailable ? <FeedbackStatus content={{ tone: "Warning", title: "original no longer available · downloaded copy kept", message: "listening stays saved on this device." }} announcement={active ? "Polite" : "None"} /> : null}
-    {arrival.failure === null ? null : <FeedbackNotice content={{ tone: "Warning", title: arrival.failure.title }} announcement={active ? "Polite" : "None"} />}
-    {failure === null ? null : <FeedbackNotice content={{ tone: "Warning", title: failure }} announcement={active ? "Polite" : "None"} />}
+    {arrival.failure === null ? null : <FeedbackFailure scope="Local" occurrence={arrival.failure} content={{ tone: "Warning", title: arrival.failure.title }} announcement={active ? "Polite" : "None"} />}
+    {failure === null ? null : <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={{ tone: "Warning", title: failure }} announcement={active ? "Polite" : "None"} />}
     {capture.show_notes.kind === "Available" ? <PublisherNotes title={capture.rendition.title} html={capture.show_notes.html} hrefForTime={() => null} onOpenTime={openTime} />
       : capture.show_notes.kind === "Unavailable" ? <FeedbackStatus content={{ tone: "Neutral", title: capture.show_notes.reason === "TooLarge" ? "show notes exceed download limit" : "show notes unavailable" }} announcement="None" /> : null}
-    {artworkFailure ? <FeedbackNotice content={{ tone: "Warning", title: "saved artwork couldn’t open", message: "audio remains available." }} announcement="None"
+    {artworkFailure ? <FeedbackFailure scope="Local" occurrence={artworkOccurrence} content={{ tone: "Warning", title: "saved artwork couldn’t open", message: "audio remains available." }} announcement="None"
       actions={[{ label: "retry artwork", onClick: () => setArtworkAttempt(value => value + 1) }]} /> : null}
     {artworkState?.kind === "Failed" ? <FeedbackStatus content={{ tone: "Neutral", title: artworkState.reason === "TooLarge" ? "artwork exceeds download limit" : "artwork download failed" }} announcement="None" /> : artworkState?.kind === "Pending" ? <FeedbackStatus content={{ tone: "Neutral", title: "artwork download pending" }} announcement="None" /> : null}
     {transcriptCopy === null ? null : <FeedbackStatus content={{ tone: transcript?.kind === "Failed" ? "Warning" : "Neutral", title: transcriptCopy }} announcement="None" />}

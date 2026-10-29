@@ -22,7 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import { invalidateReads, publishChange, useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import {
@@ -87,7 +87,8 @@ export interface LecternCommands {
   readonly revision: OrderRevision | null;
   readonly pending: ReadonlyMap<string, LecternPending>;
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
-  readonly collectionPending: { readonly title: string; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
+  readonly collectionPending: { readonly occurrence: object; readonly title: string; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
+  readonly collectionFailure: {readonly key: string; readonly occurrence: object; readonly content: FeedbackContent; readonly actions: FeedbackActions} | null;
   readonly addCollection: (input: { readonly title: string; readonly request: Schema<"CollectionLecternRequest">; readonly onAcknowledged?: () => void }) => Promise<LecternOutcome>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
   readonly remove: (input: Input) => Promise<LecternOutcome>;
@@ -104,6 +105,8 @@ interface Request extends Input {
   retract: (() => void) | null;
 }
 interface CollectionRequest {
+  readonly occurrence: object;
+  failed: boolean;
   readonly onAcknowledged: (() => void) | null;
   readonly title: string;
   readonly body: string;
@@ -275,11 +278,8 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         feedback.receipt({ tone: "Warning", title: "lectern changed", message: "the earlier request is superseded. its acknowledgement was not recovered; review lectern before another change." });
         emit(); pump(); return "Superseded";
       case "Unknown":
-        request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit();
+        request.failed = true; request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit();
         // The review dialog keeps this check while open; the lane blocks other changes until it settles.
-        request.retract = feedback.receipt({ tone: "Warning", title: `change not confirmed · ${request.title}`,
-          message: "the request may have succeeded. checking retains the same reviewed order and items." },
-        { label: "check lectern change", onClick: () => void sendCollection(request, true).catch((error: unknown) => fail({ error })) });
         return "Unconfirmed";
       case "Refused":
         lane.collection = null; request.unregister();
@@ -287,12 +287,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         emit(); pump(); throw result.error;
       case "Defect":
         // Delivery may have crossed the boundary before the defect; keep the lane blocked.
-        request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit(); fail({ error: result.error }); return "Unconfirmed";
+        request.failed = true; request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit(); fail({ error: result.error }); return "Unconfirmed";
     }
   }
 
   function collectionPending(request: CollectionRequest): NonNullable<LecternCommands["collectionPending"]> {
-    return { title: request.title, phase: request.phase, check: () => {
+    return { occurrence: request.occurrence, title: request.title, phase: request.phase, check: () => {
       if (lane.collection !== request) return Promise.resolve("Superseded");
       return request.phase === "Unconfirmed" ? sendCollection(request, true) : Promise.resolve("Unconfirmed");
     } };
@@ -306,7 +306,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       read.refetch();
       return Promise.reject(new ApiError(409, "E_RESOURCE_CONFLICT", "lectern changed; review it before submitting"));
     }
-    const request: CollectionRequest = { title: input.title, onAcknowledged: input.onAcknowledged ?? null, body: JSON.stringify(input.request), expected: input.request.expected_order_revision, phase: "Sending", unregister: () => {}, retract: null };
+    const request: CollectionRequest = { occurrence: {}, failed: false, title: input.title, onAcknowledged: input.onAcknowledged ?? null, body: JSON.stringify(input.request), expected: input.request.expected_order_revision, phase: "Sending", unregister: () => {}, retract: null };
     request.unregister = guard.register({ id: "lectern-collection", scope: { kind: "account" },
       subscribe: listener => { collectionListeners.add(listener); return () => { collectionListeners.delete(listener); }; },
       read: () => ({ changed: false, unconfirmed: lane.collection === request, stopsBrowserWork: false }),
@@ -392,7 +392,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         past(readRevision, lane.pending.command.expectedRevision)
       ) {
         lane.pending = null;
-        lane.notice = { kind: "Checked" };
+        lane.notice = null;
         changed = true;
       }
       for (const [id, receipt] of lane.receipts) {
@@ -423,6 +423,13 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         defect,
         revision: lane.collection === null ? revision : null,
         collectionPending: lane.collection === null ? null : collectionPending(lane.collection),
+        collectionFailure: lane.collection?.failed ? {key: "lectern-collection", occurrence: lane.collection.occurrence,
+          content: {tone: "Warning", title: `change not confirmed · ${lane.collection.title}`, message: "the request may have succeeded. checking retains the same reviewed order and items."},
+          actions: [{label: "check lectern change", busy: lane.collection.phase !== "Unconfirmed", onClick: () => {
+            const request = lane.collection;
+            if (request?.phase === "Unconfirmed") void sendCollection(request, true).catch(error => fail({error}));
+          }}],
+        } : null,
         addCollection,
         pending: new Map(
           [...lane.requests].map(([id, request]): [string, LecternPending] => [
@@ -469,7 +476,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
             return Promise.resolve("Rejected");
           lane.originPaneId = workspace().state.active_primary_pane_id;
           lane.notice = null;
-          return sendMove({ command: Object.freeze({ ...command }), phase: "Sending" });
+          return sendMove({ command: Object.freeze({ ...command }), occurrence: {}, phase: "Sending" });
         },
       },
     }),

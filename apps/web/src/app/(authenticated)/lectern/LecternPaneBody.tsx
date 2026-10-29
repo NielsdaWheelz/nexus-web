@@ -13,7 +13,7 @@ import { suggestionTargetId } from "@/lib/suggestions";
 import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import {
-  FeedbackNotice,
+  FeedbackNotice, FeedbackFailure, useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -32,7 +32,7 @@ import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { Lectern } from "@/lib/lectern/api";
 import { remoteReady } from "@/lib/native/admission";
-import { renderOrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
+import { OrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
@@ -247,9 +247,10 @@ export default function LecternPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
+  const readOccurrence = useFeedbackOccurrence(lectern.status === "failed");
   return (
     <PaneSurface
-      state={liveShown ? renderOrderNotice({ order: order.state, active: isActive, paneId: runtime?.paneId ?? null }) : null}
+      state={liveShown ? <OrderNotice order={order.state} active={isActive} paneId={runtime?.paneId ?? null}/> : null}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (
@@ -305,7 +306,7 @@ export default function LecternPaneBody() {
             }
             error={
               lectern.status === "failed" ? (
-                <FeedbackNotice
+                <FeedbackFailure scope="Local" occurrence={readOccurrence}
                   content={failure(lectern.error, "Lectern couldn’t be loaded")}
                   announcement="Assertive"
                   actions={[{ label: "Retry", onClick: lectern.refetch, busy: lectern.retrying }]}

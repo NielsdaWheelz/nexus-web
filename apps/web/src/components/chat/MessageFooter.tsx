@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { Copy, Info } from "lucide-react";
-import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, Copy, Info } from "lucide-react";
+import { Announcement, FeedbackFailure, FeedbackStatus } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Button from "@/components/ui/Button";
@@ -12,8 +12,9 @@ import type { Message } from "@/lib/chat/wire";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
-import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useChatPane } from "./ChatSurface";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import styles from "./MessageFooter.module.css";
 
 const BUSY = "finish the current chat action first";
@@ -29,21 +30,26 @@ export default function MessageFooter({ message, latest, engaged, details = null
   status?: string | null;
   alternatives: ReactNode;
 }) {
-  const feedback = useFeedback();
+  const copied = useCopyFeedback(`${message.id}:${message.content}`);
+  const [copyFailure, setCopyFailure] = useState<object | null>(null);
+  useEffect(() => setCopyFailure(null), [message.id, message.content]);
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
   const run = message.trust_trail?.run;
   const pending = message.role === "assistant" && message.status === "pending";
   const copy = async () => {
     try {
-      await copyText(message.content);
+      await copied.copy(message.content);
+      setCopyFailure(null);
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
-      feedback.receipt({ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." });
+      setCopyFailure({});
     }
   };
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
+      {copyFailure ? <FeedbackFailure scope="Local" occurrence={copyFailure} content={{ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." }} announcement="Polite" /> : null}
+      {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
       <div className={styles.left}>
         {details}
         {currentAction || status ? (
@@ -56,7 +62,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       {pending ? null : (
         <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
-            <Button iconOnly icon={<Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
+            <Button iconOnly icon={copied.copied ? <Check /> : <Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
           ) : null}
           <MessageMenu message={message} onOpenChange={setMenuOpen} />
         </div>

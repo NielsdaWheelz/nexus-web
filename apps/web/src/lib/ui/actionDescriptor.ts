@@ -164,14 +164,14 @@ export type PreparationState =
 
 /**
  * Facts that settle after a prepared snapshot is published, for the same request. They
- * render in one region after it and are never part of it: arrival cannot reorder,
+ * render in one region after it; failures retain their owner's recovery. Arrival cannot reorder,
  * replace or close the published actions, move focus or change their meaning.
  */
 export type TrailingState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly label: string | null; readonly options: readonly ActionDescriptor[] }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly retry: (() => void) | null; readonly pending: boolean };
 
 /** The presenter owns invocation, cancellation and its preparation deadline. */
 export type MenuSource = { readonly subjectKey: string; readonly title: string } & (

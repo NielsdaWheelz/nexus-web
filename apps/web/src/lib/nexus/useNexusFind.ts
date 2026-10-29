@@ -9,9 +9,9 @@ import type { SearchFamily } from "@nexus/authored/scope";
 import type { AuthoredQuery } from "@nexus/authored/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -39,7 +39,6 @@ const withoutAuthoredPassage = <Row extends { matching_passage: { item: { author
   row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row;
 const PREVIEW_SETTLE_MS = { direct: 80, lexical: 120, hybrid: 160 } as const;
 const PREVIEW_PHASE_RANK = { direct: 0, lexical: 1, hybrid: 2 } as const;
-const PROGRESS_REVEAL_MS = 150;
 export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"];
 
 export function useNexusFind({ open, query, retainedLocalTargets }: { open: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
@@ -53,7 +52,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
   const [historyWanted, setHistoryWanted] = useState(false);
   const [revision, setRevision] = useState(0);
-  const [showBusy, setShowBusy] = useState(false);
   const fail = useThrowLater();
   useEffect(() => {
     if (open) setHistoryWanted(true);
@@ -175,37 +173,37 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   }, [local.matches, preview]);
   const remoteBusy = identityKey !== null && best?.phase !== "hybrid" && ((best?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
     || (open && referenceRef !== null && localReference === null && reference.status === "loading");
-  const localBusy = open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) && local.matches === null && local.error === null;
-  const pending = remoteBusy || localBusy;
-  useEffect(() => {
-    if (!pending) { setShowBusy(false); return; }
-    const timer = window.setTimeout(() => setShowBusy(true), PROGRESS_REVEAL_MS);
-    return () => window.clearTimeout(timer);
-  }, [pending, identityKey]);
-  const failures = new Set<NexusSource>();
+  const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending;
+  const [incidents,setIncidents] = useState<ReadonlyMap<NexusSource,{identity: string; error: ApiError; occurrence: object}>>(() => new Map());
+  const readFailures = new Map<NexusSource,{identity: string; error: ApiError; occurrence: object}>();
   const retrying = new Set<NexusSource>();
-  for (const [source, value, wanted] of [["Direct", direct, identityKey !== null], ["Lexical", lexical, wantsLexical], ["Hybrid", hybrid, wantsHybrid], ["Reference", reference, open && referenceRef !== null && !localRow?.authored_by_viewer]] as const) {
+  for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
     if (!wanted) continue;
     if (source !== "Reference" && best !== null && PREVIEW_PHASE_RANK[best.phase] > PREVIEW_PHASE_RANK[source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid"]) continue;
-    if (value.status !== "loading" && value.error) {
-      failures.add(source);
-      if (value.status === "failed" ? value.retrying : value.refreshing) retrying.add(source);
-    }
+    const identity = source === "Reference" ? `${accountId}:nexus-ref:${referenceRef}` : identityKey!;
+    const previous = incidents.get(source);
+    const retained = previous?.identity === identity ? previous : null;
+    const error = value.status === "loading" ? null : value.error;
+    if (error !== null) readFailures.set(source, retained?.error === error ? retained : {identity,error,occurrence:retained?.occurrence??{}});
+    else if (retained && value.status === "loading") readFailures.set(source,retained);
+    if (readFailures.has(source) && (value.status === "loading" || (value.status === "failed" ? value.retrying : value.refreshing))) retrying.add(source);
   }
+  if (incidents.size !== readFailures.size || [...readFailures].some(([source,value]) => incidents.get(source) !== value)) setIncidents(readFailures);
+  const failures = new Set(readFailures.keys());
   const progress = searchProgress({
     phase: best?.phase ?? null, count: localShown.length + (preview === null ? 0 : preview.resources.length + preview.saved.length + preview.passages.length),
     lexical: wantsLexical ? lexical.status === "ready" ? "ready" : lexical.status === "failed" ? "failed" : "pending" : "idle",
     hybrid: wantsHybrid ? hybrid.status === "ready" ? "ready" : hybrid.status === "failed" ? "failed" : "pending" : "idle",
     directFailed: failures.has("Direct"), held: false,
   });
-  const blocked = [...failures].map(source => ({ Direct: direct, Lexical: lexical, Hybrid: hybrid, Reference: reference })[source]).find(value => value.status !== "loading" && value.error !== null && ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(value.error.code));
-  const blockedError = blocked?.status !== "loading" ? blocked?.error : null;
   const retry = (source: NexusSource) => {
     if (source === "Reference") { reference.refetch(); return; }
     const phase = source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid";
     setAttempts(current => ({ ...current, [phase]: current[phase] + 1 }));
   };
   const baseData = base.status === "ready" ? base.data.data : null;
+  const recentError = base.status === "loading" ? null : base.error;
+  const recentOccurrence = useFeedbackOccurrence(recentError !== null, `${accountId}:nexus-history`);
   const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
   /** Record an accepted selection now; a transport failure offers one retry (a retry after a lost answer counts twice). */
@@ -239,21 +237,18 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
 
   let presentation: SearchProgress = progress;
   if (local.scopeAvailable === false) presentation = { kind: "Notice", text: "scope unavailable on this device. connect to refresh its access and reading data.", action: null };
-  else if (local.error || retainedLocal.error || localRead.error) presentation = { kind: "Notice", text: "couldn’t search this device", action: "search" };
   else if (searchUnavailable) presentation = { kind: "Notice", text: "search is unavailable for this input. shorten the search or ask nexus with the full text.", action: null };
   else if (identityKey === null && referenceRef === null || localReference !== null) presentation = { kind: null, text: "", action: null };
-  else if (blockedError) presentation = { kind: "Notice", text: blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available", action: null };
-  else if (localBusy && failures.size === 0) presentation = { kind: "Pending", text: "searching your content…", action: null };
-  else if (referenceRef !== null) presentation = reference.status === "failed"
-    ? { kind: "Notice", text: "resource lookup failed", action: "search" }
-    : { kind: showBusy && remoteBusy ? "Pending" : null, text: showBusy && remoteBusy ? "searching your content…" : "", action: null };
-  if (presentation.kind === "Pending" && !showBusy && pending) presentation = { kind: null, text: "", action: null };
+  else if (pending || failures.size > 0 || local.error || retainedLocal.error || localRead.error || referenceRef !== null)
+    presentation = { kind: null, text: "", action: null };
 
   return {
     recent: baseData?.recent ?? EMPTY_RECENT,
     recentRead: {
       status: base.status,
-      error: base.status === "loading" ? null : base.error,
+      error: recentError,
+      occurrence: recentOccurrence,
+      pending: historyWanted && (base.status === "loading" || (base.status === "failed" ? base.retrying : base.error !== null && base.refreshing)),
       retrying: base.status === "failed" ? base.retrying : base.status === "ready" && base.refreshing,
       retry: base.refetch,
     },
@@ -267,10 +262,17 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     localReference,
     localReferenceMissing: localRef !== null && localRead.data !== null && !localRow?.authored_by_viewer && reference.status === "ready" && reference.data.authored_by_viewer,
     searchUnavailable,
+    queryIdentity: identityKey ?? `${accountId}:nexus-ref:${referenceRef}`,
+    readFailures,
+    localFailures: [
+      {key: "reference", error: localRead.error, occurrence: localRead.occurrence, pending: localRead.pending, retry: localRead.retry},
+      {key: "preview", error: local.error, occurrence: local.occurrence, pending: local.pending, retry: local.retry},
+      {key: "admission", error: retainedLocal.error, occurrence: retainedLocal.occurrence, pending: retainedLocal.pending, retry: retainedLocal.retry},
+    ],
     progress: presentation,
     retrySearch: () => { if (local.error) local.retry(); if (retainedLocal.error) retainedLocal.retry(); if (localRead.error) localRead.retry(); for (const source of failures) retry(source); },
     retryRelated: () => retry("Hybrid"),
-    busy: showBusy && pending,
+    busy: pending,
     pending,
     failures,
     retrying,

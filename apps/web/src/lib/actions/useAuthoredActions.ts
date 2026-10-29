@@ -27,7 +27,7 @@ export const AUTHORED_ACTION_IDS: ReadonlySet<string> = new Set<ActionId>([
   "EditNoteBody", "EditPageTitle", "EditHighlight", "EditHighlightBounds", "EditHighlightAnnotation",
   "DeleteNote", "DeletePage", "DeleteHighlight",
 ]);
-const IDLE = { saving: false, error: null, error_refs: [] as string[], revision: 0 };
+const IDLE = { saving: false, error: null, error_occurrence: null, error_refs: [] as string[], revision: 0 };
 const idle = () => IDLE;
 const noSubscription = () => () => {};
 

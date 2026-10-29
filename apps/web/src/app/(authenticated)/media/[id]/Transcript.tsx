@@ -4,7 +4,7 @@
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { Captions } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackNotice, FeedbackStatus, useFeedbackOccurrence, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
@@ -47,6 +47,7 @@ export function TranscriptState({ media, announcement, returnFocus, holdFocus }:
 }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ApiError | null>(null);
+  const occurrence = useFeedbackOccurrence(failure !== null || busy, media.id);
   const throwLater = useThrowLater();
   const owner = useRef<HTMLDivElement>(null);
   const active = useRef(announcement !== "None");
@@ -86,13 +87,10 @@ export function TranscriptState({ media, announcement, returnFocus, holdFocus }:
       <Button icon={<Captions />} aria-busy={busy} aria-disabled={busy} onClick={(event) => void request(event.currentTarget)}>
         {state === "failed_provider" || failure ? "retry transcription" : "transcribe"}
       </Button>
-      <span className="sr-only" role="status" aria-live={announcement === "None" ? "off" : "polite"}>
-        {busy ? "requesting transcript" : ""}
-      </span>
     </> : <FeedbackStatus content={sourceUnavailable && failure ? requestFailure(failure) : { tone: "Neutral", title: state === "queued" ? "transcript queued"
       : state === "running" ? "transcribing" : state === "unavailable" ? "transcript unavailable" : "preparing transcript" }}
       announcement={announcement} returnFocus={returnFocus} />}
-    {failure && requestable ? <FeedbackNotice content={requestFailure(failure)} announcement={announcement} /> : null}
+    {failure && requestable ? <FeedbackFailure scope="Local" occurrence={occurrence} content={requestFailure(failure)} announcement={announcement} /> : null}
   </div>;
 }
 

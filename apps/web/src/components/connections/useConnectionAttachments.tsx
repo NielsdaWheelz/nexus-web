@@ -7,7 +7,7 @@
 import { useRef } from "react";
 import { Paperclip } from "lucide-react";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackFailure, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -29,6 +29,7 @@ interface Task {
   running: boolean;
   unconfirmed: boolean;
   failure: FeedbackContent | null;
+  occurrence: object;
   /** The frozen retry of a link whose local commit failed. */
   retryLink: (() => Promise<unknown>) | null;
 }
@@ -61,7 +62,6 @@ export function useConnectionAttachments(selfRef: string) {
       .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
     const stop = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
     task.running = true;
-    task.failure = null;
     publish();
     try {
       while (task.index < task.files.length && !controller.signal.aborted) {
@@ -100,7 +100,15 @@ export function useConnectionAttachments(selfRef: string) {
       if (!controller.signal.aborted && owner.read().task === task) owner.set({ task: null, defect: null });
     } catch (error) {
       // A failed commit keeps its frozen retry even when this visit's browser work stops.
-      if (error instanceof LocalCommitError) task.retryLink = error.retry;
+      if (error instanceof LocalCommitError) {
+        task.retryLink = error.retry;
+        void error.completion.then(() => {
+          if (account.aborted || owner.read().task !== task || task.retryLink !== error.retry || task.running) return;
+          task.retryLink = null; task.failure = null; task.index++; task.mediaId = null;
+          publish();
+          if (owned()) void run(task);
+        }, () => {});
+      }
       if (account.aborted || owner.read().task !== task || controller.signal.aborted) return;
       if (task.retryLink !== null) {
         task.failure = { tone: "Warning", title: "file saved; couldn’t link it on this device", message: "keep this page open. retry saving." };
@@ -132,7 +140,7 @@ export function useConnectionAttachments(selfRef: string) {
     }
     if (!accepted.length) return;
     if (prior !== null && !guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] })) return;
-    const task: Task = { files: accepted, index: 0, mediaId: null, running: false, unconfirmed: false, failure: null, retryLink: null };
+    const task: Task = { files: accepted, index: 0, mediaId: null, running: false, unconfirmed: false, failure: null, occurrence: {}, retryLink: null };
     owner.set({ task, defect: null });
     void run(task);
   }
@@ -148,9 +156,9 @@ export function useConnectionAttachments(selfRef: string) {
     control: <>
       <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || writing === null} aria-busy={task?.running} icon={<Paperclip size={14} aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={[{
+      {task?.failure && task.retryLink === null ? <FeedbackFailure scope="Local" occurrence={task.occurrence} content={task.failure} announcement="Polite" actions={[{
         label: task.retryLink ? "retry saving" : task.mediaId !== null ? "link again" : upload?.expired ? "choose the file again" : upload?.review_required ? "review and save" : "check save",
-        onClick: () => {
+        busy: task.running, onClick: () => {
           if (task.retryLink === null && task.mediaId === null && upload?.expired) { fileInputRef.current?.click(); return; }
           if (task.retryLink === null && task.mediaId === null && upload !== undefined) reviewUploadAttempt(upload);
           void run(task);

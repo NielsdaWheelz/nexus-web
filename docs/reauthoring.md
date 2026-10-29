@@ -54,6 +54,14 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+quiet feedback against `b79cf2f56`: +980 authored runtime lines (3,339 added,
+2,359 deleted), all web source. scoped passive layers replace the workspace-only
+portal, cold skeletons, request-status rows and duplicated copy timers. the
+existing authored runtime separates document-read recovery from failed writes;
+command owners retain exact retry and loss protection. mounted controls and
+content geometry stay with their existing hosts. docs, generated output and
+disposable cases are excluded; earlier area totals retain their stated bases.
+
 compact palette and inline pane list against `480c20a39`: +699 net authored
 runtime lines (1,704 added, 1,005 deleted): web +612, shared authored +74,
 search python +13. the retained search fixture's format-3 capture update adds

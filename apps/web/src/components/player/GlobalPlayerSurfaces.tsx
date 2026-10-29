@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useId,
@@ -12,7 +13,9 @@ import {
   type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackRecoveryControl, FeedbackNotice, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
@@ -33,7 +36,7 @@ import {
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
-import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
+import { OverlayContext, useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -225,7 +228,10 @@ function MobileDisclosure({ kind, id, close, trigger, skipReturnFocus, children 
   readonly children: ReactNode;
 }) {
   const region = useRef<HTMLDivElement>(null);
-  useOverlay(true, { kind: "transient", onDismiss: close, returnFocus: true,
+  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
+  const modal = useContext(OverlayContext);
+  const setRegion = useCallback((element: HTMLDivElement | null) => {region.current = element; setBounds(element);}, []);
+  const {layer} = useOverlay(true, { kind: "transient", onDismiss: close, returnFocus: true,
     returnFocusTo: trigger, tabContinuation: () => region.current,
     skipReturnFocus: () => {
       if (skipReturnFocus()) return true;
@@ -240,7 +246,11 @@ function MobileDisclosure({ kind, id, close, trigger, skipReturnFocus, children 
       : panel?.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel?.querySelector<HTMLButtonElement>('ol button');
     target?.focus({ preventScroll: true });
   }, [kind]);
-  return <div ref={region} id={id} role="region" aria-label={kind === "Playback" ? "playback" : "chapters"}>{children}</div>;
+  return <div ref={setRegion} id={id} role="region" aria-label={kind === "Playback" ? "playback" : "chapters"}>
+    <FeedbackSurface bounds={bounds} interaction={layer} modal={modal} active
+      protectedTargets={() => [trigger(), bounds?.querySelector<HTMLElement>('input:focus, button:focus') ?? null].filter((element): element is HTMLElement => element !== null)}
+      returnFocus={() => trigger() ?? bounds}><FeedbackRecoveryControl />{children}<PlayerFailures /></FeedbackSurface>
+  </div>;
 }
 
 function ChapterContext() {
@@ -287,10 +297,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const focusedControl = useRef<HTMLElement | null>(null);
   const sourceOpened = useRef(false);
   const announcedSource = useRef<string | null>(null);
-  const announcedStatus = useRef<string | null>(null);
   const announcedPhase = useRef<Loaded["phase"] | null>(null);
   const announcedUnavailable = useRef<string | null>(null);
-  const announcedSettings = useRef<string | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded === null ? null : `${loaded.source.kind}:${
     loaded.source.kind === "Episode"
@@ -308,6 +316,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       return getPodcastSettings(podcastId, signal);
     },
   });
+  const settingsReadOccurrence = useFeedbackOccurrence(settingsRead.status !== "loading" && settingsRead.error !== null, podcastId);
   const save = usePodcastSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded?.source.kind === "Episode" && loaded.playbackFailed
@@ -319,8 +328,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   let settingsFailed = false;
   if (operation !== null) {
     switch (operation.kind) {
-      case "Saving": settingsStatus = "saving podcast defaults…"; break;
-      case "Reading": settingsStatus = "checking saved settings…"; break;
+      case "Saving": break;
+      case "Reading": break;
       case "Unknown":
       case "ReadFailed": settingsStatus = "save not confirmed. open playback settings to check."; settingsFailed = true; break;
       case "Rejected": settingsStatus = "couldn’t save podcast defaults. open playback settings to try again."; settingsFailed = true; break;
@@ -334,7 +343,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   if (preferences !== null) {
     switch (preferences.application.kind) {
       case "Ready": break;
-      case "Applying": if (!settingsFailed) settingsStatus = "applying playback settings…"; break;
+      case "Applying": break;
       case "Failed": settingsStatus = "couldn’t apply playback settings. open playback settings to try again."; settingsFailed = true; break;
       default: assertNever(preferences.application);
     }
@@ -410,7 +419,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       case "Absent":
         setAnnouncement(announcedSource.current === null ? null : "playback stopped");
         announcedSource.current = null;
-        announcedStatus.current = null;
         announcedPhase.current = null;
         announcedUnavailable.current = null;
         break;
@@ -428,17 +436,13 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         announcedUnavailable.current = null;
         const started = state.error === null && state.phase === "Playing";
         if (identity !== announcedSource.current) {
-          const observation = started ? "now playing"
-            : state.error ?? (state.phase === "Buffering" ? "buffering" : "audio loaded");
-          setAnnouncement(`${observation}: ${title}`);
+          const observation = started ? "now playing" : state.phase === "Buffering" ? "buffering" : "audio loaded";
+          setAnnouncement(state.error === null ? `${observation}: ${title}` : null);
         } else if (started && announcedPhase.current !== "Playing") {
           setAnnouncement(`now playing: ${title}`);
-        } else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
-        else if (settingsStatus !== null && settingsStatus !== announcedSettings.current) setAnnouncement(settingsStatus);
+        }
         else if (recovering) setAnnouncement(null);
-        announcedSettings.current = settingsStatus;
         announcedSource.current = identity;
-        announcedStatus.current = status;
         announcedPhase.current = state.phase;
         break;
       }
@@ -451,8 +455,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     aria-busy={queueBusy || undefined}
     aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined}
     onClick={() => { sourceOpened.current = false; if (isMobile) { setSheetTarget("Queue"); setSheetOpen(true); } else setQueueOpen(value => !value); }}>up next</Button>;
-  const absentCopy = pendingPlayback !== null ? "preparing…"
-    : !queue.known ? queue.error === null ? "loading queue…" : "couldn’t load queue"
+  const absentCopy = pendingPlayback !== null || !queue.known ? ""
     : retained ? queue.header?.current_entry_id === null ? "queue finished" : "playback stopped" : "nothing queued";
   let desktopSource: ReactNode = <p className={styles.emptyIdentity}>{absentCopy}</p>;
   let utilities: ReactNode = <>
@@ -461,7 +464,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     <Button size="comfortable" iconOnly aria-label="chapters" icon={<Icon.ListMusic />} disabled />
     <Button size="comfortable" iconOnly aria-label="stop playback" icon={<Icon.Square />} disabled />
   </>;
-  let playerFeedback: ReactNode = null;
   let contents: ReactNode = null;
   let overlays: ReactNode = null;
   let sheetPlayerContent: ReactNode = null;
@@ -491,9 +493,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       break;
     }
     case "Unavailable": {
-      const warning = <FeedbackNotice
+      const warning = state.reason === "UpdateRequired" ? <FeedbackNotice
         content={{ tone: "Warning", title: unavailableMessages[state.reason] }} announcement="None"
-        actions={state.reason === "UpdateRequired" ? [{ label: "update", href: "/android" }] : undefined} />;
+        actions={[{ label: "update", href: "/android" }]} /> : null;
       desktopSource = warning;
       if (pendingPlayback !== null) sheetPlayerContent = <>{warning}<Transport compact /></>;
       contents = <div className={styles.unavailable}>{warning}{pendingPlayback !== null ? <Transport compact /> : null}{openQueue}</div>;
@@ -537,9 +539,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
             pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
           });
         };
-        const check = () => { void save.check().then(() => settingsRead.refetch()); };
         let feedback: FeedbackContent | null = null;
-        let actions: FeedbackActions | undefined;
         if (replaced) {
           feedback = { tone: "Warning", title: "playback defaults changed. reopen settings before saving." };
         } else if (missing) {
@@ -549,29 +549,15 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           const captured = `${podcast}: ${defaults(patch.default_playback_speed, patch.pause_shortening_mode)}`;
           switch (operation.kind) {
             case "Saving":
-              feedback = { tone: "Neutral", title: `remembering ${captured}…` };
+
               break;
             case "Reading":
-              feedback = { tone: "Neutral", title: "checking saved settings…", message: captured };
+
               break;
             case "Accepted":
-              feedback = { tone: "Success", title: supportsSilenceSkipping
-                ? `saved: ${formatPlaybackRate(patch.default_playback_speed ?? 1)} · skip silence ${patch.pause_shortening_mode === "Natural" ? "on" : "off"}`
-                : `saved speed: ${formatPlaybackRate(patch.default_playback_speed ?? 1)}`, message: podcast };
-              break;
             case "Rejected":
-              feedback = podcastErrorMessage(operation.error, "couldn’t save podcast defaults.");
-              if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (!supportsSilenceSkipping || (patch.pause_shortening_mode === "Natural") === preferences.skipSilence)) {
-                actions = [{ label: "try again", commandKey: JSON.stringify(patch), onClick: () => { void save.retry(); } }];
-              }
-              break;
             case "Unknown":
-              feedback = { tone: "Warning", title: "save not confirmed.", message: "the request may have succeeded. check the saved settings before trying again.", requestId: operation.error.requestId };
-              actions = [{ label: "check saved settings", commandKey: JSON.stringify(patch), onClick: check }];
-              break;
             case "ReadFailed":
-              feedback = podcastErrorMessage(operation.error, "couldn’t check saved settings.");
-              actions = [{ label: "check saved settings", commandKey: JSON.stringify(patch), onClick: check }];
               break;
             case "Review":
               feedback = { tone: "Warning", title: operation.reason === "Conflict" ? "podcast defaults changed elsewhere." : "the saved settings do not confirm this request.", message: captured };
@@ -582,19 +568,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
             default:
               assertNever(operation);
           }
-        }
-        let applicationFeedback: ReactNode = null;
-        switch (preferences.application.kind) {
-          case "Ready":
-            break;
-          case "Applying":
-            applicationFeedback = <FeedbackStatus content={{ tone: "Neutral", title: "applying playback settings…" }} announcement="None" />;
-            break;
-          case "Failed":
-            applicationFeedback = <FeedbackNotice content={{ tone: "Warning", title: "couldn’t apply playback settings.", message: preferences.application.message }} announcement="None" actions={[{ label: "try again", onClick: commands.retryPlaybackPreferences }]} />;
-            break;
-          default:
-            assertNever(preferences.application);
         }
         playbackPanel = <section className={styles.panel} aria-label="playback">
           <div className={styles.panelHeading}>
@@ -607,20 +580,20 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
               : <p className={styles.eyebrow}>skip silence · android app only</p>}
             {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
           </> : null}
-          {applicationFeedback}
+          <PlayerFailures />
+          {save.feedback}
           {podcastId !== null ? <div className={styles.panelRow}>
-            {!missing && !replaced ? <Button size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
+            {!missing && !replaced ? <Button reserveIcon busyKey={operation?.command} size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
               {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
-            {feedback ? <FeedbackNotice content={feedback} announcement="None" actions={actions} /> : null}
+            {feedback ? <FeedbackNotice content={feedback} announcement="None" /> : null}
             {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}
             {reviewed && !replaced ? <div className={styles.comparison}>
               <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
               <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
             </div> : null}
             {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
-            {settingsRead.status === "loading" || (settingsRead.status === "ready" && settingsRead.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="None" /> : null}
-            {!missing && ((settingsRead.status === "failed") || (settingsRead.status === "ready" && settingsRead.error)) ? <FeedbackNotice content={podcastErrorMessage(settingsRead.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: settingsRead.refetch }]} /> : null}
+            {!missing && ((settingsRead.status === "failed") || (settingsRead.status === "ready" && settingsRead.error)) ? <FeedbackFailure scope="Local" occurrence={settingsReadOccurrence} content={podcastErrorMessage(settingsRead.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: settingsRead.refetch }]} /> : null}
           </div> : null}
         </section>;
       }
@@ -649,14 +622,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}
         {stop}
       </>;
-      playerFeedback = <div className={styles.feedback}>
-        {!queuePlaybackFailure && (state.error || (sheetShown && state.phase !== "Buffering")) && status !== null ? <FeedbackStatus
-          content={{ tone: state.error ? "Warning" : "Neutral", title: status }}
-          announcement="None"
-          actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
-        /> : null}
-        {settingsFailed && !panelOpen && settingsStatus ? <FeedbackStatus content={{ tone: "Warning", title: settingsStatus }} announcement="None" /> : null}
-      </div>;
       contents = isMobile ? <>
         <MiniProgress />
         <div className={styles.miniRow}>
@@ -672,8 +637,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         <Transport />
         <Seek active={sheetShown} />
         <div className={styles.options}>{utilities}</div>
-        {playerFeedback}
-        {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
+            {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
           id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
           trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
           skipReturnFocus={() => sourceOpened.current || !currentSurface.current.sheetShown || picker?.subject !== currentSurface.current.playbackSubject}>
@@ -715,7 +679,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         tooltip={{ text: loaded?.phase === "Playing" || loaded?.phase === "Buffering" ? "hide player; playback continues" : "hide player" }}
         onClick={presentation.hide} />
     </div>
-    {playerFeedback}
   </>;
 
   return <>
@@ -767,4 +730,27 @@ function MiniProgress() {
       <span className={styles.miniFill} style={{ width: percent(positionMs, durationMs) }} />
     </span>
   );
+}
+
+/** One account-level presentation identity over the existing player state owners. */
+export function usePlayerFailurePresentation() {
+  const {preferences, playbackFailure, queueFailureOccurrence, state, queue} = Player.usePlayerSession();
+  const commands = Player.usePlayerCommands();
+  const unavailableOccurrence = useFeedbackOccurrence(state.kind === "Unavailable");
+  const applicationFailure = preferences?.application.kind === "Failed" ? preferences.application
+    : preferences?.application.kind === "Applying" ? preferences.application.failure : null;
+  return <>
+    {state.kind === "Unavailable" && state.reason === "NotResponding" ? <FeedbackFailure scope="Local" occurrence={unavailableOccurrence} content={{tone: "Warning", title: unavailableMessages[state.reason]}} announcement="Polite" /> : null}
+    {playbackFailure !== null ? <FeedbackFailure scope="Local" occurrence={playbackFailure.occurrence} content={{tone: "Warning", title: playbackFailure.message}}
+      announcement="Polite" actions={[{label: "retry", onClick: commands.resume, busy: state.kind === "Loaded" && state.phase === "Buffering"}]} /> : null}
+    {applicationFailure ? <FeedbackFailure scope="Local" occurrence={applicationFailure.occurrence}
+      content={{tone: "Warning", title: "couldn’t apply playback settings", message: applicationFailure.message}}
+      announcement="Polite" actions={[{label: "try again", onClick: commands.retryPlaybackPreferences, busy: preferences?.application.kind === "Applying"}]} /> : null}
+    {queue.error !== null ? <FeedbackFailure scope="Local" occurrence={queueFailureOccurrence} content={{tone: "Warning", title: queue.error}}
+      announcement="Polite" actions={[{label: "check playback", onClick: commands.checkQueue, busy: queue.phase === "Preparing" || queue.phase === "Saving"}]} /> : null}
+  </>;
+}
+
+export function PlayerFailures() {
+  return useActionRuntime().playerFeedback;
 }

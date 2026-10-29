@@ -30,8 +30,8 @@ operation after a lost reply.
 authored query subscriptions require success and failure callbacks and return one
 unsubscribe function. one initial read and subsequent invalidations use those same
 owners; adapters do not report failures behind the caller. read surfaces retain
-accepted rows on refresh failure and expose their existing inline error/retry;
-retry clears the displayed error while retaining the accepted same-query prefix.
+accepted rows on refresh failure and publish recovery outside the content flow;
+retry retains the incident, action and accepted same-query prefix until settlement.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
 all authored pane locators retain their canonical title subscriptions. the active
@@ -52,7 +52,30 @@ including absence, and survives paging or refresh failure without retiring the
 editing host. arrivals and inspection use that exact canonical text; edit-note
 delivery waits for the actual editor handle. unknown and unavailable notes do
 not admit writing documents. android's existing aggregate window cap also bounds
-this canonical note-route read; failures retain the owned inline retry.
+this canonical note-route read; failures retain their owned read retry.
+
+an accepted `WritingDocument` owns its refresh snapshot and subscription. a failed
+refresh retains the same yjs document, undo and text; `retryRead` rearms that read.
+account, cached-document and attempt identity fence both success and failure.
+modeled local storage errors retain recovery; invariant defects reach the existing
+defect boundary. only current successful adoption clears a read incident.
+
+`WritingRuntime` save errors describe uncommitted commands only. their inert
+occurrence identity survives retries and presentation changes. one account adapter
+offers the exact retry and exports only actual endangered writing, never clean
+text from a failed graph operation. locally committed pending synchronization is
+already saved and acquires no loss guard. pending outline input remains its own
+buffer, export and recovery owner.
+while a command is pending, its runtime owns the failure occurrence; a transient
+store status cannot create a second stopped-store incident for that command.
+
+branch collectors publish read and admission state into their existing controller
+request. row chrome consumes that projection without starting another read. the
+existing disclosure slot carries foreground waiting; root waiting uses pane
+chrome. selection and routine autosave produce no narration or success notice.
+failed admission retains its request, proposal and recovery through selection
+and blur. automatic reconciliation resumes deferred healthy proposals only;
+explicit retry renews the failed request's navigation lease before admission.
 
 `cd apps/web && bun run gen:authored-helper` bundles `node/authored/helper.ts`
 and its shared semantic imports into the shipped `node/authored/helper.mjs`.
@@ -134,6 +157,11 @@ ordinary note and bound highlight annotation editing autosave locally. annotatio
 its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
 writing retains the loss guard and retry/copy affordance. committed unsynchronized
 writing survives app termination and does not acquire an exit warning.
+
+a first annotation save locks its submitted clone until the reserved command
+settles. the existing retained draft owns that lock through navigation; durability
+clears the same clone and revision even while its editor is absent. subsequent
+body editing uses the ordinary autosave owner.
 
 split copies the observed suffix into a new note and removes only its observed
 source ranges. join inserts the observed source at its destination anchor, then

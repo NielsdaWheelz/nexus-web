@@ -6,7 +6,7 @@
 import { useCallback, useId, useState } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import LibraryInvitations from "@/components/libraries/LibraryInvitations";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
@@ -49,6 +49,7 @@ export default function LibrariesPaneBody() {
   const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
   const indexItems = list.status === "ready" ? list.data.items : [];
   const failure = list.status === "loading" ? null : list.error;
+  const readOccurrence = useFeedbackOccurrence(failure !== null, "Libraries.Index");
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const invalid =
@@ -147,7 +148,7 @@ export default function LibrariesPaneBody() {
   }
   const loadFailure =
     failure !== null ? (
-      <FeedbackNotice
+      <FeedbackFailure scope="Local" occurrence={readOccurrence}
         content={
           libraryErrorFeedback(
             failure,

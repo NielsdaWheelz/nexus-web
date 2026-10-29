@@ -2,9 +2,9 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
-import { ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, Save, Share2 } from "lucide-react";
+import { Check, ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContextValue } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackBusy, FeedbackFailure, FeedbackNotice, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -19,7 +19,8 @@ import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
-import { copyText } from "@/lib/ui/copyText";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { usesMeta } from "@/lib/shortcuts";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -31,8 +32,25 @@ import HighlightColourPicker, { Colours, HighlightButton } from "./HighlightColo
 import styles from "./media.module.css";
 
 
-function copy(feedback: FeedbackContextValue, text: string, title: string) {
-  void copyText(text).catch(() => feedback.receipt({ tone: "Danger", title }));
+function usePassageCopy(target: unknown) {
+  const copied = useCopyFeedback(target);
+  const [failure, setFailure] = useState<{text: string; occurrence: object} | null>(null);
+  const [manual, setManual] = useState(false);
+  const [defect, setDefect] = useState<{error: unknown} | null>(null);
+  useEffect(() => {setFailure(null); setManual(false);}, [target]);
+  if (defect) throw defect.error;
+  return {copied: copied.copied,
+    copy: (text: string) => {void copied.copy(text).then(() => setFailure(null), error => {
+      if (error instanceof ClipboardWriteUnavailableError) setFailure({text, occurrence: {}}); else setDefect({error});
+    });},
+    notice: <>
+      {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
+      {failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} content={{tone: "Warning", title: "couldn’t copy passage"}} announcement="Polite"
+        actions={[{label: "copy manually", onClick: () => setManual(true)}]} /> : null}
+      <Dialog open={manual && failure !== null} title="copy passage" onClose={() => setManual(false)} initialFocus={panel => panel.querySelector('textarea')}>
+        <textarea aria-label="passage to copy" readOnly value={failure?.text ?? ""} onFocus={event => event.currentTarget.select()} />
+      </Dialog>
+    </>};
 }
 
 type SelectionActionPresentation =
@@ -84,12 +102,13 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
   readonly canQuote: boolean;
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
-  const feedback = useFeedback();
   const ownerId = useId();
   const row = useRef<HTMLDivElement | null>(null);
   const menuTrigger = useRef<HTMLButtonElement | null>(null);
   const [menuSubject, setMenuSubject] = useState<MobileSelection | null>(null);
   const subject = menuSubject && verbs.selectionCurrent(menuSubject) ? menuSubject : verbs.mobileSelection;
+  const copying = usePassageCopy(subject);
+  const copy = copying.copy;
   const current = useRef(verbs);
   current.current = verbs;
   const press = useRef<{
@@ -188,8 +207,8 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
   };
   const content = (captured: MobileSelection): MenuContent => {
     const options: ActionDescriptor[] = [
-      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: <Copy size={16} aria-hidden="true" />,
-        onSelect: () => { if (verbs.selectionCurrent(captured)) copy(feedback, captured.capture.quote, "passage couldn’t be copied"); } },
+      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: copying.copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />,
+        onSelect: () => { if (verbs.selectionCurrent(captured)) copy(captured.capture.quote); } },
       { kind: "custom", id: "HighlightColours", label: "Highlight colour", render: ({ closeMenu }) => (
         <Colours selected={null} persisted={false} size="comfortable"
           onSelect={(color) => { closeMenu(); menuCommand.current = captured; verbs.highlightSelection(captured, color); }} />
@@ -230,6 +249,7 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
         strategy="mobile-selection-actions" selectionSession={subject?.id ?? null}
         role="group" label={confirming ? "confirm passage selection" : "passage actions"} onDismiss={verbs.dismissSelection}>
         <div ref={row} className={styles.mobileSelectionActions}>
+          {copying.notice}
           {confirming ? <>
             <Button size="comfortable" emphasis="strong" onPointerDown={pointerDown} onKeyDown={keyDown}
               onFocus={(event) => focusControl(event.currentTarget)} onClick={(event) => activate(event, verbs.applySelection)}>apply selection</Button>
@@ -266,8 +286,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const { composer, menu } = verbs;
   const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
-  const feedback = useFeedback();
   const { draft, opening, annotation } = composer;
+  const copying = usePassageCopy(draft?.id);
+  const copy = copying.copy;
+  const chatIssueOccurrence = useFeedbackOccurrence(draft?.chatIssue != null, draft?.id);
+  const destinationOccurrence = useFeedbackOccurrence(draft?.destination.kind === "LookupFailed", draft?.id);
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -309,7 +332,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
     const chatLabel = selected ? `${hasMessage ? "Send to" : "Open in"} “${selected.title}”` : "Choose existing chat";
     const chatIssue = draft.chatIssue;
-    const commandRecovery = composer.ownChatCommand && (composer.chatState.kind === "Unconfirmed" || composer.chatState.kind === "RefreshRequired") ? composer.chatState : null;
+    const commandRecovery = composer.ownChatCommand && composer.chatState.kind !== "Idle" && composer.chatState.feedback ? composer.chatState : null;
     const blockedChat = composer.chat?.target.kind === "Blocked" ? composer.chat.target.reason === "AssistantRunning"
       ? "this chat is still responding" : "this chat can’t accept a reply here"
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
@@ -329,7 +352,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "Choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const copyAction = command("CopyPassage", "Copy passage", <Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(feedback, composer.copyQuote, "passage couldn’t be copied"); },
+    const copyAction = command("CopyPassage", "Copy passage", copying.copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); },
       composer.copyUnavailable);
     // sharing a new passage first commits its highlight; an existing one shares as it is.
     const shareAction = { ...(sharePiece !== null
@@ -380,8 +403,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       <div data-mobile={isMobile} className={styles.selectionComposer}>
         {!isMobile ? toolbar : null}
         {refused && !sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: refused.message }} announcement="Polite"
-          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
-          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
+          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
+          actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : null}
         {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
         {draft.highlightId && draft.bodyRole === "question" ? <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} /> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
@@ -398,25 +421,24 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             />
           </PaneReturnVisitScope>
         </div>
-        {failed ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
-          actions={[{ label: "retry saving", onClick: failed.retry, busy: saving, disabledReason: saving ? "saving on this device…" : undefined }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
+
+        {failed?.phase === "Preparation" ? <FeedbackFailure scope="Local" occurrence={failed} content={{tone: "Warning", title: failed.message}} announcement="Polite"
+          actions={hasNote ? [{label: "retry saving", busy: saving, onClick: failed.retry}, {label: "copy unsaved writing", onClick: () => copy(draft.body.body_text)}] : [{label: "retry saving", busy: saving, onClick: failed.retry}]} /> : null}
+        {copying.notice}
         {canQuote ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
-          {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "highlight saved; send not confirmed" : "this chat changed", message: commandRecovery.kind === "Unconfirmed" ? "the request may have succeeded." : "review this chat before sending again." }} announcement="Polite"
-            actions={commandRecovery.kind === "Unconfirmed" ? [{ label: "retry same send", onClick: composer.retryChat }]
-              : [{ label: "refresh chat", onClick: composer.refreshChat }]} />
-            : chatIssue?.kind === "Recall" ? <>
-              <FeedbackStatus content={{ tone: "Warning", title: chatIssue.state === "Pending" ? "restoring last model…" : "couldn’t restore your last model" }} announcement="Polite" />
-              {chatIssue.state === "Failed" ? <div className={styles.dock}>
-                <Button onClick={() => { composer.retryRecall(); composer.closePicker(); }}>retry</Button>
-                <Button onClick={composer.recoverModel}>open in chat</Button>
-              </div> : null}
-            </> : chatIssue ? <FeedbackNotice content={{ tone: "Warning", title: chatIssue.highlightSaved ? "highlight saved; question not sent" : chatIssue.message, message: chatIssue.highlightSaved ? chatIssue.message : undefined }} announcement="Polite"
+          {commandRecovery?.feedback ? <FeedbackFailure scope="Local" occurrence={commandRecovery.occurrence} announcementOccurrence={commandRecovery.feedback} content={commandRecovery.feedback} announcement="Polite"
+            actions={[{label: "check chat change", onClick: commandRecovery.kind === "RefreshRequired" ? composer.refreshChat : composer.retryChat, busy: commandRecovery.kind === "Busy"}]} />
+            : chatIssue?.kind === "Recall" ? composer.recallFailureOccurrence === null ? <FeedbackBusy pending={composer.recallPending} />
+              : <FeedbackFailure scope="Local" occurrence={composer.recallFailureOccurrence} content={{ tone: "Warning", title: "couldn’t restore your last model" }} announcement="Polite"
+                actions={[{label: "retry", busy: composer.recallPending, onClick: composer.retryRecall},
+                  {label: "open in chat", onClick: composer.recoverModel}]} />
+            : chatIssue ? <FeedbackFailure scope="Local" occurrence={chatIssueOccurrence} content={{ tone: "Warning", title: chatIssue.highlightSaved ? "highlight saved; question not sent" : chatIssue.message, message: chatIssue.highlightSaved ? chatIssue.message : undefined }} announcement="Polite"
               actions={chatIssue.kind === "Catalog" ? [
                 { label: "retry", onClick: composer.retryCatalog },
                 { label: "choose a model in chat", onClick: composer.recoverModel },
               ] : chatIssue.kind === "Passage" || chatIssue.kind === "Source" ? [
                 { label: "select passage again", onClick: composer.reselect },
-                { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") },
+                { label: "copy text", onClick: () => copy(draft.body.body_text) },
               ] : chatIssue.kind === "Model" ? [{ label: "choose a model in chat", onClick: composer.recoverModel }]
                 : chatIssue.kind === "Missing" ? [{ label: "choose existing chat…", onClick: composer.chooseChat }]
                 : chatIssue.kind === "Changed" ? [{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }] : undefined} />
@@ -424,7 +446,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                 actions={selected ? [{ label: "open chat", onClick: composer.openChat }] : undefined} />
                 : blockedChat ? <FeedbackNotice content={{ tone: "Neutral", title: blockedChat }} announcement="Polite"
                   actions={[{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }]} />
-                  : destination.kind === "LookupFailed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
+                  : destination.kind === "LookupFailed" ? <FeedbackFailure scope="Local" occurrence={destinationOccurrence} content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
                       actions={[{ label: "retry", onClick: composer.retryDefault }]} /> : null}
         </div> : null}
       </div>
@@ -432,6 +454,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
+    {composer.hiddenPreparationFailures.map(failure => <FeedbackFailure key={failure.id} scope="Local" occurrence={failure.issue}
+      content={{tone: "Warning", title: failure.issue.message}} announcement="Polite"
+      actions={failure.text !== null ? [{label: "retry saving", busy: failure.busy, onClick: failure.issue.retry}, {label: "copy unsaved writing", onClick: () => {if (failure.text !== null) copy(failure.text);}}]
+        : [{label: "retry saving", busy: failure.busy, onClick: failure.issue.retry}]} />)}
+    {draft === null ? copying.notice : null}
     {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} canQuote={canQuote} sharePiece={sharePiece} /> : null}
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}

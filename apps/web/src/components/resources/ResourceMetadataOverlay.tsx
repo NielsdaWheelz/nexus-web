@@ -4,8 +4,7 @@ import type { ReactNode } from "react";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { FeedbackBusy, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import InformationFrame from "./InformationFrame";
 import { informationFact } from "./InformationFacts";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
@@ -31,9 +30,11 @@ const sourceLink = (href: string | null) => href === null ? null : <a href={href
 
 function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; readonly open: boolean }) {
   const display = useRenderEnvironment();
-  const source = usePaneFreeServerValue({ key: open ? `metadata:podcast:${podcastId}` : null, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
-  if (source.status === "loading") return <PaneLoadingState label="loading metadata…" announcement="Polite" />;
-  if (source.status === "failed") return <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
+  const key = open ? `metadata:podcast:${podcastId}` : null;
+  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
+  const occurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, key);
+  if (source.status === "loading") return <FeedbackBusy pending subject={key} />;
+  if (source.status === "failed") return <FeedbackFailure scope="Local" occurrence={occurrence} content={podcastErrorMessage(source.error, "couldn’t load metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
   const { podcast, episode_counts: counts } = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
@@ -50,17 +51,19 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
       <Fact label="catalog record created">{date(podcast.created_at)}</Fact>
       <Fact label="catalog record updated">{date(podcast.updated_at)}</Fact>
     </dl>
-    {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
+    {source.error !== null ? <FeedbackFailure scope="Local" occurrence={occurrence} content={podcastErrorMessage(source.error, "couldn’t refresh metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
   </div>;
 }
 
 function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; readonly open: boolean }) {
   const display = useRenderEnvironment();
-  const source = usePaneFreeServerValue({ key: open ? `metadata:library:${libraryId}` : null, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
-  if (source.status === "loading") return <PaneLoadingState label="loading library details…" announcement="Polite" />;
+  const key = open ? `metadata:library:${libraryId}` : null;
+  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
+  const occurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, key);
+  if (source.status === "loading") return <FeedbackBusy pending subject={key} />;
   if (source.status === "failed") {
     const failure = libraryErrorFeedback(source.error, "couldn’t load library details.", throwDefect);
-    return failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
+    return failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
   }
   const refreshFailure = source.error === null ? null : libraryErrorFeedback(source.error, "couldn’t refresh library details.", throwDefect);
   const metadata = source.data;
@@ -74,7 +77,7 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
       <Fact label="created">{date(metadata.created_at)}</Fact>
       <Fact label="updated">{date(metadata.updated_at)}</Fact>
     </dl>
-    {refreshFailure !== null ? <FeedbackNotice content={refreshFailure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
+    {refreshFailure !== null ? <FeedbackFailure scope="Local" occurrence={occurrence} content={refreshFailure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
   </div>;
 }
 

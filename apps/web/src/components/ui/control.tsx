@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type {
   DOMAttributes,
   FocusEvent,
@@ -25,7 +28,7 @@ export type ControlHelp = {
   openDelayMs?: number;
 };
 
-export type ControlContent =
+export type ControlContent = { reserveIcon?: boolean; busyKey?: unknown } & (
   | {
       iconOnly: true;
       icon: ReactElement;
@@ -39,12 +42,13 @@ export type ControlContent =
       "aria-label"?: string;
       children: ReactNode;
       tooltip?: ControlHelp;
-    };
+    }
+);
 
 type Trigger = HTMLButtonElement | HTMLAnchorElement;
 
 /**
- * Shared native-control paint and anatomy. The recipe is pure and server-callable;
+ * Shared native-control paint and anatomy. The class recipe is pure;
  * tooltip composition keeps the same real root even when help or content changes.
  * Native roots retain operation, navigation and focus ownership.
  */
@@ -52,14 +56,22 @@ export function buttonClassName({ emphasis, tone, size, iconOnly }: ControlAppea
   return cx(styles.control, emphasis && styles.strong, tone && styles.danger, size && styles.comfortable, iconOnly && styles.iconOnly);
 }
 
-export function ControlContents({ icon, busy, children }: {
+export function ControlContents({ icon, reserveIcon = false, busy, busyKey, children }: {
   icon?: ReactElement;
+  reserveIcon?: boolean;
   busy: boolean;
+  busyKey?: unknown;
   children?: ReactNode;
 }) {
+  const [waiting, setWaiting] = useState<{ key: unknown } | null>(null);
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setTimeout(() => setWaiting({ key: busyKey }), 200);
+    return () => { clearTimeout(timer); setWaiting(null); };
+  }, [busy, busyKey]);
   return <>
-    {icon ? <span className={styles.icon} aria-hidden="true">
-      {busy ? <span className={styles.busy} /> : icon}
+    {icon || reserveIcon ? <span className={styles.icon} aria-hidden="true">
+      {busy && waiting !== null && Object.is(waiting.key, busyKey) ? <span className={styles.busy} /> : icon}
     </span> : null}
     {children !== undefined ? <span className={styles.label}>{children}</span> : null}
   </>;

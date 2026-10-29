@@ -17,8 +17,8 @@ import { ReaderProfileProvider } from "./ReaderProfileContext";
 import { remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
-import { useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { FeedbackFailure, useFeedback, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { apiFetch, apiTransportFeedback, outcomeUnknown, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -30,6 +30,10 @@ export interface ReaderProfileCapability {
     | { readonly state: "Clean" | "Pending" }
     | { readonly state: "SaveFailed"; readonly failure: unknown };
   readonly editable: boolean;
+  readonly saving: boolean;
+  readonly failureOccurrence: object;
+  readonly connectionOccurrence: object | null;
+  readonly unavailableReason: string | null;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
   setFocusMode(value: ReaderProfile["focus_mode"]): void;
@@ -52,12 +56,19 @@ export function ReaderProvider({
 }) {
   const refreshSettings = useSettingsRefresh();
   const feedback = useFeedback();
-  const editable = useRemoteAdmission() === "Ready";
-  const failureReport = useRef<(() => void) | null>(null);
+  const admission = useRemoteAdmission();
+  const editable = admission === "Ready";
+  const blockedOccurrence = useFeedbackOccurrence(admission !== "Ready" && admission !== "Checking");
+  const connectionOccurrence = admission === "Unavailable" ? blockedOccurrence : null;
+  const unavailableReason = admission === "Ready" ? null : admission === "Checking" ? "checking whether reader settings can be changed"
+    : admission === "SignInRequired" ? "sign in to change reader settings"
+    : admission === "UpdateRequired" ? "update nexus to change reader settings" : "changing reader settings requires a connection";
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
   >({ state: "Clean" });
+  const occurrence = useFeedbackOccurrence(persistence.state === "SaveFailed");
+  const [saving, setSaving] = useState(false);
   const unsent = useRef<Partial<ReaderProfile>>({});
   const timer = useRef<number | undefined>(undefined);
   const sending = useRef(false);
@@ -74,7 +85,7 @@ export function ReaderProvider({
     if (!live.current || sending.current || Object.keys(patch).length === 0) return;
     unsent.current = {};
     sending.current = true;
-    failureReport.current?.(); failureReport.current = null;
+    setSaving(true);
     try {
       const saved = await apiFetch<ApiJson<"/me/reader-profile", "patch">>(
         "/api/me/reader-profile",
@@ -85,21 +96,20 @@ export function ReaderProvider({
       // Fields changed while this request flew stay as the user set them.
       setProfile({ ...saved.data, ...unsent.current });
       sending.current = false;
+      setSaving(false);
       if (Object.keys(unsent.current).length > 0) void send();
       else setPersistence({ state: "Clean" });
     } catch (failure) {
       sending.current = false;
+      setSaving(false);
       if (!live.current) return;
       unsent.current = { ...patch, ...unsent.current };
       handleUnauthenticatedApiError(failure);
       if (!isApiError(failure) || isSameSystemApiDefect(failure)) return setDefect({ error: failure });
-      // The settings pane keeps the failure; this reports it once wherever it was changed.
+      // The retained owner projects the same failure through current hosts.
       setPersistence({ state: "SaveFailed", failure });
-      failureReport.current = feedback.receipt({ tone: "Warning", title: "reader settings not synced",
-        message: "your settings are applied in this tab. retry to sync them.", requestId: failure.requestId },
-      { label: "retry", onClick: () => void send() });
     }
-  }, [feedback, refreshSettings]);
+  }, [refreshSettings]);
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
@@ -132,6 +142,10 @@ export function ReaderProvider({
       profile,
       persistence,
       editable,
+      saving,
+      failureOccurrence: occurrence,
+      connectionOccurrence,
+      unavailableReason,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
       setFocusMode: (focus_mode) => intend({ focus_mode }),
@@ -141,7 +155,7 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [editable, intend, persistence, profile, send],
+    [editable, intend, persistence, profile, send, saving, occurrence, connectionOccurrence, unavailableReason],
   );
   if (defect) throw defect.error;
   return (
@@ -154,4 +168,18 @@ export function useReaderContext(): ReaderProfileCapability {
   // The profile is a required bootstrap seed; absence is a wiring defect.
   if (!context) throw new Error("useReaderContext requires a ReaderProvider");
   return context;
+}
+
+/** The profile owner retains this recovery when typography controls leave their pane. */
+export function ReaderSettingsFailure() {
+  const reader = useReaderContext();
+  if (reader.persistence.state !== "SaveFailed") return null;
+  const failure = reader.persistence.failure;
+  const content = (isApiError(failure) && apiTransportFeedback(failure, "couldn’t save reader settings")) || {
+    tone: "Warning" as const, title: "couldn’t save reader settings", message: "your settings are applied in this tab. retry to sync them.",
+    requestId: isApiError(failure) ? failure.requestId : undefined};
+  return <FeedbackFailure scope="Local" occurrence={reader.failureOccurrence}
+    content={outcomeUnknown(failure) && failure.code !== "E_UNAUTHENTICATED"
+      ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content}
+    announcement="Polite" actions={[{label: "retry", onClick: reader.retrySave, busy: reader.saving}]} />;
 }

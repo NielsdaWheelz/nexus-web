@@ -18,6 +18,9 @@ import {
 } from "react";
 import {
   FeedbackNotice,
+  FeedbackFailure,
+  FeedbackBusy,
+  useFeedbackOccurrence,
   FeedbackState,
   FeedbackStatus,
   type FeedbackAnnouncement,
@@ -209,6 +212,7 @@ export default function DocumentReaderView(
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
   const navigationFailure = useReaderState(runtime, (state) => state.navigation.failure);
+  const refreshOccurrence = useFeedbackOccurrence(publication.status === "ready" && publication.refreshFailure !== null, runtime);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
   const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
   const frame = useRef<HTMLDivElement>(null);
@@ -225,7 +229,7 @@ export default function DocumentReaderView(
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
         {props.before}
-        <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
+        <FeedbackBusy pending />
       </div>
     );
   } else if (publication.status === "failed") {
@@ -274,26 +278,26 @@ export default function DocumentReaderView(
       <div ref={feedback} className={styles.statusStack}>
         {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
         {navigationFailure ? (
-          <div className={`${styles.status} ${styles.feedback}`}>
-            <FeedbackNotice
+          <>
+            <FeedbackFailure scope="Local"
               content={navigationFailureContent(navigationFailure)}
               occurrence={navigationFailure}
               onDismiss={() => runtime.dismissNavigationFailure(navigationFailure)}
               announcement={announcement}
               returnFocus={returnFocus}
             />
-          </div>
+          </>
         ) : null}
         {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
-          <div className={`${styles.status} ${styles.feedback}`}>
-            <FeedbackNotice
+          <>
+            <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
               content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
               announcement={announcement}
               actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
               disclosure="Anchored"
               returnFocus={returnFocus}
             />
-          </div>
+          </>
         ) : null}
       </div>
       {body}
@@ -360,9 +364,12 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       returnFocus()?.focus({ preventScroll: true });
   };
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
+  const saveOccurrence = useFeedbackOccurrence(!!ready?.saveFailed || !!ready?.retrying, reader);
+  const loadOccurrence = useFeedbackOccurrence(loadFailed !== null, reader);
+  const unavailableOccurrence = useFeedbackOccurrence(unavailable && !exploring, reader);
   if (!unresolved && !title && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
   return (
-    <div className={`${styles.status} ${styles.feedback}`} role="group" aria-label="reading position">
+    <div className={unresolved || title || handoff ? `${styles.status} ${styles.feedback}` : undefined} role="group" aria-label="reading position">
       {unresolved ? <>
         <FeedbackNotice content={{ tone: "Warning", title: "your saved reading position no longer matches this version." }}
           announcement={announcement} actions={[{ label: "read from here", onClick: reader.continueHere, busy: documentRefreshing || ready?.saving || navigation.positioning }]} />
@@ -397,7 +404,7 @@ function StatusStrip({ reader, announcement, returnFocus }: {
         </div>
       ) : null}
       {ready?.saveFailed ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={saveOccurrence}
           content={{ tone: "Warning", title: "reading position not synced", message: "your place is still held in this tab. retry to sync it." }}
           announcement={announcement}
           actions={[{ label: "retry", onClick: reader.retrySave, busy: ready.saving || ready.retrying }]}
@@ -406,10 +413,10 @@ function StatusStrip({ reader, announcement, returnFocus }: {
         />
       ) : null}
       {unavailable && !exploring ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
+        <FeedbackFailure scope="Local" occurrence={unavailableOccurrence} content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
       ) : null}
       {loadFailed ? (
-        <FeedbackNotice
+        <FeedbackFailure scope="Local" occurrence={loadOccurrence}
           content={{
             tone: "Warning",
             title: loadFailed.recovery === "RetryPosition" ? "couldn’t load your reading position" : "reading position needs a document reload",
