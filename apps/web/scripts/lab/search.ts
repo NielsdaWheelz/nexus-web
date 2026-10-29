@@ -37,7 +37,8 @@ from nexus.services.search import discovery, projection
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
-from nexus.services.reader_excerpts import plain_excerpt
+from nexus.services.reader_excerpts import plain_excerpt, text_parts
+from nexus.schemas.reader_excerpts import ExcerptBody
 from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
@@ -409,7 +410,7 @@ else:
             stale=(await read(UUID(f["viewer"]),"media:"+f["source"],f["stale_term"],kinds=("highlights",)))["results"]
             assert len(stale)==1 and stale[0]["item"]["ref"]=="highlight:"+f["stale"], "stored unlocated quote is not searchable from its source"
             item=stale[0]["item"]
-            assert not item["missing"] and item["preview"]["body"]["kind"]=="passage" and item["preview"]["body"]["exact"]["text"]==f["stale_quote"]
+            assert not item["missing"] and item["preview"]["body"]["kind"]=="passage" and text_parts([ExcerptBody.model_validate(item["preview"]["body"]["excerpt"]["body"])])[0].exact==f["stale_quote"]
             assert item["activation"]["kind"]=="route" and item["activation"]["resource_ref"]=="highlight:"+f["stale"] and item["activation"]["field"] is None and item["activation"]["href"]=="/highlights/"+f["stale"], "unlocated quote lost its durable capture destination"
             assert item["preview"]["source"]["ref"]=="media:"+f["source"], "stored quote lost its readable source"
             assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["stale_term"],kinds=("highlights",)))["results"]==[], "piece admitted a source-only unlocated quote"
