@@ -12,7 +12,7 @@ import type {
 } from "@/lib/workspace/targetActivation";
 
 export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
-export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import"}`;
+export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import" | "Browse"}`;
 
 export type NexusHistorySource = Schema<"NexusSelectionRecordRequest">["source"];
 export type NexusRecent = Schema<"NexusHistoryRecentOut">;
