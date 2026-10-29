@@ -1,7 +1,8 @@
 "use client";
 /** Saved notes reuse the existing contextual formatting, references and attachment
  * UI. Supplied history joins the containing outline; standalone surfaces own theirs. */
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import * as Y from "yjs";
 import {FeedbackBusy} from "@/components/feedback/Feedback";
 import { bodyInline, readBody } from "@nexus/authored/documents";
@@ -18,6 +19,17 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
   onSplit?: (displayed: import("@/lib/notes/editorTypes").DisplayedSplit) => void; onJoin?: (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => void;
   history?: EditorHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
 }) {
+  const row = useIndexRowWindow();
+  useLayoutEffect(() => {
+    if (!row) return;
+    let release: (() => void) | null = null;
+    const update = () => {
+      if (document.hasPendingEdits()) release ??= row.pin();
+      else {release?.(); release = null;}
+    };
+    const unsubscribe = document.subscribePendingEdits(update); update();
+    return () => {unsubscribe(); release?.();};
+  }, [document, row]);
   const [body, setBody] = useState(() => readBody(document.doc));
   const [own,setOwn]=useState<{document:WritingDocument;origin:symbol;manager:Y.UndoManager}|null>(null);
   useEffect(()=>{

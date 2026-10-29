@@ -113,6 +113,23 @@ selection keeps a root in the aligned layout; only a connected control inside
 that root pins its screen position. replacing an insertion line with an editor
 without a live pin uses the normal placement floor.
 
+the reader pane admits root occurrences before their resource reads and child
+probes mount. all-items uses measured variable heights and estimated gaps;
+desktop follow mounts its source placements. geometry belongs to the current
+publication and width. complete membership, facets and source order remain with
+the pane, including keyboard successors, explicit arrivals and unlink recovery.
+saved restoration demands its occurrence and that occurrence's terminal source
+detail, never every remembered disclosure. late layout preserves the visible
+occurrence's offset; user interaction retires restoration.
+
+focus, inspector selection, menus, actual draft risk, pending local document
+edits and unsettled row commands retain the existing occurrence and editor.
+committed pending synchronization and past undo availability do not retain rows.
+native browser find and cross-row selection cover mounted inspector content
+only; source-reader find keeps its complete existing scope. disclosed descendants
+keep their existing owners and admission contracts. this is a representative
+large-book repair, not a universal bound on rich bodies or arbitrary branches.
+
 ## relationships
 
 user links are unordered pairs: `origin=user`, `kind=context`, no

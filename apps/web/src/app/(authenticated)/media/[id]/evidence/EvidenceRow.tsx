@@ -41,7 +41,9 @@ export function sourceTextKey(entry: EvidenceEntry): string | null {
     ? JSON.stringify([entry.root.source.media_id, entry.root.source.identity, `evidence/${entry.key}`]) : null;
 }
 
-export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout }: {
+export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout, position, count }: {
+  readonly position: number | null;
+  readonly count: number;
   readonly sourceText: ReadonlySet<string>;
   readonly onSourceTextChange: (key: string, open: boolean) => void;
   readonly onSourceLayout: (key: string, pending: boolean | null) => void;
@@ -72,7 +74,8 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   const { verbs } = actions;
   const highlightId = entry.kind === "highlight" ? entry.annotation.id
     : entry.kind === "remote" && entry.root.content.kind === "Highlight" ? entry.root.content.highlight_id : null;
-  const rootProps = { hidden: !visible, style, className, "data-active": active || openRequest !== null, "data-group": entry.key,
+  const rootProps = { hidden: !visible, style, className, "data-active": active || openRequest !== null, "data-group": entry.key, "data-window-key": entry.key,
+    "aria-posinset": position ?? undefined, "aria-setsize": count,
     onMouseEnter: () => { if (highlightId) verbs.hover(highlightId); },
     onMouseLeave: () => { if (highlightId) verbs.hover(null); },
   };

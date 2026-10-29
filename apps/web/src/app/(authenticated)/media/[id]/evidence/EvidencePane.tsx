@@ -5,6 +5,8 @@
 // evidence is a separate section that may load late or fail without hiding them.
 // All items uses normal flow; native sidebar scroll never changes the view or text.
 import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
+import { useEvidenceWindow } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -48,6 +50,11 @@ function entryMatches(entry: EvidenceEntry, id: string): boolean {
   return matches(entry.root, id);
 }
 
+function rowControls(row: HTMLElement): HTMLElement[] {
+  return [row, ...row.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')]
+    .filter(node => !node.closest("[hidden], [inert]") && node.getClientRects().length > 0);
+}
+
 /** Where an entry sits in the mounted publication; null when it has no own extent. */
 function extentOf(entry: EvidenceEntry, doc: ReaderDocument): { kind: "text"; start: Extract<ReaderPoint, {kind: "text"}>; anchor: MarkAnchor } | { kind: "pdf"; anchor: MarkAnchor } | null {
   if (entry.kind === "remote") return entry.root.resolution?.kind === "Resolved" ? rootExtent(entry.root.resolution, doc) : null;
@@ -83,6 +90,15 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const windowRoot = useRef<HTMLDivElement>(null);
+  const [focusRequest, setFocusRequest] = useState<{key: string; occurrence: string | null; last: boolean; isCurrent: () => boolean} | null>(null);
+  const interaction = useRef(0);
+  useLayoutEffect(() => {
+    const changed = () => {interaction.current++;};
+    window.document.addEventListener("pointerdown", changed, true);
+    window.document.addEventListener("keydown", changed, true);
+    return () => {window.document.removeEventListener("pointerdown", changed, true); window.document.removeEventListener("keydown", changed, true);};
+  }, []);
   const firstType = useRef<HTMLInputElement>(null);
   const ids = useId();
   const pinned = useRef<{ element: HTMLElement; y: number; scrollTop: number } | null>(null);
@@ -93,21 +109,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const writing = useWritingRuntime();
   // the pane outlives the unlinked row: it holds the frozen commit's retry and moves focus on.
   const [unlinkFailure, setUnlinkFailure] = useState<{ readonly retry: (() => void) | null } | null>(null);
-  const unlink = useCallback((linkId: string, row: HTMLElement | null) => {
-    if (!writing) return;
-    const groups = [...list.current?.querySelectorAll<HTMLElement>("[data-group]:not([hidden])") ?? []];
-    const index = row ? groups.indexOf(row) : -1;
-    const neighbour = index < 0 ? null : groups[index + 1] ?? groups[index - 1] ?? null;
-    const settled = () => {
-      setUnlinkFailure(null);
-      const target = neighbour?.isConnected ? neighbour.querySelector<HTMLElement>("a[href], button:not([disabled]), [tabindex]") ?? neighbour : list.current;
-      target?.focus({ preventScroll: true });
-    };
-    setUnlinkFailure(null);
-    void deleteLink(writing, { linkId }).then(settled, (error: unknown) => {
-      setUnlinkFailure(error instanceof LocalCommitError ? { retry: () => { void error.retry().then(settled, () => {}); } } : { retry: null });
-    });
-  }, [writing]);
   const viewport = useReaderState(reader, (s) => s.viewport);
   const document = useReaderState(reader, (s) => s.document);
   const placement = useReaderState(reader, (s) => s.placement);
@@ -178,8 +179,63 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries, state.markers]);
   const locatedEntries = useMemo(() => placed.filter(entry => visible.has(entry.key)), [placed, visible]);
   const keys = placements.map((place) => place.key).join();
+  const placedKeys = useMemo(() => new Set(placed.map(entry => entry.key)), [placed]);
+  const whole = useMemo(() => entries.filter(entry => !placedKeys.has(entry.key) && (entry.kind === "link" || entry.kind === "remote" && entry.root.resolution === null)), [entries, placedKeys]);
+  const unavailable = useMemo(() => {
+    const wholeKeys = new Set(whole.map(entry => entry.key));
+    return entries.filter(entry => !placedKeys.has(entry.key) && !wholeKeys.has(entry.key));
+  }, [entries, placedKeys, whole]);
+  const order = useMemo(() => [...placed, ...whole, ...unavailable].filter(entry => visible.has(entry.key)), [placed, whole, unavailable, visible]);
+  const logicalOrder = useRef(order); logicalOrder.current = order;
+  const byKey = useMemo(() => new Map(entries.map(entry => [entry.key, entry])), [entries]);
+  const ranks = useMemo(() => new Map(order.map((entry, index) => [entry.key, index + 1])), [order]);
+  const delivery = openKey?.isCurrent() && preparedRequest === openKey ? openKey : null;
+  const arrival = delivery ? entries.find(entry => entryMatches(entry, delivery.id))?.key ?? null : null;
+  const shownWhole = whole.some(entry => visible.has(entry.key));
+  const shownUnavailable = unavailable.some(entry => visible.has(entry.key));
+  const placedHeight = Math.max(0, ...placements.map(item => item.top + item.height));
+  const slots = useMemo(() => [
+    ...placed.filter(entry => visible.has(entry.key)).map(entry => ({key: entry.key, estimate: aligned ? 0 : 96})),
+    ...(aligned ? [{key: "label:placed-space", estimate: placedHeight}] : []),
+    ...(shownWhole || shownUnavailable ? [{key: "label:unanchored", estimate: 40}] : []),
+    ...(shownWhole ? [{key: "label:whole", estimate: 24}] : []),
+    ...whole.filter(entry => visible.has(entry.key)).map(entry => ({key: entry.key, estimate: 96})),
+    ...(shownUnavailable ? [{key: "label:unavailable", estimate: 24}] : []),
+    ...unavailable.filter(entry => visible.has(entry.key)).map(entry => ({key: entry.key, estimate: 96})),
+  ], [aligned, placed, placedHeight, shownUnavailable, shownWhole, unavailable, visible, whole]);
+  const rowWindow = useEvidenceWindow({scope: publicationKey, slots, aligned, placements: placements.map(place => place.key),
+    demand: arrival ?? focusRequest?.key ?? restore.current?.key ?? null, focused, root: windowRoot, port: list, outer: pane});
+  const heldKeys = [...rowWindow.held].sort().join();
+  const mountedKeys = rowWindow.rendered.map(slot => slot.key).join();
+  const held = useRef(rowWindow.held); held.current = rowWindow.held;
+  const {interact} = rowWindow;
+  const requestFocus = useCallback((key: string, occurrence: string | null, last: boolean, isCurrent: () => boolean) => {
+    setFollowing(false); interact(key); setFocusRequest({key, occurrence, last, isCurrent});
+  }, [interact]);
+  const revealOccurrence = useCallback((occurrence: string) => {
+    const entry = entries.find(entry => occurrence === `evidence/${entry.key}` || occurrence.startsWith(`evidence/${entry.key}/`));
+    if (entry) requestFocus(entry.key, occurrence, false, () => true);
+  }, [entries, requestFocus]);
+  const unlink = useCallback((linkId: string, row: HTMLElement | null) => {
+    if (!writing) return;
+    const before = logicalOrder.current;
+    const index = before.findIndex(entry => entry.key === row?.dataset.group);
+    let serial = interaction.current;
+    const isCurrent = () => interaction.current === serial;
+    const settled = () => {
+      setUnlinkFailure(null);
+      if (!isCurrent() || !(row?.contains(window.document.activeElement) || window.document.activeElement === window.document.body)) return;
+      const remaining = new Set(logicalOrder.current.map(entry => entry.key));
+      const neighbour = [...before.slice(index + 1), ...before.slice(0, index).reverse()].find(entry => remaining.has(entry.key));
+      if (neighbour) requestFocus(neighbour.key, null, false, isCurrent); else list.current?.focus({preventScroll: true});
+    };
+    setUnlinkFailure(null);
+    void deleteLink(writing, {linkId}).then(settled, (error: unknown) => {
+      setUnlinkFailure(error instanceof LocalCommitError ? {retry: () => {serial = interaction.current; void error.retry().then(settled, () => {});}} : {retry: null});
+    });
+  }, [writing, requestFocus]);
 
-  const captureScroll = () => {
+  const captureScroll = useCallback(() => {
     if (aligned || restore.current !== null) return;
     const port = list.current;
     const root = pane.current;
@@ -201,7 +257,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (!row || bottom <= top || row.getBoundingClientRect().top >= bottom) return;
     const key = row.dataset.group;
     if (key) updateBrowse(current => ({ ...current, anchor: { key, offsetPx: row.getBoundingClientRect().top - box.top, outerScrollTop: root.scrollTop } }));
-  };
+  }, [aligned, updateBrowse]);
 
   const preserveNormalFlowFocus = useCallback(() => {
     const pin = pinned.current;
@@ -222,7 +278,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (!port || aligned || publicationKey === null) return;
     rows.current = [...port.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")];
     alignedPosition.current = null;
-    if (restore.current === null) return;
+    if (restore.current === null) {captureScroll(); return;}
     let frame = 0;
     const measure = () => {
       frame = 0;
@@ -237,9 +293,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         if (pane.current) pane.current.scrollTop = anchor.outerScrollTop;
         port.scrollTop += row.getBoundingClientRect().top - port.getBoundingClientRect().top - anchor.offsetPx;
       }
-      // All retained, still-valid details must register before restoration can
-      // finish. Failed reads count as terminal; a zero-length initial map does not.
-      const detailsReady = [...browse.current.sourceText].every(key => !disclosureKeys.has(key) || sourceLayouts.current.get(key) === false);
+      // Only this occurrence can correct the saved offset. Other remembered
+      // disclosures stay dormant; failed relevant reads are terminal too.
+      const entry = byKey.get(anchor.key);
+      const detail = entry ? sourceTextKey(entry) : null;
+      const detailsReady = detail === null || !browse.current.sourceText.has(detail) || sourceLayouts.current.get(detail) === false;
       if (terminal && detailsReady) {
         if (!row) {
           port.scrollTop = 0;
@@ -259,7 +317,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     for (const row of rows.current) observer.observe(row);
     schedule();
     return () => { scheduleRestore.current = null; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [aligned, disclosureKeys, publicationKey, terminal, updateBrowse, visible]);
+  }, [aligned, byKey, captureScroll, disclosureKeys, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
 
   const stopRestore = () => {
     restore.current = null;
@@ -289,27 +347,27 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       const measured = locatedEntries.flatMap((entry) => {
         const extent = extentOf(entry, doc);
         if (!extent) return [];
-        const held = focused === entry.key;
-        if (!held && extent.kind === "text") {
+        const retained = held.current.has(entry.key);
+        if (!retained && extent.kind === "text") {
           const at = structure.fraction(extent.start);
           if (at < viewport.start - span || at > viewport.end + span) return [];
         }
         const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
         const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(entry.key)}"]:not([hidden])`);
-        if (!geometry && !held) return [];
+        if (!geometry && !retained) return [];
         const y = geometry?.lines[0]?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
-        if (!held && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
+        if (!retained && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
         const primary = row?.querySelector<HTMLElement>("[data-resource-primary]");
         const passage = primary?.querySelector("mark") ?? primary;
         const baseline = row && passage ? passage.getBoundingClientRect().top - row.getBoundingClientRect().top : 0;
         const desired = y - originY - baseline;
         const height = row?.getBoundingClientRect().height ?? 32;
-        const pin = held && row && pinned.current?.element.isConnected && row.contains(pinned.current.element) ? pinned.current : null;
+        const pin = retained && row && pinned.current?.element.isConnected && row.contains(pinned.current.element) ? pinned.current : null;
         let top = desired;
         if (pin && row) {
           top = pin.y - box.top - (pin.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
         }
-        return [{ key: entry.key, desired, top, height, y, held, pinned: pin !== null }];
+        return [{ key: entry.key, desired, top, height, y, held: retained, pinned: pin !== null }];
       });
       if (measured.length) {
         let pivot = measured.findIndex((item) => item.held);
@@ -331,7 +389,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     const unsubscribe = reader.subscribe(schedule);
     schedule();
     return () => { unsubscribe(); observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [active, aligned, document, focused, locatedEntries, keys, position, preserveNormalFlowFocus, reader, viewport]);
+  }, [active, aligned, document, focused, heldKeys, locatedEntries, keys, position, preserveNormalFlowFocus, reader, viewport]);
 
   useLayoutEffect(() => {
     if (!openKey?.isCurrent()) return;
@@ -383,7 +441,10 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       };
       const occurrence = lastFocused.current && shown(lastFocused.current) ? lastFocused.current :
         [...port.querySelectorAll<HTMLElement>("[data-group]")].find(shown);
-      if (occurrence) switchAnchor.current = { element: occurrence, offset: occurrence.getBoundingClientRect().top - box.top };
+      if (occurrence) {
+        switchAnchor.current = { element: occurrence, offset: occurrence.getBoundingClientRect().top - box.top };
+        if (occurrence.dataset.group) interact(occurrence.dataset.group);
+      }
       else port.scrollTop = 0;
     }
     setFollowing(next);
@@ -426,21 +487,29 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     firstType.current?.focus({ preventScroll: true });
     setHidden(new Set());
   };
-  const placedKeys = new Set(placed.map(entry => entry.key));
-  const whole = entries.filter(entry => !placedKeys.has(entry.key) && (entry.kind === "link" || entry.kind === "remote" && entry.root.resolution === null));
-  const unavailable = entries.filter(entry => !placedKeys.has(entry.key) && !whole.includes(entry));
-  const delivery = openKey?.isCurrent() && preparedRequest === openKey ? openKey : null;
   const row = (entry: EvidenceEntry) => {
     const place = aligned ? placements.find((item) => item.key === entry.key) : null;
     const shown = visible.has(entry.key) && (!aligned || !placedKeys.has(entry.key) || !!place);
-    return <EvidenceRow key={entry.key} entry={entry} actions={actions} active={active === entry.key} visible={shown}
+    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown}
       sourceText={sourceText} onSourceTextChange={onSourceTextChange} onSourceLayout={onSourceLayout}
       className={styles.group} displaced={place?.displaced ?? false} style={place ? { position: "absolute", top: place.top, width: "100%" } : undefined}
       unresolvedText={doc?.kind === "text"}
-      openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} onUnlink={unlink} />;
+      openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} onUnlink={unlink} /></IndexRowWindow>;
   };
-  const shownWhole = whole.some((entry) => visible.has(entry.key));
-  const shownUnavailable = unavailable.some((entry) => visible.has(entry.key));
+  const mounted = new Set(rowWindow.rendered.map(slot => slot.key));
+  const retained = entries.filter(entry => rowWindow.held.has(entry.key) && !mounted.has(entry.key));
+  useLayoutEffect(() => {
+    if (!focusRequest) return;
+    if (focusRequest.isCurrent()) {
+      const root = list.current?.querySelector<HTMLElement>(`[data-group="${CSS.escape(focusRequest.key)}"]`);
+      const occurrence = focusRequest.occurrence ? root?.querySelector<HTMLElement>(`[data-outline-occurrence="${CSS.escape(focusRequest.occurrence)}"]`) ?? root : root;
+      if (!occurrence) return;
+      revealInSidebar(occurrence);
+      const controls = rowControls(occurrence);
+      (focusRequest.last ? controls.at(-1) : controls[0])?.focus({preventScroll: true});
+    }
+    setFocusRequest(null);
+  }, [focusRequest, mountedKeys, revealInSidebar]);
   return (
     <div ref={pane} className={styles.pane}
       onPointerDownCapture={stopRestore}
@@ -477,7 +546,19 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           </div>
         </fieldset>
       </div>
-      <div ref={list} className={styles.list} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {
+      <div ref={list} className={styles.list} onKeyDown={event => {
+        if (event.defaultPrevented || event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+        const row = (event.target as HTMLElement).closest<HTMLElement>("[data-group]");
+        if (!row) return;
+        const controls = rowControls(row);
+        if (event.target !== (event.shiftKey ? controls[0] : controls.at(-1))) return;
+        const index = order.findIndex(entry => entry.key === row.dataset.group);
+        const next = order[index + (event.shiftKey ? -1 : 1)];
+        if (!next) return;
+        event.preventDefault();
+        const serial = interaction.current;
+        requestFocus(next.key, null, event.shiftKey, () => interaction.current === serial);
+      }} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {
         captureScroll();
         const pin = pinned.current;
         if (pin?.element.isConnected && pin.scrollTop !== event.currentTarget.scrollTop) {
@@ -499,17 +580,18 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           : !visible.size ? <FeedbackState content={{ tone: "Neutral", title: !complete ? "no available connections match the selected types"
             : !entries.length ? "no connections in this document yet" : "no connections match the selected types" }} announcement="None"
             actions={hidden.size ? [{ label: "show all types", onClick: showAllTypes }] : undefined} /> : null}
-        <div data-aligned-connections={aligned || undefined}>
-          <ResourceOutlineList scope="reader-connections" ariaLabel="connections">
-            {[
-              ...placed.map(row),
-              aligned ? <li key="placed-space" aria-hidden="true" style={{ height: Math.max(0, ...placements.map((item) => item.top + item.height)) }} /> : null,
-              shownWhole || shownUnavailable ? <li key="unanchored-label" role="presentation" className={styles.unanchored}><p className={styles.label}>unanchored connections</p></li> : null,
-              shownWhole ? <li key="whole-label" role="presentation"><p className={styles.label}>whole document</p></li> : null,
-              ...whole.map(row),
-              shownUnavailable ? <li key="unavailable-label" role="presentation"><p className={styles.label}>location unavailable</p></li> : null,
-              ...unavailable.map(row),
-            ]}
+        <div ref={windowRoot} data-aligned-connections={aligned || undefined}>
+          <ResourceOutlineList scope="reader-connections" ariaLabel="connections" onRevealOccurrence={revealOccurrence}>
+            {[...rowWindow.rendered.flatMap(slot => {
+              const entry = byKey.get(slot.key);
+              const content = entry ? row(entry) : slot.key === "label:placed-space"
+                ? <li key={slot.key} data-window-key={slot.key} aria-hidden="true" style={{height: placedHeight}} />
+                : <li key={slot.key} data-window-key={slot.key} role="presentation" className={`${styles.sectionLabel} ${slot.key === "label:unanchored" ? styles.unanchored : ""}`}>
+                  <p className={styles.label}>{slot.key === "label:unanchored" ? "unanchored connections" : slot.key === "label:whole" ? "whole document" : "location unavailable"}</p></li>;
+              return [slot.gap ? <li key={`gap:${slot.key}`} aria-hidden="true" style={{height: slot.gap}}/> : null, content];
+            }),
+            rowWindow.tail ? <li key="tail" aria-hidden="true" style={{height: rowWindow.tail}}/> : null,
+            ...retained.map(row)]}
           </ResourceOutlineList>
         </div>
       </div>
