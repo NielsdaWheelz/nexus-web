@@ -317,8 +317,9 @@ Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
 enclosing modal boundary wraps. this also applies while failed, empty or
 disabled-only on desktop. custom editable controls retain their editing keys.
-focus moves to the first (or last) item once, after the first
-placement, so a moving anchor never resets the keyboard position. choosing a
+ordinary keyboard opening focuses the current-location item, otherwise the first;
+explicit arrow opening chooses first/last. touch retains panel focus and reveals
+current location once. later placement never resets the keyboard position. choosing a
 command returns focus before it runs unless it opts out. a handled workspace
 link transfers focus ownership to navigation; closing must not reactivate its
 source pane. an unhandled native mouse link retains normal menu restoration.
@@ -327,7 +328,9 @@ published command meaning and target geometry remain stable. changed title,
 sections, labels, targets, reasons, controls or unsolicited layout close with one
 announcement; a fresh activation is required. same-geometry availability and
 handlers remain live. a choice's names, options and reason are meaning; its
-checked value is live state and repaints in place. capture checks precede
+checked value is live state and repaints in place. command/link `current: "location"`
+is also live: its reserved marker and `aria-current` update without retiring the
+menu or moving focus/scroll. capture checks precede
 custom/native activation, including shifted and auxiliary links. list scrolling
 and header drag are deliberate movement.
 mobile sheets measure layout position within their fixed backdrop, independently

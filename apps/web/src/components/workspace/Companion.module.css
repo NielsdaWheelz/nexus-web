@@ -66,11 +66,14 @@
   gap: var(--space-1);
   overflow-x: auto;
   scrollbar-width: none;
-  text-transform: lowercase;
 }
 
 .tabs::-webkit-scrollbar {
   display: none;
+}
+
+.tabs :global([role="tab"]) {
+  text-transform: lowercase;
 }
 
 .fullScreen {
