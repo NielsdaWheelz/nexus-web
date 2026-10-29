@@ -164,8 +164,12 @@ def assemble(
         context.append(
             f'<subject kind="reader_highlight" source="{quotes.attribute(snapshot.evidence.source.title or "")}">\n'
             f"<highlight_id>{snapshot.key.highlight_id}</highlight_id>\n"
-            f"<media_id>{snapshot.key.media_id}</media_id>\n"
-            "</subject>"
+            + (
+                f"<media_id>{snapshot.key.media_id}</media_id>\n"
+                if snapshot.key.media_id
+                else f"<capture_id>{snapshot.key.capture_id}</capture_id>\n"
+            )
+            + "</subject>"
         )
         context.append(quotes.snapshot_block(snapshot, "reader_selection"))
     if user.branch_anchor_kind == "assistant_selection":

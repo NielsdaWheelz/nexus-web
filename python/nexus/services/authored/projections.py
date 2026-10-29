@@ -20,6 +20,7 @@ from nexus.schemas.retrieval import (
     PlaybackTimeRangeLocator,
     TranscriptTimeRangeLocator,
     WebTextOffsetsLocator,
+    XCaptureOffsetsLocator,
 )
 from nexus.services.resource_graph.refs import require_ref
 
@@ -154,14 +155,22 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
         if locator is not None:
             if isinstance(
                 locator,
-                (WebTextOffsetsLocator, EpubFragmentOffsetsLocator, NoteBlockOffsetsLocator),
+                (
+                    WebTextOffsetsLocator,
+                    EpubFragmentOffsetsLocator,
+                    XCaptureOffsetsLocator,
+                    NoteBlockOffsetsLocator,
+                ),
             ):
                 hint = {
                     "kind": "text",
                     "start_offset": locator.start_offset,
                     "end_offset": locator.end_offset,
                 }
-                if isinstance(locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator)):
+                if isinstance(
+                    locator,
+                    (WebTextOffsetsLocator, EpubFragmentOffsetsLocator, XCaptureOffsetsLocator),
+                ):
                     hint["fragment_id"] = str(locator.fragment_id)
                 if isinstance(locator, EpubFragmentOffsetsLocator):
                     hint["section_id"] = str(locator.section_id) if locator.section_id else None
@@ -232,13 +241,13 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
     captures += [passage.source_ref for passage in result.passages]
     retained_x_source = bool(captures) and db.scalar(
         text(
-            "SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=ANY(CAST(:ids AS uuid[])))"
+            "SELECT EXISTS (SELECT 1 FROM fragments WHERE x_post_capture_id IS NOT NULL AND id=ANY(CAST(:ids AS uuid[])))"
         ),
         {
             "ids": [
                 require_ref(ref).id
                 for ref in captures
-                if ref is not None and ref.startswith("media:")
+                if ref is not None and ref.startswith("fragment:")
             ]
         },
     )
@@ -369,7 +378,7 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
             "id": ref.id,
             "a": account_id,
             "kind": kind,
-            "media": source.id,
+            "media": None if isinstance(locator, XCaptureOffsetsLocator) else source.id,
             "color": item.color,
             "exact": capture.quote_exact,
             "prefix": capture.prefix or "",
@@ -383,7 +392,9 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
             ),
         },
     )
-    if isinstance(locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator)):
+    if isinstance(
+        locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator, XCaptureOffsetsLocator)
+    ):
         db.execute(
             text(
                 "INSERT INTO highlight_fragment_anchors(highlight_id,fragment_id,start_offset,end_offset) "

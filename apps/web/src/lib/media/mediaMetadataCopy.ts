@@ -96,15 +96,15 @@ export function metadataResearchLabel(
 ): string {
   if (purpose === "title") {
     if (operation === null || operation.purpose !== "title")
-      return "generate title";
+      return "Generate title";
     return operation.status === "failed"
-      ? "retry title generation"
-      : "generate title again";
+      ? "Retry title generation"
+      : "Generate title again";
   }
-  if (operation === null) return "research metadata";
+  if (operation === null) return "Research metadata";
   return operation.status === "failed"
-    ? "retry metadata research"
-    : "research again";
+    ? "Retry metadata research"
+    : "Research again";
 }
 
 export const X_TITLE_CONTEXT_HELP =

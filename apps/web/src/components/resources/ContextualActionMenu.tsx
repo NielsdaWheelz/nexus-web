@@ -1,5 +1,8 @@
 "use client";
 
+import { CloudOff } from "lucide-react";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
+
 import { useCallback, useState } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { ActionMenuHost, ActionMenuInvocation, type ActionMenuProps, type ActionMenuSession } from "@/components/ui/ActionMenu";
@@ -76,7 +79,7 @@ function ContextualMenuInvocation({
   if (coarse && displayedActivation?.kind === "route" && displayedActivation.href && pane) {
     const href = displayedActivation.href;
     groups.push({ id: "Navigation", label: null, options: [{
-      kind: "link", id: "Row.OpenInNewPane", label: "open in new pane", href,
+      kind: "link", id: "Row.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label, icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />, href,
       disabled: Boolean(commandDisabledReason), disabledReason: commandDisabledReason,
       restoreFocusOnClose: false,
       onActivate: event => {
@@ -105,7 +108,7 @@ function ContextualMenuInvocation({
       });
     }
     if (remote?.kind === "Failed" && remote.connectionRequired) groups.push({
-      id: "Resource", label: null, options: [{ kind: "command", id: "Resource.ConnectionRequired", label: "requires a connection", disabled: true, onSelect: () => {} }],
+      id: "Resource", label: null, options: [{ kind: "command", id: "Resource.ConnectionRequired", label: "Requires a connection", icon: <CloudOff size={16} aria-hidden="true" />, disabled: true, onSelect: () => {} }],
     });
   }
   // Client-owned facts compose beside the remote facts; a remote verb with the same id wins.

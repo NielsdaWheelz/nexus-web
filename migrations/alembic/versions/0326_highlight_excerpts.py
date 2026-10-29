@@ -1,6 +1,6 @@
 """Freeze saved excerpt words without reconstructing historical source structure.
 
-After actual head 0323, stopped writers are required. Convert only canonical
+After actual head 0325, stopped writers are required. Convert only canonical
 highlight/passage captures and the three listed historical evidence paths; retain
 ids, stamps, vectors, metadata, accepted source prefixes and feed rows unchanged.
 Add bounded preview projections and fence old opaque feed receipts at account head.
@@ -17,8 +17,8 @@ from shutil import which
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0324"
-down_revision = "0323"
+revision = "0326"
+down_revision = "0325"
 branch_labels = None
 depends_on = None
 
@@ -33,7 +33,7 @@ def _plain(exact: str, prefix: str | None, suffix: str | None, plain: bool) -> d
         or not isinstance(prefix, str | None)
         or not isinstance(suffix, str | None)
     ):
-        raise RuntimeError("0324 unsupported saved quote strings")
+        raise RuntimeError("0326 unsupported saved quote strings")
     before, after = prefix or "", suffix or ""
     return {
         "structure": "plain" if plain else "unknown",
@@ -51,30 +51,50 @@ def _plain(exact: str, prefix: str | None, suffix: str | None, plain: bool) -> d
 
 
 def _is_plain(locator: dict | None, source: dict | None = None) -> bool:
-    return (locator or {}).get("type") in (
-        "pdf_page",
-        "pdf_page_geometry",
+    kind = (locator or {}).get("type")
+    if kind not in (
+        None,
+        "x_capture_offsets",
+        "web_text_offsets",
+        "epub_fragment_offsets",
         "note_block_offsets",
+        "pdf_page_geometry",
+        "pdf_page",
+        "transcript_time_range",
+        "audio_time_range",
+        "video_time_range",
         "message_offsets",
-    ) or (source or {}).get("media_kind") == "pdf"
+        "external_url",
+    ):
+        raise RuntimeError(f"0326 unsupported saved locator {kind}")
+    return (
+        kind
+        in (
+            "pdf_page",
+            "pdf_page_geometry",
+            "note_block_offsets",
+            "message_offsets",
+        )
+        or (source or {}).get("media_kind") == "pdf"
+    )
 
 
 def _check(value: dict, identity: str) -> None:
     if len(_json(value).encode()) > 2 * 1024 * 1024:
         raise RuntimeError(
-            f"0324 {identity} exceeds the 2 MiB converted capture budget"
+            f"0326 {identity} exceeds the 2 MiB converted capture budget"
         )
 
 
 def _project(items: list[dict]) -> list[dict]:
     node = which("node")
     if node is None:
-        raise RuntimeError("0324 requires the paired node runtime")
+        raise RuntimeError("0326 requires the paired node runtime")
     result = subprocess.run(
         [
             node,
             "--max-old-space-size=128",
-            str(Path(__file__).with_name("0324_excerpt_projection.mjs")),
+            str(Path(__file__).with_name("0326_excerpt_projection.mjs")),
         ],
         input=_json({"op": "project_excerpts", "items": items}),
         text=True,
@@ -92,11 +112,11 @@ def _normalize(value: str) -> str:
 
 def _evidence(value: dict, identity: str) -> dict:
     if set(value) != {"quote", "source", "target"}:
-        raise RuntimeError(f"0324 unsupported evidence {identity}")
+        raise RuntimeError(f"0326 unsupported evidence {identity}")
     quote = value["quote"]
     if quote is not None:
         if set(quote) != {"exact", "prefix", "suffix", "color"}:
-            raise RuntimeError(f"0324 unsupported historical quote {identity}")
+            raise RuntimeError(f"0326 unsupported historical quote {identity}")
         quote["excerpt"] = _plain(
             quote["exact"],
             quote["prefix"],
@@ -109,9 +129,6 @@ def _evidence(value: dict, identity: str) -> dict:
 
 def upgrade() -> None:
     connection = op.get_bind()
-    op.execute(
-        "ALTER TABLE authored_heads ADD COLUMN min_feed_cursor bigint NOT NULL DEFAULT 0 CHECK(min_feed_cursor>=0 AND min_feed_cursor<=head_seq)"
-    )
     op.execute("ALTER TABLE highlights ADD COLUMN excerpt_preview jsonb")
     op.execute("ALTER TABLE passage_anchors ADD COLUMN excerpt_preview jsonb")
     previews = []
@@ -130,7 +147,7 @@ def upgrade() -> None:
             "suffix",
             "passage_ref",
         }:
-            raise RuntimeError(f"0324 unsupported selection {row['ref']}")
+            raise RuntimeError(f"0326 unsupported selection {row['ref']}")
         capture["excerpt"] = _plain(
             capture["quote_exact"],
             capture["prefix"],
@@ -174,9 +191,9 @@ def upgrade() -> None:
         state, selector = row["state"], row["selector"]
         capture = state["capture"]["value"]
         if set(capture) != {"quote_exact", "publication", "locator"}:
-            raise RuntimeError(f"0324 unsupported passage {row['anchor_id']}")
+            raise RuntimeError(f"0326 unsupported passage {row['anchor_id']}")
         if selector is None:
-            raise RuntimeError(f"0324 passage projection missing {row['anchor_id']}")
+            raise RuntimeError(f"0326 passage projection missing {row['anchor_id']}")
         quote = selector["quote"]
         affixes = (
             state["source_ref"] == f"{row['owner_scheme']}:{row['owner_id']}"
@@ -253,7 +270,7 @@ def upgrade() -> None:
                 },
             )
             if changed.rowcount != 1:
-                raise RuntimeError(f"0324 projection owner mismatch {ref}")
+                raise RuntimeError(f"0326 projection owner mismatch {ref}")
 
     for entry in previews:
         size = len(_json(entry[2]).encode())
@@ -302,8 +319,14 @@ def upgrade() -> None:
             )
     op.execute("ALTER TABLE highlights ALTER COLUMN excerpt_preview SET NOT NULL")
     op.execute("ALTER TABLE passage_anchors ALTER COLUMN excerpt_preview SET NOT NULL")
-    op.execute("UPDATE authored_heads SET min_feed_cursor=head_seq")
+    op.execute("UPDATE authored_heads SET snapshot_floor_seq=head_seq")
+    op.execute(
+        "UPDATE authored_replicas SET format_revision=3 WHERE format_revision IN (1,2)"
+    )
+    op.execute(
+        "ALTER TABLE authored_replicas ALTER COLUMN format_revision SET DEFAULT 3"
+    )
 
 
 def downgrade() -> None:
-    raise RuntimeError("0324 requires restoring the paired database and device backups")
+    raise RuntimeError("0326 requires restoring the paired database and device backups")

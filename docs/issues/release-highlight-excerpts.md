@@ -1,6 +1,7 @@
 # release highlight excerpts
 
-implementation and disposable qualification complete; paired release pending.
+implementation qualified before main integration; combined format-3 qualification
+in progress; paired release pending.
 binding cutover for
 [highlight excerpts](../modules/highlight.md#frozen-excerpts); one user, all devices paired.
 no release or data mutation is authorized by creating this record.
@@ -12,9 +13,9 @@ commands incompatible. accepted source command contents must remain immutable
 
 ## preparation and admission
 
-- implement one alembic migration after the actual head; freeze its conversion
+- apply excerpt migration 0326 after x capture 0324 and chat selections 0325; freeze its conversion
   logic, import no nexus application code, state all data effects and raise on
-  unsupported data. authored format becomes 2; apply the wire revision's existing
+  unsupported data. authored format becomes 3; apply the wire revision's existing
   once-between-releases rule. build matched web/helper/android assets.
 - wire 17 is already the pending break after released wire 16 (`3d81ef45e`);
   retain 17 for this paired release. verify the deployed boundary before release;
@@ -36,7 +37,7 @@ commands incompatible. accepted source command contents must remain immutable
 
 ## migration effects
 
-1. convert current canonical captures to the single v2 grammar. conservatively
+1. convert current canonical captures to the single v3 grammar. conservatively
    seed actual saved text with unknown structure for old reflowable captures;
    pdf/plain sources retain explicit plain behavior. concatenate existing strings
    exactly and mark selection by codepoint lengths. never consult current sources.
@@ -52,33 +53,37 @@ commands incompatible. accepted source command contents must remain immutable
    inventory that reader before implementation, never add a legacy decoder.
 3. add/rebuild bounded `highlights.excerpt_preview` and
    `passage_anchors.excerpt_preview`. keep full excerpt in canonical authored state;
-   historical evidence owns its own immutable snapshot. freeze the v2 kernel's
+   historical evidence owns its own immutable snapshot. freeze the v3 kernel's
    serializer/projection with migration code; prove preview/revision equality with
    runtime for unicode and pdf numeric locators. python's json spelling is not
    a substitute for the kernel's canonical serialization.
 4. preserve `authored_changes` byte-for-byte and all accepted source prefixes.
-   add `authored_heads.min_feed_cursor` default 0; set each existing account's floor
-   to `h`. v2 download rejects `after < floor` with `E_INVALID_CURSOR` before
-   decoding rows. old feed records are opaque receipts, never v2 inputs. do not
+   reuse `authored_heads.snapshot_floor_seq`; set each existing account's floor
+   to `h`. v3 download rejects `after < floor` with `E_INVALID_CURSOR` before
+   decoding rows. old feed records are opaque receipts, never v3 inputs. do not
    reset head/lamport or invent accepted commands for the conversion.
 5. retain resource/passage/link ids, source stubs, register stamps and causal state.
-   v2 snapshots at head expose only converted current state. new writes append
-   after the preserved source sequence and account head.
+   v3 snapshots at head expose only converted current state. promote existing
+   replica format metadata from 1 or 2 to 3 without changing accepted prefixes.
+   uploads require an explicit format-3 envelope before replay comparison; this
+   blocks older wire-17 clients while preserving replica identities. the reserved
+   server:2 producer continues its accepted sequence. new writes append after the
+   preserved source sequence and account head.
 
 ## device transition and release
 
 deploy paired clients before reopening writing. the one-time storage transition
 reads only prior format metadata and pending-row count. in one transaction require
-format 1 and zero pending rows, apply the device schema change, retire old authored
-rows/projections, set format 2 and provisioning incomplete, and preserve replica
+format 1 or 2 and zero pending rows, apply the device schema change, retire old authored
+rows/projections, set format 3 and provisioning incomplete, and preserve replica
 identity, source sequence and clocks. nonempty pending rows refuse; old command
 bodies are never parsed or rewritten. existing snapshot staging/completion replaces
 state and derived indexes; interruption restarts provisioning with writing disabled.
-this finite storage migration remains, but no runtime can read/write v1 content.
+this finite storage migration remains, but no runtime can read/write prior-format content.
 preserve account state and downloaded sources; do not use android signout or clear
 the whole application.
 
-verify exact database head, v2 provision/snapshot/above-floor catch-up, below-floor
+verify exact database head, v3 provision/snapshot/above-floor catch-up, below-floor
 refusal, old-client refusal, id-preserving offline reads, subsequent color/resize
 commands, historical quotation reads and unchanged pdf behavior on both platforms.
 exercise the pending-write refusal before any real retirement. no partial-pair
@@ -86,7 +91,7 @@ release, automatic data deletion or silent source reconstruction.
 
 rollback requires restoring the paired database/device backups and old binaries
 while writers remain stopped. after new writes resume, use explicit repair; do
-not replay v2 writes into v1. this is a short coordinated cutover, not a rolling
+not replay v3 writes into earlier formats. this is a short coordinated cutover, not a rolling
 compatibility deployment.
 
 resolved when the paired release and device qualification satisfy these checks,

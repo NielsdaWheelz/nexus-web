@@ -1,16 +1,16 @@
 "use client";
 
 // Unsent text and model choice live only in memory, per account, pane and chat.
-// Pane retirement forgets its drafts; acceptance spends only the submitted text.
+// Pane retirement forgets its drafts; acceptance spends only the unchanged submitted object.
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { bindChatWorkGuard, retireChatPanes, setChatCommandAccount, suspendChatCommands } from "./commands";
-import type { Selection } from "./wire";
+import type { SelectionEditor } from "./selection";
 
-export type Draft = Readonly<{ text: string; selection: Selection | null }>;
-const EMPTY: Draft = { text: "", selection: null };
+export type Draft = Readonly<{ text: string; selection: SelectionEditor }>;
+const EMPTY: Draft = { text: "", selection: { kind: "Uninitialized" } };
 export const chatDraftOwnerId = (accountId: string, viewId: string, scope: string) =>
   JSON.stringify(["chat-draft", accountId, viewId, scope]);
 const drafts = new Map<string, {
@@ -75,9 +75,13 @@ export function useChatDraft(scope: string, viewId: string) {
     return {
       setDraft: (draft: Draft) => write(draft),
       setText: (text: string) => write({ ...entry.value, text }),
-      setSelection: (selection: Selection | null) => write({ ...entry.value, selection }),
+      setSelection: (selection: SelectionEditor) => { if (selection !== entry.value.selection) write({ ...entry.value, selection }); },
       seed: (text: string) => write({ ...entry.value, text }),
-      spend: (submitted: string) => write({ text: entry.value.text === submitted ? "" : entry.value.text, selection: null }),
+      spend: (submitted: Draft) => {
+        if (entry.value !== submitted) return false;
+        write({ text: "", selection: { kind: "Uninitialized" } });
+        return true;
+      },
     };
   }, [entry]);
   return { draft, owner: key, ...commands };

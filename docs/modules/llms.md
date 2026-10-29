@@ -66,9 +66,28 @@ keys, `(mode, effort)` and `(mode, effort_order)` are unique within a model,
 and a declared default names an actual row. mode order is source order; effort
 order applies only within that model/mode. the browser groups actual rows and
 never parses execution keys or manufactures model/mode/effort combinations.
-this required catalog contract was introduced with wire revision 4; no database
-migration is needed. the runtime and kernel dependency pins form one reviewed
-cohort.
+each route also names its product `default_model` (model key and mode), even when
+that target is absent. each reasoning row carries `chat_default`, `mode_label`
+and `effort_label`. policy declares exact provider/model/mode efforts; a missing
+declared effort leaves no default. only undeclared tuples use the sole advertised
+row or the higher `effort_order` of exactly two rows; larger sets require choice.
+the first-use seed is codex / `gpt-6-sol` / `xhigh`.
+readiness never selects an alternative or erases a default. default policy does
+not grant or withdraw execution eligibility. source defaults choose nothing;
+the old combined reasoning-row label is removed from the wire.
+
+the browser uses these projected labels and default markers. provider/model changes
+are complete when facts permit; `DefaultUnavailable` retains an unresolved target
+and allows explicit effort choice. recovery completes only that same unresolved
+intent. exact selections, account memory and frozen requests never follow later
+defaults. discovery is event-driven and quiet over retained usable data; cold-load
+failure keeps retry. one advertised effort is static only when it is the selected
+identity; other unavailable identities retain explicit recovery choices.
+
+new saved reasoning presentation uses the same mode/effort labels. history reads
+its saved presentation verbatim, including older descriptive labels. the combined
+label bound is 256 characters, accommodating two 64-character labels and the
+separator. provider/kernel pins remain unchanged.
 
 The strict Chat selection is one tagged value:
 

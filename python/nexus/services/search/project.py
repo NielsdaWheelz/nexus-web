@@ -101,6 +101,16 @@ def _locator(row: Mapping[str, Any]) -> dict[str, Any] | None:
     """The row's reader locator, or None where its evidence span no longer resolves."""
     if row["type"] not in ("content_chunk", "evidence_span"):
         return row.get("locator")
+    if row.get("chunk_owner_kind") == "fragment":
+        raw = row["chunk_locator"]
+        return {
+            "type": "x_capture_offsets",
+            "capture_id": raw["capture_id"],
+            "fragment_id": raw["fragment_id"],
+            "start_offset": raw["start_offset"],
+            "end_offset": raw["end_offset"],
+            "text_quote_selector": {"exact": row["span_text"], "prefix": None, "suffix": None},
+        }
     resolution = evidence_resolution(
         evidence_span_id=row["span_id"],
         owner_id=row.get("source_media_id", row["media_id"]),
@@ -123,6 +133,10 @@ def _refs(row: Mapping[str, Any]) -> tuple[ResourceRef, ResourceRef]:
     """(occurrence, owner): the resource a hit names and the one that receives it."""
     t = row["type"]
     ref = _ref(SCHEMES.get(t) or t, row["id"])
+    if row.get("chunk_owner_kind") == "fragment":
+        return ref, _ref("fragment", UUID(str(row["chunk_locator"]["fragment_id"])))
+    if (row.get("locator") or {}).get("type") == "x_capture_offsets":
+        return ref, _ref("fragment", UUID(str(row["locator"]["fragment_id"])))
     if t == "message":
         return ref, _ref("conversation", row["conversation_id"])
     if t == "evidence_span":
@@ -155,7 +169,11 @@ def project(
         for (family, owner), family_ids in groups.items()
         for row in hydrate(db, viewer_id, family, family_ids, terms, reading_media_id=owner)
     }
-    sourced = [row["media_id"] for row in rows.values() if "media_title" in row]
+    sourced = [
+        row["media_id"]
+        for row in rows.values()
+        if row.get("media_id") is not None and "media_title" in row
+    ]
     credits = load_contributor_credits_for_media(db, sourced)
     credits |= load_contributor_credits_for_podcasts(db, ids.get("podcast", []))
     summaries = media_summaries(db, viewer_id=viewer_id, media_ids=ids.get("media", []))
@@ -175,7 +193,11 @@ def project(
             )
         ):
             continue
-        if row.get("reading_media_id") is not None:
+        if (
+            row.get("reading_media_id") is not None
+            and row.get("chunk_owner_kind") != "fragment"
+            and (locator or {}).get("type") != "x_capture_offsets"
+        ):
             scoped = scoped_media_passage(
                 db,
                 viewer_id=viewer_id,
@@ -227,13 +249,15 @@ def project(
         for index, (row, _, locator, ref, owner) in enumerate(placed)
         if ref.scheme not in ("highlight", "passage_anchor")
         and locator is not None
-        and locator["type"] in ("web_text_offsets", "epub_fragment_offsets")
+        and locator["type"] in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets")
     ]
     rich = source_excerpts(
         db,
         [
             SourceExcerptRequest(
-                reading_id=UUID(str(row.get("reading_media_id") or owner.id)),
+                reading_id=owner.id
+                if locator["type"] == "x_capture_offsets"
+                else UUID(str(row.get("reading_media_id") or owner.id)),
                 fragment_id=UUID(str(locator["fragment_id"])),
                 start=locator["start_offset"],
                 end=locator["end_offset"],
@@ -257,7 +281,9 @@ def project(
                 media_id=row["media_id"],
                 media_kind=row["media_kind"],
                 title=row["media_title"],
-                contributors=credits.get(row["media_id"], []),
+                contributors=credits.get(row["media_id"], [])
+                if row["media_id"] is not None
+                else [],
                 original_published_date=row["original_published_date"],
             )
             values |= {"source": source, "title": source.title}
@@ -337,7 +363,9 @@ def project(
         from nexus.services.reader_document import transcript_identity
 
         source_identity = (
-            f"g{row['publication_generation']}"
+            locator["capture_id"]
+            if locator and locator["type"] == "x_capture_offsets"
+            else f"g{row['publication_generation']}"
             if row.get("publication_generation") is not None
             else transcript_identity(row["source_unit_ids"])
             if row.get("media_kind") in ("podcast_episode", "video") and row.get("source_unit_ids")

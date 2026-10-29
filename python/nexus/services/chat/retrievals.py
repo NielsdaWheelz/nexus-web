@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import XPostSource
+from nexus.db.models import XPostMedia
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
@@ -301,9 +301,9 @@ def lock_retrieval_media(db: Session, citations: Sequence[RetrievalCitation]) ->
     """Batch admission takes canonical post reference locks in media-id order."""
     ids = sorted({UUID(citation.media_id) for citation in citations if citation.media_id})
     for media_id in db.scalars(
-        select(XPostSource.media_id)
-        .where(XPostSource.media_id.in_(ids))
-        .order_by(XPostSource.media_id)
+        select(XPostMedia.media_id)
+        .where(XPostMedia.media_id.in_(ids))
+        .order_by(XPostMedia.media_id)
     ):
         lock_media_for_reference(db, media_id)
 
@@ -324,7 +324,7 @@ def insert_retrieval(
 
     if (
         citation.media_id is not None
-        and db.scalar(select(XPostSource.id).where(XPostSource.media_id == UUID(citation.media_id)))
+        and db.scalar(select(XPostMedia.id).where(XPostMedia.media_id == UUID(citation.media_id)))
         is not None
     ):
         media_id = UUID(citation.media_id)

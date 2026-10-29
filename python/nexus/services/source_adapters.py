@@ -29,7 +29,6 @@ from nexus.db.models import (
     MediaKind,
     MediaSourceAttempt,
     XArticleSource,
-    XPostAlias,
 )
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
@@ -159,6 +158,7 @@ def acquire(
             )
         case st.X_AUTHOR_THREAD | st.X_POST:
             assert target is not None
+            assert attempt.created_by_user_id is not None
             _begin(session_factory, media_id, fence, _ARTICLE)
             scope: XSourceScope = (
                 "author_thread" if attempt.source_type == st.X_AUTHOR_THREAD else "post"
@@ -166,22 +166,21 @@ def acquire(
             with session_factory() as db:
                 get_repeatable_read_db(db)
                 prior = load_prior_x_source(
-                    db, media_id=media_id, requested_revision_id=target, scope=scope
+                    db,
+                    media_id=media_id,
+                    requested_revision_id=target,
+                    scope=scope,
+                    viewer_id=attempt.created_by_user_id,
                 )
-                requested_owner = db.scalar(
-                    select(XPostAlias.post_media_id).where(XPostAlias.revision_id == target)
+            if scope == "post":
+                return prepare_x_source(
+                    acquired=x_client.fetch_x_post_capture(requested_revision_id=target),
+                    prior=prior,
                 )
-                baseline_ids = {media_id, *(post.media_id for post in prior.posts)}
-                if requested_owner is not None:
-                    baseline_ids.add(requested_owner)
-                baselines = {}
-                for identity in baseline_ids:
-                    latest = sa.latest_attempt(db, identity, lock=False)
-                    baselines[identity] = latest.id if latest else None
             carrier = x_client.lookup_x_carrier(requested_revision_id=target, prior=prior)
             carrier_revision_id = carrier.source_revision_id
             article_id = carrier.article_id
-            if scope == "author_thread" and carrier_revision_id is not None:
+            if carrier_revision_id is not None:
 
                 def lock_article(db: Session) -> None:
                     sa.lock_identity(db, f"x-article-carrier:{carrier_revision_id}")
@@ -213,9 +212,8 @@ def acquire(
                     ),
                 )
             return prepare_x_source(
-                acquired=x_client.fetch_x_source(carrier=carrier, scope=scope),
+                acquired=x_client.fetch_x_source(carrier=carrier, scope="author_thread"),
                 prior=prior,
-                baseline_attempt_ids=baselines,
             )
         case st.X_ARTICLE:
             assert target is not None

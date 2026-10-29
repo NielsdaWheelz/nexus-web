@@ -272,7 +272,6 @@ export default function ImportsList({
         navigation: { label: "Imports views", content: navigation },
         query: {
           kind: "Controls",
-          label: "Search imports",
           content: toolbar,
           focusInput,
         },

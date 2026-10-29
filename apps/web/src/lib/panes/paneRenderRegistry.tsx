@@ -23,6 +23,7 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
   browsePreview: () =>
     import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
+  xCapture: () => import("@/app/(authenticated)/x/captures/[id]/CapturePaneBody"),
   conversations: () =>
     import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),

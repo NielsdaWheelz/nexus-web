@@ -66,6 +66,8 @@ from nexus.schemas.llm import (
 from nexus.services.generation.policy import (
     CHAT_CONTEXT_BUDGET_TOKENS,
     CHAT_OUTPUT_BUDGET_TOKENS,
+    chat_effort_default,
+    chat_model_default,
     policy,
 )
 
@@ -76,11 +78,11 @@ _TTL_SECONDS = 60
 _RETRY_SECONDS = 10
 _FETCH_SECONDS = 120.0
 _PROVIDERS: dict[GenerationApiProvider, tuple[str, str]] = {
-    "openai": ("OpenAI API", "OpenAI"),
-    "anthropic": ("Anthropic API", "Anthropic"),
-    "gemini": ("Google Gemini API", "Google"),
-    "deepseek": ("DeepSeek API", "DeepSeek"),
-    "xai": ("xAI API", "xAI"),
+    "openai": ("OpenAI", "OpenAI"),
+    "anthropic": ("Anthropic", "Anthropic"),
+    "gemini": ("Gemini", "Google"),
+    "deepseek": ("DeepSeek", "DeepSeek"),
+    "xai": ("xAI", "xAI"),
 }
 
 
@@ -259,9 +261,51 @@ class _Model:
     max_output_tokens: int | None
     input_modalities: tuple[Literal["text", "image"], ...]
     reasoning: tuple[AgentReasoningFacts | ApiReasoningFacts, ...]
-    default_reasoning: str | None
     target: CodexTarget | ProviderTarget
     chat_capable: bool
+
+
+def _chat_defaults(provider: GenerationApiProvider | None, model: _Model) -> set[str]:
+    defaults: set[str] = set()
+    for mode in dict.fromkeys(row.mode for row in model.reasoning):
+        choices = [row for row in model.reasoning if row.mode == mode]
+        effort = chat_effort_default(provider, model.key, mode)
+        if effort is not None:
+            default = next((row for row in choices if row.effort == effort), None)
+        elif len(choices) == 1:
+            default = choices[0]
+        elif len(choices) == 2:
+            default = max(choices, key=lambda row: row.effort_order)
+        else:
+            default = None
+        if default is not None:
+            defaults.add(default.key)
+    return defaults
+
+
+def _reasoning_labels(
+    row: AgentReasoningFacts | ApiReasoningFacts,
+) -> tuple[str | None, str, str]:
+    mode = (
+        {
+            "standard": "Standard",
+            "pro": "Pro",
+            "adaptive": "Adaptive",
+            "disabled": "Thinking Off",
+        }.get(row.mode, row.mode)
+        if row.mode is not None
+        else None
+    )
+    effort = {
+        "none": "None",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra High",
+        "max": "Max",
+        "ultra": "Ultra",
+    }.get(row.effort, row.effort)
+    return mode, effort, effort if mode is None else f"{mode} · {effort}"
 
 
 def _compose(
@@ -312,7 +356,10 @@ def _compose(
                 state = readiness
             elif tool_block is not None:
                 state = tool_block
+            defaults = _chat_defaults(provider, model)
+            reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in model.reasoning:
+                mode_label, effort_label, reasoning_label = _reasoning_labels(reasoning)
                 selection: GenerationSelection = (
                     ProviderApiSelection(
                         route="ProviderApi", model_ref=model.key, reasoning=reasoning.key
@@ -327,7 +374,7 @@ def _compose(
                     presentation=SelectionPresentation(
                         route_label=label,
                         model_label=model.label,
-                        reasoning_label=reasoning.label,
+                        reasoning_label=reasoning_label,
                         billing=billing,
                         privacy=privacy,
                         processor_chain=chain,
@@ -337,6 +384,19 @@ def _compose(
                     context_window=model.context_window,
                     max_output_tokens=model.max_output_tokens,
                     target=model.target,
+                )
+                reasoning_rows.append(
+                    GenerationReasoningRow(
+                        key=reasoning.key,
+                        mode=reasoning.mode,
+                        mode_label=mode_label,
+                        effort=reasoning.effort,
+                        effort_label=effort_label,
+                        effort_order=reasoning.effort_order,
+                        chat_default=reasoning.key in defaults,
+                        readiness=readiness,
+                        chat_state=state,
+                    )
                 )
             context, output = _budgets(model.context_window, model.max_output_tokens)
             model_rows.append(
@@ -350,19 +410,7 @@ def _compose(
                     effective_chat_output_budget_tokens=output,
                     readiness=readiness,
                     input_modalities=model.input_modalities,
-                    source_default_reasoning=model.default_reasoning,
-                    reasoning=tuple(
-                        GenerationReasoningRow(
-                            key=reasoning.key,
-                            label=reasoning.label,
-                            mode=reasoning.mode,
-                            effort=reasoning.effort,
-                            effort_order=reasoning.effort_order,
-                            readiness=readiness,
-                            chat_state=state,
-                        )
-                        for reasoning in model.reasoning
-                    ),
+                    reasoning=tuple(reasoning_rows),
                 )
             )
         routes.append(
@@ -373,6 +421,7 @@ def _compose(
                 billing=billing,
                 privacy=privacy,
                 processor_chain=chain,
+                default_model=chat_model_default(provider),
                 models=tuple(model_rows),
             )
         )
@@ -409,7 +458,6 @@ def _codex_model(catalog: AgentModelCatalog, row: AgentModelFacts) -> _Model:
         max_output_tokens=_value(row.source_max_output_tokens),
         input_modalities=row.input_modalities,
         reasoning=row.reasoning,
-        default_reasoning=_value(row.source_default_reasoning),
         target=CodexTarget(
             model_key=row.key,
             definition_revision=catalog.definition_revision,
@@ -430,7 +478,6 @@ def _api_model(row: ApiModelFacts) -> _Model:
         max_output_tokens=_value(row.max_output_tokens),
         input_modalities=row.input_modalities,
         reasoning=row.reasoning,
-        default_reasoning=_value(row.source_default_reasoning),
         target=ProviderTarget(
             provider=row.provider, model_id=row.dispatch.model_id, supports_tools=capable
         ),
@@ -443,7 +490,7 @@ def _disclosure(
 ) -> tuple[str, SubscriptionBilling | MeteredApiBilling, PrivacyDisclosure, ProcessorChain]:
     if provider is None:
         return (
-            "Codex Personal",
+            "Codex",
             SubscriptionBilling(),
             PrivacyDisclosure(
                 summary=(

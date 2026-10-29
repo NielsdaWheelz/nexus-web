@@ -63,12 +63,12 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
-    options.push(action("earlier", "move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
+    options.push(action("next", "Play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
+    options.push(action("earlier", "Move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
-  if (future || failed) options.push(action("remove", "remove from queue", <Trash2 />, () => {
+    options.push(action("later", "Move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
+  if (future || failed) options.push(action("remove", "Remove from queue", <Trash2 />, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
     void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors, `removed “${title}” from queue`);
   }));

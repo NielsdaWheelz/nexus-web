@@ -176,7 +176,7 @@ class _Post(_Model):
 class _Node:
     post: _Post | XSourcePost
     history: tuple[str, ...] | None
-    prior_media_ids: frozenset[UUID]
+    prior_post_ids: frozenset[UUID]
 
     @property
     def revision_id(self) -> str:
@@ -326,7 +326,7 @@ class _Capture:
         groups: dict[str, list[_Post | XSourcePost]] = {}
         prior_ids: dict[str, set[UUID]] = {}
         histories: dict[str, tuple[str, ...] | None] = {}
-        entries = [(item.post, item.revision_ids, item.media_id) for item in self.prior.posts] + [
+        entries = [(item.post, item.revision_ids, item.post_id) for item in self.prior.posts] + [
             (post, post.history, None) for post in self.posts.values()
         ]
         for post, aliases, media_id in entries:
@@ -562,7 +562,7 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         saved_ids = {
             item.post.source_revision_id
             for item in prior.posts
-            if item.media_id in prior.primary_post_media_ids
+            if item.post_id in prior.primary_post_ids
         }
         capture.lookup(saved_ids, "check_saved_members")
         capture.resolve_edits(saved_ids)
@@ -582,31 +582,41 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
             direct.update(ref.id for ref in post.referenced_tweets) if isinstance(
                 post, _Post
             ) else direct.update(ref.target_revision_id for ref in post.content.references)
-        capture.lookup(direct, "lookup_context")
-        capture.resolve_edits(direct)
+        context_failed = False
+        try:
+            capture.lookup(direct, "lookup_context")
+        except ApiError:
+            context_failed = True
         nodes, aliases = capture.graph()
         selected = _select(nodes, aliases, requested_revision_id, prior, scope)
-        context = {aliases[identity] for identity in direct if identity in aliases}
-        relevant = selected | context
         _complete_expansions(
-            capture, {post.id for post in capture.posts.values() if aliases[post.id] in relevant}
+            capture,
+            {nodes[key].revision_id for key in selected if nodes[key].revision_id in capture.posts},
         )
-        if capture.operations == before:
+        for revision_id in direct:
+            try:
+                _complete_expansions(capture, {revision_id})
+            except ApiError:
+                continue
+        if context_failed or capture.operations == before:
             break
     nodes, aliases = capture.graph()
     selected = _select(nodes, aliases, requested_revision_id, prior, scope)
-    context = {aliases[identity] for identity in direct if identity in aliases}
     ordered = _order(nodes, aliases, selected)
     new_posts = []
-    for key in sorted(selected | context, key=lambda key: nodes[key].order):
-        observed = [post for post in capture.posts.values() if aliases[post.id] == key]
-        if observed:
-            history = nodes[key].history
-            latest = max(
-                observed,
-                key=lambda post: history.index(post.id) if history is not None else int(post.id),
-            )
-            new_posts.append(capture.normalize(_Node(latest, history, nodes[key].prior_media_ids)))
+    for key in sorted(selected, key=lambda key: nodes[key].order):
+        node = nodes[key]
+        observed = capture.posts.get(node.revision_id)
+        if observed is not None:
+            new_posts.append(capture.normalize(_Node(observed, node.history, node.prior_post_ids)))
+    captured_ids = {post.source_revision_id for post in new_posts}
+    for revision_id in sorted(direct - captured_ids, key=int):
+        observed = capture.posts.get(revision_id)
+        if observed is not None:
+            try:
+                new_posts.append(capture.normalize(_Node(observed, observed.history, frozenset())))
+            except ApiError:
+                continue
     unresolved = {
         node.parent
         for node in nodes.values()
@@ -618,11 +628,11 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         and node.parent_author_id in {None, author.id}
     }
     unchecked = tuple(
-        item.media_id
+        item.post_id
         for item in prior.posts
-        if item.media_id in prior.primary_post_media_ids
+        if item.post_id in prior.primary_post_ids
         and not any(
-            item.media_id in nodes[key].prior_media_ids
+            item.post_id in nodes[key].prior_post_ids
             and (
                 nodes[key].revision_id in capture.posts
                 or nodes[key].revision_id in capture.unavailable
@@ -661,7 +671,7 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
             search_exhausted=exhausted,
             limits=tuple(limits),
             unresolved_parent_revision_ids=tuple(sorted(unresolved, key=int)),
-            unchecked_primary_post_media_ids=unchecked,
+            unchecked_primary_post_ids=unchecked,
         ),
     )
 
@@ -720,7 +730,7 @@ def _select(
     selected.update(
         identity
         for identity, node in nodes.items()
-        if node.prior_media_ids.intersection(prior.primary_post_media_ids)
+        if node.prior_post_ids.intersection(prior.primary_post_ids)
     )
     changed = True
     while changed:
@@ -763,7 +773,7 @@ def _root(
     while True:
         node = nodes[key]
         if node.parent is None:
-            if isinstance(node.post, _Post) or prior.root_post_media_id in node.prior_media_ids:
+            if isinstance(node.post, _Post) or prior.root_post_id in node.prior_post_ids:
                 return key
             return None
         if node.parent_author_id is not None and node.parent_author_id != node.author_id:
@@ -774,8 +784,8 @@ def _root(
                 (
                     identity
                     for identity in selected
-                    if prior.root_post_media_id is not None
-                    and prior.root_post_media_id in nodes[identity].prior_media_ids
+                    if prior.root_post_id is not None
+                    and prior.root_post_id in nodes[identity].prior_post_ids
                 ),
                 None,
             )
@@ -900,3 +910,49 @@ def _error(code: ApiErrorCode, operation: str, *, status: int | None = None) -> 
         api_error_code=code.value,
     )
     return ApiError(code, _MESSAGES[code])
+
+
+def fetch_x_post_capture(*, requested_revision_id: str) -> XAcquiredSource:
+    """Acquire the requested body and exact direct references, without edit substitution."""
+    capture = _Capture(XPriorSource(), get_settings().x_api_acquisition_max_operations)
+    capture.lookup({requested_revision_id}, "lookup_post")
+    post = capture.posts.get(requested_revision_id)
+    if post is None:
+        raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_post")
+    _complete_expansions(capture, {requested_revision_id})
+    primary = capture.normalize(_Node(post, post.history, frozenset()))
+    direct = {reference.target_revision_id for reference in primary.content.references}
+    try:
+        capture.lookup(direct, "lookup_context")
+    except ApiError:
+        pass
+    posts = [primary]
+    for identity in sorted(direct - {requested_revision_id}, key=int):
+        target = capture.posts.get(identity)
+        if target is None:
+            continue
+        try:
+            _complete_expansions(capture, {identity})
+            posts.append(capture.normalize(_Node(target, target.history, frozenset())))
+        except ApiError:
+            # Context failure does not discard the validated primary body.
+            continue
+    return XAcquiredSource(
+        article_ids={},
+        scope="post",
+        requested_revision_id=requested_revision_id,
+        author=primary.content.author,
+        primary_revision_ids=(requested_revision_id,),
+        root_revision_id=None,
+        posts=tuple(posts),
+        unavailable=tuple(
+            XUnavailableObservation(checked_revision_id=identity, checked_at=at)
+            for identity, at in capture.unavailable.items()
+        ),
+        coverage=XSourceCoverage(
+            search_exhausted=None,
+            limits=("operation_limit",) if capture.limited else (),
+            unresolved_parent_revision_ids=(),
+            unchecked_primary_post_ids=(),
+        ),
+    )

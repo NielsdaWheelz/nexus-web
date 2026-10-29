@@ -10,7 +10,7 @@ import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/ap
 import type { EpisodeState } from "@/lib/podcasts/api";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
-import { Minus, type LucideIcon } from "lucide-react";
+import { Minus, Undo2, type LucideIcon } from "lucide-react";
 import {
   ACTION_CATALOG,
   BLOCKED_COPY,
@@ -32,7 +32,7 @@ import {
 import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
-import { LECTERN_INTENT_COPY, lecternFull } from "@/lib/lectern/lectern";
+import { lecternFull } from "@/lib/lectern/lectern";
 import { deleteLibrary, leaveLibrary, placements } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -120,7 +120,7 @@ export function projectLecternAction({
   readonly ctx: ActionContext;
   readonly busy: ReadonlySet<ActionId>;
   readonly run: (command: ActionCommand) => void;
-}): Extract<ActionDescriptor, { kind: "command" }> {
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
   const request = ctx.lectern.pending.get(mediaId);
   const { read, revision, collectionPending } = ctx.lectern;
   const currentIntent = request?.intent.kind ?? intent ?? "Ensure";
@@ -128,17 +128,17 @@ export function projectLecternAction({
   const disconnected = installedApp && !ctx.online;
   const retry = !disconnected && !request && collectionPending === null && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
-  const copy = LECTERN_INTENT_COPY[currentIntent];
+  const copy = currentIntent === "Ensure" ? { sending: "Adding…", check: "Check add" } : { sending: "Removing…", check: "Check removal" };
   const label = request
     ? {
-        Sending: `${copy.verb}…`,
+        Sending: copy.sending,
         Checking: copy.check,
         Unconfirmed: copy.check,
       }[request.phase]
-    : disconnected ? "lectern"
+    : disconnected ? "Lectern"
     : collectionPending !== null ? state.label
-    : retry ? "retry checking lectern"
-    : needsRead && blocked === null ? "checking lectern" : state.label;
+    : retry ? "Retry checking Lectern"
+    : needsRead && blocked === null ? "Checking Lectern" : state.label;
   let disabledReason: string | undefined;
   if (disconnected) disabledReason = "requires a connection";
   else if (request && request.phase !== "Unconfirmed")
@@ -252,8 +252,8 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
   const entry = ACTION_CATALOG[id];
   const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
   const label = selection.kind === "Podcast" && selection.state !== "all"
-    ? `mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
-    : `mark all ${status}…`;
+    ? `Mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
+    : `Mark all ${status}…`;
   return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
@@ -271,7 +271,7 @@ export function projectPodcastTranscriptAction({ podcastId, state, title, blocke
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const id = "TranscribePodcastEpisodes";
   const entry = ACTION_CATALOG[id];
-  const label = state === "all" ? entry.label : `transcribe ${state.replaceAll("_", " ")} episodes…`;
+  const label = state === "all" ? entry.label : `Transcribe ${state.replaceAll("_", " ")} episodes…`;
   return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
@@ -327,14 +327,14 @@ export function projectPodcastSubscriptionAction({ target, title, facts, disable
         break;
       case "Discovery": subscribed = false; label = ACTION_CATALOG.SubscribePodcast.label; break;
       case "Unavailable":
-        label = "subscription unavailable";
+        label = "Subscription unavailable";
         disabledReason = facts.resolution.reason === "NotFound" ? "this podcast is no longer available" : "this podcast discovery target is invalid";
         break;
       default: assertNever(facts.resolution);
     }
   } else {
     subscribed = facts.observedSubscribed;
-    label = subscribed === null ? "subscription status unknown" : subscribed ? "last known subscribed" : "last known not subscribed";
+    label = subscribed === null ? "Subscription status unknown" : subscribed ? "Last known subscribed" : "Last known not subscribed";
     disabledReason = facts.kind === "Failed" ? "couldn’t check subscription" : "checking subscription…";
   }
   disabledReason = installedApp && !ctx.online ? "requires a connection" : disabledReason;
@@ -342,7 +342,7 @@ export function projectPodcastSubscriptionAction({ target, title, facts, disable
   const entry = ACTION_CATALOG[id];
   return {
     kind: "command", id, label,
-    accessibleLabel: `${facts.kind === "Ready" && subscribed ? `subscribed; ${label}` : label}: ${title}`,
+    accessibleLabel: `${facts.kind === "Ready" && subscribed ? `Subscribed. ${label}` : label}: ${title}`,
     icon: createElement(PodcastSubscriptionIcon, { subscribed: subscribed === true }), hasPopup: "dialog",
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined,
     restoreFocusOnClose: false,
@@ -374,7 +374,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
       if (disabledReason !== null) return;
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
       const successFocus = focus?.afterRemoval;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "add to library…", title,
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label, title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
           focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
@@ -395,13 +395,13 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly accessibleLabel: string } {
-  const label = `remove from ${libraryName}`;
+  const label = `Remove from ${libraryName}`;
   const disabledReason = installedApp && !ctx.online ? "requires a connection"
     : blocked !== null ? BLOCKED_COPY[blocked]
     : !canRemove ? "a library admin must remove this subscription." : undefined;
   return {
     kind: "command", id: "PodcastLibraryRemoval", label,
-    accessibleLabel: `remove ${title} from ${libraryName}`,
+    accessibleLabel: `Remove ${title} from ${libraryName}`,
     icon: createElement(Minus, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason, restoreFocusOnClose: false,
     onSelect: detail => {
@@ -721,7 +721,7 @@ export function projectResourceActions(
     if (pending === null) return null;
     if (isStaleBuild(pending.error)) {
       return make(actionId, null, () => { if (!installedApp) window.location.reload(); }, {
-        state: { label: installedApp ? "update nexus" : "reload app", icon: ACTION_CATALOG.RefreshSource.icon },
+        state: { label: installedApp ? "Update Nexus" : "Reload app", icon: ACTION_CATALOG.RefreshSource.icon },
         disabledReason: installedApp ? "install the current nexus apk, then reopen the app." : undefined,
         tracked: false,
       });
@@ -730,7 +730,7 @@ export function projectResourceActions(
       ? "this request is being sent"
       : !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
     return make(actionId, null, () => ctx.admissions.retry(pending.key), {
-      state: { label: "retry same request", icon: ACTION_CATALOG[actionId].icon },
+      state: { label: "Retry same request", icon: ACTION_CATALOG[actionId].icon },
       tracked: false,
       disabledReason,
     });
@@ -818,7 +818,7 @@ export function projectResourceActions(
       }
       case "AddUnfinishedToLectern": {
         const target = collectionTarget(resource);
-        const label = target.kind === "Podcast" ? "add unfinished episodes to lectern…" : ACTION_CATALOG.AddUnfinishedToLectern.label;
+        const label = target.kind === "Podcast" ? "Add unfinished episodes to Lectern…" : ACTION_CATALOG.AddUnfinishedToLectern.label;
         return make(action.kind, blocked, ({ triggerEl }) => ctx.overlays.open({ kind: "CollectionLectern", target, title: facts.label }, invocationFocus(triggerEl, returnFocus)),
           { tracked: false, state: { label, icon: ACTION_CATALOG.AddUnfinishedToLectern.icon } });
       }
@@ -944,7 +944,7 @@ export function projectConsumptionUndoActions(target: ActionContext["consumption
     return target.kind === "Podcast" && item.target.podcast_id === target.podcast_id;
   }).map(item => {
     const disabledReason = !ctx.online ? "requires a connection" : undefined;
-    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel,
+    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Undo2, { size: 16, "aria-hidden": true }),
       disabled: disabledReason !== undefined || item.phase === "Sending", disabledReason, busy: item.phase === "Sending",
       onSelect: () => { if (disabledReason === undefined && item.phase !== "Sending") ctx.consumption.undo(item.commandKey); },
     };

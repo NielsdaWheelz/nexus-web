@@ -1,5 +1,7 @@
 "use client";
 
+import { ArrowRightLeft, UserMinus } from "lucide-react";
+
 // The Members tab for an admin of a named library: invite an existing user, the
 // people (role, remove, transfer ownership) and the pending invitations (revoke).
 // Every command is request, then reread: one command at a time, and after any
@@ -294,7 +296,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       {
                         kind: "command",
                         id: `LibraryMember.Remove.${member.user_id}`,
-                        label: "Remove member…",
+                        label: "Remove member…", icon: <UserMinus size={16} aria-hidden="true" />,
                         tone: "danger",
                         restoreFocusOnClose: false,
                         onSelect: ask({
@@ -314,7 +316,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                             {
                               kind: "command" as const,
                               id: `LibraryMember.Transfer.${member.user_id}`,
-                              label: "Transfer ownership…",
+                              label: "Transfer ownership…", icon: <ArrowRightLeft size={16} aria-hidden="true" />,
                               tone: "danger" as const,
                               restoreFocusOnClose: false,
                               onSelect: ask({

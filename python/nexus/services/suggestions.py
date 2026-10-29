@@ -507,11 +507,11 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
                 JOIN anchor_chunks admitted ON admitted.chunk_id=cc.id AND admitted.reading_media_id=a.id
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
                 JOIN content_index_states cis
-                  ON cis.owner_kind = 'media' AND cis.owner_id = cc.owner_id
+                  ON cis.owner_kind = cc.owner_kind AND cis.owner_id = cc.owner_id
                  AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
                  AND cis.active_embedding_provider = :embedding_provider
                  AND cis.active_embedding_model = :embedding_model
-                WHERE cc.owner_kind = 'media'
+                WHERE cc.owner_kind IN ('media','fragment')
                   AND ce.embedding_provider = :embedding_provider
                   AND ce.embedding_model = :embedding_model
                   AND ce.embedding_dimensions = :embedding_dimensions
@@ -532,12 +532,12 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             JOIN peer_chunks admitted ON admitted.chunk_id=cc.id
             JOIN eligible_media_partitions eligible ON eligible.media_id=admitted.reading_media_id
             JOIN content_index_states peer_state
-              ON peer_state.owner_kind = 'media' AND peer_state.owner_id = cc.owner_id
+              ON peer_state.owner_kind = cc.owner_kind AND peer_state.owner_id = cc.owner_id
              AND peer_state.status = 'ready' AND peer_state.lexical_revision = peer_state.revision
              AND peer_state.active_embedding_provider = :embedding_provider
              AND peer_state.active_embedding_model = :embedding_model
             CROSS JOIN anchor_vectors av
-            WHERE cc.owner_kind = 'media' AND admitted.reading_media_id <> av.anchor_media_id
+            WHERE cc.owner_kind IN ('media','fragment') AND admitted.reading_media_id <> av.anchor_media_id
               AND ce.embedding_provider = :embedding_provider
               AND ce.embedding_model = :embedding_model
               AND ce.embedding_dimensions = :embedding_dimensions

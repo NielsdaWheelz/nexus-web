@@ -51,7 +51,7 @@ export default function NotesPaneBody() {
   const statusId = useId();
   const visible = rows.filter(row => matchesPaneFilterQuery(filter.query, [row.title.text]));
   usePaneChrome({
-    query: { kind: "Controls", label: "Filter pages", focusInput, content: <PaneQueryToolbar
+    query: { kind: "Controls", focusInput, content: <PaneQueryToolbar
       inputRef={inputRef}
       input={{ label: "Filter pages", placeholder: "Filter pages", value: filter.query, appliedValue: filter.query, onChange: filter.onQueryChange, onClear: filter.clearQuery }}
       status={{ placement: "Inline", id: statusId, visible: false, content: <PaneFilterRowsStatus id={statusId} status={filter.rowStatus} query={filter.query} announceQueryChanges={read.data !== null && read.error === null} /> }}

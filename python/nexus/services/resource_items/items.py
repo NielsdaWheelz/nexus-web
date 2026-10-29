@@ -619,6 +619,17 @@ def _rows(
         row["excerpt_projection"] = row["excerpt_projection"].model_copy(
             update={"text_parts": parts}
         )
+    capture_fragments = [ref.id for ref in refs if ref.scheme == "fragment" and ref.uri in passages]
+    if capture_fragments:
+        for row in db.execute(
+            text("""SELECT f.id,COALESCE(c.payload #>> '{content,author,name}',
+                c.payload->>'attribution_text',c.payload->>'parent_title') AS title
+                FROM fragments f JOIN x_post_captures c ON c.id=f.x_post_capture_id
+                WHERE f.id=ANY(:ids)"""),
+            {"ids": capture_fragments},
+        ):
+            if row.title:
+                out[f"fragment:{row.id}"]["title"] = row.title
     return out, passages
 
 

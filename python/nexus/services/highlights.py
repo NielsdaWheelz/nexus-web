@@ -35,6 +35,7 @@ from nexus.schemas.highlights import (
     PdfAnchorOut,
     PdfQuadOut,
     TypedHighlightOut,
+    XCaptureAnchorOut,
 )
 from nexus.services import note_bodies
 from nexus.services.media_text_scope import (
@@ -45,8 +46,6 @@ from nexus.services.media_text_scope import (
 from nexus.services.resource_grants import invalidate_annotation_visibility
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
-
-AFFIX_CODEPOINTS = 64
 
 
 def _parent_media_id(highlight: Highlight) -> UUID:
@@ -152,7 +151,9 @@ def recent_highlight_anchor_facts(
     )
 
 
-def _anchor_out(highlight: Highlight) -> FragmentAnchorOut | PdfAnchorOut:
+def _anchor_out(
+    db: Session, highlight: Highlight
+) -> FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut:
     pdf_anchor = highlight.pdf_anchor
     if highlight.anchor_kind == "pdf_page_geometry" and pdf_anchor is not None:
         return PdfAnchorOut(
@@ -165,6 +166,18 @@ def _anchor_out(highlight: Highlight) -> FragmentAnchorOut | PdfAnchorOut:
         )
     fragment_anchor = highlight.fragment_anchor
     if highlight.anchor_kind == "fragment_offsets" and fragment_anchor is not None:
+        if highlight.anchor_media_id is None:
+            capture_id = db.scalar(
+                select(Fragment.x_post_capture_id).where(Fragment.id == fragment_anchor.fragment_id)
+            )
+            if capture_id is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            return XCaptureAnchorOut(
+                capture_id=capture_id,
+                fragment_id=fragment_anchor.fragment_id,
+                start_offset=fragment_anchor.start_offset,
+                end_offset=fragment_anchor.end_offset,
+            )
         return FragmentAnchorOut(
             media_id=_parent_media_id(highlight),
             fragment_id=fragment_anchor.fragment_id,
@@ -236,7 +249,7 @@ def annotations_changed(db: Session, highlight_ids: Iterable[UUID]) -> None:
 def _highlight_out(
     highlight: Highlight,
     viewer_id: UUID,
-    anchor: FragmentAnchorOut | PdfAnchorOut,
+    anchor: FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut,
     conversations: list[LinkedConversationRef],
     note_blocks: list[LinkedNoteBlockRef],
 ) -> TypedHighlightOut:
@@ -259,7 +272,7 @@ def _highlight_out(
 def _project_anchored(
     db: Session,
     viewer_id: UUID,
-    anchored: list[tuple[Highlight, FragmentAnchorOut | PdfAnchorOut]],
+    anchored: list[tuple[Highlight, FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut]],
     reading_media_id: UUID | None = None,
 ) -> list[TypedHighlightOut]:
     from nexus.services.resource_items.items import resource_items_out
@@ -330,7 +343,7 @@ def _project_anchored(
 def project_highlights_with_links(
     db: Session, viewer_id: UUID, highlights: list[Highlight]
 ) -> list[TypedHighlightOut]:
-    return _project_anchored(db, viewer_id, [(item, _anchor_out(item)) for item in highlights])
+    return _project_anchored(db, viewer_id, [(item, _anchor_out(db, item)) for item in highlights])
 
 
 def list_highlights_for_media(
@@ -399,7 +412,7 @@ def list_highlights_for_media(
     projected = _project_anchored(
         db,
         viewer_id,
-        [(item, unresolved if live is None else _anchor_out(item)) for item, live in rows],
+        [(item, unresolved if live is None else _anchor_out(db, item)) for item, live in rows],
         media_id,
     )
     return projected

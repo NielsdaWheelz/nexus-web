@@ -41,7 +41,7 @@ export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,selection:null,color:null,embedded_refs:[]};
+  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[]};
   switch(state.kind) {
     case "note": {
       const {body}=mergeNote(state.body_state,null);
@@ -53,14 +53,14 @@ export function projectResource(state:ResourceState):ResourceProjection {
     case "page": return {...common,title:mergeTitle(state.title_state,null).title,local_date:state.local_date};
     case "highlight": {
       const {excerpt, ...selection} = state.selection.value;
-      return {...common,source_ref:state.source_ref,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
+      return {...common,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
     }
   }
 }
 export function projectPassage(state: PassageState): ResourceProjection {
   const excerpt = excerptView(state.capture.value.excerpt, "compact", {kind:"capture"});
   const text = excerpt.kind === "content" ? excerptTextParts(excerpt.body).exact : "table excerpt";
-  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value})};
+  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value})};
 }
 function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState {
   if(!isResourceRef(patch.ref)) throw new TypeError("Invalid resource reference");

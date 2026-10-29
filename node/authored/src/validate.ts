@@ -22,6 +22,8 @@ function publication(value: Publication | null): void {
   if (value === null) return;
   if (value.kind === "reader") {
     if (!Number.isSafeInteger(value.generation) || value.generation < 1) throw new TypeError("Invalid reader generation");
+  } else if (value.kind === "x_capture") {
+    uuid(value.capture_id);
   } else if (value.kind !== "note_text" || !/^[0-9a-f]{64}$/u.test(value.sha256)) throw new TypeError("Invalid note publication");
 }
 function integer(value: number, minimum = 0): void {
@@ -42,6 +44,11 @@ function validateLocatorCapture(locator: Locator, source_ref: string): void {
     uuid(locator.media_id);
   }
   switch (locator.type) {
+    case "x_capture_offsets":
+      uuid(locator.capture_id); uuid(locator.fragment_id);
+      if (source_ref !== `fragment:${locator.fragment_id}`) throw new TypeError("Locator fragment disagrees with immutable source");
+      range(locator.start_offset, locator.end_offset);
+      break;
     case "web_text_offsets":
     case "epub_fragment_offsets":
       uuid(locator.fragment_id);
@@ -83,8 +90,12 @@ export function validateLocator(locator: Locator, source_ref: string): void {
   if ("media_id" in locator && source_ref !== `media:${locator.media_id}`) throw new TypeError("Locator media disagrees with immutable source");
 }
 function selection(value: SelectionCapture, source_ref: string): void {
-  if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
-  if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");
+  if (value.locator.type === "x_capture_offsets") {
+    if (value.publication?.kind !== "x_capture" || value.publication.capture_id !== value.locator.capture_id) throw new TypeError("Capture publication disagrees with locator");
+  } else {
+    if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
+    if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");
+  }
   if (value.locator.type === "pdf_page_geometry") {
     const quads=value.locator.quads;
     const canonical = canonicalQuads(quads);
@@ -129,8 +140,13 @@ export function validateChange(change: Change): void {
     register(passage.capture); publication(passage.capture.value.publication);
     if (typeof passage.capture.value.quote_exact !== "string") throw new TypeError("Expected literal passage quote");
     if (normalizeQuote(passage.capture.value.quote_exact) !== passage.normalized_exact) throw new TypeError("Passage quote disagrees with semantic binding");
+    if (passage.capture.value.publication?.kind === "x_capture" && passage.capture.value.locator?.type !== "x_capture_offsets") throw new TypeError("Capture publication requires a capture locator");
     // A media passage keys its reading slice; placement must prove that slice's relation to the locator's physical source.
-    if (passage.capture.value.locator !== null) validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
+    if (passage.capture.value.locator !== null) {
+      validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
+      const locator = passage.capture.value.locator;
+      if (locator.type === "x_capture_offsets" && (passage.capture.value.publication?.kind !== "x_capture" || passage.capture.value.publication.capture_id !== locator.capture_id)) throw new TypeError("Capture publication disagrees with locator");
+    }
   }
   for (const stub of change.source_stubs) {
     if (!isResourceRef(stub.source_ref)) throw new TypeError("Invalid captured source ref");

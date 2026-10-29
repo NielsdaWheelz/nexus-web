@@ -200,7 +200,6 @@ export default function LecternPaneBody() {
     query: valid
       ? {
           kind: "Controls",
-          label: "Filter Lectern",
           focusInput,
           content: (
             <PaneQueryToolbar

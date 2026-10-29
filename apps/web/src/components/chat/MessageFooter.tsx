@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Copy, Info, RotateCcw } from "lucide-react";
+import { Copy, Info } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
@@ -13,7 +13,6 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
-import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useChatPane } from "./ChatSurface";
 import styles from "./MessageFooter.module.css";
 
@@ -30,7 +29,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
   status?: string | null;
   alternatives: ReactNode;
 }) {
-  const { store, command } = useChatPane();
   const feedback = useFeedback();
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -43,12 +41,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
       feedback.receipt({ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." });
     }
-  };
-  const regenerate = (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Unowned") return;
-    event.preventDefault();
-    if (activation.kind === "Open") void store.repeat("regenerate", message.id, null, activation.intent);
   };
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
@@ -64,11 +56,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       {pending ? null : (
         <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
-            <Button iconOnly icon={<Copy />} aria-label="copy message" className={styles.secondary} onClick={() => void copy()} />
-          ) : null}
-          {message.role === "assistant" && message.status === "complete" && run ? (
-            <Button iconOnly icon={<RotateCcw />} aria-label="regenerate response" className={styles.secondary}
-              disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate} />
+            <Button iconOnly icon={<Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
           ) : null}
           <MessageMenu message={message} onOpenChange={setMenuOpen} />
         </div>
@@ -86,7 +74,7 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
   const local: ActionDescriptor[] = [{
     kind: "command",
     id: "MessageInformation",
-    label: "message information…",
+    label: "Message information…",
     icon: <Info size={16} aria-hidden="true" />,
     onSelect: ({ triggerEl }) => openDialog({ kind: "Information", messageId: message.id, opener: triggerEl }),
   }];
@@ -98,12 +86,13 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
       options.push({ ...option, disabled: true, disabledReason: "finish sending this message first" });
     else if ((repeat || option.id === "DeleteMessage") && busy) options.push({ ...option, disabled: true, disabledReason: BUSY });
     else options.push(option);
-    if (!repeat) continue;
+    if (!repeat || option.kind === "custom") continue;
     const operation = option.id === "RerunMessage" ? "rerun" : "regenerate";
     options.push({
       kind: "command",
       id: "RepeatWithModel",
-      label: `${operation} with…`,
+      label: option.id === "RerunMessage" ? "Rerun with…" : "Regenerate with…",
+      icon: option.icon,
       disabled: busy || option.disabled,
       disabledReason: busy ? BUSY : option.disabledReason,
       onSelect: ({ triggerEl, openIntent }) => openDialog({ kind: "Repeat", messageId: message.id, operation, opener: triggerEl, openIntent }),

@@ -62,7 +62,7 @@ function shelfSource(mediaId: string, generation: number): ReaderSource {
       const assets = `/api/media/${mediaId}/assets/`;
       const units = doc.units.map((unit) => ({
         ...unit,
-        html: unit.html.replaceAll(assets, copyUrl(mediaId, "assets/")),
+        html: unit.html.replaceAll(assets, copyUrl(mediaId, "assets/")).replaceAll("/nexus-copy/", copyUrl(mediaId, "")),
       }));
       return { ...doc, units };
     },

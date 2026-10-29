@@ -298,7 +298,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
-    query: { kind: "Controls", label: "Search content", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: message || "\u00a0", detail: count ? `${count} loaded ${unit}.` : undefined, announce: true, action: statusAction }} /> },
+    query: { kind: "Controls", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: message || "\u00a0", detail: count ? `${count} loaded ${unit}.` : undefined, announce: true, action: statusAction }} /> },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : pending ? { kind: "Pending" } : { kind: "None" } },
   });
   const sections = [

@@ -345,32 +345,24 @@ function PaneView({
       )
     : undefined;
   const paneActions: ActionDescriptor[] = [];
-  if (query) {
-    const isFind = query.kind === "Find";
-    const verb = isFind ? "Find" : query.label;
-    const resolving = isFind && find === null;
+  if (isMobile && query?.kind === "Find") {
+    const resolving = find === null;
     const menuLabels = {
-      collapsed: verb,
+      collapsed: "Find",
       expanded: "Close find",
     };
     paneActions.push({
       kind: "command",
       id: "Pane.Search",
-      label: verb,
+      label: "Find",
       icon: <Search size={16} aria-hidden="true" />,
       disabled: resolving || undefined,
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
       restoreFocusOnClose: false,
-      state:
-        isMobile && isFind
-          ? findVisible
-            ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
-            : { kind: "disclosure", expanded: false, menuLabels }
-          : undefined,
-      onSelect: () => {
-        if (isMobile && isFind && findVisible) closeFind();
-        else openQuery();
-      },
+      state: findVisible
+        ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
+        : { kind: "disclosure", expanded: false, menuLabels },
+      onSelect: () => findVisible ? closeFind() : openQuery(),
     });
   }
   if (find?.returnable) {
@@ -384,7 +376,7 @@ function PaneView({
   }
   if (refresh.command) paneActions.push(refresh.command);
   if (installedApp) paneActions.push({
-    kind: "command", id: "Catalog.Save", label: "save catalog for offline",
+    kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
     icon: <Download size={16} aria-hidden="true" />,
     disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
     disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,

@@ -10,15 +10,18 @@ import { ExcerptCaptureError, excerptView, excerptTextParts } from "@nexus/autho
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import Dialog from "@/components/ui/Dialog";
 import { useAuthoredStore } from "@/lib/authored/provider";
+import { assumeReaderSelectionKey, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import { bodyHasContent, emptyBody, type NoteBody } from "@nexus/authored/body";
 import NoteEditor from "@/components/notes/NoteEditor";
 import { attachNote, captureSelection, createHighlight, createReaderAnnotations, type Capture, type SourceLabel } from "../annotations";
-import { useReaderState, type Decorations, type MarkEvent, type SelectionNotice } from "../DocumentReader";
+import { useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
 import type { Reader } from "../runtime";
 import { AnnotationList, AnnotationQuote, AttachedNotes, LocalWritingError, PLACEMENT_COPY } from "./ReaderAnnotation";
 import styles from "./chrome.module.css";
@@ -27,8 +30,8 @@ const NO_SUBSCRIPTION = () => () => {};
 
 type Open =
   | { readonly kind: "selection"; readonly capture: Capture }
-  | { readonly kind: "annotation"; readonly id: string }
-  | { readonly kind: "choose"; readonly ids: readonly string[] };
+  | { readonly kind: "annotation"; readonly id: string; readonly mark: Mark | null }
+  | { readonly kind: "choose"; readonly marks: readonly Mark[] };
 
 /** What the reader view takes from the annotation layer; stable while nothing changes. */
 export interface ReaderAnnotationProps {
@@ -38,7 +41,7 @@ export interface ReaderAnnotationProps {
 }
 
 /** `available` false: this host has no source text (missing or failed); annotations still list. */
-export function useCompactAnnotations(reader: Reader, mediaId: string, source: SourceLabel, available: boolean) {
+export function useCompactAnnotations(reader: Reader, mediaId: string, source: SourceLabel, available: boolean, showPlaced = false) {
   const store = useAuthoredStore();
   const writing = useWritingRuntime();
   const [annotations] = useState(() => createReaderAnnotations(store, mediaId));
@@ -75,9 +78,10 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     if (!writing) return;
     const id = crypto.randomUUID();
     commit(() => createHighlight(writing, { id, capture, color: "yellow", note: withNote && hasNote ? note.body : null,
-      source: capture.sourceRef === `media:${mediaId}` ? source : null }), () => setOpen({ kind: "annotation", id }));
+      source: capture.sourceRef === `media:${mediaId}` || capture.sourceRef.startsWith("fragment:") ? source : null }), () => setOpen({ kind: "annotation", id, mark: null }));
   };
   const annotation = open?.kind === "annotation" ? annotations.annotation(open.id) : null;
+  const activeMark = open?.kind === "annotation" ? open.mark : null;
   const editor = (placeholder: string, onSave: () => void) => <NoteEditor editorKey={`reader-annotation:${mediaId}`} containingNoteRef={null}
     body={note.body} revision={note.revision} label="note on passage" placeholder={placeholder} compact editable={!busy}
     history={null} onEdit={edit => setNote(edit.after)} onSave={onSave} />;
@@ -99,17 +103,19 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     </Dialog>
     <Dialog open={open?.kind === "choose"} title="choose highlight" onClose={close}>
       {open?.kind === "choose" ? <ul className={styles.attachedNotes}>
-        {open.ids.flatMap(id => { const entry = annotations.annotation(id); return entry ? [<li key={id}>
-          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id }); }}>{entry.excerpt.kind === "content" ? excerptTextParts(entry.excerpt.body).exact : "table excerpt"}</Button>
+        {open.marks.flatMap(mark => { const id = mark.id; const entry = annotations.annotation(id); return entry ? [<li key={id}>
+          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id, mark }); }}>{entry.excerpt.kind === "content" ? excerptTextParts(entry.excerpt.body).exact : "table excerpt"}</Button>
         </li>] : []; })}
       </ul> : null}
     </Dialog>
     <Dialog open={open?.kind === "annotation"} title="highlight" onClose={close}>
       {annotation ? <div className={styles.compactAnnotation}>
         <AnnotationQuote annotation={annotation} />
+        {activeMark ? <Button onClick={() => { const anchor = activeMark.anchor; close(); void reader.inspect({ target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads }, signal: new AbortController().signal }); }}>view in source</Button> : null}
         <AttachedNotes annotation={annotation} />
         {editor(annotation.notes.length ? "add another note…" : "write a note…", () => { if (hasNote && writing && !blocked) commit(() => attachNote(writing, annotation, note.body), () => {}); })}
         <div className={styles.compactActions}>
+          {annotation.selection.publication?.kind === "x_capture" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: annotation.selection.publication.capture_id, highlightId: annotation.id }) })}>ask about this passage</a> : null}
           <Button emphasis="strong" disabled={busy || blocked || !hasNote || !writing} onClick={() => commit(() => attachNote(writing!, annotation, note.body), () => {})}>save note</Button>
           <Button tone="danger" disabled={busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: annotation.ref }), close)}>delete highlight</Button>
         </div>
@@ -121,7 +127,10 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const unplaced = state.annotations.filter(entry => entry.placement.kind !== "placed");
   const list = <>
     <LocalWritingError />
-    {unplaced.length ? <section aria-label="unplaced highlights">
+    {showPlaced && state.annotations.length ? <ResourceOutlineList scope={`capture-highlights:${mediaId}`} ariaLabel="your highlights">
+      {state.annotations.map(entry => <ResourceOutlineRow key={entry.ref} resourceRef={entry.ref} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />)}
+    </ResourceOutlineList> : null}
+    {!showPlaced && unplaced.length ? <section aria-label="unplaced highlights">
     {missing ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement="None" /> : null}
     <AnnotationList annotations={unplaced} />
   </section> : null}
@@ -144,8 +153,8 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const onMarks = useCallback((event: MarkEvent) => {
     if (event.kind !== "activate" || !event.marks.length) return;
     setIssue(null);
-    if (event.marks.length === 1) { setFocused(event.marks[0]!.id); setOpen({ kind: "annotation", id: event.marks[0]!.id }); }
-    else setOpen({ kind: "choose", ids: event.marks.map(mark => mark.id) });
+    if (event.marks.length === 1) { setFocused(event.marks[0]!.id); setOpen({ kind: "annotation", id: event.marks[0]!.id, mark: event.marks[0]! }); }
+    else setOpen({ kind: "choose", marks: event.marks });
   }, []);
   return { decorations, onSelection, onMarks, panel, list };
 }

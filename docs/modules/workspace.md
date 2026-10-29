@@ -355,7 +355,7 @@ readers keep their own document viewport and collection return anchors stay in
 `.routeContent`. canvas dragging begins only in the identity header's
 noninteractive region. controls and option labels never drag the canvas.
 
-`query` is `Controls {label, content, focusInput}` or `Find {find}`. absent means
+`query` is `Controls {content, focusInput}` or `Find {find}`. absent means
 unsupported; null find means a promised source is not ready. desktop renders
 every supported field, including a disabled resolving find field. mobile keeps
 ordinary collection/page/note controls visible; find starts collapsed, coexists
@@ -427,7 +427,8 @@ neighbour/input. options escape collapses only options, preserving selections.
 desktop input escape clears nonempty text; mobile find escape clears/collapses.
 only the active capable pane consumes `Pane.Search` (cmd/ctrl+f); existing
 interaction overlays win and unsupported/resolving panes retain native find.
-menu commands focus the permanent desktop field. source identity is
+only mobile find publishes the query menu command, retaining its disclosure
+while open. permanent query fields have no duplicate menu entry. source identity is
 `paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
 
 `usePaneFilterRows` owns source-local text and honest complete/partial/failed

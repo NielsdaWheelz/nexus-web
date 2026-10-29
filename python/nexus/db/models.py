@@ -118,6 +118,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ChatSelection(Base):
+    """The last admitted chat choice for one account."""
+
+    __tablename__ = "chat_selections"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    revision: Mapped[int] = mapped_column(BigInteger)
+    choice: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
 class Page(Base):
     """Projection of one authored page; kept while deleted, hidden by ``authored_visible``."""
 
@@ -390,7 +401,7 @@ class ContentIndexState(Base):
     active_embedding_model: Mapped[str | None]
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    owner_kind: Mapped[Literal["media", "note_block"]] = mapped_column(Text)
+    owner_kind: Mapped[Literal["media", "note_block", "fragment"]] = mapped_column(Text)
     owner_id: Mapped[UUID]
     revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     section_witness_key: Mapped[str | None]
@@ -402,6 +413,7 @@ class MediaSourceAttempt(Base):
 
     __tablename__ = "media_source_attempts"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    # Settled x-capture receipts retain this original identity after media deletion.
     media_id: Mapped[UUID]
     created_by_user_id: Mapped[UUID | None]
     source_type: Mapped[str]
@@ -426,28 +438,76 @@ class MediaSourceAttempt(Base):
 
 
 class XPostSource(Base):
-    """One canonical post's current body; its provider revisions are aliases."""
+    """Logical post identity, separate from immutable captured evidence."""
 
     __tablename__ = "x_post_sources"
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    media_id: Mapped[UUID]
-    source_attempt_id: Mapped[UUID]
-    source_revision_id: Mapped[str]
     logical_post_id: Mapped[str | None]
     edit_history_ids: Mapped[list[str] | None] = mapped_column(JSONB(none_as_null=True))
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
-    availability: Mapped[str]
-    body_captured_at: Mapped[datetime | None]
-    checked_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class XPostAlias(Base):
-    """An exact provider revision belongs to one canonical post."""
+    """An exact provider revision and its last availability observation."""
 
     __tablename__ = "x_post_aliases"
     id: Mapped[UUID] = mapped_column(primary_key=True)
     revision_id: Mapped[str]
-    post_media_id: Mapped[UUID]
+    post_id: Mapped[UUID]
+    availability: Mapped[str | None]
+    checked_at: Mapped[datetime | None]
+
+
+class XPostCapture(Base):
+    """Immutable evidence for one exact revision; asset work is separate."""
+
+    __tablename__ = "x_post_captures"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    post_id: Mapped[UUID]
+    source_revision_id: Mapped[str]
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    captured_at: Mapped[datetime]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    asset_job_id: Mapped[UUID | None]
+
+
+class XPostCaptureContext(Base):
+    __tablename__ = "x_post_capture_contexts"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    capture_id: Mapped[UUID]
+    relation: Mapped[str]
+    ordinal: Mapped[int]
+    referenced_revision_id: Mapped[str]
+    target_capture_id: Mapped[UUID | None]
+    outcome: Mapped[str]
+    error_code: Mapped[str | None]
+
+
+class XPostMedia(Base):
+    __tablename__ = "x_post_media"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID]
+    post_id: Mapped[UUID]
+    capture_id: Mapped[UUID]
+
+
+class XPostCaptureAsset(Base):
+    __tablename__ = "x_post_capture_assets"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    capture_id: Mapped[UUID]
+    asset_key: Mapped[str]
+    storage_path: Mapped[str]
+    mime: Mapped[str]
+    sha256: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    captured_at: Mapped[datetime]
+
+
+class XPostCaptureAdmission(Base):
+    __tablename__ = "x_post_capture_admissions"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    capture_id: Mapped[UUID]
 
 
 class XThreadSource(Base):
@@ -458,19 +518,19 @@ class XThreadSource(Base):
     media_id: Mapped[UUID]
     source_attempt_id: Mapped[UUID]
     author_id: Mapped[str]
-    root_post_media_id: Mapped[UUID | None]
+    root_capture_id: Mapped[UUID | None]
     published_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     membership_checked_at: Mapped[datetime | None]
     coverage: Mapped[dict[str, object]] = mapped_column(JSONB)
 
 
 class XThreadPost(Base):
-    """An ordered primary occurrence; published partial threads may overlap."""
+    """An ordered primary occurrence with a selected immutable capture."""
 
     __tablename__ = "x_thread_posts"
     id: Mapped[UUID] = mapped_column(primary_key=True)
     thread_media_id: Mapped[UUID]
-    post_media_id: Mapped[UUID]
+    capture_id: Mapped[UUID]
     ordinal: Mapped[int]
 
 
@@ -594,11 +654,12 @@ class ReaderPublication(Base):
 
 
 class Fragment(Base):
-    """An immutable render unit of a media item."""
+    """An immutable render unit owned by media or an x capture."""
 
     __tablename__ = "fragments"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    media_id: Mapped[UUID]
+    media_id: Mapped[UUID | None]
+    x_post_capture_id: Mapped[UUID | None]
     idx: Mapped[int]
     canonical_text: Mapped[str]
     html_sanitized: Mapped[str]
@@ -606,23 +667,6 @@ class Fragment(Base):
     t_end_ms: Mapped[int | None] = mapped_column(BigInteger)
     speaker_label: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-
-
-class DocumentEmbedArtifactState(Base):
-    """Aggregate inline-embed extraction state for one current readable media artifact."""
-
-    __tablename__ = "document_embed_artifact_states"
-    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    media_id: Mapped[UUID]
-    source_attempt_id: Mapped[UUID | None]
-    status: Mapped[str]
-    total_count: Mapped[int] = mapped_column(server_default=FetchedValue())
-    resolved_count: Mapped[int] = mapped_column(server_default=FetchedValue())
-    unsupported_count: Mapped[int] = mapped_column(server_default=FetchedValue())
-    failed_count: Mapped[int] = mapped_column(server_default=FetchedValue())
-    diagnostics: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
-    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class DocumentEmbed(Base):
@@ -643,6 +687,8 @@ class DocumentEmbed(Base):
     canonical_source_url: Mapped[str | None]
     provider_target_ref: Mapped[str | None]
     target_media_id: Mapped[UUID | None]
+    target_x_post_capture_id: Mapped[UUID | None]
+    capture_job_id: Mapped[UUID | None]
     title: Mapped[str | None]
     description: Mapped[str | None]
     thumbnail_url: Mapped[str | None]
@@ -1019,6 +1065,15 @@ class ResourceGrant(Base):
     grantee_email: Mapped[str | None]
     share_token: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class ResourceGrantCapture(Base):
+    """Capture evidence pinned by one public resource grant."""
+
+    __tablename__ = "resource_grant_captures"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    grant_id: Mapped[UUID]
+    capture_id: Mapped[UUID]
 
 
 class EpubTocNode(Base):

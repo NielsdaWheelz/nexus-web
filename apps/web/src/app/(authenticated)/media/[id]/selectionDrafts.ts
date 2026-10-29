@@ -3,7 +3,7 @@ import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
 import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
-import type { Selection } from "@/lib/chat/wire";
+import type { SelectionEditor } from "@/lib/chat/selection";
 import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
 
@@ -38,13 +38,14 @@ export type ChatDestination =
       | { kind: "Ready"; tree: ConversationTree } };
 
 export type ReaderChatIssue = (
-  | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: Selection | null }
+  | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: SelectionEditor }
+  | { kind: "Recall"; state: "Pending" | "Failed"; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string }
 ) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Extract<SelectionEditor, { kind: "Selected" }>; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
 
 export interface ComposerDraft {
   id: string;
@@ -67,6 +68,7 @@ export interface ComposerDraft {
   sourceMediaId: string;
   sourceHasChats: boolean | null;
   destination: ChatDestination;
+  chatSelection: SelectionEditor;
   chatAttempt: ChatAttempt | null;
   chatIssue: ReaderChatIssue | null;
 }

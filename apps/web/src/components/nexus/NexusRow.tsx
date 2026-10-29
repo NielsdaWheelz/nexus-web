@@ -1,5 +1,8 @@
 "use client";
 
+import { X } from "lucide-react";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
+
 // Row parts: resource bodies, menus, and visible search status.
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
@@ -100,13 +103,13 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
   const ownOptions: ActionDescriptor[] = [];
   if (row.matchingPassage) {
     const action = resourceAction(row.matchingPassage.item);
-    ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage",
+    ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "Open matching passage", icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
       disabled: action.kind === "Unavailable", disabledReason: action.kind === "Unavailable" ? action.reason : undefined,
       onSelect: ({ openIntent }) => activate(action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
     });
   }
   if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
-    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, onSelect: () => closePane(pane.id) });
+    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
   const target = row.action.kind === "Available" ? row.action.target : null;
   const activation = row.item?.activation ?? (target?.kind === "Resource" ? target.activation : {
     kind: target?.kind === "InternalHref" ? "route" as const : "none" as const,

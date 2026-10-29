@@ -11,7 +11,7 @@ import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEA
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_V1_TABLES } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -45,7 +45,7 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        writeFileSync(path.join(outDir, "authored-retired-v1.json"), JSON.stringify(RETIRED_V1_TABLES));
+        writeFileSync(path.join(outDir, "authored-retired-formats.json"), JSON.stringify(RETIRED_FORMAT_TABLES));
         const cursor = JSON.stringify(["a0", ""]);
         const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
           outline_window: [

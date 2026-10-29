@@ -161,10 +161,11 @@ records and conflicting live semantic bindings refuse the transaction. paired
 release, backup and device qualification belong to the
 [release issue](../issues/release-local-first-writing.md).
 
-format 2 adds frozen excerpts and bounded relational previews. revision 0324
+format 3 adds frozen excerpts and bounded relational previews. revision 0326
 converts only named current/historical capture paths, preserving saved words,
-causal state and immutable accepted changes. an account feed floor keeps v1
-receipts out of v2 decoding. device retirement reads metadata and pending count
+causal state and immutable accepted changes. an account feed floor keeps prior-format
+receipts out of current decoding. required format-3 upload envelopes reject old
+producers before replay while retaining replica identities and accepted prefixes. device retirement reads metadata and pending count
 before content: pending writing refuses, while drained stores retain replica
 identity, counters and downloaded sources and reprovision authored state.
 the paired cutover remains tracked in

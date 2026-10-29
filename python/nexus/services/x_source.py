@@ -18,12 +18,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    DocumentEmbed,
     Media,
     MediaSourceAttempt,
     XArticleInspection,
     XArticleSource,
     XPostAlias,
+    XPostCapture,
+    XPostCaptureContext,
+    XPostMedia,
     XPostSource,
     XThreadPost,
     XThreadSource,
@@ -91,26 +93,49 @@ def x_article_content_facts(
     return facts
 
 
-def post_from_row(row: XPostSource) -> XSourcePost:
-    """Decode the only canonical body owner; malformed stored evidence fails loudly."""
+def post_from_capture(capture: XPostCapture, source: XPostSource, alias: XPostAlias) -> XSourcePost:
+    """Decode a complete capture with its exact revision observation."""
+    if capture.post_id != source.id or alias.post_id != source.id:
+        raise ValueError("capture and alias must belong to the same logical post")
+    if (
+        alias.revision_id != capture.source_revision_id
+        or capture.payload.get("kind") != "complete_post"
+    ):
+        raise ValueError("complete capture requires its exact revision alias")
     return XSourcePost.model_validate(
         {
-            "source_revision_id": row.source_revision_id,
-            "logical_post_id": row.logical_post_id,
-            "edit_history_ids": tuple(row.edit_history_ids)
-            if row.edit_history_ids is not None
+            "source_revision_id": capture.source_revision_id,
+            "logical_post_id": source.logical_post_id,
+            "edit_history_ids": tuple(source.edit_history_ids)
+            if source.edit_history_ids is not None
             else None,
-            "content": XPostContent.model_validate_json(json.dumps(row.payload)),
-            "availability": row.availability,
-            "body_captured_at": row.body_captured_at,
-            "checked_at": row.checked_at,
+            "content": XPostContent.model_validate_json(json.dumps(capture.payload["content"])),
+            "availability": alias.availability or "available",
+            "body_captured_at": capture.captured_at,
+            "checked_at": alias.checked_at,
         }
     )
 
 
+def _capture_posts(db: Session, capture_ids: Sequence[UUID]) -> dict[UUID, XSourcePost]:
+    return {
+        capture.id: post_from_capture(capture, source, alias)
+        for capture, source, alias in db.execute(
+            select(XPostCapture, XPostSource, XPostAlias)
+            .join(XPostSource, XPostSource.id == XPostCapture.post_id)
+            .join(
+                XPostAlias,
+                (XPostAlias.post_id == XPostSource.id)
+                & (XPostAlias.revision_id == XPostCapture.source_revision_id),
+            )
+            .where(XPostCapture.id.in_(capture_ids))
+        ).tuples()
+    }
+
+
 def load_x_post(db: Session, *, media_id: UUID) -> XSourcePost | None:
-    row = db.scalar(select(XPostSource).where(XPostSource.media_id == media_id))
-    return post_from_row(row) if row is not None else None
+    capture_id = db.scalar(select(XPostMedia.capture_id).where(XPostMedia.media_id == media_id))
+    return _capture_posts(db, [capture_id]).get(capture_id) if capture_id is not None else None
 
 
 def x_article_child_media_ids(db: Session, *, thread_media_ids: Sequence[UUID]) -> set[UUID]:
@@ -127,11 +152,12 @@ def x_article_child_media_ids(db: Session, *, thread_media_ids: Sequence[UUID]) 
     }
 
 
-def x_article_link(db: Session, *, post: XPostSource) -> tuple[str, UUID | None] | None:
-    """The current carrier revision's association in its proved thread.
+def x_article_link(
+    db: Session, *, capture: XPostCapture, reading_media_id: UUID
+) -> tuple[str, UUID | None] | None:
+    """An association in the authorized reading thread, for this exact captured revision.
 
-    A saved older revision never supplies an article for an edited body. Failed
-    unrelated imports carry no membership authority over a canonical post.
+    The caller must authorize the reading publication before invoking this helper.
     """
     rows = db.execute(
         select(
@@ -142,11 +168,10 @@ def x_article_link(db: Session, *, post: XPostSource) -> tuple[str, UUID | None]
         )
         .outerjoin(Media, Media.id == XArticleInspection.article_media_id)
         .where(
-            XArticleInspection.carrier_post_id == post.source_revision_id,
+            XArticleInspection.carrier_post_id == capture.source_revision_id,
+            XArticleInspection.thread_media_id == reading_media_id,
             XArticleInspection.thread_media_id.in_(
-                select(XThreadPost.thread_media_id).where(
-                    XThreadPost.post_media_id == post.media_id
-                )
+                select(XThreadPost.thread_media_id).where(XThreadPost.capture_id == capture.id)
             ),
         )
     ).all()
@@ -215,86 +240,92 @@ def _load_sources(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, Publi
         .where(XThreadPost.thread_media_id.in_(threads))
         .order_by(XThreadPost.thread_media_id, XThreadPost.ordinal)
     ):
-        members[member.thread_media_id].append(member.post_media_id)
-    post_ids = set(media_ids) | {identity for ids in members.values() for identity in ids}
-    rows = {
+        members[member.thread_media_id].append(member.capture_id)
+    bindings = {
         row.media_id: row
-        for row in db.scalars(select(XPostSource).where(XPostSource.media_id.in_(post_ids)))
+        for row in db.scalars(select(XPostMedia).where(XPostMedia.media_id.in_(media_ids)))
     }
-    posts = {identity: post_from_row(row) for identity, row in rows.items()}
-    attempts = {
-        row.id: row
-        for row in db.scalars(
-            select(MediaSourceAttempt).where(
-                MediaSourceAttempt.id.in_(
-                    [
-                        row.source_attempt_id
-                        for identity, row in rows.items()
-                        if identity in media_ids
-                    ]
-                )
-            )
-        )
-    }
+    capture_ids = {row.capture_id for row in bindings.values()}
+    capture_ids.update(identity for ids in members.values() for identity in ids)
+    posts = _capture_posts(db, list(capture_ids))
     result = {}
-    for media_id in media_ids:
-        if media_id in threads:
-            thread = threads[media_id]
-            primary = tuple(posts[identity] for identity in members[media_id])
-            if not primary or any(post.content.author.id != thread.author_id for post in primary):
-                raise ValueError("stored thread membership must retain one author")
-            result[media_id] = PublishedXSource(
-                source_attempt_id=thread.source_attempt_id,
-                published_at=thread.published_at,
-                scope="author_thread",
-                primary_posts=primary,
-                root_revision_id=posts[thread.root_post_media_id].source_revision_id
-                if thread.root_post_media_id is not None
-                else None,
-                coverage=XSourceCoverage.model_validate_json(json.dumps(thread.coverage)),
+    for media_id, thread in threads.items():
+        primary = tuple(posts[identity] for identity in members[media_id])
+        if not primary or any(post.content.author.id != thread.author_id for post in primary):
+            raise ValueError("stored thread membership must retain one author")
+        result[media_id] = PublishedXSource(
+            source_attempt_id=thread.source_attempt_id,
+            published_at=thread.published_at,
+            scope="author_thread",
+            primary_posts=primary,
+            root_revision_id=posts[thread.root_capture_id].source_revision_id
+            if thread.root_capture_id is not None
+            else None,
+            coverage=XSourceCoverage.model_validate_json(json.dumps(thread.coverage)),
+        )
+    for media_id, binding in bindings.items():
+        attempt = db.scalar(
+            select(MediaSourceAttempt)
+            .where(
+                MediaSourceAttempt.media_id == media_id,
+                MediaSourceAttempt.status == "succeeded",
             )
-        elif media_id in posts:
-            row = rows[media_id]
-            published_at = attempts[row.source_attempt_id].finished_at
-            if published_at is None:
-                raise ValueError("published post source must own a finished attempt")
-            result[media_id] = PublishedXSource(
-                source_attempt_id=row.source_attempt_id,
-                published_at=published_at,
-                scope="post",
-                primary_posts=(posts[media_id],),
-                root_revision_id=None,
-                coverage=XSourceCoverage(
-                    search_exhausted=None,
-                    limits=(),
-                    unresolved_parent_revision_ids=(),
-                    unchecked_primary_post_media_ids=(),
-                ),
-            )
+            .order_by(MediaSourceAttempt.attempt_no.desc())
+            .limit(1)
+        )
+        if attempt is None or attempt.finished_at is None:
+            raise ValueError("published post requires a finished source attempt")
+        result[media_id] = PublishedXSource(
+            source_attempt_id=attempt.id,
+            published_at=attempt.finished_at,
+            scope="post",
+            primary_posts=(posts[binding.capture_id],),
+            root_revision_id=None,
+            coverage=XSourceCoverage(
+                search_exhausted=None,
+                limits=(),
+                unresolved_parent_revision_ids=(),
+                unchecked_primary_post_ids=(),
+            ),
+        )
     return result
 
 
 def load_prior_x_source(
-    db: Session, *, media_id: UUID, requested_revision_id: str, scope: XSourceScope
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_revision_id: str,
+    scope: XSourceScope,
+    viewer_id: UUID,
 ) -> XPriorSource:
-    """Detach saved primaries, direct context and aliases before provider work."""
-    requested_media_id = db.scalar(
-        select(XPostAlias.post_media_id).where(XPostAlias.revision_id == requested_revision_id)
+    """Detach the selected primary captures and their pinned direct context."""
+    from sqlalchemy import text
+
+    from nexus.auth.permissions import visible_media_ids_cte_sql
+
+    visible_media = set(db.scalars(text(visible_media_ids_cte_sql()), {"viewer_id": viewer_id}))
+    readable_captures = set(
+        db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id})
+    )
+    requested_post_id = db.scalar(
+        select(XPostAlias.post_id).where(XPostAlias.revision_id == requested_revision_id)
     )
     thread = None
-    primary: tuple[UUID, ...] = ()
+    capture_ids: list[UUID] = []
     if scope == "author_thread":
         thread_ids = set(
             db.scalars(select(XThreadSource.media_id).where(XThreadSource.media_id == media_id))
         )
-        if requested_media_id is not None:
+        if requested_post_id is not None:
             thread_ids.update(
                 db.scalars(
-                    select(XThreadPost.thread_media_id).where(
-                        XThreadPost.post_media_id == requested_media_id
-                    )
+                    select(XThreadPost.thread_media_id)
+                    .join(XPostCapture, XPostCapture.id == XThreadPost.capture_id)
+                    .where(XPostCapture.post_id == requested_post_id)
                 )
             )
+        thread_ids.intersection_update(visible_media)
         if len(thread_ids) > 1:
             raise ConflictError(
                 ApiErrorCode.E_X_IDENTITY_CONFLICT,
@@ -305,86 +336,69 @@ def load_prior_x_source(
                 select(XThreadSource).where(XThreadSource.media_id == next(iter(thread_ids)))
             )
             assert thread is not None
-            primary = tuple(
+            capture_ids = list(
                 db.scalars(
-                    select(XThreadPost.post_media_id)
+                    select(XThreadPost.capture_id)
                     .where(XThreadPost.thread_media_id == thread.media_id)
                     .order_by(XThreadPost.ordinal)
                 )
             )
     else:
-        own = db.scalar(select(XPostSource.media_id).where(XPostSource.media_id == media_id))
-        if own is not None:
-            primary = (own,)
-        elif (
-            requested_media_id is not None
-            and db.scalar(
-                select(XPostSource.media_id).where(XPostSource.media_id == requested_media_id)
+        binding = db.scalar(select(XPostMedia).where(XPostMedia.media_id == media_id))
+        if binding is None and requested_post_id is not None:
+            binding = db.scalar(select(XPostMedia).where(XPostMedia.post_id == requested_post_id))
+        if binding is not None and binding.capture_id in readable_captures:
+            capture_ids = [binding.capture_id]
+    capture_ids = [identity for identity in capture_ids if identity in readable_captures]
+    primary_rows = list(db.scalars(select(XPostCapture).where(XPostCapture.id.in_(capture_ids))))
+    primary_by_capture = {row.id: row.post_id for row in primary_rows}
+    primary = tuple(primary_by_capture[identity] for identity in capture_ids)
+    capture_ids.extend(
+        identity
+        for identity in db.scalars(
+            select(XPostCaptureContext.target_capture_id).where(
+                XPostCaptureContext.capture_id.in_(capture_ids),
+                XPostCaptureContext.target_capture_id.is_not(None),
             )
-            is not None
-        ):
-            primary = (requested_media_id,)
-    ids = set(primary)
-    if requested_media_id is not None:
-        ids.add(requested_media_id)
-    rows = {
-        row.media_id: row
-        for row in db.scalars(select(XPostSource).where(XPostSource.media_id.in_(ids)))
-    }
-    direct = {
-        ref.target_revision_id
-        for row in rows.values()
-        for ref in post_from_row(row).content.references
-    }
-    context_ids = (
-        set(db.scalars(select(XPostAlias.post_media_id).where(XPostAlias.revision_id.in_(direct))))
-        - ids
-    )
-    rows.update(
-        (row.media_id, row)
-        for row in db.scalars(select(XPostSource).where(XPostSource.media_id.in_(context_ids)))
-    )
-    aliases: dict[UUID, list[str]] = {identity: [] for identity in rows}
-    for revision_id, owner_id in db.execute(
-        select(XPostAlias.revision_id, XPostAlias.post_media_id).where(
-            XPostAlias.post_media_id.in_(rows)
         )
+        if identity is not None and identity in readable_captures
+    )
+    captures = list(db.scalars(select(XPostCapture).where(XPostCapture.id.in_(capture_ids))))
+    posts = _capture_posts(db, capture_ids)
+    # A logical post can occur in context at a different revision; the pinned primary wins.
+    selected = {row.post_id: row for row in captures}
+    selected.update({row.post_id: row for row in primary_rows})
+    aliases: dict[UUID, list[str]] = {identity: [] for identity in selected}
+    for revision_id, post_id in db.execute(
+        select(XPostAlias.revision_id, XPostAlias.post_id).where(XPostAlias.post_id.in_(selected))
     ).tuples():
-        aliases[owner_id].append(revision_id)
+        aliases[post_id].append(revision_id)
     return XPriorSource(
         posts=tuple(
             XPriorPost(
-                media_id=identity,
-                post=post_from_row(row),
+                post_id=identity,
+                post=posts[row.id],
                 revision_ids=tuple(sorted(aliases[identity], key=int)),
             )
-            for identity, row in sorted(rows.items())
+            for identity, row in sorted(selected.items())
         ),
-        primary_post_media_ids=primary,
-        root_post_media_id=thread.root_post_media_id if thread is not None else None,
+        primary_post_ids=primary,
+        root_post_id=primary_by_capture.get(thread.root_capture_id)
+        if thread is not None and thread.root_capture_id is not None
+        else None,
     )
 
 
 def x_source_attempt_ids(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, UUID]:
-    if not media_ids:
-        return {}
-    statement = (
-        select(XPostSource.media_id, XPostSource.source_attempt_id)
-        .where(XPostSource.media_id.in_(media_ids))
-        .union_all(
-            select(XThreadSource.media_id, XThreadSource.source_attempt_id).where(
-                XThreadSource.media_id.in_(media_ids)
-            )
-        )
-    )
-    return dict(db.execute(statement).tuples().all())
+    sources = _load_sources(db, media_ids=media_ids)
+    return {media_id: source.source_attempt_id for media_id, source in sources.items()}
 
 
 def retained_x_publication_sql(alias: str) -> str:
-    """A published canonical body or nonempty proved composition is a saved copy."""
+    """A selected post, thread, or article publication is a saved copy."""
     return f"""({alias}.kind = 'web_article' AND {alias}.provider = 'x'
         AND EXISTS (SELECT 1 FROM reader_publications rp WHERE rp.media_id = {alias}.id)
-        AND (EXISTS (SELECT 1 FROM x_post_sources xs WHERE xs.media_id = {alias}.id)
+        AND (EXISTS (SELECT 1 FROM x_post_media xm WHERE xm.media_id = {alias}.id)
             OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)
             OR EXISTS (SELECT 1 FROM x_article_sources xa WHERE xa.media_id = {alias}.id)))"""
 
@@ -423,65 +437,29 @@ def source_label(posts: Sequence[XSourcePost], *, scope: XSourceScope) -> str:
 
 
 def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, XSourceContext]:
-    """Current capture coverage; body/status authority remains the canonical posts."""
-    if not media_ids:
-        return {}
+    """Current thread coverage and pinned direct-context outcomes."""
     sources = _load_sources(db, media_ids=media_ids)
-    revisions = {
-        post.source_revision_id for source in sources.values() for post in source.primary_posts
+    bindings = {
+        row.media_id: [row.capture_id]
+        for row in db.scalars(select(XPostMedia).where(XPostMedia.media_id.in_(media_ids)))
     }
-    owners = dict(
-        db.execute(
-            select(XPostAlias.revision_id, XPostAlias.post_media_id).where(
-                XPostAlias.revision_id.in_(revisions)
+    for row in db.scalars(select(XThreadPost).where(XThreadPost.thread_media_id.in_(media_ids))):
+        bindings.setdefault(row.thread_media_id, []).append(row.capture_id)
+    contexts: dict[UUID, list[XPostCaptureContext]] = {}
+    for row in db.scalars(
+        select(XPostCaptureContext).where(
+            XPostCaptureContext.capture_id.in_(
+                [capture for ids in bindings.values() for capture in ids]
             )
         )
-        .tuples()
-        .all()
-    )
-    embeds = list(
-        db.scalars(
-            select(DocumentEmbed).where(
-                DocumentEmbed.media_id.in_(owners.values()),
-                DocumentEmbed.provider == "x",
-                DocumentEmbed.embed_kind == "post",
-            )
-        )
-    )
-    unavailable_targets = set(
-        db.scalars(
-            select(XPostSource.media_id).where(
-                XPostSource.media_id.in_(
-                    [row.target_media_id for row in embeds if row.target_media_id is not None]
-                ),
-                XPostSource.availability == "unavailable",
-            )
-        )
-    )
+    ):
+        contexts.setdefault(row.capture_id, []).append(row)
     result = {}
-    for identity, source in sources.items():
-        primary_ids = {owners[post.source_revision_id] for post in source.primary_posts}
+    for media_id, source in sources.items():
         direct = [
-            row
-            for row in embeds
-            if row.media_id in primary_ids and row.target_media_id not in primary_ids
+            row for capture_id in bindings.get(media_id, ()) for row in contexts.get(capture_id, ())
         ]
-        unavailable = {
-            row.provider_target_ref
-            for row in direct
-            if row.target_media_id in unavailable_targets
-            or (
-                row.target_media_id is None
-                and row.error_code == ApiErrorCode.E_X_POST_UNAVAILABLE.value
-            )
-        }
-        uncaptured = {
-            row.provider_target_ref
-            for row in direct
-            if row.target_media_id is None
-            and row.error_code != ApiErrorCode.E_X_POST_UNAVAILABLE.value
-        }
-        result[identity] = XSourceContext(
+        result[media_id] = XSourceContext(
             source_attempt_id=source.source_attempt_id,
             published_at=source.published_at,
             scope=source.scope,
@@ -490,8 +468,121 @@ def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, X
             search_exhausted=source.coverage.search_exhausted,
             limits=list(source.coverage.limits),
             unresolved_parent_count=len(source.coverage.unresolved_parent_revision_ids),
-            unchecked_post_count=len(source.coverage.unchecked_primary_post_media_ids),
-            unavailable_context_count=len(unavailable),
-            uncaptured_context_count=len(uncaptured),
+            unchecked_post_count=len(source.coverage.unchecked_primary_post_ids),
+            unavailable_context_count=sum(row.outcome == "unavailable" for row in direct),
+            uncaptured_context_count=sum(row.outcome == "not_captured" for row in direct),
         )
     return result
+
+
+def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
+    """Selected readable roots and their admitted direct context, never recursive context."""
+    from nexus.auth.permissions import visible_media_ids_cte_sql
+    from nexus.services.resource_grants import highlight_grant_path_exists_sql
+    from nexus.services.resource_graph.liveness import edge_live_sql
+
+    visible_media = visible_media_ids_cte_sql().replace(":viewer_id", viewer_id)
+    return f"""
+        WITH visible_media AS ({visible_media}), roots AS (
+            SELECT xm.capture_id FROM x_post_media xm
+            JOIN visible_media vm ON vm.media_id=xm.media_id
+            UNION
+            SELECT tp.capture_id FROM x_thread_posts tp
+            JOIN visible_media vm ON vm.media_id=tp.thread_media_id
+            UNION
+            SELECT de.target_x_post_capture_id FROM document_embeds de
+            JOIN visible_media vm ON vm.media_id=de.media_id
+            WHERE de.provider='x' AND de.embed_kind='post'
+              AND de.canonical_end_offset IS NOT NULL AND de.target_x_post_capture_id IS NOT NULL
+            UNION
+            SELECT f.x_post_capture_id FROM highlights h
+            JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
+            JOIN fragments f ON f.id=a.fragment_id
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE (h.user_id={viewer_id} OR {highlight_grant_path_exists_sql("h.id", viewer_id)})
+              AND h.authored_visible
+              AND f.x_post_capture_id IS NOT NULL
+            UNION
+            SELECT f.x_post_capture_id FROM passage_anchors pa
+            JOIN fragments f ON pa.owner_scheme='fragment' AND pa.owner_id=f.id
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE pa.user_id={viewer_id} AND EXISTS (
+                SELECT 1 FROM resource_edges e WHERE e.user_id=pa.user_id
+                  AND {edge_live_sql("e")}
+                  AND ((e.source_scheme='passage_anchor' AND e.source_id=pa.id)
+                    OR (e.target_scheme='passage_anchor' AND e.target_id=pa.id)))
+            UNION
+            SELECT f.x_post_capture_id FROM message_retrievals r
+            JOIN messages m ON m.id=r.assistant_message_id
+            JOIN conversations c ON c.id=m.conversation_id
+            JOIN fragments f ON f.id::text=r.locator->>'fragment_id'
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE c.owner_user_id={viewer_id} AND r.locator->>'type'='x_capture_offsets'
+              AND r.locator->>'capture_id'=f.x_post_capture_id::text
+            UNION
+            SELECT f.x_post_capture_id FROM messages m
+            JOIN conversations c ON c.id=m.conversation_id
+            JOIN fragments f ON f.id::text=m.reader_selection_snapshot #>> '{{evidence,target,locator,fragment_id}}'
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE c.owner_user_id={viewer_id}
+              AND m.reader_selection_snapshot #>> '{{evidence,target,locator,type}}'='x_capture_offsets'
+              AND m.reader_selection_snapshot #>> '{{evidence,target,locator,capture_id}}'=f.x_post_capture_id::text
+            UNION
+            SELECT f.x_post_capture_id FROM resource_edges e
+            JOIN fragments f ON f.id::text=e.snapshot #>> '{{evidence,target,locator,fragment_id}}'
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE e.user_id={viewer_id} AND e.origin='citation' AND {edge_live_sql("e")}
+              AND e.snapshot #>> '{{evidence,target,locator,type}}'='x_capture_offsets'
+              AND e.snapshot #>> '{{evidence,target,locator,capture_id}}'=f.x_post_capture_id::text
+        )
+        SELECT capture_id FROM roots
+        UNION
+        SELECT context.target_capture_id FROM roots
+        JOIN x_post_capture_contexts context ON context.capture_id=roots.capture_id
+        JOIN x_post_capture_admissions admission
+          ON admission.capture_id=context.target_capture_id AND admission.user_id={viewer_id}
+        WHERE context.target_capture_id IS NOT NULL
+    """
+
+
+def admit_x_captures_for_accounts(
+    db: Session, *, account_ids: Sequence[UUID], capture_ids: Sequence[UUID]
+) -> None:
+    """Record an already-authorized manifest; callers establish its pre-mutation authority."""
+    from sqlalchemy.dialects.postgresql import insert
+
+    from nexus.db.models import XPostCaptureAdmission
+    from nexus.ids import new_uuid7
+
+    values = [
+        {"id": new_uuid7(), "user_id": account_id, "capture_id": capture_id}
+        for account_id in set(account_ids)
+        for capture_id in set(capture_ids)
+    ]
+    if values:
+        db.execute(
+            insert(XPostCaptureAdmission)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["user_id", "capture_id"])
+        )
+
+
+def require_readable_x_capture(db: Session, *, viewer_id: UUID, capture_id: UUID) -> XPostCapture:
+    """Mask absent and unauthorized captures behind the same not-found response."""
+    from sqlalchemy import text
+
+    from nexus.errors import NotFoundError
+
+    readable = db.scalar(
+        text(f"SELECT :capture_id IN ({readable_x_capture_ids_sql()})"),
+        {"viewer_id": viewer_id, "capture_id": capture_id},
+    )
+    capture = db.get(XPostCapture, capture_id) if readable else None
+    if capture is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Capture not found")
+    return capture

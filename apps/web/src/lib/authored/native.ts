@@ -3,7 +3,7 @@
 import { bindingQueries, excerptQuery, searchQuery, sourceAliasQuery, type CompiledQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
-import type { AuthoredStore, Change, FeedChange, ReplicaState, StateSelection, QueryResult, SyncStatus } from "@nexus/authored/types";
+import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
 import { nativeQueryPlan, nativeSearchPlan } from "./nativeQuery";
@@ -86,7 +86,7 @@ async function call<T>(op: string, input: Record<string, unknown> = {}, signal?:
 export async function openNativeAuthoredStore(accountId: string): Promise<AuthoredStore> {
   const replica = await call<ReplicaState & { foreground: boolean; foreground_revision: string }>("hello");
   receiveForeground(replica.foreground, replica.foreground_revision);
-  if (replica.account_id !== accountId) throw new Error("native authored account mismatch");
+  if (replica.account_id !== accountId || replica.format_revision !== FORMAT_REVISION) throw new Error("native authored account or format mismatch");
   let lease: string | null = null;
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();

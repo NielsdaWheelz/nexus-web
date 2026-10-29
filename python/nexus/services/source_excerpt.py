@@ -28,6 +28,8 @@ _STRUCTURAL = set("ul ol dl table thead tbody tfoot tr".split())
 
 @dataclass(frozen=True)
 class SourceExcerptRequest:
+    """A media reading id, or the immutable x capture fragment id itself."""
+
     reading_id: UUID
     fragment_id: UUID
     start: int
@@ -474,12 +476,19 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
         row.id: row
         for row in db.execute(
             text(
-                "SELECT id,media_id,html_sanitized,canonical_text FROM fragments WHERE id=ANY(:ids)"
+                "SELECT id,media_id,x_post_capture_id,html_sanitized,canonical_text FROM fragments WHERE id=ANY(:ids)"
             ),
             {"ids": list({request.fragment_id for request in requests})},
         )
     }
     identities = source_identities(db, list({request.reading_id for request in requests}))
+    identities.update(
+        {
+            row.id: f"capture:{row.x_post_capture_id}"
+            for row in fragments.values()
+            if row.x_post_capture_id is not None
+        }
+    )
     pieces = set(
         db.scalars(
             text("SELECT media_id FROM media_parts WHERE media_id=ANY(:ids)"),
@@ -509,7 +518,9 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             contexts.append(
                 (sliced.html_sanitized, sliced.canonical_text, sliced.source_start_offset)
             )
-        elif row.media_id == request.reading_id:
+        elif row.media_id == request.reading_id or (
+            row.x_post_capture_id is not None and row.id == request.reading_id
+        ):
             contexts.append((row.html_sanitized or "", row.canonical_text, 0))
         else:
             raise InvalidRequestError(
@@ -605,7 +616,9 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
                 and request.end <= interval.end_offset
             )
             admitted_bounds = interval.start_offset, interval.end_offset
-        elif row.media_id != request.reading_id:
+        elif row.media_id != request.reading_id and not (
+            row.x_post_capture_id is not None and row.id == request.reading_id
+        ):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Selection is outside its source"
             )
@@ -613,7 +626,9 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             {
                 **body,
                 "source_extent": {
-                    "reading_ref": f"media:{request.reading_id}",
+                    "reading_ref": f"fragment:{row.id}"
+                    if row.x_post_capture_id is not None
+                    else f"media:{request.reading_id}",
                     "document_identity": identities[request.reading_id],
                     "fragment_id": str(request.fragment_id),
                     "start_offset": base,

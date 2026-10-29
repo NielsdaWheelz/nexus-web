@@ -52,7 +52,14 @@ class NotePublication(Closed):
     sha256: str = Field(pattern="^[0-9a-f]{64}$")
 
 
-Publication = Annotated[ReaderPublication | NotePublication, Field(discriminator="kind")]
+class XCapturePublication(Closed):
+    kind: Literal["x_capture"]
+    capture_id: UUID
+
+
+Publication = Annotated[
+    ReaderPublication | NotePublication | XCapturePublication, Field(discriminator="kind")
+]
 
 
 class SelectionLocation(Closed):
@@ -172,6 +179,7 @@ class ResourceProjection(Closed):
     title: str | None
     local_date: str | None
     source_ref: str | None
+    source_publication: Publication | None
     selection: SelectionLocation | None
     color: HighlightColor | None
     embedded_refs: list[str]
@@ -189,6 +197,7 @@ class ProvisionReplica(Closed):
 
 
 class UploadChanges(Closed):
+    format_revision: Literal[3]
     replica_id: UUID
     changes: list[Change] = Field(min_length=1, max_length=64)
 
@@ -213,7 +222,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[2]
+    format_revision: Literal[3]
     head_cursor: Counter
     lamport: Counter
 
@@ -247,7 +256,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[2]
+    format_revision: Literal[3]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts

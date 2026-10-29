@@ -42,5 +42,5 @@ export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS scope_revocations (scope_ref TEXT PRIMARY KEY)`,
 ] as const;
 
-/** Finite v1 retirement: only authored state and derived indexes, never replica metadata or downloaded sources. */
-export const RETIRED_V1_TABLES = ["search_fts", "resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_state", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations"] as const;
+/** Finite v1/v2 retirement: only authored state and derived indexes, never replica metadata or downloaded sources. */
+export const RETIRED_FORMAT_TABLES = ["search_fts", "resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "scope_state", "scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress", "scope_revocations"] as const;

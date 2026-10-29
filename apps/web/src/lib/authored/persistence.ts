@@ -11,7 +11,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_V1_TABLES } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -25,13 +25,13 @@ export class Persistence {
     await this.db.transaction(async () => {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
-      if (state.format_revision === 1) {
-        const [pending] = await this.db.all("SELECT COUNT(*) AS count FROM pending_changes");
-        if (Number(pending?.count) !== 0) throw new Error("sync this device’s pending writing with the previous nexus version before updating.");
-        for (const table of RETIRED_V1_TABLES) await this.db.run(`DROP TABLE ${table}`);
-        for (const sql of DEVICE_SCHEMA) if (!sql.startsWith("PRAGMA")) await this.db.run(sql);
-        await this.db.run("UPDATE replica_state SET format_revision=2,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1");
-      } else if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch");
+      if (state.format_revision === FORMAT_REVISION) return;
+      if (state.format_revision !== 1 && state.format_revision !== 2) throw new Error("authored format mismatch");
+      const pending = await this.db.all("SELECT 1 FROM pending_changes LIMIT 1");
+      if (pending.length) throw new Error("sync this device’s pending writing with the previous nexus version before updating.");
+      for (const table of RETIRED_FORMAT_TABLES) await this.db.run(`DROP TABLE ${table}`);
+      for (const sql of DEVICE_SCHEMA) if (!sql.startsWith("PRAGMA")) await this.db.run(sql);
+      await this.db.run("UPDATE replica_state SET format_revision=?,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1", [FORMAT_REVISION]);
     });
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {

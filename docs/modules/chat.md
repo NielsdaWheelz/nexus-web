@@ -40,8 +40,10 @@ store and the views).
 - **live overlay**: a pending answer's streamed paint; never state.
 - **command**: one frozen chat write per account and chat (a new chat's: per pane) and
   tab, with the revision it observed and where its answer opens.
-- **draft**: the viewer's unsent text and explicitly picked model, per tab and pane.
+- **draft**: immutable unsent text and captured selection intent, per tab and pane.
 - **selection**: an exact catalog `route/model/reasoning`; never substituted.
+- **account selection**: the last accepted generation choice, ordered by committed
+  admission. it seeds untouched ordinary composers across chats and devices.
 - **quote**: an immutable snapshot of a locked highlight on a user turn.
 - **context**: the chat's scope refs (future prompt membership), frozen per run as
   `tool_scope`.
@@ -76,6 +78,7 @@ re-present existing data and never refetch, publish, reorder or move focus.
 
 | route | request | answer | retry rule |
 |---|---|---|---|
+| `GET /me/chat-selection` | none | `ChatSelectionOut{last_used: {route, selection, revision} \| null}`; private, no-store | read; failure is never absence |
 | `POST /chat-runs` | `Idempotency-Key: <uuid>`; `{destination, content, selection, reader_selection}` | `ChatAdmissionReceipt{outcome: Accepted{conversation_id, run_id, assistant_message_id} \| Rejected{reason:{code}}}` | the key is the run id: the viewer's run with that id answers any resend; another user's is 409 `E_RESOURCE_CONFLICT`; a rejection is not stored, so a resend decides again |
 | `POST /messages/{answer}/rerun`, `/regenerate` | `Idempotency-Key`; `{selection, expected_revision}` | the same receipt; a missing source, a changed chat, an ineligible answer and selection or context refusals are `Rejected` | as a send |
 | `POST /chat-runs/{id}/cancel` | none | `ChatRunResponse` | idempotent stop intent; finalizes a run whose job is dead |
@@ -123,6 +126,11 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
 - `chat_run_events`: `(run_id, seq)` frames of the five types above. tool frames store
   identity only (`tool_call_id`, `tool_call_index`, plus `status`/`error_type` on results);
   their public projection is computed when read.
+- `chat_selections`: one account row with validated `{route, selection}` and a
+  positive bigint revision, exposed as a decimal string. admission locks and
+  replaces it in the run/message/job transaction. first-insert races retry that
+  transaction. rejection and existing-run replay do not write it; completion and
+  chat deletion leave it intact. malformed memory fails without repair.
 - `message_retrievals`: per (answer, call or attached, ordinal): result type, source id,
   media and span ids, context ref, `result_ref` (the model-visible `tool_citation` payload
   and search's web-snapshot source), `selected`, locator, captured evidence, candidate
@@ -187,7 +195,9 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   holds the accepted answer made by this run (another pane's send may move the stored
   leaf), and hands it to every mounted store before the gate reopens. a send's acceptance
   settles its source callback once, whichever surface retried it: ordinary chat spends
-  its submitted text, while the reader keeps its annotation. the pane lands an accepted send, or
+  its submitted draft only if the same object is still current; any later edit,
+  including an edit away and back, preserves the whole draft,
+  while the reader keeps its annotation. the pane lands an accepted send, or
   a repeat once a read shows its answer (a retried read too), through `openAsyncResult`:
   while it still shows the path asked from, it selects the answer (a new chat's pane
   routes to the chat), shift opens it in a new pane, otherwise an offer ("message
@@ -200,8 +210,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   exact retry. closing the pane retires it after the common loss decision.
 - **the composer** (`ChatComposer.tsx`) holds the draft, the model controls and the one
   button: Send, Sending, Stop response, Stop requested, Retry send, Retry refresh. an
-  untouched draft follows the run of the answer it replies to, else the catalog seed; an
-  explicit pick holds until the send that uses it. a new chat's unresolved first send
+  untouched draft follows fresh account memory, or the product seed after confirmed
+  absence. the first text edit captures the displayed intent; typing while recall is
+  pending captures once fresh recall arrives. explicit choices bypass recall. bound
+  drafts survive read failures, refresh and deletion of all text. a new chat's unresolved first send
   holds its text and model; an existing chat's draft stays editable. the field takes text
   only once the app has hydrated. desktop Enter sends (a held key sends once), Shift+Enter
   is a newline, every Enter is a newline on a phone, and composition owns Enter;
@@ -210,8 +222,9 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
 - **reader continuation** (`useSelectionComposer.ts`) owns visit-local question and
   destination intent. a fresh passage defaults to the newest owned chat related to its
   canonical media; a later explicit choice wins over a pending lookup. a chosen chat's
-  canonical tree supplies its stored leaf, revision, insertion and inherited model,
-  independently of another pane's endpoint. sends use the same new-chat or conversation
+  canonical tree supplies its stored leaf, revision and insertion independently of
+  another pane's endpoint. ask captures fresh account selection before saving or
+  awaiting preparation; typing a note captures nothing. sends use the same new-chat or conversation
   command owner as chat panes and freeze content, selection, quote revision, insertion
   and run uuid once. ambiguous admission offers the exact retry; an observed branch or
   quote change requires explicit refresh. acceptance invalidates the continuation
@@ -234,13 +247,16 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   and never saves or spends the annotation. user bubbles and recovery show markdown
   source through the existing literal chat views.
 - **reader recovery** uses `ComposeReaderQuestion{text, selection}` on a fresh `Fork`
-  pane. its href names the chat/observed leaf and quote, never the question. after
+  pane. recovery actions belong to the reader composer's interaction scope;
+  independently edited attached notes do not. its href names the chat/observed
+  leaf and quote, never the question. after
   registering the actual memory draft cell, the composer synchronously writes text and
-  the exact observed model (or null), then claims that visit's entry before enabling input.
+  the complete captured editor (including unresolved intent), then claims that
+  visit's entry before enabling input.
   the workspace retains and guards an unclaimed question until this transfer; no draft
   or launch payload enters browser storage. model
-  availability does not gate staging. a failed catalog read blocks sending even with
-  retained data; recovery keeps the exact last observed model. the quote preview and ordinary model picker
+  availability does not gate staging; retained catalog rows still describe the exact
+  captured intent. the quote preview and ordinary model picker
   retain their owners. failed history reads keep the staged editor visible with
   `retry chat`; sending remains blocked. other panes' drafts survive. this is fresh
   composition for review, never a retry of uncertain admission.
@@ -255,7 +271,9 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   browser zoom remains native.
 - **the views**: `ChatSurface` provides the pane context to rows, footers and dialogs;
   `AssistantMessage` owns its details disclosure and failure or reconnect card;
-  `MessageDetails` shows `route · model · reasoning key`, the admitted context and the
+  successful answers expose regeneration only in message overflow; eligible
+  failed or cancelled answers retain inline rerun in their failure card.
+  `MessageDetails` shows the saved `route · model · reasoning` presentation, the admitted context and the
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
@@ -371,13 +389,20 @@ and source arrival remain resource-owned.
     refusal settles an earlier unconfirmed attempt only with accepted-run evidence or a
     revision or absence fence (a new chat has neither, so it stays unconfirmed until the
     viewer discards it or reloads).
-21. a selection is never substituted: a provider change needs a model; within a provider
-    keep the effort name, else the mode default, else the sole effort, else require one.
+21. deliberate provider/model changes choose the catalog's model/mode/effort defaults
+    together. a missing default preserves draft intent and permits explicit effort
+    choice. only that unresolved intent can complete on a later catalog read; an exact
+    selection is never substituted. captured choices and pending requests retain their identity.
 22. saved terminal calls win over replayed frames; only saved authorship authorizes undo.
 23. drafts and live command identity remain in memory. the common work guard
     warns before their actual loss; model selection alone is clean. accepted
     server runs continue after local discard, navigation or reload.
 24. every chat create names its id; every fork rename names the title it replaces.
+25. one account reader owns selection recall through the existing server-value
+    primitive. acceptance, foreground/reconnection and composer entry invalidate
+    it; automatic capture requires fresh successful data. acceptance never installs
+    the command's selection optimistically. local commands carry captured provider
+    identity outside the serialized request; old repeats start from their saved run.
 
 passage questions consume only their submitted rich input on server acceptance,
 through `ConversationCommands.execute(command, onAcceptance)`. newer editor input

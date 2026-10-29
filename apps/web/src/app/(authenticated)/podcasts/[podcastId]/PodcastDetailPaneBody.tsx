@@ -266,7 +266,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const canReset = sort !== "newest" || chips.length > 0;
   const queryControls = {
     kind: "Controls" as const,
-    label: "Filter podcast episodes",
     focusInput,
     content: <PaneQueryToolbar
       inputRef={inputRef}

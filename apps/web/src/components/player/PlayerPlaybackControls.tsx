@@ -1,5 +1,7 @@
 "use client";
 
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
+
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -210,7 +212,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
           if (signal.aborted) return;
           const href = result?.target.href ?? null;
           setPreparation({ kind: "Ready", request: signal, content: { sections: [{ id: "Open", label: null, options: [{
-            kind: "link", id: "OpenInPane", label: "open in new pane",
+            kind: "link", id: "OpenInPane", label: ACTION_CATALOG.OpenInNewPane.label, icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
             ...(href === null ? { href: null, disabled: true as const } : { href }),
             disabledReason: href === null ? "no transcript at this time" : undefined,
             onActivate(event) {

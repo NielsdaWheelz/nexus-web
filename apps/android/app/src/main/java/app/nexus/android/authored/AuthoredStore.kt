@@ -32,18 +32,20 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,2,0)", account.toString(), UUID.randomUUID().toString())
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,3,0)", account.toString(), UUID.randomUUID().toString())
         try {
             transaction {
                 val metadata = replica()
                 check(metadata.getString("account_id") == account.toString())
-                if (metadata.getInt("format_revision") == 1) {
-                    require(rows("SELECT COUNT(*) AS count FROM pending_changes").getJSONObject(0).getString("count").toLong() == 0L) { "sync this device’s pending writing with the previous nexus version before updating." }
-                    val retired = JSONArray(context.assets.open("app/authored-retired-v1.json").bufferedReader().use { it.readText() })
+                val format = metadata.getInt("format_revision")
+                if (format != 3) {
+                    check(format == 1 || format == 2) { "authored format mismatch" }
+                    check(rows("SELECT 1 FROM pending_changes LIMIT 1").length() == 0) { "sync this device’s pending writing with the previous nexus version before updating." }
+                    val retired = JSONArray(context.assets.open("app/authored-retired-formats.json").bufferedReader().use { it.readText() })
                     for (index in 0 until retired.length()) run("DROP TABLE ${retired.getString(index)}")
                     for (index in 0 until schema.length()) if (!schema.getString(index).startsWith("PRAGMA")) run(schema.getString(index))
-                    run("UPDATE replica_state SET format_revision=2,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1")
-                } else check(metadata.getInt("format_revision") == 2) { "authored format mismatch" }
+                    run("UPDATE replica_state SET format_revision=3,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1")
+                }
             }
         } catch (error: Throwable) { connection.close(); throw error }
     }

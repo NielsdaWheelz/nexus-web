@@ -63,7 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from nexus.config import Settings
-from nexus.db.models import ChatRun, XPostSource
+from nexus.db.models import ChatRun, XPostMedia
 from nexus.db.retries import retry_serializable
 from nexus.db.session import open_async_session
 from nexus.jobs.queue import lock_running_job_claim
@@ -448,7 +448,7 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
         )
     media_ids = {UUID(c.media_id) for c in call.retrieved if c.media_id}
     if media_ids and db.scalar(
-        select(XPostSource.id).where(XPostSource.media_id.in_(media_ids)).limit(1)
+        select(XPostMedia.id).where(XPostMedia.media_id.in_(media_ids)).limit(1)
     ):
         projection.refresh_viewer_contributors(db, [call.principal])
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None

@@ -42,7 +42,7 @@ const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
@@ -448,6 +448,14 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
   const capture: SelectionCapture | PassageCapture = "capture" in state ? state.capture.value : state.kind === "highlight" ? state.selection.value : (() => {throw new Error("Excerpt row is not a capture");})();
   const hasTable = (nodes: ExcerptNode[]): boolean => nodes.some(node => node.kind === "table" || "children" in node && hasTable(node.children));
   const containsTable = hasTable(capture.excerpt.content);
+  if (capture.locator?.type === "x_capture_offsets") {
+    const locator = capture.locator, extent = capture.excerpt.source_extent;
+    if (resource.source_ref !== `fragment:${locator.fragment_id}` || capture.publication?.kind !== "x_capture" || capture.publication.capture_id !== locator.capture_id ||
+      extent !== null && (extent.reading_ref !== resource.source_ref || extent.document_identity !== `capture:${locator.capture_id}` || extent.fragment_id !== locator.fragment_id))
+      return {...result,scope_available:false};
+    if (query.reading_ref !== null && query.reading_ref !== resource.source_ref) return {...result,scope_available:false};
+  }
+
   let scope: ExcerptScope = {kind:"capture"};
   if (query.reading_ref !== null) {
     const readings = await read({sql:EXCERPT_READING_SQL,params:[query.reading_ref]});
@@ -514,7 +522,7 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
     const original = resource.selection, selector = original.locator.text_quote_selector;
     const text_quote_selector = selector === null ? null : {...selector,prefix:null,suffix:null};
     switch (original.locator.type) {
-      case "web_text_offsets": case "epub_fragment_offsets": return {...original,prefix:null,suffix:null,locator:{...original.locator,text_quote_selector}};
+      case "x_capture_offsets": case "web_text_offsets": case "epub_fragment_offsets": return {...original,prefix:null,suffix:null,locator:{...original.locator,text_quote_selector}};
       case "pdf_page_geometry": return {...original,prefix:null,suffix:null,locator:{...original.locator,prefix:null,suffix:null,text_quote_selector}};
     }
   })();

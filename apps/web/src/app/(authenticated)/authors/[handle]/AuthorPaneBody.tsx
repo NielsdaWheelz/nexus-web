@@ -257,7 +257,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       : { kind: "Pending" };
   const queryControls = invalidView ? undefined : {
     kind: "Controls" as const,
-    label: "Filter works",
     focusInput,
     content: <PaneQueryToolbar
       inputRef={inputRef}

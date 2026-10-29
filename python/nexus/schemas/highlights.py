@@ -20,6 +20,14 @@ class FragmentAnchorOut(BaseModel):
     end_offset: int | None
 
 
+class XCaptureAnchorOut(BaseModel):
+    type: Literal["x_capture_offsets"] = "x_capture_offsets"
+    capture_id: UUID
+    fragment_id: UUID
+    start_offset: int
+    end_offset: int
+
+
 class PdfQuadOut(BaseModel):
     x1: float
     y1: float
@@ -57,7 +65,7 @@ class LinkedNoteBlockRef(BaseModel):
 
 class TypedHighlightOut(BaseModel):
     id: UUID
-    anchor: FragmentAnchorOut | PdfAnchorOut
+    anchor: FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut
     color: HIGHLIGHT_COLORS
     exact: str
     prefix: str

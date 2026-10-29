@@ -240,14 +240,14 @@ export function useSourceArrival(input: {
     const run = async () => {
       try {
         let target: SourceArrivalApplyTarget | null;
-        const local = intent.target.kind === "resource" && latest.current.runtime.routeId === "media" &&
+        const local = intent.target.kind === "resource" && (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "xCapture") &&
           intent.target.resource_ref.startsWith("highlight:") ? intent.target.resource_ref.slice("highlight:".length) : null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
         else if (ready && intent.target.kind === "resource" && latest.current.runtime.routeId === "note" &&
             intent.target.resource_ref === latest.current.runtime.resourceRef) target = intent.target;
         else if (local !== null) target = { kind: "highlight", highlight_id: local };
         else if (intent.target.kind === "resource" && intent.target.resource_ref.startsWith("passage_anchor:") &&
-            (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "note")) {
+            (latest.current.runtime.routeId === "media" || latest.current.runtime.routeId === "xCapture" || latest.current.runtime.routeId === "note")) {
           const anchor = intent.target.resource_ref.slice("passage_anchor:".length);
           const states = await authored.readStates(selectStates({ anchor_ids: [anchor] }));
           if (!current()) return;

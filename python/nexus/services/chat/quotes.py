@@ -52,6 +52,15 @@ def build_snapshot(
         )
     except NotFoundError as error:
         raise ApiError(missing, "Highlight is outside the requested reading scope") from error
+    if key.capture_id is not None:
+        from nexus.schemas.resource_evidence import CapturedPassageTarget
+
+        if (
+            not isinstance(evidence.target, CapturedPassageTarget)
+            or evidence.target.locator.type != "x_capture_offsets"
+            or evidence.target.locator.capture_id != key.capture_id
+        ):
+            raise ApiError(missing, "Highlight is outside the requested capture")
     quote = evidence.quote
     parts = quote_parts(quote) if quote is not None else None
     if parts is None or not parts.exact.strip():
