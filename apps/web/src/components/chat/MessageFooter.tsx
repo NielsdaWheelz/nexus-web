@@ -48,7 +48,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
   };
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
-      {copyFailure ? <FeedbackFailure scope="Local" occurrence={copyFailure} content={{ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." }} announcement="Polite" onDismiss={() => setCopyFailure(null)} /> : null}
+      {copyFailure ? <FeedbackFailure scope="Local" occurrence={copyFailure} content={{ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." }} announcement="Polite" /> : null}
       {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
       <div className={styles.left}>
         {details}
