@@ -12,7 +12,9 @@ revisions in `python/uv.lock`, and native `0.165.0` in `node/codex/bun.lock`.
   the host uses the locked npm launcher and contained catalog v2; the provider
   client uses agent catalog v3 and api catalog v5. old clients/hosts are rejected;
   no version bypass or credential copying. this adds no migration or wire bump;
-  the paired controls release still requires wire 17.
+  the paired controls release still requires wire 17 and its account-memory
+  migration 0325. retired remembered choices remain unchanged until explicit
+  reselection; accepted-request replay never updates that memory.
 - verify deployed catalog health, current offerings, ordinary-worker chat with
   the sol 6.1/xhigh seed, strict-json oracle, and preserved historical presentation.
   use the existing host account and isolation contract. production account refresh
