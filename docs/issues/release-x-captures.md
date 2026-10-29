@@ -1,7 +1,8 @@
 # release x quote captures
 
-status: implementation and disposable migration/live qualification complete;
-production census, device synchronization, backup and coordinated release outstanding
+status: historical capture-time, highlight-provenance and saved-destination repairs
+implemented. device synchronization, final integrated qualification and coordinated
+release remain outstanding.
 
 the [capture ownership contract](../modules/ingest.md),
 [retention contract](../modules/storage.md) and
@@ -26,6 +27,12 @@ release conditions:
    anchor check without adding a general fragment fk. convert exact chat evidence
    and persisted source destinations too; reject semantic-key collisions.
    record proof in the pr.
+   historical unknown body observation times must remain null; retain known
+   times exactly. require the complete normal upgrade of the verified october28
+   archive, including json destinations and intentional annotation conversions.
+   passing timestamp conversion alone does not establish that upgrade.
+   isolated recovery must use the paired node 22 executable, not a version-manager
+   shim that depends on environment omitted by frozen migration helpers.
 3. commit every editor buffer and sync every browser/android device. verify empty
    outboxes, accepted source prefixes and the common account head. unknown or
    unavailable devices block cutover. freeze writers and take a verified backup.
@@ -44,6 +51,10 @@ release conditions:
    import/removal, thread reading, images, sharing and one local authored sync.
    the reported item is `01a1627e-bd78-78fa-bb89-fd76a1a0886a`; its context-only
    media must retire without losing its parent's captured quote.
+   qualify the paired native downloaded reader on the final integrated candidate;
+   inspecting a generated reading-copy archive alone does not prove native shelf
+   rendering. a validated acquisition/publication check does not prove a live x
+   provider fetch.
 
 rollback requires stopped writers and matched database/client restoration; an
 old binary cannot run against the new schema. capture reclamation and video

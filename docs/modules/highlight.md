@@ -15,6 +15,14 @@ observed-delete liveness, permanent yjs body, selection register and color regis
 selection publication, typed locator, literal quote and context move together;
 resizing or changing color never replaces the body.
 
+an x selection's locator names its retained capture and fragment. its nullable
+publication records original observation provenance: historical unknowns stay
+null, even when the retained location is proved. a known publication must match
+the locator. new creation and explicit reselection require that known publication;
+body/color edits, restore and replication preserve existing unknown provenance.
+source navigation and chat use the retained locator. frozen literal excerpts
+remain readable without reconstructing an unknown original full-source extent.
+
 the body uses the shared note grammar and editor. empty prose projects as absent;
 whitespace, breaks, images, embeds and empty code are content. canonical yjs bytes
 remain present even when the nullable annotation projection is absent. clearing

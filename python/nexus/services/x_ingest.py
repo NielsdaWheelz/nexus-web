@@ -495,6 +495,8 @@ def publish_acquired_captures(db: Session, *, prepared: PreparedXSource) -> dict
             )
         for revision in sorted(eligible, key=int):
             item = by_revision[revision]
+            # XAcquiredSource requires timestamps for every new observation.
+            assert item.source.body_captured_at is not None
             contexts = [
                 CaptureContext(
                     ref.kind,
@@ -519,7 +521,7 @@ def publish_acquired_captures(db: Session, *, prepared: PreparedXSource) -> dict
                 revision_id=revision,
                 payload=XCompletePostCapture(kind="complete_post", content=item.source.content),
                 fragment=item.fragment,
-                captured_at=item.source.body_captured_at or datetime.now(UTC),
+                captured_at=item.source.body_captured_at,
                 contexts=contexts,
             )
             pending.remove(revision)

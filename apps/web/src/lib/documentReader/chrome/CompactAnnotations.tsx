@@ -154,7 +154,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         {!annotation ? <p role="status">this highlight is no longer available. your writing is kept.</p> : null}
         <HighlightAnnotation highlightRef={shownAnnotation.ref} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
         <div className={styles.compactActions}>
-          {shownAnnotation.selection.publication?.kind === "x_capture" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.publication.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
+          {shownAnnotation.selection.locator.type === "x_capture_offsets" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.locator.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
 
           <Button tone="danger" reserveIcon aria-busy={busy} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close)}>delete highlight</Button>
         </div>

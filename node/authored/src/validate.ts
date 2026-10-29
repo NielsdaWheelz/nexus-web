@@ -98,7 +98,7 @@ export function validateLocator(locator: Locator, source_ref: string): void {
 }
 function selection(value: SelectionCapture, source_ref: string): void {
   if (value.locator.type === "x_capture_offsets") {
-    if (value.publication?.kind !== "x_capture" || value.publication.capture_id !== value.locator.capture_id) throw new TypeError("Capture publication disagrees with locator");
+    if (value.publication !== null && (value.publication.kind !== "x_capture" || value.publication.capture_id !== value.locator.capture_id)) throw new TypeError("Capture publication disagrees with locator");
   } else {
     if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
     if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");

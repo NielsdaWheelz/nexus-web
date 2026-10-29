@@ -468,7 +468,7 @@ class XPostCapture(Base):
     post_id: Mapped[UUID]
     source_revision_id: Mapped[str]
     payload: Mapped[dict[str, object]] = mapped_column(JSONB)
-    captured_at: Mapped[datetime]
+    captured_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     asset_job_id: Mapped[UUID | None]
 
