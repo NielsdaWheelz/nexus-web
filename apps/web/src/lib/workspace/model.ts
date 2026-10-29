@@ -111,9 +111,9 @@ export function enterWorkspace(
     return { active_primary_pane_id: pane.id, panes: [pane] };
   }
   if (href === null) return restored;
-  const existing = restored.panes.find((pane) =>
-    matchWorkspaceTargetHref(pane.current_visit.href, href) !== null,
-  );
+  const matches = (pane: WorkspacePane) => matchWorkspaceTargetHref(pane.current_visit.href, href) !== null;
+  const active = restored.panes.find((pane) => pane.id === restored.active_primary_pane_id);
+  const existing = active && matches(active) ? active : restored.panes.find(matches);
   if (!existing) {
     const pane = newPane(href);
     return { active_primary_pane_id: pane.id, panes: [...restored.panes, pane] };

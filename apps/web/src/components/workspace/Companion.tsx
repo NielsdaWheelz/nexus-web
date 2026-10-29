@@ -506,7 +506,7 @@ export default function Companion(props: {
   ) : null;
   const header = (requestDismiss: () => void) => {
     const resourceMenu = presentation !== "Column" && props.resourceRef ? (
-      <ContextualActionMenu
+      <ContextualActionMenu navigation={null}
         sections={[]}
         resourceRef={props.resourceRef}
         title={props.resourceTitle}

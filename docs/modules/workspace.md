@@ -92,6 +92,10 @@ invalid paths resume; bare `/daily` resolves in the account zone; another path
 reuses its resource and material view or appends a pane. neither entry seeds
 authored text from the server. the authenticated group has one optional catch-all
 page (`[[...path]]/page.tsx`); unknown paths render unsupported panes.
+when several saved panes match an incoming address, entry prefers the saved
+active matching instance, then the first match. null incoming href resumes
+unchanged. the existing view replacement and visibility rules apply; this does
+not add restore metadata or alter live target activation.
 
 primary note, page and daily authoring code is a workspace prerequisite; its
 bodies still mount only for their actual pane. this increases initial workspace

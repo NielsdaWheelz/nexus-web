@@ -178,6 +178,8 @@ export type MenuSource = { readonly subjectKey: string; readonly title: string }
   | { readonly kind: "Immediate"; readonly content: MenuContent }
   | {
       readonly kind: "Prepared";
+      /** Known local controls publish without completing preparation. */
+      readonly initial: MenuContent;
       readonly state: PreparationState;
       readonly prepare: (signal: AbortSignal) => void;
       /** Present only when the source has a trailing region; it has no deadline of its own. */
