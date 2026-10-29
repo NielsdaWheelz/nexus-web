@@ -25,7 +25,7 @@ type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
-interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; confirmRecentRemoved(entry: RecentEntry): void; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
 const PublisherContext = createContext<PublishTitle | null>(null);
@@ -59,6 +59,12 @@ function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevisio
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
   const recent = useRecent();
+  const [confirmedRecentRemovals, setConfirmedRecentRemovals] = useState(() => new Set<string>());
+  const confirmRecentRemoved = useCallback((entry: RecentEntry) => setConfirmedRecentRemovals(previous => {
+    const key = `${recentTargetKey(entry.target)}:${entry.used_revision}`;
+    if (previous.has(key)) return previous;
+    return new Set(previous).add(key);
+  }), []);
   const store = useAuthoredStore();
   const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
@@ -158,6 +164,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   }, [forVisit]);
   const isRecentRemoved = useCallback((entry: RecentEntry): boolean => {
     const target = entry.target;
+    if (confirmedRecentRemovals.has(`${recentTargetKey(target)}:${entry.used_revision}`)) return true;
     if (target.kind === "preview" || target.kind === "x_capture" || target.kind === "daily_date") return false;
     const key = panePresentationLocatorKey(target);
     if (authored(target)) {
@@ -165,7 +172,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return result?.used_revision === entry.used_revision && result.facts === null;
     }
     return remoteStatus === "ready" && !remoteFailed && remoteFacts?.has(key) === true && remoteFacts.get(key) === null;
-  }, [local.entries, remoteStatus, remoteFailed, remoteFacts]);
+  }, [confirmedRecentRemovals, local.entries, remoteStatus, remoteFailed, remoteFacts]);
   useEffect(() => {
     for (const entry of recent.snapshot?.entries ?? []) {
       if (entry.target.kind === "x_capture") continue;
@@ -201,7 +208,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
   }, [recent, forRecent, local.entries, state.panes, remote]);
   const retryTitles = useCallback(() => retry(value => value + 1), []);
-  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles }), [forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles]);
+  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, confirmRecentRemoved, resourceRefForVisit, retryTitles }), [forVisit, forRecent, isRecentRemoved, confirmRecentRemoved, resourceRefForVisit, retryTitles]);
   useEffect(() => {
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);

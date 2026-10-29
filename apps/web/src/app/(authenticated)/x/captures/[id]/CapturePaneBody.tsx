@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { useWorkspacePresentations } from "@/lib/workspace/presentations";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import { useRecent } from "@/lib/recent/store";
+import type { RecentEntry } from "@/lib/recent/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -31,6 +33,7 @@ export default function CapturePaneBody() {
 
 function CaptureReader({ id }: { readonly id: string }) {
   const recent = useRecent();
+  const { confirmRecentRemoved } = useWorkspacePresentations();
   const runtime = requirePaneRuntime(usePaneRuntime(), "CaptureReader");
   const store = useAuthoredStore();
   const { profile } = useReaderContext();
@@ -59,7 +62,12 @@ function CaptureReader({ id }: { readonly id: string }) {
   } }), [source, savedView, id, runtime]));
   readerRef.current = reader;
   const state = useReaderState(reader, value => value);
-  const retriedSequence = useRef("0");
+  const retriedSequence = useRef<string | null>(null);
+  const retryEvidence = useRef<RecentEntry | null>(null);
+  const attemptedRevision = useRef<string | null>(null);
+  const recentSnapshot = recent.snapshot;
+  const recentRef = useRef(recent);
+  recentRef.current = recent;
   const missing = state.document.status === "failed" && !state.document.retrying && isApiError(state.document.error) && state.document.error.status === 404;
   useEffect(() => {
     if (!missing) return;
@@ -71,12 +79,29 @@ function CaptureReader({ id }: { readonly id: string }) {
       checking = true;
       try {
         const { command_seq } = await store.readReplica();
-        if (BigInt(command_seq) <= BigInt(retriedSequence.current)) return;
+        if (retriedSequence.current !== null && BigInt(command_seq) <= BigInt(retriedSequence.current)) {
+          const current = reader.getState().document;
+          if (current.status !== "failed" || current.retrying || !isApiError(current.error) || current.error.status !== 404) return;
+          const evidence = retryEvidence.current;
+          retryEvidence.current = null;
+          const entry = recentRef.current.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
+          if (evidence && (!entry || entry.used_revision === evidence.used_revision)) {
+            confirmRecentRemoved(evidence);
+            recentRef.current.reconcile({ target: evidence.target, expected_used_revision: evidence.used_revision, replacement: null });
+          } else if (entry && entry.used_revision !== attemptedRevision.current) {
+            retryEvidence.current = entry;
+            attemptedRevision.current = entry.used_revision;
+            reader.retryLoad();
+          }
+          return;
+        }
         await store.whenUploaded(command_seq, controller.signal);
         if (controller.signal.aborted) return;
         const current = reader.getState().document;
         if (current.status === "failed" && !current.retrying) {
           retriedSequence.current = command_seq;
+          retryEvidence.current = recentRef.current.snapshot?.entries.find(entry => entry.target.kind === "x_capture" && entry.target.capture_id === id) ?? null;
+          attemptedRevision.current = retryEvidence.current?.used_revision ?? null;
           reader.retryLoad();
         }
       } catch {
@@ -90,8 +115,9 @@ function CaptureReader({ id }: { readonly id: string }) {
       if (status === "syncing" || status === "current") void check();
     });
     return () => { controller.abort(); stop(); };
-  }, [missing, reader, store]);
+  }, [confirmRecentRemoved, id, missing, reader, recentSnapshot, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
+  useEffect(() => { if (doc) { retryEvidence.current = null; attemptedRevision.current = null; } }, [doc]);
   useEffect(() => {
     if (!doc) return;
     const entry = recent.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
