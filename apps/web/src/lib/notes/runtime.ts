@@ -17,6 +17,8 @@ export interface DocumentReadSnapshot { retrying: boolean; error: unknown | null
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
   onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
+  hasPendingEdits(): boolean;
+  subscribePendingEdits(listener: () => void): () => void;
   readSnapshot(): DocumentReadSnapshot;
   subscribeRead(listener: () => void): () => void;
   retryRead(): void;
@@ -506,6 +508,7 @@ export class WritingRuntime {
     let observed_touch = resource.touch_vv;
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
+    const pendingListeners = new Set<() => void>();
     const readListeners = new Set<() => void>();
     let readState: DocumentReadSnapshot = {retrying: false, error: null, occurrence: null};
     const cached: CachedDocument = {
@@ -529,9 +532,12 @@ export class WritingRuntime {
         void this.evict();
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
+      hasPendingEdits: () => pending_edits.size > 0,
+      subscribePendingEdits: listener => {pendingListeners.add(listener); return () => pendingListeners.delete(listener);},
       track: (result, origin) => {
         pending_edits.add(result); cached.pending++;
-        const settled=()=>{pending_edits.delete(result);cached.text_pending.delete(result);cached.pending--;void this.evict();};
+        for (const listener of pendingListeners) listener();
+        const settled=()=>{pending_edits.delete(result);cached.text_pending.delete(result);cached.pending--;for(const listener of pendingListeners)listener();void this.evict();};
         void result.then(receipt => { try { for (const listener of committed) listener(receipt, origin); } finally { settled(); } },settled);
       },
       capture: () => {

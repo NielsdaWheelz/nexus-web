@@ -24,6 +24,7 @@ import {parseBody} from "@nexus/authored/body";
 import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {useChangeStamp} from "@/lib/api/changes";
+import {useIndexRowWindow} from "@/lib/collections/indexRowWindow";
 import {isApiError} from "@/lib/api/client";
 import {assertNever} from "@/lib/assertNever";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
@@ -272,6 +273,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [failure, setFailure] = useState<{content: FeedbackContent; action: FeedbackAction | null} | null>(null);
+  const rowWindow = useIndexRowWindow();
+  const unsettled = busy || failure !== null;
+  useLayoutEffect(() => unsettled ? rowWindow?.pin() : undefined, [rowWindow, unsettled]);
   const failureOccurrence = useFeedbackOccurrence(failure !== null, occurrenceKey);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {

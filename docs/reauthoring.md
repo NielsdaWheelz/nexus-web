@@ -4,6 +4,14 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+reader connections admission against `352e30350`: +257 net authored runtime
+lines (316 added, 59 deleted): reader evidence +214, note editors/host/runtime
++37, shared resource rows +6. sparse root admission replaces full-corpus mounts;
+complete logical order replaces mounted-neighbour recovery. existing drafts,
+native editors, local commits and menu pins retain their owners. no nested tree,
+second controller, persistence, wire or dependency change. docs and temporary
+qualification cases are excluded.
+
 compatible framework security update against `7e37f0db1`: zero authored runtime
 lines. package and lock changes are +48/-48; the next response-header patch is
 renamed byte for byte from 15.5.22 to 15.5.28. next/eslint-config-next 15.5.28

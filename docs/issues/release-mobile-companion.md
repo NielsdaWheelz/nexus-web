@@ -20,6 +20,14 @@ qualify representative first-open, filtering, source reveal/return and dismissal
 under ordinary action deadlines. preserve row identity, disclosure, focus and
 visit memory. increasing deadlines or accepting a smaller corpus is not a fix.
 
+the root-window repair must be qualified with the retained representative book
+on the supported framework cohort, including an actually disclosed branch,
+far reveal/source return, keyboard successors and unfinished input/menu/retry
+retention. native inspector find and cross-row selection are explicitly limited
+to mounted content; source-reader find is unchanged. final installed-native
+header geometry and downloaded-reader retention remain paired-release checks;
+disposable browser qualification does not replace them.
+
 native behavior passed on `26507b6e7`, lab
 `20261028-201503-b4d99d9ffe6a`, paired apk sha256
 `94c792dd0183ce5c939fbccb868880b5124c2706b4aa3b5e812d0848684e8247`:

@@ -35,6 +35,7 @@ type Props = {
   ancestorRef?: string;
   branch?: OutlineBranch;
   onRevealRoot?: () => void;
+  onRevealOccurrence?: (key: string) => void;
   busy?: boolean;
   viewLocked?: boolean;
 };
@@ -57,7 +58,7 @@ export default function ResourceOutlineList(props: Props) {
 
 function RootList({
   children, after, ariaLabel, scope, ancestorRef, branch: suppliedBranch,
-  onRevealRoot, busy, viewLocked = false,
+  onRevealRoot, onRevealOccurrence, busy, viewLocked = false,
 }: Props) {
   const inherited = useContext(ResourceBranch);
   const root = useRef<HTMLDivElement | null>(null);
@@ -69,10 +70,11 @@ function RootList({
       else list.current?.focus();
       return;
     }
-    root.current?.querySelector<HTMLElement>(
+    const row = root.current?.querySelector<HTMLElement>(
       `[data-outline-occurrence="${CSS.escape(target.key)}"] [data-row-focusable]`,
-    )?.focus();
-  }, [onRevealRoot]);
+    );
+    if (row) row.focus(); else onRevealOccurrence?.(target.key);
+  }, [onRevealRoot, onRevealOccurrence]);
   const [descriptors,setDescriptors]=useState<ReadonlyMap<string,OutlineChildrenDescriptor>>(()=>new Map());
   const registerChildren=useCallback((key:string,descriptor:OutlineChildrenDescriptor)=>{
     setDescriptors(current=>new Map(current).set(key,descriptor));
