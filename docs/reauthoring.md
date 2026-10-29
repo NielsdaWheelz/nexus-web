@@ -35,9 +35,9 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-highlight excerpts against `aac38e09a`: +3,343 net authored runtime lines
-(4,172 added, 829 deleted): web +284, shared authored kernel +1,013,
-semantic-helper transport +104, python +1,938, android +4. the self-contained
+highlight excerpts against `aac38e09a`: +3,351 net authored runtime lines
+(4,180 added, 829 deleted): web +284, shared authored kernel +1,013,
+semantic-helper transport +104, python +1,946, android +4. the self-contained
 conversion adds 332 authored migration lines; disposable-runtime backup
 composition and browser lifecycle fixes add 88 net verification-infrastructure
 lines (121 added, 33 deleted). generated wire/bundles,

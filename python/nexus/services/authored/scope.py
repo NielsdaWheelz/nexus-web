@@ -228,6 +228,14 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         UNION ALL SELECT DISTINCT 'capture-member:'||m.media_id::text||':'||c.fragment_id::text,
             jsonb_build_object('kind','media_member','root_ref','media:'||m.media_id::text,'reading_ref','fragment:'||c.fragment_id::text)
             FROM capture_members m JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-workspace:'||c.fragment_id::text,
+            jsonb_build_object('kind','workspace_member','reading_ref','fragment:'||c.fragment_id::text)
+            FROM workspace w JOIN capture_members m ON m.media_id=w.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
+        UNION ALL SELECT DISTINCT 'capture-library:'||library.library_id::text||':'||c.fragment_id::text,
+            jsonb_build_object('kind','library_member','library_ref','library:'||library.library_id::text,'reading_ref','fragment:'||c.fragment_id::text)
+            FROM library_members library JOIN capture_members m ON m.media_id=library.media_id
+            JOIN capture_readings c ON c.capture_id=m.capture_id
         UNION ALL SELECT 'capture-interval:'||fragment_id::text,
             jsonb_build_object('kind','interval','interval_key','capture:'||fragment_id::text,'reading_ref','fragment:'||fragment_id::text,'fragment_id',fragment_id,'fragment_idx',idx,'start_offset',0,'end_offset',size,'purpose','body','start_cut',false,'end_cut',false) FROM capture_readings WHERE size>0
         UNION ALL SELECT 'reading:'||media_id::text,
