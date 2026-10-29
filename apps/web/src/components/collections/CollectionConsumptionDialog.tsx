@@ -29,6 +29,7 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   const pending = ctx.consumption.pendingCollection(target);
   const connectionRequired = installedApp && !ctx.online;
   const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
+  const connectionOccurrence = useFeedbackOccurrence(connectionRequired);
   const scopeLabel = selection.kind === "Podcast" && selection.state !== "all"
     ? `all ${selection.state === "in_progress" ? "in-progress" : selection.state} episodes`
     : podcast ? "the whole podcast" : "the whole library";
@@ -57,7 +58,7 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           { label: "retry same request", busy: pending.phase === "Sending", disabledReason: connectionRequired ? "requires a connection" : undefined, onClick: () => ctx.consumption.retry(pending.commandKey) },
           { label: "stop tracking", busy: pending.phase === "Sending", onClick: () => ctx.consumption.forget(pending.commandKey) },
         ]} /> : null}
-      {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
+      {connectionRequired ? <FeedbackFailure scope="Local" occurrence={connectionOccurrence} content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}>
         <Button reserveIcon emphasis="strong" aria-busy={pending?.phase === "Sending"} disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>
         <Button onClick={onClose}>cancel</Button>

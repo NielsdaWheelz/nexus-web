@@ -39,6 +39,7 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
   const accountError = lectern.status === "failed" || lectern.status === "ready" ? lectern.error : null;
   const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
   const accountOccurrence = useFeedbackOccurrence(accountError !== null);
+  const connectionOccurrence = useFeedbackOccurrence(connectionRequired);
   const prepared = source.status === "ready" ? source.data : null;
   const needed = prepared === null ? 0 : prepared.media_ids.length - prepared.already_present_count;
   const capacity = prepared !== null && needed > prepared.available_slots;
@@ -70,7 +71,7 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
           <p>{target.kind === "Podcast" ? "episodes append oldest publication first." : "contents append in the library’s stored order; all uses newest added first."} this captures the whole accessible collection, ignoring page, sort, text and filters. new arrivals are excluded; future items are not added automatically.</p>
           {source.data.media_ids.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}
           {capacity ? <FeedbackNotice content={{ tone: "Warning", title: "not enough lectern space", message: `${needed} slots required; ${source.data.available_slots} available. nothing will be added until the whole selection fits.` }} announcement="Polite" /> : null}
-          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" /> : null}
+          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
         </>}
       {accountBusy ? <PaneLoadingState /> : null}
       {accountError !== null ? <FeedbackFailure scope="Local" occurrence={accountOccurrence} content={podcastErrorMessage(accountError, "couldn’t load lectern.")} announcement="Polite"
@@ -79,7 +80,7 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
         actions={[{ label: "check lectern change", busy: pending.phase === "Checking",
           onClick: () => void pending.check().then(outcome => { if (outcome === "Superseded") setRefused(true); }, error => fail({ error })) }]} /> : null}
       {refused ? <FeedbackNotice content={{ tone: "Warning", title: "this selection needs another review", message: "the lectern or selected items changed. this confirmation is disarmed." }} announcement="Polite" actions={[{ label: "review selection again", onClick: reviewAgain, busy: reviewing, disabledReason: reviewing ? "checking lectern and selected items…" : sending || pending !== null ? "resolve the pending lectern change first." : undefined }]} /> : null}
-      {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
+      {connectionRequired ? <FeedbackFailure scope="Local" occurrence={connectionOccurrence} content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}>
         <Button reserveIcon emphasis="strong" aria-busy={sending || reviewing || undefined} disabled={connectionRequired || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || refused || pending !== null || !accountReady} onClick={() => void submit()}>add to lectern</Button>
         <Button onClick={onClose}>cancel</Button>
