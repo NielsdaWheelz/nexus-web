@@ -75,6 +75,49 @@ annotation conversions do not establish the complete upgrade.
    no extra authored-format bump is indicated by this timestamp change alone.
    downloaded readers consume the same reader schema and must be qualified.
 
+## historical highlight provenance
+
+2026-10-29 contract refinement: the date correction exposes a second 0324
+refusal. 0320 deliberately seeds all six historical x highlights with unknown
+original publication. five now point at a generation-four reader. retained
+historical anchor-move records establish their current association, but do not
+prove the full source body observed at original creation. neither generation one
+nor a matching current quote should manufacture that missing provenance.
+
+for highlight selections, the existing `publication: null` means the original
+publication is unknown. an `x_capture_offsets` locator may independently name a
+proved retained destination. 0324 must preserve all six nulls while requiring
+the exact media/fragment mapping, bounded offsets, literal quotation and matching
+relational anchor. explicit publications must still match the recorded reader
+generation before conversion. passage conversion and its refusals stay unchanged:
+passages lack the highlight's retained locator projection; this corpus has no
+authored x passages. source stubs describe retained sources, not observation history.
+
+the shared selection validator, server upload validation and excerpt query must
+admit that canonical highlight state without weakening capture admission,
+capture/fragment identity, offsets or quote validation. source navigation and
+chat selection derive their destination from the validated locator. saved literal
+excerpts remain available; unknown original full-source extent stays unknown.
+0326's historical `source_extent: null` is not reconstructed from today's body.
+
+new highlight creation and explicit reselection must require a known matching x
+publication at the shared command owner. ordinary body/color edits, restore,
+move/unlink and synchronization preserve existing unknown provenance. introduce
+no historical-id allowlist, compatibility reader or new provenance structure.
+regenerate the current semantic helper and paired clients. change frozen migration
+helpers only if their actual entrypoints require it; qualify the complete chain.
+this correction rides unreleased wire 17 and authored format 4.
+
+prove all six nulls, identities, quotes, offsets, stamps/vectors and annotation
+writing survive. exercise snapshot/bootstrap, excerpt display, source navigation,
+paint, chat selection, downloaded reading and upload after ordinary edits. verify
+new creation/reselection rejects unknown x publication, explicit mismatches and
+invalid anchors still refuse, and nonempty accepted source prefixes remain intact.
+the cost is admitting a broader truthful stored state and using locator identity
+at its consumers; the original full-source view remains unavailable.
+
+## other consumer findings
+
 source tracing found no captured-time ordering dependency in the x capture
 selection path: capture reuse orders by id and compares payload, contexts and
 fragment, not timestamps. a later identical acquisition may reuse an undated
