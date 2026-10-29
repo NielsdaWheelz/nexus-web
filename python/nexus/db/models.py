@@ -118,6 +118,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ChatSelection(Base):
+    """The last admitted chat choice for one account."""
+
+    __tablename__ = "chat_selections"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    revision: Mapped[int] = mapped_column(BigInteger)
+    choice: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
 class Page(Base):
     """Projection of one authored page; kept while deleted, hidden by ``authored_visible``."""
 

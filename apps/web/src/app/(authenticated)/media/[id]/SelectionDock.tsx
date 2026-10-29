@@ -396,11 +396,17 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         </div>
         {failed ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
           actions={[{ label: "retry saving", onClick: failed.retry, busy: saving, disabledReason: saving ? "saving on this device…" : undefined }, { label: "copy text", onClick: () => copy(feedback, draft.body.body_text, "text couldn’t be copied") }]} /> : null}
-        {canQuote ? <>
+        {canQuote ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
           {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "highlight saved; send not confirmed" : "this chat changed", message: commandRecovery.kind === "Unconfirmed" ? "the request may have succeeded." : "review this chat before sending again." }} announcement="Polite"
             actions={commandRecovery.kind === "Unconfirmed" ? [{ label: "retry same send", onClick: composer.retryChat }]
               : [{ label: "refresh chat", onClick: composer.refreshChat }]} />
-            : chatIssue ? <FeedbackNotice content={{ tone: "Warning", title: chatIssue.highlightSaved ? "highlight saved; question not sent" : chatIssue.message, message: chatIssue.highlightSaved ? chatIssue.message : undefined }} announcement="Polite"
+            : chatIssue?.kind === "Recall" ? <>
+              <FeedbackStatus content={{ tone: "Warning", title: chatIssue.state === "Pending" ? "restoring last model…" : "couldn’t restore your last model" }} announcement="Polite" />
+              {chatIssue.state === "Failed" ? <div className={styles.dock}>
+                <Button onClick={() => { composer.retryRecall(); composer.closePicker(); }}>retry</Button>
+                <Button onClick={composer.recoverModel}>open in chat</Button>
+              </div> : null}
+            </> : chatIssue ? <FeedbackNotice content={{ tone: "Warning", title: chatIssue.highlightSaved ? "highlight saved; question not sent" : chatIssue.message, message: chatIssue.highlightSaved ? chatIssue.message : undefined }} announcement="Polite"
               actions={chatIssue.kind === "Catalog" ? [
                 { label: "retry", onClick: composer.retryCatalog },
                 { label: "choose a model in chat", onClick: composer.recoverModel },
@@ -416,7 +422,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                   actions={[{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }]} />
                   : destination.kind === "LookupFailed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
                       actions={[{ label: "retry", onClick: composer.retryDefault }]} /> : null}
-        </> : null}
+        </div> : null}
       </div>
     );
   };

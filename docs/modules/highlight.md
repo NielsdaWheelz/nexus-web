@@ -93,7 +93,7 @@ the same creation receipt, while provenance retains distinct field identities.
 
 ## cutover
 
-revision 0325 consumes unambiguous attached notes and transfers their actual yjs
+revision 0326 consumes unambiguous attached notes and transfers their actual yjs
 bodies, references, placements and unchanged index publications to highlights.
 ambiguous ownership, liveness or binding collisions abort atomically with exact
 record ids. old accepted bytes remain inert behind authored format 3 and the

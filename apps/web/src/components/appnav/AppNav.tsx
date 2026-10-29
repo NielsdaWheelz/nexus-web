@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, CircleUser, Headphones, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Headphones, Plus, Search } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -207,7 +207,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           placement="above"
           align="start"
           onNavigate={(event, item) => navigate(event, item, true)}
-          renderTrigger={(trigger, attention) => (
+          renderTrigger={(trigger, accountMark) => (
             <Tooltip text="account" placement="right" openDelayMs={0}
               disabled={!collapsed || trigger["aria-expanded"]} triggerRef={trigger.ref}
               renderTrigger={help => (
@@ -219,10 +219,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   aria-describedby={cx(help["aria-describedby"], trigger["aria-describedby"]) || undefined}
                   aria-current={accountActive ? "page" : undefined}
                 >
-                  <span className={styles.accountIcon}>
-                    <CircleUser className={styles.icon} size={20} aria-hidden="true" />
-                    <span className={styles.accountMarker}>{attention}</span>
-                  </span>
+                  {accountMark}
                   <span className={styles.label}>Account</span>
                 </button>
               )} />

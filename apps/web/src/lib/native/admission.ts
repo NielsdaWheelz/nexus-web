@@ -1,5 +1,6 @@
 // Local binding is not server authority. This document retains its owners while
-// native alone verifies admission; Ready transitions wake reads, never writes.
+// native alone verifies admission; explicit Ready transitions wake reads, never writes.
+// A browser response can restore reachability without waking every read.
 import type { RemoteAdmission } from "./contracts";
 
 export const installedApp = typeof window !== "undefined" && "nexusApp" in window;
@@ -23,17 +24,18 @@ export function subscribeAdmission(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-export function publishAdmission(next: RemoteAdmission): void {
+function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
   if (next === admission) return;
   admission = next;
-  if (next === "Ready") generation += 1;
+  if (next === "Ready" && wakeReads) generation += 1;
   for (const listener of listeners) listener();
 }
+export function publishAdmission(next: RemoteAdmission): void { setAdmission(next, true); }
 export function bindSessionCheck(run: () => Promise<unknown>): void { check = run; }
 export function checkSession(): void { void check?.(); }
 /** A current-account successful request is another browser reachability witness. */
 export function observeRemoteSuccess(): void {
-  if (!installedApp && browserBinding !== null && admission === "Unavailable") publishAdmission("Ready");
+  if (!installedApp && browserBinding !== null && admission === "Unavailable") setAdmission("Ready", false);
 }
 export function observeRemoteFailure(status: number): void {
   if (!installedApp && browserBinding === null || admission === "UpdateRequired") return;

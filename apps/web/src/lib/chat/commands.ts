@@ -10,7 +10,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import type { WorkGuard, WorkScope } from "@/lib/unsavedWork";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { readCatalog } from "./catalog";
-import { isSelectable } from "./selection";
+import { isSelectable, type Route } from "./selection";
 import {
   chatFailure,
   failureDetail,
@@ -40,6 +40,7 @@ export type ChatCommand =
   | {
       readonly kind: "Send";
       readonly request: RunCreateRequest;
+      readonly selectionRoute: Route | null;
       readonly runId: string;
       /** The pane whose composer sent it: only that pane shows its recovery. */
       readonly viewId: string;
@@ -50,6 +51,7 @@ export type ChatCommand =
       readonly messageId: string;
       readonly operation: "rerun" | "regenerate";
       readonly selection: Selection;
+      readonly selectionRoute: Route | null;
       readonly expectedRevision: number;
       readonly runId: string;
       readonly implicit: boolean;
@@ -181,10 +183,10 @@ export function repeatMessage(
   conversation: Conversation,
   message: Message,
   operation: "rerun" | "regenerate",
-  explicit: Selection | null,
+  explicit: { selection: Selection; route: Route | null } | null,
   openIntent: OpenIntent,
 ): Promise<CommandOutcome> {
-  const selection = explicit ?? message.trust_trail?.run.run_selection.selection;
+  const selection = explicit?.selection ?? message.trust_trail?.run.run_selection.selection;
   if (!selection)
     return Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: "model not recorded" }, rejection: null });
   return getConversationCommands(accountId, conversation.id).execute({
@@ -192,6 +194,7 @@ export function repeatMessage(
     messageId: message.id,
     operation,
     selection,
+    selectionRoute: explicit?.route ?? null,
     expectedRevision: conversation.branch_revision,
     runId: createRandomId(),
     implicit: explicit === null,
@@ -395,7 +398,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         attempt.accepted = accepted;
         attempt.unconfirmed = false;
         attempt.onAcceptance?.();
-        publishChange("Chats"); // the chat moved to the top of the index
+        publishChange("Chats", "ChatSelection"); // the chat moved to the top of the index
         if (conversationId === null) {
           pending = null; // a new chat settles with its acceptance; its pane routes to it
           set(IDLE_COMMAND);

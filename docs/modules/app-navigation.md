@@ -40,6 +40,14 @@ settings, a separator, and danger-last sign out. imports retains its canonical
 the mobile nexus account projection renders that same component and order;
 mobile attention remains inside nexus, without a closed-launcher badge.
 
+`AccountMenu` owns one decorative person-in-circle mark and its passive attention
+dot, shared by the rail and mobile root header. mobile shows quiet icon-only
+`account` and `close nexus` controls, in that order, with 20px glyphs and 48px
+minimum targets. the root heading may wrap with enlarged text; controls never
+shrink. close invokes the existing guarded full dismissal; search back/escape
+returns to overview. account retains its trigger state, status description and
+focus/navigation owners. the expanded desktop rail retains its visible label.
+
 `AccountMenu` reads the existing `ImportsProvider` summary once. a known positive
 `needs_attention_count` paints a passive warning dot inside account and a warning
 `Pill` inside its imports item. the pill caps at `99+`; the imports link's complete
@@ -63,8 +71,9 @@ Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
 Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
-owns the autofocused query; Choose Create, Choose Browse, Manage Panes, Add, and
-recovery pages replace one another inside one opaque viewport-fixed dialog.
+opens the keyboard-down overview with heading focus; explicitly entering search
+focuses its query. Choose Create, Choose Browse, Manage Panes, Add, and recovery
+pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
 the nexus control opens through native button activation: pointer click,
 keyboard and assistive technology. primary button-0 presses are captured so

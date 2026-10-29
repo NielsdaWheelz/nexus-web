@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0325"
-down_revision = "0324"
+revision = "0326"
+down_revision = "0325"
 branch_labels = None
 depends_on = None
 
@@ -93,7 +93,7 @@ def _parts(ref: str) -> tuple[str, UUID]:
 
 
 def _refuse(record, reason, repair="repair the named records before retrying"):
-    raise RuntimeError(f"0325 {record}: {reason}; {repair}")
+    raise RuntimeError(f"0326 {record}: {reason}; {repair}")
 
 
 @cache
@@ -1891,5 +1891,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        "0325 is irreversible; restore the verified backup and matching clients"
+        "0326 is irreversible; restore the verified backup and matching clients"
     )

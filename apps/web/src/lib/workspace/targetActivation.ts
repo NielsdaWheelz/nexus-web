@@ -4,7 +4,7 @@ import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/pan
 import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
-import type { Selection } from "@/lib/chat/wire";
+import type { SelectionEditor } from "@/lib/chat/selection";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface WorkspaceTarget {
@@ -27,7 +27,7 @@ export type WorkspacePaneEntry =
   | { readonly kind: "ComposePage"; readonly title: string }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget; readonly purpose: "Open" | "RestoreVisit" }
   // a fresh chat pane: review the complete reader question with its observed model.
-  | { readonly kind: "ComposeReaderQuestion"; readonly text: string; readonly selection: Selection | null }
+  | { readonly kind: "ComposeReaderQuestion"; readonly text: string; readonly selection: SelectionEditor }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
   // page or daily pane: the caret at the end of that note's row

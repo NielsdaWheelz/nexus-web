@@ -93,8 +93,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             activeId={accountId}
             placement="below"
             align="end"
-            renderTrigger={(trigger, attention) => (
-              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account {attention}</Button>
+            renderTrigger={(trigger, accountMark) => (
+              <Button {...trigger} iconOnly icon={accountMark} className={styles.iconButton} aria-current={accountId === null ? undefined : "page"} />
             )}
             onNavigate={(event, destination) => {
               const activation = workspaceTargetActivationIntent(event);
@@ -105,7 +105,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }}
           />
-          <Button className={styles.textButton} onClick={controller.close}>done</Button>
+          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} />
         </div>
       </header>
       <div className={styles.searchInput}>
