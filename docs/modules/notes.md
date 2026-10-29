@@ -478,9 +478,12 @@ ranked before truncation; prose remains evidence. firefox serializes the whole
 read and android applies its store-revision fence to the entire operation.
 `SEARCH_READ_SQL` owns its finite packaged native statements. ordinary `search`
 retains its cursor and full-search/picker contract.
-`search_admission` reuses that compound admission for at most eight held refs,
-including current query membership and scoped evidence. it returns null cursors
-and avoids a corpus scan; resource existence alone cannot prove scoped admission.
+`search_admission` reuses that compound admission for at most eight held
+`{ref, field}` targets, including current query membership and scoped evidence.
+it proves the held field itself: a quotation cannot admit a cleared annotation,
+and a stronger quotation cannot revoke an annotation that still matches.
+it returns null cursors and avoids a corpus scan; resource existence alone cannot
+prove scoped admission.
 
 `workspace_member` identifies readings admitted by canonical global search;
 independent retained-source readability does not add workspace membership.
