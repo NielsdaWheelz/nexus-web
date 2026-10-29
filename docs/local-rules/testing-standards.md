@@ -96,6 +96,14 @@ including `down --rmi local`; current labs create no per-run images. unrelated
 images and other runs' resources neither fail cleanup nor become its targets.
 incomplete owned cleanup turns success into exit 125 and retains recovery inputs.
 
+`--database-backup FILE` restores a supplied postgres custom-format backup into
+the fresh owned database before migrations, api and workers start. restoration
+is transactional and stops on errors; the normal migration/bootstrap/teardown
+path remains authoritative. auth and object storage are separate owners: drivers
+must establish matching authorized accounts and retained source objects when
+their journey requires them. never overwrite a running lab database to simulate
+an upgrade.
+
 the required private `web_tls` context contains `ca_file` and
 `leaf_spki_sha256`. each run owns a fresh root and leaf; chromium trusts only
 that exact leaf through its scoped spki exception. this is separate from the
@@ -109,6 +117,17 @@ persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
 gecko bridge accepts that permission without applying it; the helper verifies the
 grant and real storage persistence before returning. on macos its app-data home
 also stays inside the owned temporary root. no global profile or trust changes.
+`restart(offline)` closes the actual browser process and reopens its exact profile;
+callers use the returned context/page. offline mode is supplied at context creation,
+before restored pages or shared workers can reconnect.
+the already verified profile keeps its trust and persistence grant; restart never
+reseeds cookies. normal `close()` retires the profile after process shutdown.
+
+`context.setOffline()` is not a shared-worker transport-isolation guarantee.
+authored offline checks use stock firefox's profile-scoped network controls or
+android's `setWebReachable`. restart isolation must precede browser startup,
+including background catch-up. verify that the actual local source prefix remains
+unuploaded before and after restart, then uploads after reconnection.
 
 native firefox drivers import `open_native_firefox` from
 `python/scripts/lab_firefox.py`, using the checkout's `python` import root. it
@@ -337,7 +356,8 @@ lab and `make worker-*` share `python/scripts/worker_checkout_image.py`. the tag
 is `nexus-worker-checkout:<first 16 hex of sha256>` over framed file names and
 contents: `docker/Dockerfile.backend`, `docker/codex-requirements.toml`,
 `python/pyproject.toml`, `python/uv.lock`, `python/README.md`,
-`node/ingest/package.json` and `node/ingest/bun.lock` when present. missing and
+`node/codex/package.json`, `node/codex/bun.lock`, `node/ingest/package.json` and
+`node/ingest/bun.lock` when present. missing and
 empty lock files differ. application edits and the git sha do not change it.
 the `worker-checkout` target installs dependencies only: no application source,
 migrations, installed nexus project, source sha or runtime identity. checkout

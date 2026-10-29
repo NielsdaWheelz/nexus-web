@@ -15,34 +15,37 @@ import { usePaneEntryDelivery, usePaneParam } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-import { useNoteRootTitle } from "@/lib/workspace/presentations";
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
   const ref = `note_block:${blockId}`;
-  const sourceView = useRef<HTMLDivElement>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
-  const rootField = useMemo(() => ({label: "edit note", inspection: inspection?.view ?? null}), [inspection]);
+  const rootField = useMemo(() => ({label: "note body", inspection: inspection?.view ?? null}), [inspection]);
   const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField});
   const resource = read.rootRead.resource;
-  useNoteRootTitle(ref, read.rootRead);
   const [error, setError] = useState<unknown | null>(null);
   usePaneReturnReady(read.rootRead.known || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
     const handle = outline.current;
-    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !read.ready || !handle || !claim(delivery)) return;
+    if (delivery?.entry.kind === "EditNoteBody" && read.rootRead.known && !resource) {claim(delivery); return;}
+    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !read.rootReady || !handle || !claim(delivery)) return;
     void handle.focusRoot().catch(setError);
-  }, [resource, read.ready, delivery, claim]);
+  }, [resource, read.rootRead.known, read.rootReady, delivery, claim]);
   const arrival = useSourceArrival({
-    ready: resource !== null,
+    ready: resource !== null && read.rootReady,
     sourceIdentity: resource?.body_text ?? null,
     apply: async (arrival, context) => {
       if (!resource || context.signal.aborted) return "Unavailable";
+      const restored = context.purpose === "RestoreVisit" || context.restored;
       if (arrival.kind === "resource") {
         if (arrival.resource_ref !== resource.ref) return "Unavailable";
-        if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
+        if (!restored) {
+          const handle = outline.current;
+          handle?.revealRoot();
+          if (context.mayFocus()) await handle?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
+        }
         return "Applied";
       }
       const text = resource.body_text ?? "";
@@ -60,14 +63,23 @@ export default function NotePaneBody() {
       } else {
         if (arrival.kind !== "source") return "Unavailable";
         const location = arrival.source.location;
-        if (location.kind === "resource") { if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true }); return "Applied"; }
+        if (location.kind === "resource") {
+          if (!restored) {
+            const handle = outline.current;
+            handle?.revealRoot();
+            if (context.mayFocus()) await handle?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
+          }
+          return "Applied";
+        }
         if (location.kind !== "located" || location.locator.type !== "note_block_offsets" || location.locator.block_id !== blockId) return "Unavailable";
         const locator = location.locator;
         const exact = locator.text_quote_selector?.exact;
         if (typeof exact !== "string" || Array.from(text).slice(locator.start_offset, locator.end_offset).join("") !== exact) return "Unavailable";
         range = { startOffset: locator.start_offset, endOffset: locator.end_offset };
       }
-      setInspection({ text, view: { text, ...range, activationId: context.activationId, signal: context.signal, mayFocus: context.mayFocus, restored: context.restored } });
+      if (context.signal.aborted) return "Unavailable";
+      if (!restored) outline.current?.revealRoot();
+      setInspection({ text, view: { text, ...range, activationId: context.activationId, signal: context.signal, mayFocus: context.mayFocus, restored } });
       context.signal.addEventListener("abort", () => setInspection(current => current?.view.activationId === context.activationId ? null : current), { once: true });
       return "Applied";
     },
@@ -75,14 +87,15 @@ export default function NotePaneBody() {
   const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />, [blockId]);
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
-  usePaneChrome(useMemo(() => ({ resourceRef }), [resourceRef]));
+  usePaneChrome({resourceRef, editor: resource ? read.rootEditor ?? undefined : undefined, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
+    header: resource ? {kind: "Resource", resource: {status: "Ready", creditGroups: []}} : undefined});
   const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null, ref);
   const entryOccurrence = useFeedbackOccurrence(error !== null, ref);
   if (!resource) {
     if (!read.rootRead.known) return <>{read.view}<FeedbackBusy subject={ref} pending={read.error === null}/></>;
     return <p>this note is no longer available.</p>;
   }
-  return <div ref={sourceView} tabIndex={-1}>
+  return <div>
     {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
     {error ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{tone: "Warning", title: "couldn’t open this note"}} announcement="Polite"/> : null}
     {read.view}

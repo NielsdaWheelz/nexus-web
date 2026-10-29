@@ -10,6 +10,7 @@ import { prepareChange, createNoteIntent, type Intent } from "@nexus/authored/co
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
+import { CommandTooLargeError } from "@nexus/authored/types";
 import type { AuthoredStore, Change, CommitFrame, Corpus, QueryResult, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
@@ -39,6 +40,7 @@ interface CachedDocument extends WritingDocument { text_pending: Set<Promise<Loc
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
   occurrence: object;
+  reject_oversize: boolean;
   intent: Intent | null; selection: StateSelection; change: Change | null;
   prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
   store: AuthoredStore | null; held: boolean; attempting: boolean;
@@ -110,6 +112,8 @@ export class WritingRuntime {
     const selected = selectStates(selection);
     for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) inferred[key] = [...new Set([...inferred[key], ...selected[key]])];
     const owner = this.reserve();
+    const capturesExcerpt = (command: Intent): boolean => command.kind === "batch" ? command.intents.some(capturesExcerpt) : command.kind === "create_highlight" || command.kind === "update_highlight" && command.selection !== null || command.kind === "capture_passage";
+    owner.reject_oversize = capturesExcerpt(frozen);
     owner.intent = frozen;
     owner.selection = inferred;
     owner.release();
@@ -240,14 +244,20 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { occurrence: {}, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = { occurrence: {}, reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
     this.pending_commands.set(result, owner);
     const operation = this.tail.then(async () => {
       if (this.retired) throw new Error("Writing account is closed");
       this.failed = owner;
       let receipt: LocalCommit;
       try { receipt = await this.attempt(owner); }
-      catch (error) { this.reportFailure(owner, error); receipt = await settled; }
+      catch (error) {
+        if (error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null) {
+          if (this.failed === owner) this.failed = null;
+          throw error;
+        }
+        this.reportFailure(owner, error); receipt = await settled;
+      }
       if (this.failed === owner) this.failed = null;
       this.publish({ error: null, error_occurrence: null, error_refs: [] });
       owner.resolve(receipt);
@@ -255,7 +265,8 @@ export class WritingRuntime {
     });
     this.tail = operation.then(accept, error => {
       owner.reject(error instanceof Error ? error : new Error("Writing command did not settle"));
-      if (!this.retired) this.publish({ error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
+      if (!this.retired) this.publish(error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null
+        ? { error: null, error_occurrence: null, error_refs: [] } : { error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
       refuse(error);
     }).finally(() => {
       this.pending_commands.delete(result);
@@ -279,6 +290,7 @@ export class WritingRuntime {
         owner.held = true;
         try { return await this.prepareAndPersist(owner, store); }
         catch (error) {
+          if (error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null) throw error;
           owner.attempting = false;
           this.reportFailure(owner, error);
           // Retain the account lease until these exact bytes settle or the

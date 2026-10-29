@@ -168,7 +168,7 @@ export default function PdfSurface({
       const quads = rangeQuads(range, page, shown.viewport);
       const exact = selection.toString().trim();
       return quads.length && exact ? {
-        kind: "Captured",
+        kind: "Captured", excerpt: null, excerpt_start: null, excerpt_end: null,
         anchor: { kind: "pdf", page: number, quads, exact },
         quote: exact,
       } : null;

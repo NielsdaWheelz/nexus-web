@@ -55,8 +55,10 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     if (retired) throw new Error("authored account retired");
     if (!persistence) {
       account = input.account_id;
-      persistence = new Persistence(await openDatabase(account));
-      await persistence.initialize(account);
+      const opened = new Persistence(await openDatabase(account));
+      try { await opened.initialize(account); }
+      catch (error) { await opened.db.close(); throw error; }
+      persistence = opened;
       sync = new Sync(persistence, {
         json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => (await response(path, body, signal)).json() as Promise<T>,
         snapshot: async signal => { const result = await response("/api/authored/snapshot", null, signal); if (!result.body) throw new Error("authored snapshot stream missing"); return result.body; },

@@ -6,11 +6,12 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 // first title edit or item commits the latent page and that edit/item together.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Intent } from "@nexus/authored/commands";
+import type { ResourceProjection } from "@nexus/authored/types";
 import { pageTitle } from "@nexus/authored/queries";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import LocalOutline, { type LocalOutlineHandle } from "@/components/notes/LocalOutline";
+import { useLocalOutlineRoot, type LocalOutlineHandle } from "@/components/notes/LocalOutline";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -47,9 +48,7 @@ function PageAccount({ writing, pageId, localDate }: { writing: WritingRuntime; 
 }
 
 function PageContent({ writing, createdId, pageId, localDate }: { writing: WritingRuntime; createdId: string; pageId: string | null; localDate: string | null }) {
-  const pane = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
-  const params = usePaneSearchParams();
-  const { delivery, claim } = usePaneEntryDelivery();
+  const {delivery, claim} = usePaneEntryDelivery();
   const newPage = pageId === null && localDate === null;
   const direct = useMemo<ResolvedPage>(() => ({
     ref: `page:${pageId ?? createdId}`,
@@ -76,24 +75,51 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   const latent = prelude.length > 0;
   const ready = resolved !== null && read.data !== null;
   const gone = ready && page === null && !latent;
+  useEffect(() => {
+    if (!gone || !delivery) return;
+    const kind = delivery.entry.kind;
+    if (kind === "EditPageTitle" || kind === "AppendNote" || kind === "FocusNote" || kind === "ComposePage") claim(delivery);
+  }, [claim, delivery, gone]);
   const date = page?.local_date ?? localDate;
   const id = ref?.slice("page:".length) ?? null;
+  usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
+  usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
+  const dailyError = currentDaily?.error ?? null;
+  const dailyOccurrence = useFeedbackOccurrence(dailyError !== null, localDate);
+  const error = dailyError ?? read.error;
+  const failure = <AuthoredReadFailure error={error} occurrence={dailyError !== null ? dailyOccurrence : read.occurrence}
+    pending={dailyError !== null ? dailyRetrying : read.pending}
+    retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
+    title="couldn’t open this page on this device"/>;
+  return <>{failure}{!ready || ref === null || id === null
+    ? <FeedbackBusy subject={localDate ?? pageId ?? createdId} pending={error === null}/>
+    : gone ? <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />
+    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />}</>;
+}
+
+function PageEditing({rootRef, id, page, date, newPage, prelude}: {
+  rootRef: string; id: string; page: ResourceProjection | null;
+  date: string | null; newPage: boolean; prelude: readonly Intent[];
+}) {
+  const pane = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
+  const params = usePaneSearchParams();
+  const { delivery, claim } = usePaneEntryDelivery();
   const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
   const [entryMessage, setEntryMessage] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [entryError, setEntryError] = useState<unknown | null>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
-  const surface = useRef<HTMLDivElement>(null);
+  const rootField = useMemo(() => ({label: "page title", initialTitle, placeholder: pageTitle("", date)}), [date, initialTitle]);
+  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField});
   const { inputRef, focusInput } = usePaneQueryInput();
-  const displayTitle = pageTitle(page?.title ?? initialTitle, date);
-  usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
-  usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
+  const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
     kind: "link", id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
     label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
   })), [date]);
   usePaneChrome({
-    displayTitle, menuActions,
+    displayTitle, menuActions, editor: root.rootEditor ?? undefined,
+    header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
     query: { kind: "Controls", focusInput, content: <PaneQueryToolbar inputRef={inputRef}
       input={{ label: "Filter page items", placeholder: "Filter page items", value: filter, appliedValue: filter, onChange: setFilter, onClear: () => setFilter("") }}
@@ -103,13 +129,12 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
     if (newPage && page !== null && id !== null) pane.router.replace(`/pages/${id}`, { activate: false });
   }, [id, newPage, page, pane.router]);
   useEffect(() => {
-    if (!delivery || !ready) return;
+    if (!delivery || !root.rootReady) return;
     const entry = delivery.entry;
-    if (entry.kind === "ComposePage" && newPage) {
-      if (claim(delivery)) setInitialTitle(entry.title);
+    if (entry.kind === "ComposePage") {
+      if (claim(delivery) && newPage) setInitialTitle(entry.title);
       return;
     }
-    if (gone) { if (claim(delivery)) setEntryMessage("this page is no longer available."); return; }
     if (entry.kind === "EditPageTitle") {
       const handle = outline.current;
       if (!handle) return;
@@ -130,21 +155,14 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
       }).catch(error => { if (!controller.signal.aborted) setEntryError(error); });
       return () => controller.abort();
     }
-  }, [claim, delivery, gone, id, newPage, ready]);
-  const error = currentDaily?.error ?? read.error;
-  const readOccurrence = useFeedbackOccurrence(error !== null && error !== undefined, localDate ?? pageId ?? createdId);
-  const entryOccurrence = useFeedbackOccurrence(entryError !== null, ref);
-  const failure = <AuthoredReadFailure error={error ?? null} occurrence={readOccurrence} pending={dailyRetrying || read.pending}
-    retry={currentDaily?.error !== null && currentDaily?.error !== undefined ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry} title="couldn’t open this page on this device"/>;
-  if (!ready || ref === null) return <>{failure}<FeedbackBusy subject={localDate ?? pageId ?? createdId} pending={error == null}/></>;
-  if (gone) return <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />;
-  return <div ref={surface}>
+  }, [claim, delivery, id, newPage, root.rootReady]);
+  const entryOccurrence = useFeedbackOccurrence(entryError !== null, rootRef);
+  return <div>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
-    {failure}
     {entryError !== null ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
     {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
-    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} rootField={{label: "edit page title", initialTitle, placeholder: pageTitle("", date)}}/>
+    {root.view}
 
   </div>;
 }

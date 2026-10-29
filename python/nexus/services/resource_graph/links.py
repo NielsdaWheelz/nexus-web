@@ -70,6 +70,9 @@ def materialize_link_endpoint(
         owner_scheme=owner.scheme,
         owner_id=owner.id,
         exact=evidence.quote.exact,
+        prefix=evidence.quote.prefix,
+        suffix=evidence.quote.suffix,
+        captured_evidence=evidence,
     )
 
 

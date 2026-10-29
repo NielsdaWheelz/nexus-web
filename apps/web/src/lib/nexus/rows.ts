@@ -1,5 +1,5 @@
+import { authoredItem } from "@/lib/notes/presentation";
 import type { SearchActive } from "@/lib/ui/searchOptions";
-import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 // Launcher composition: local navigation, resources and evidence have separate budgets.
 // Selection preserves identity; deliberate movement also pins the visible prefix.
 import {
@@ -24,7 +24,7 @@ import { parseResourceRef, resourceIconForScheme, resourceTypeLabel } from "@/li
 import type { ResourceItem } from "@/lib/resources/items";
 import type { LocalMatch } from "@/lib/search/localSearch";
 import { resourceMetadataText } from "@/lib/resources/metadata";
-import { searchHref } from "@/lib/search/searchParams";
+import { emptySearchQuery } from "@/lib/search/query";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   NexusAction,
@@ -37,12 +37,13 @@ import type {
   NexusRecent,
   NexusRow,
   NexusRootMode,
+  NexusTarget,
 } from "./model";
-import { newChatTarget, NEXUS_COMMANDS, nexusBrowseTarget, type BrowseKind, type NexusQuery } from "./query";
+import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusIntent, type NexusQuery } from "./query";
 
 const SECTION_CAPS = { Commands: 4, Resources: 4, Saved: 2, Inside: 2 } as const;
 const SECTIONS = Object.keys(SECTION_CAPS) as NexusHomeSection[];
-const SECTION_LABELS = { BestMatch: "best match", Commands: "commands & places", Resources: "resources", Saved: "saved passages", Inside: "inside sources" } as const;
+const SECTION_LABELS = { BestMatch: "best match", Commands: "actions", Resources: "resources", Saved: "saved passages", Inside: "inside sources" } as const;
 const OPEN_CAP = 5;
 const RECENT_CAP = 4;
 const TIERS: readonly NexusRankTier[] = [
@@ -127,13 +128,17 @@ function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexu
   };
 }
 
+function placeActionLabel(place: Destination): string {
+  return place.id === "authors" ? "search people" : `open ${place.label.toLowerCase()}`;
+}
+
 function placeRow(place: Destination, tier: NexusRankTier, frecency: Frecency): NexusRow {
   const today = place.id === "today";
   return {
     key: `Destination:${place.id}`, existing: true,
-    label: place.label,
+    label: placeActionLabel(place),
     icon: place.icon ?? getPaneRouteIcon(place.href),
-    type: "Place",
+    detail: place.id === "authors" ? "authors and contributors" : undefined,
     action: {
       kind: "Available",
       target: today
@@ -149,90 +154,60 @@ function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string): 
   const command = NEXUS_COMMANDS[id];
   return {
     key: `QuickAction:${id}`, existing: false,
-    label: command.label,
+    label: id === "Nexus.Quick.Note" && argument ? "save note to today" : command.label,
     icon: command.icon,
-    type: "Command",
-    detail: argument || `${command.category} · ${command.alias.trimEnd()}`,
-    action: { kind: "Available", target: command.target(argument) },
+    detail: `${command.aliases.join(", ")} [${command.argumentLabel}]${argument ? ` · ${argument}` : ""}`,
+    action: command.action(argument),
     rank: { tier, score: 0, frecency: 0 },
   };
 }
 
-function askRow(key: string, text: string, detail: string | undefined, tier: NexusRankTier): NexusRow {
-  return {
-    key, existing: false,
-    label: `Ask Nexus about “${text}”`,
-    icon: MessageSquarePlus,
-    type: "Chat",
-    detail,
-    action: { kind: "Available", target: newChatTarget(text) },
-    rank: { tier, score: 0, frecency: 0 },
-  };
-}
-
-function appendToToday(text: string): NexusAction {
-  return {
-    kind: "Available",
-    target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "AppendNote", initialText: text } },
-  };
-}
-
-function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
+function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency, picker: boolean): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
   if (intent.kind === "ImportUrl") {
     explicit.push({
       key: `ImportUrl:${intent.url}`, existing: false,
-      label: "Import URL",
+      label: "import",
       icon: LinkIcon,
       type: "URL",
       detail: intent.url,
-      action: { kind: "Available", target: NEXUS_COMMANDS["Nexus.Quick.Import"].target(intent.url) },
+      action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url),
       rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
   } else if (intent.kind === "Command") {
     explicit.push(commandRow(intent.id, "ExplicitIntent", intent.argument));
+  } else if (intent.kind === "CommandLookup") {
+    explicit.push(...(Object.keys(NEXUS_COMMANDS) as NexusCommandId[]).map((id) => commandRow(id, "CurrentContext", "")));
   } else if (intent.kind === "Destination") {
     explicit.push(placeRow(getDestination(intent.id), "ExplicitIntent", frecency));
   } else if (intent.kind === "ChooseCreate") {
     explicit.push({
-      key: "Intent:ChooseCreate", existing: false, label: "New…", icon: FilePlus2, type: "Command",
+      key: "Intent:ChooseCreate", existing: false, label: "new…", icon: FilePlus2,
       action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } },
-      rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
-    });
-  } else if (intent.kind === "Ask") {
-    explicit.push(askRow("Intent:Ask", intent.argument, "Explicit intent", "ExplicitIntent"));
-  } else if (intent.kind === "ChooseBrowse") {
-    explicit.push({
-      key: "Intent:ChooseBrowse", existing: false,
-      label: intent.query ? `Browse for “${intent.query}”…` : "Browse…",
-      icon: Globe,
-      type: "Browse",
-      detail: "Choose a kind",
-      action: { kind: "Available", target: { kind: "ChooseBrowse", query: intent.query } },
       rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
   } else if (intent.kind === "Browse") {
     const kind = BROWSE_LABELS[intent.browseKind];
-    const target = nexusBrowseTarget(intent.query, intent.browseKind);
     explicit.push({
       key: `Intent:Browse.${intent.browseKind}`, existing: false,
-      label: intent.query ? `Browse ${kind} for “${intent.query}”…` : `Browse ${kind}…`,
+      label: intent.query ? `browse ${kind} for “${intent.query}”…` : `browse ${kind}…`,
       icon: Globe,
       type: "Browse",
-      detail: "Explicit kind",
-      action: normalizeWorkspaceHref(target.href) === null
-        ? { kind: "Unavailable", reason: "this input is too long for a browse address" }
-        : { kind: "Available", target },
+      detail: "explicit kind",
+      action: nexusBrowseAction(intent.query, intent.browseKind),
       rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
+  }
+  if (intent.kind === "Command" || intent.kind === "CommandLookup") {
+    return explicit.map((row) => ({ ...row, placement: { home: "Commands", promoted: false } }));
   }
   const paneRows = panes.filter((pane) => pane.resourceRef === null && resolvePaneRouteModel(pane.href).header.kind !== "Resource").flatMap((pane) => {
     const tier = textTier(text, pane.presentation.title, { aliases: [pane.href], currentContext: true });
     return tier ? [paneRow(pane, tier, frecency)] : [];
   });
   const places = DESTINATIONS.flatMap((place) => {
-    const tier = textTier(text, place.label, { aliases: place.keywords, metadata: [place.href] });
+    const tier = textTier(text, placeActionLabel(place), { aliases: [place.label, ...place.keywords], metadata: [place.href] });
     return tier ? [placeRow(place, tier, frecency)] : [];
   });
   const commands =
@@ -249,8 +224,12 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
     const place = [...unique.values()].find((candidate) => candidate.action.kind === "Available"
       && candidate.action.target.kind === "InternalHref"
       && resolveWorkspaceActivationRouteId(candidate.action.target.href) === resolveWorkspaceActivationRouteId(pane.href));
-    if (place) unique.set(place.key, { ...place, state: row.state, secondary: row.secondary });
-    else unique.set(row.key, row);
+    if (place && !picker) {
+      const prior = place.secondary?.kind === "TargetMenu" ? place.secondary.closePanes : [];
+      const ids = new Set([...prior.map((item) => item.id), pane.id]);
+      const matching = panes.filter((candidate) => ids.has(candidate.id));
+      unique.set(place.key, { ...place, state: place.state === "Current" ? place.state : row.state, secondary: targetMenu(null, matching) });
+    } else unique.set(row.key, row);
   }
   return [...unique.values()].sort(compareRows).map((row) => ({ ...row, placement: { home: "Commands", promoted: false } }));
 }
@@ -262,10 +241,10 @@ export function resourceAction(item: ResourceItem): NexusAction {
     : { kind: "Available", target: { kind: "Resource", activation: item.activation, label: item.label } };
 }
 
-function resourceMenu(ref: string, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "ResourceMenu" }> {
+function targetMenu(ref: string | null, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "TargetMenu" }> {
   return {
-    kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(ref),
-    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "Close current pane" : panes.length > 1 ? `Close pane ${index + 1}` : "Close pane" })),
+    kind: "TargetMenu", resourceRef: ref === null ? null : assumeCanonicalResourceRef(ref),
+    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${index + 1}` : "close pane" })),
   };
 }
 
@@ -278,7 +257,7 @@ function resourceRow(item: ResourceItem, home: NexusHomeSection, panes: readonly
     icon: resourceIconForScheme(ref.scheme), type: resourceTypeLabel(ref.scheme),
     state: pane ? paneState(pane) : undefined,
     action: resourceAction(item),
-    secondary: resourceMenu(item.action_ref, matching),
+    secondary: targetMenu(item.action_ref, matching),
     source: "Search", rank: UNRANKED, placement: { home, promoted: false },
   };
 }
@@ -291,12 +270,14 @@ function localRow(match: LocalMatch, home: NexusHomeSection, panes: readonly Nex
   const excerpt = match.excerpt;
   return {
     key: `Resource:${ref}`, existing: true, label: match.label,
+    item: authoredItem(match.resource, match.readingRef),
+    match: excerpt === null ? null : { excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after }, ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })) },
     icon: resourceIconForScheme(parseResourceRef(ref)!.scheme), type: resourceTypeLabel(parseResourceRef(ref)!.scheme),
     detail: excerpt === null ? undefined : `${excerpt.before ? "…" : ""}${excerpt.text}${excerpt.after ? "…" : ""}`,
     state: pane ? paneState(pane) : undefined,
     action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
       : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
-    secondary: resourceMenu(ref, matching),
+    secondary: targetMenu(ref, matching),
     source: "Search", rank: { ...UNRANKED, tier: "MetadataOrFullText" }, placement: { home, promoted: false },
   };
 }
@@ -307,6 +288,7 @@ export function candidateRows(input: {
   readonly query: NexusQuery;
   readonly panes: readonly NexusPane[];
   readonly frecency: Frecency;
+  readonly picker: boolean;
   readonly preview: Schema<"SearchPreviewResponse"> | null;
   readonly reference: ResourceItem | null;
   readonly referenceFailed: boolean;
@@ -328,7 +310,8 @@ export function candidateRows(input: {
     } satisfies Partial<NexusRow>;
     return [{ ...row, rank: { tier: "ExplicitIntent", score: 0, frecency: 0 } }];
   }
-  const rows = localRows(query, panes, frecency);
+  const rows = localRows(query, panes, frecency, input.picker);
+  if (query.intent.kind === "Command" || query.intent.kind === "CommandLookup") return rows;
   for (const match of input.local) rows.push(localRow(match, "Resources", panes));
   for (const result of [...(preview?.resources ?? []), ...(preview?.saved ?? [])]) {
     rows.push({
@@ -348,8 +331,8 @@ export function candidateRows(input: {
       rows.push({
         ...paneRow(pane, "CurrentContext", frecency), key: `Resource:${pane.resourceRef}`,
         state: paneState(matching.find((pane) => pane.current) ?? pane),
-        action: { kind: "Available", target: { kind: "InternalHref", href: resolvePaneRouteModel(pane.href).pathname, labelHint: pane.presentation.title } },
-        secondary: resourceMenu(pane.resourceRef, matching),
+        action: { kind: "Available", target: { kind: "InternalHref", href: input.picker ? pane.href : resolvePaneRouteModel(pane.href).pathname, labelHint: pane.presentation.title } },
+        secondary: targetMenu(pane.resourceRef, matching),
         placement: { home: "Resources", promoted: false },
       });
     }
@@ -367,12 +350,41 @@ export function candidateRows(input: {
   return rows;
 }
 
-/** A moved prefix keeps both its displayed section and primary target. */
-export function mergeResults(previous: NexusList, identity: string, candidates: readonly NexusRow[]): NexusList {
+/** Picker admission and pane projection share the same target contract as activation. */
+export function pickerTarget(target: NexusTarget, panes: readonly NexusPane[]): NexusTarget | null {
+  switch (target.kind) {
+    case "PaneOpen": {
+      const pane = panes.find((candidate) => candidate.id === target.paneId);
+      return pane ? { kind: "InternalHref", href: pane.href, labelHint: pane.presentation.title } : null;
+    }
+    case "Resource": return target.activation.kind === "route" ? target : null;
+    case "InternalHref": case "OpenDailyPage": case "CreatePage": case "CreateLibrary": case "ChooseCreate": case "ChooseBrowse": return target;
+    case "OpenAcceptedSource": case "OpenAdd": case "ResumeCurrentPlayback": case "ManagePanes": return null;
+  }
+}
+
+export function pickerRows(rows: readonly NexusRow[], panes: readonly NexusPane[], query: NexusQuery): NexusRow[] {
+  if (query.intent.kind === "Command") {
+    const command = NEXUS_COMMANDS[query.intent.id].action("");
+    if (command.kind === "Available" && pickerTarget(command.target, panes) === null) return [];
+  }
+  return rows.flatMap((row) => {
+    const passage = row.matchingPassage ? resourceAction(row.matchingPassage.item) : null;
+    const projected = { ...row, state: undefined, secondary: undefined,
+      matchingPassage: passage?.kind === "Available" && pickerTarget(passage.target, panes) === null ? null : row.matchingPassage };
+    if (row.action.kind === "Unavailable") return [projected];
+    const target = pickerTarget(row.action.target, panes);
+    if (!target) return [];
+    return [{ ...projected, action: { kind: "Available" as const, target } }];
+  });
+}
+
+/** Selection keeps its primary target; a moved prefix also keeps its displayed section. */
+export function mergeResults(previous: NexusList, identity: string, candidates: readonly NexusRow[], intent: NexusIntent): NexusList {
   const same = previous.identity === identity;
   const active = same ? previous.active?.key ?? null : null;
   const moved = same && previous.moved;
-  const selected = same && previous.moved ? previous.rows.find((row) => row.key === active) : null;
+  const selected = same ? previous.rows.find((row) => row.key === active) : null;
   const incoming = candidates.map((row) => row.key === selected?.key && row.action.kind === "Available" && selected.action.kind === "Available"
     ? { ...row, action: selected.action } : row);
   const byKey = new Map(incoming.map((row) => [row.key, row]));
@@ -393,7 +405,8 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
   const rows = [...stable];
   for (const home of SECTIONS) {
     if (SECTIONS.indexOf(home) < floor) continue;
-    const room = SECTION_CAPS[home] - stable.filter((row) => row.placement?.home === home).length;
+    const cap = home === "Commands" && intent.kind === "CommandLookup" ? Object.keys(NEXUS_COMMANDS).length : SECTION_CAPS[home];
+    const room = cap - stable.filter((row) => row.placement?.home === home).length;
     const pool = incoming.filter((row) => row.placement?.home === home && !held.has(row.key));
     const selected = pool.slice(0, room);
     const current = !moved ? pool.find((row) => row.key === active) : null;
@@ -445,7 +458,9 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
 
 export function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
   const q = query.text;
-  const searchTarget = normalizeWorkspaceHref(searchHref(query.searchQuery));
+  const command = query.intent.kind === "Command" || query.intent.kind === "CommandLookup";
+  const searchQuery = command ? emptySearchQuery() : query.searchQuery;
+  if (command) searchQuery.text = q;
   const row = (id: string, label: string, icon: NexusRow["icon"], type: string | undefined, detail: string | undefined, action: NexusAction): NexusRow => ({
     key: `Continuation:${id}`, existing: false,
     label,
@@ -455,31 +470,30 @@ export function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
     action,
     rank: UNRANKED,
   });
+  const search: NexusRow = {
+    ...row("SeeAll", command ? `search for “${q}”` : desktop ? `see all results for “${q}”` : "search all results", Search,
+      undefined, undefined, nexusSearchAction(searchQuery)),
+    source: "Search",
+  };
+  if (command) return [search];
   return [
-    askRow("Continuation:Ask", q, desktop ? "Ask Nexus" : undefined, "CurrentContext"),
-    row("AddToToday", `Add “${q}” to Today`, FileText, desktop ? "Today" : undefined, "Append note", appendToToday(q)),
-    row("Browse", `Browse for “${q}”…`, Globe, desktop ? "Browse" : undefined, "Choose a kind", {
-      kind: "Available",
-      target: { kind: "ChooseBrowse", query: q },
-    }),
-    row("Create", `Create “${q}”…`, FilePlus2, desktop ? "Create" : undefined, "Choose a type", {
+    row("Ask", desktop ? `ask nexus about “${q}”` : "ask nexus", MessageSquarePlus, "chat", undefined,
+      NEXUS_COMMANDS["Nexus.Quick.Chat"].action(q)),
+    row("AddToToday", desktop ? `add “${q}” to today` : "save note to today", FileText, undefined, desktop ? "append note" : undefined, NEXUS_COMMANDS["Nexus.Quick.Note"].action(q)),
+    row("Browse", desktop ? `browse for “${q}”…` : "browse…", Globe, undefined, desktop ? "choose a kind" : undefined,
+      NEXUS_COMMANDS["Nexus.Quick.Browse"].action(q)),
+    row("Create", desktop ? `create “${q}”…` : "create…", FilePlus2, undefined, desktop ? "choose a type" : undefined, {
       kind: "Available",
       target: { kind: "ChooseCreate", initialDraft: q },
     }),
-    {
-      ...row("SeeAll", `See all results for “${q}”`, Search, "Search", desktop ? "All results" : undefined,
-        searchTarget === null
-          ? { kind: "Unavailable", reason: "this input is too long for a search address" }
-          : { kind: "Available", target: { kind: "InternalHref", href: searchTarget, labelHint: "Search" } }),
-      source: "Search",
-    },
+    search,
   ];
 }
 
 /** Blank workspace groups keep their existing shape; typed queries show intent/resource bands. */
 export function nexusGroups(input: {
   readonly desktop: boolean;
-  readonly mobileMode: NexusRootMode;
+  readonly rootMode: NexusRootMode;
   readonly query: NexusQuery;
   readonly list: NexusList;
   readonly panes: readonly NexusPane[];
@@ -491,15 +505,15 @@ export function nexusGroups(input: {
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] =>
     rows.length === 0 ? [] : [{ id, label, rows }];
   if (query.text) {
-    if (!desktop && input.mobileMode === "Overview") return mobileOverview(input);
+    if (!desktop && input.rootMode === "Overview") return mobileOverview(input);
     const actions = queryActions(query, desktop);
     return [
       ...(["BestMatch", ...SECTIONS] as const).flatMap((id) => group(id, SECTION_LABELS[id],
         input.list.rows.filter((row) => (row.placement?.promoted ? "BestMatch" : row.placement?.home) === id)
           .map((row) => desktop ? row : mobileRow(row)))),
-      ...group("QuickActions", desktop ? "Do with query" : "", desktop
+      ...group("QuickActions", desktop ? "do with query" : "", desktop
         ? query.intent.kind === "ImportUrl" ? [] : actions
-        : actions.filter((row) => row.key === "Continuation:SeeAll").map((row) => ({ ...row, label: "search all results", type: undefined, detail: undefined }))),
+        : actions.filter((row) => row.key === "Continuation:SeeAll")),
     ];
   }
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
@@ -507,15 +521,14 @@ export function nexusGroups(input: {
     ...panes.slice(0, OPEN_CAP).map((pane) => paneRow(pane, "CurrentContext", frecency)),
     {
       key: "ManagePanes", existing: false,
-      label: "Manage panes…",
+      label: "manage panes…",
       icon: PanelLeft,
-      type: "Command",
-      detail: "Close, minimize, or restore",
+      detail: "close, minimize, or restore",
       action: { kind: "Available", target: { kind: "ManagePanes" } },
       rank: UNRANKED,
     } satisfies NexusRow,
   ];
-  const seen = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
+  const seen = new Set(input.rootMode === "NewPane" ? [] : panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   const recent = input.recent.flatMap((entry): NexusRow[] => {
     const routeId = resolveWorkspaceActivationRouteId(entry.target_href);
     if (seen.has(routeId)) return [];
@@ -541,24 +554,25 @@ export function nexusGroups(input: {
     command("Nexus.Quick.Library"),
     command("Nexus.Quick.Import"),
   ];
-  const openGroup = group("Open", "Open", open);
-  const continueGroup = group("Continue", "Continue", input.playback ? [input.playback] : []);
-  const recentGroup = group("Recent", "Recent", recent.slice(0, RECENT_CAP).map(plain));
-  const quickGroup = group("QuickActions", "Quick Actions", quick);
+  if (input.rootMode === "NewPane") return [
+    ...group("Recent", "recent", recent.slice(0, RECENT_CAP).map(mobileRow)),
+    ...group("Places", "places", MOBILE_PLACES.map((id) => mobileRow(placeRow(getDestination(id), "CurrentContext", frecency)))),
+    ...group("QuickActions", "create and open", [command("Nexus.Quick.Note"), command("Nexus.Quick.Page"), command("Nexus.Quick.Chat"), command("Nexus.Quick.Library")].map(mobileRow)),
+  ];
+  const openGroup = group("Open", "open", open);
+  const continueGroup = group("Continue", "continue", input.playback ? [input.playback] : []);
+  const recentGroup = group("Recent", "recent", recent.slice(0, RECENT_CAP).map(plain));
+  const quickGroup = group("QuickActions", "quick actions", quick);
   if (desktop) return [...openGroup, ...continueGroup, ...recentGroup, ...quickGroup];
-  if (input.mobileMode === "Search") return recentGroup.map((group) => ({ ...group, label: "recent", rows: group.rows.map(mobileRow) }));
+  if (input.rootMode === "Search") return recentGroup.map((group) => ({ ...group, label: "recent", rows: group.rows.map(mobileRow) }));
   return mobileOverview(input);
 }
 
 function mobileRow(row: NexusRow): NexusRow {
-  if (row.key.startsWith("Pane:") || row.key.startsWith("Resource:")) return row;
-  return {
-    ...row,
-    label: row.key.startsWith("QuickAction:") || row.key.startsWith("Destination:")
-      ? row.label.toLowerCase()
-      : row.label.replace(/^Ask Nexus/, "ask nexus").replace(/^Browse/, "browse").replace(/^Import URL/, "import url"),
-    detail: row.key.startsWith("ImportUrl:") ? row.detail : undefined,
-  };
+  const target = row.action.kind === "Available" ? row.action.target : null;
+  const direct = !row.key.startsWith("QuickAction:") && (target?.kind === "InternalHref" || target?.kind === "OpenDailyPage" || (target?.kind === "Resource" && target.activation.kind === "route"));
+  const secondary = row.secondary ?? (direct ? { kind: "TargetMenu" as const, resourceRef: null, closePanes: [] } : undefined);
+  return row.key.startsWith("Pane:") || row.key.startsWith("Resource:") ? { ...row, secondary } : { ...row, secondary, type: undefined };
 }
 
 function mobileOverview(input: {
@@ -575,7 +589,7 @@ function mobileOverview(input: {
     { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
     { id: "QuickActions", label: "", rows: [
       place("today"),
-      { key: "QuickAction:New", existing: false, label: "new…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },
+      { key: "QuickAction:New", existing: false, label: "create…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },
       mobileRow(commandRow("Nexus.Quick.Import", "CurrentContext", "")),
     ] },
     ...(input.playback ? [{ id: "Continue", label: "", rows: [{ ...input.playback, label: `resume ${input.playback.label}`, type: undefined }] } satisfies NexusGroup] : []),
@@ -583,7 +597,7 @@ function mobileOverview(input: {
 }
 
 /** The rows of a choice page: what to create from a draft, or which kind to browse. */
-export function choiceRows(page: NexusPage, mobile: boolean): NexusRow[] {
+export function choiceRows(page: NexusPage): NexusRow[] {
   const choice = (label: string, icon: NexusRow["icon"], action: NexusAction): NexusRow => ({
     key: `Choice:${label}`, existing: false,
     label,
@@ -592,12 +606,12 @@ export function choiceRows(page: NexusPage, mobile: boolean): NexusRow[] {
     rank: UNRANKED,
   });
   if (page.kind === "ChooseCreate") {
-    const target = (id: NexusCommandId): NexusAction => ({ kind: "Available", target: NEXUS_COMMANDS[id].target(page.draft) });
+    const target = (id: NexusCommandId): NexusAction => NEXUS_COMMANDS[id].action(page.draft);
     return [
-      choice(mobile ? page.draft ? "add to today" : "quick note" : "Today Note", FileText, appendToToday(page.draft)),
-      choice(mobile ? "page" : "Page", FilePlus2, target("Nexus.Quick.Page")),
-      choice(mobile ? "chat" : "Chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
-      choice(mobile ? "library" : "Library", Library, target("Nexus.Quick.Library")),
+      choice(page.draft ? "save note to today" : "quick note", FileText, target("Nexus.Quick.Note")),
+      choice("page", FilePlus2, target("Nexus.Quick.Page")),
+      choice("chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
+      choice("library", Library, target("Nexus.Quick.Library")),
     ];
   }
   if (page.kind !== "ChooseBrowse") return [];
@@ -608,12 +622,7 @@ export function choiceRows(page: NexusPage, mobile: boolean): NexusRow[] {
       ["Videos", "Video"],
       ["Books", "Epub"],
     ] as const
-  ).map(([label, kind]) => {
-    const target = nexusBrowseTarget(page.query, kind);
-    return choice(mobile ? label.toLowerCase() : label, Globe, normalizeWorkspaceHref(target.href) === null
-      ? { kind: "Unavailable", reason: "this input is too long for a browse address" }
-      : { kind: "Available", target });
-  });
+  ).map(([label, kind]) => choice(label.toLowerCase(), Globe, nexusBrowseAction(page.query, kind)));
 }
 
 /** A row's spoken name: its parts as sentences, adding no period after a part that already ends one. */
@@ -626,7 +635,7 @@ export function rowName(parts: readonly (string | null | undefined)[]): string {
 export function rowFacts(row: NexusRow, desktop: boolean): string {
   if (row.item) return [resourceMetadataText(row.item, row.matchMethod), row.state?.toLowerCase()].filter(Boolean).join(" · ");
   if (!desktop) {
-    const type = row.type && !["Pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : undefined;
+    const type = row.type && !["Pane", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : undefined;
     const facts = [row.detail, type, row.state && row.state !== "Open" ? row.state.toLowerCase() : undefined];
     return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
   }

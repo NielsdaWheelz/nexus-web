@@ -23,8 +23,11 @@
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@journeyapps/wa-sqlite": "2.0.8",
+    "@nexus/authored": "file:../../node/authored",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.108.2",
+    "fractional-indexing": "4.0.0",
     "lucide-react": "^1.8.0",
     "next": "15.5.22",
     "pdfjs-dist": "5.7.284",
@@ -42,10 +45,7 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "11.0.0",
     "unified": "11.0.5",
-    "@nexus/authored": "file:../../node/authored",
-    "@journeyapps/wa-sqlite": "2.0.8",
-    "yjs": "13.6.33",
-    "fractional-indexing": "4.0.0"
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",

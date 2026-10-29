@@ -18,9 +18,8 @@ import type { LibraryPlacementSession } from "@/lib/libraries/placementControlle
 import type { NexusTarget } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { pluralize } from "@/lib/text/pluralize";
-import { findAmbiguousUrlSplit, validateDraftSource } from "./addInput";
+import { MAX_ADD_ITEMS, findAmbiguousUrlSplit, validateDraftSource } from "@/lib/nexus/addInput";
 import {
-  MAX_ADD_ITEMS,
   isPopulatedAddItem,
   type AddContentSessionController,
   type AddItem,

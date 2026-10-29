@@ -109,7 +109,7 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
     ...(options.length ? [{ id: "Resource", label: null, options }] : []),
   ] };
   const source: MenuSource = {
-    kind: "Prepared", subjectKey: `${pane?.visitId ?? "workspace"}:message:${message.id}`, title: "message actions",
+    kind: "Prepared", initial: { sections: [] }, subjectKey: `${pane?.visitId ?? "workspace"}:message:${message.id}`, title: "message actions",
     prepare: resource.prepare,
     state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content } : state,
   };

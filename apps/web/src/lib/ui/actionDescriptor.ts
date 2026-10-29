@@ -95,6 +95,7 @@ interface ActionBase {
 export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "command";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onSelect: (detail: ActionSelectDetail) => void;
       readonly state?: ActionControlState;
@@ -104,6 +105,7 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
+      readonly current?: "location";
       readonly icon: ReactElement | null;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly target?: "_blank";
@@ -162,20 +164,22 @@ export type PreparationState =
 
 /**
  * Facts that settle after a prepared snapshot is published, for the same request. They
- * render in one region after it and are never part of it: arrival cannot reorder,
+ * render in one region after it; failures retain their owner's recovery. Arrival cannot reorder,
  * replace or close the published actions, move focus or change their meaning.
  */
 export type TrailingState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly label: string | null; readonly options: readonly ActionDescriptor[] }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly retry: (() => void) | null; readonly pending: boolean };
 
 /** The presenter owns invocation, cancellation and its preparation deadline. */
 export type MenuSource = { readonly subjectKey: string; readonly title: string } & (
   | { readonly kind: "Immediate"; readonly content: MenuContent }
   | {
       readonly kind: "Prepared";
+      /** Known local controls publish without completing preparation. */
+      readonly initial: MenuContent;
       readonly state: PreparationState;
       readonly prepare: (signal: AbortSignal) => void;
       /** Present only when the source has a trailing region; it has no deadline of its own. */

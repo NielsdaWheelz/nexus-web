@@ -6,7 +6,7 @@ import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
+import { NexusRowBody, NexusRowEvidence, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -46,7 +46,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     return () => document.removeEventListener("selectionchange", selected);
   }, [controller.open, controller.page.kind, markSearchInteraction]);
   const previousQuery = useRef(controller.query);
-  const searching = controller.rootMode === "Search";
+  const picker = controller.rootMode === "NewPane";
+  const searching = controller.rootMode !== "Overview";
+  useLayoutEffect(() => { if (picker && controller.page.kind === "Root") inputRef.current?.select(); }, [picker, controller.page.kind]);
   useLayoutEffect(() => { taskPointerId.current = null; }, [controller.open]);
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -81,16 +83,15 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.preventDefault();
     event.stopPropagation();
   };
-  const textLabels = ["Ask Nexus", "Add to Today", "Browse…", "Create…"];
 
   const root = (
     <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`}>
       <header className={styles.header}>
-        {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
-        <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
+        {searching && !picker ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
+        <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{picker ? "open in new pane" : searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
           <FeedbackRecoveryControl />
-          <AccountMenu
+          {picker ? <button type="button" className={styles.allPanes} onClick={controller.escape}>cancel</button> : <><AccountMenu
             activeId={accountId}
             placement="below"
             align="end"
@@ -106,7 +107,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }}
           />
-          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} />
+          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} /></>}
         </div>
       </header>
       <div className={styles.searchInput}>
@@ -116,6 +117,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             ref={inputRef}
             type="search"
             aria-label="search"
+            aria-describedby={searching && controller.lookupGuidance !== null ? "mobile-nexus-guidance" : undefined}
             value={controller.query}
             placeholder="find anything…"
             autoComplete="off"
@@ -139,19 +141,21 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const activation = workspaceTargetActivationIntent(event, "activate");
                 if (activation.kind === "Unowned") return;
                 event.preventDefault();
-                if (activation.kind === "Open") controller.submitSearch({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
+                if (activation.kind === "Open") controller.submitInput({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
               }
             }}
           />
           {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
+        {picker && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         {searching ? <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} /> : null}
+        {searching && controller.lookupGuidance !== null ? <p id="mobile-nexus-guidance" className={styles.empty}>{controller.lookupGuidance}</p> : null}
       </div>
       <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
         <NexusTitleFailure returnFocus={() => searching ? inputRef.current : headingRef.current} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
-            {group.label ? <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3> : null}
+            {group.label ? <div className={styles.sectionHeading}><h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3>{group.id === "Open" && !searching ? <button type="button" className={styles.allPanes} data-nexus-control="NewPane" onClick={controller.enterNewPane}>new pane…</button> : null}</div> : null}
             <ul className={styles.rows}>
               {group.rows.map((row) => {
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
@@ -175,19 +179,20 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                     >
                       <NexusRowBody row={row} desktop={false} />
                     </button>
-                    {row.secondary?.kind === "ClosePane" ? (
+                    {row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && row.secondary?.kind === "ClosePane" ? (
                       <Button iconOnly className={styles.rowMenu} aria-label={`close ${row.label}`}
                         onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
                         onClick={() => { if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId); }}
                         icon={<X size={18} aria-hidden="true" />} />
-                    ) : row.secondary?.kind === "ResourceMenu" ? (
-                      <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} menuProps={{
+                    ) : row.secondary?.kind === "TargetMenu" || (picker && row.matchingPassage) ? (
+                      <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} destinationHref={controller.destinationHref} mobile picker={picker} menuProps={{
                         label: `more actions for ${row.label}`,
                         align: "end",
                         onOpenChange: (open) => { if (open) controller.setActive(row.key); },
                         renderTrigger: (trigger) => <OverflowMenuButton {...trigger} className={styles.rowMenu} />,
                       }} />
                     ) : null}
+                    <NexusRowEvidence row={row} />
                   </li>
                 );
               })}
@@ -195,16 +200,16 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             {group.id === "Open" && !searching ? <button type="button" className={styles.allPanes} data-nexus-control="AllPanes" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "pane" : "panes"}`} onClick={controller.managePanes}>all panes <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
           </section>
         ))}
-        {searching && typed ? (
+        {searching && typed && controller.textActions.length > 0 ? (
           <ActionMenu label="use this text…" align="start" triggerAttributes={{ "data-nexus-control": "UseText" }}
-            source={{ kind: "Immediate", subjectKey: `nexus-text:${controller.query}`, title: controller.query, content: { sections: [{ id: "Text", label: null, options: controller.textActions.map((row, index) => ({ kind: "command", id: row.key, label: textLabels[index]!, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) })) }] } }}
+            source={{ kind: "Immediate", subjectKey: `nexus-text:${controller.query}`, title: controller.query, content: { sections: [{ id: "Text", label: null, options: controller.textActions.map((row) => ({ kind: "command", id: row.key, label: row.label, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) })) }] } }}
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {[controller.announcement || (searching ? controller.lookupGuidance : null), searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
       </div>
     </div>
   );

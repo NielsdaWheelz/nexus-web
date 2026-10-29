@@ -63,7 +63,7 @@ export default function PeopleSearch({
   const expanded = !disabled && open && selected === null && q.length >= 3;
   const options = results.map(person => ({ key: person.user_id, disabledReason: null }));
   const current = reconcileSearchActive({
-    context: searchContext, admitted, options, firstExistingKey: results[0]?.user_id ?? null, active,
+    context: searchContext, admitted, options, initialKey: results[0]?.user_id ?? null, active,
   });
   if (current !== active) setActive(current);
   const navigation = useSearchOptions<HTMLUListElement>({

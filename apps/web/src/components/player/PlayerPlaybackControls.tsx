@@ -210,7 +210,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       <span>{chapter.title}</span>
       <span className={styles.time}>{formatClock(chapter.start_ms / 1000)}</span>
     </button>
-    <ActionMenu label={`more actions for ${chapter.title}`} triggerDisabled={expectedSubject === null} source={{ kind: "Prepared",
+    <ActionMenu label={`more actions for ${chapter.title}`} triggerDisabled={expectedSubject === null} source={{ kind: "Prepared", initial: { sections: [] },
       subjectKey: `chapter:${mediaId}:${expectedSubject}:${chapter.start_ms}`, title: chapter.title, state: preparation,
       prepare(signal) {
         setPreparation({ kind: "Loading", request: signal });

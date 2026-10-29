@@ -1,4 +1,5 @@
 "use client";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
 import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
@@ -10,10 +11,14 @@ import MediaIdentity from "@/components/media/MediaIdentity";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { assertNever } from "@/lib/assertNever";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { ExcerptText, ResourceIndexBody, type ResourceMatch } from "./ResourceBody";
+import { FullResourceBody } from "./ExcerptDisclosure";
 import IndexBibliography from "./IndexBibliography";
 import ResourceMetadata from "./ResourceMetadata";
 import ContextualActionMenu from "./ContextualActionMenu";
@@ -43,6 +48,8 @@ export default function ResourceIndexRow({
   primaryControl?: ReactNode;
   attention?: string;
 }) {
+  const pane = usePaneRuntime();
+  const touch = useTouchCapable();
   const status = presentation.kind === "Context" && presentation.primary.kind === "Status" ? presentation.primary.label : null;
   const item = useResolvedResourceItem(supplied);
   const parsed = parseResourceRef(item.ref);
@@ -79,7 +86,7 @@ export default function ResourceIndexRow({
       case "images": title = body.count === 1 ? "image" : `${body.count} images`; break;
       case "passage":
       case "prose": {
-        const literal = body.kind === "passage" ? body.exact.text : body.excerpt.text;
+        const literal = body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.excerpt.text;
         if (source?.title?.trim()) title = source.title.trim();
         else if (literal.startsWith(item.label)) {
           title = typeLabel;
@@ -130,7 +137,7 @@ export default function ResourceIndexRow({
   </span>;
   let content: ComponentProps<typeof ResourceRow>["content"];
   switch (presentation.kind) {
-    case "Context": content = { kind: "Index", metadata: contextMetadata, supportingContent: presentation.supportingContent }; break;
+    case "Context": content = { kind: "Index", metadata: contextMetadata, supportingContent: <>{body.kind === "passage" && status === null ? <FullResourceBody item={item} /> : null}{presentation.supportingContent}</> }; break;
     case "Search": content = { kind: "Search", metadata: rowMetadata, excerpt: presentation.excerpt }; break;
     default: assertNever(presentation);
   }
@@ -150,7 +157,11 @@ export default function ResourceIndexRow({
       {presentation.kind === "Search" && subject ? <ResourceActions subject={subject} density="Row" returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
       <ContextualActionMenu title={currentLabel} subjectKey={occurrenceKey} sections={[]}
         triggerRef={setMore} actionFocus={actionFocus} triggerAttributes={{ "data-row-actions-control": "" }}
-        resourceRef={assumeCanonicalResourceRef(item.action_ref)} displayedActivation={status === null ? item.activation : undefined}
+        resourceRef={assumeCanonicalResourceRef(item.action_ref)} navigation={status !== null ? null : {
+          key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
+          fork: touch && pane && item.activation.kind === "route" && item.activation.href !== null
+            ? paneForkLink({ runtime: pane, target: { href: item.activation.href, labelHint: currentLabel }, disabledReason: null }) : null,
+        }}
         showSourceSubject={item.action_ref !== item.ref} label={menuLabel}
         renderTrigger={(props) => <>
           <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />

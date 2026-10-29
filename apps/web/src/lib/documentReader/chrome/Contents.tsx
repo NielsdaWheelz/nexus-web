@@ -11,8 +11,9 @@ import type { ReaderDestination } from "../location";
 import styles from "./chrome.module.css";
 
 /** One native publisher list; fetching, attachment ownership and commands stay with its caller. */
-export function ContentsList({ reader, nodes, current, target, disabled = false, actions, detail, labelNote, attachments }: {
+export function ContentsList({ reader, nodes, current, target, disabled = false, actions, detail, labelNote, attachments, onNavigate }: {
   readonly reader: Reader;
+  readonly onNavigate?: (destination: ReaderDestination) => void;
   readonly nodes: readonly TocNode[];
   readonly current: string | null;
   readonly target: (node: TocNode) => ReaderDestination["target"] | null;
@@ -29,7 +30,7 @@ export function ContentsList({ reader, nodes, current, target, disabled = false,
       return <li key={node.id} data-contents-node={node.id}>
         <div className={styles.tocRow}>
           <div className={styles.tocTitle}>
-            {destination ? <ReaderLink reader={reader} target={destination} disabled={disabled}
+            {destination ? <ReaderLink reader={reader} target={destination} disabled={disabled} onDefault={onNavigate}
               className={styles.tocLink} data-contents-source="true"
               aria-current={!disabled && node.sectionId !== null && node.sectionId === current ? "location" : undefined}>{node.label}</ReaderLink>
               : <span className={styles.tocLabel}>{node.label}{labelNote}</span>}
@@ -45,14 +46,14 @@ export function ContentsList({ reader, nodes, current, target, disabled = false,
   return list(nodes, true);
 }
 
-export function Contents({ reader }: { readonly reader: Reader }): ReactElement | null {
+export function Contents({ reader, onNavigate }: { readonly reader: Reader; readonly onNavigate?: (destination: ReaderDestination) => void }): ReactElement | null {
   const ready = useReaderState(reader, state => state.document.status === "ready" && state.document.doc.kind === "text" ? state.document : null);
   const current = useReaderState(reader, state => state.document.status === "ready" && state.viewport
     ? state.document.structure.sectionAt(state.viewport.primary)?.id ?? null : null);
   if (!ready || ready.doc.kind !== "text" || ready.doc.toc.length === 0) return null;
   const doc = ready.doc;
   return <nav className={styles.contents} aria-label="Contents">
-    <ContentsList reader={reader} nodes={doc.toc} current={current}
+    <ContentsList reader={reader} nodes={doc.toc} current={current} onNavigate={onNavigate}
       labelNote={doc.format === "transcript" ? <span className="sr-only">; no transcript at this time</span> : null} target={node => {
       const chapter = doc.transcriptNavigation?.chapters.find(chapter => chapter.id === node.id) ?? null;
       return !node.at ? null : chapter ? { kind: "time", ms: chapter.startMs }

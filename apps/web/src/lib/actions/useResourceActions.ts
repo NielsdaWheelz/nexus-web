@@ -8,7 +8,7 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useActionRuntime, useBusyActionIds, resourceActionRequiresRemote } from "@/lib/actions/ResourceActionsProvider";
 import { installedApp, remoteReady, remoteGeneration } from "@/lib/native/admission";
-import { ApiError, apiFetch } from "@/lib/api/client";
+import { ApiError, apiFetch, apiTransportFeedback } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { PodcastActionFocus } from "./inlineActions";
@@ -16,9 +16,9 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
 type ReadState =
   | null
-  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal; readonly failure: {readonly feedback: FeedbackContent; readonly connectionRequired: boolean} | null }
+  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal; readonly failure: {readonly feedback: FeedbackContent; readonly error: ApiError | null} | null }
   | { readonly kind: "Ready"; readonly ref: string; readonly request: AbortSignal; readonly facts: ResourceActions; readonly generation: number; readonly source: PlaybackSource | null }
-  | { readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly connectionRequired: boolean };
+  | { readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly error: ApiError | null };
 
 /**
  * Reads one invocation's authoritative facts. The caller owns its signal and
@@ -44,7 +44,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     replaced?.cancel();
     if (ref === null || request.aborted) {setLoad(null); return;}
     if (!remoteReady()) {
-      setLoad({ kind: "Failed", ref, request, connectionRequired: true, feedback: { tone: "Neutral", title: "requires a connection" } });
+      setLoad({ kind: "Failed", ref, request, error: null, feedback: { tone: "Neutral", title: "requires a connection" } });
       return;
     }
     const generation = remoteGeneration();
@@ -63,7 +63,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     flight.current = attempt;
     request.addEventListener("abort", attempt.cancel, { once: true });
     setLoad(previous => ({kind: "Loading", ref, request, failure: previous?.ref === ref && previous.request === request && !request.aborted
-      ? previous.kind === "Failed" ? {feedback: previous.feedback, connectionRequired: previous.connectionRequired}
+      ? previous.kind === "Failed" ? {feedback: previous.feedback, error: previous.error}
         : previous.kind === "Loading" ? previous.failure : null : null}));
     apiFetch<ApiJson<"/resource-items/{resource_ref}/actions", "get">>(
       `/api/resource-items/${encodeURIComponent(ref)}/actions`,
@@ -77,8 +77,9 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
       if (flight.current !== attempt || subject.current !== ref || request.aborted) return;
       request.removeEventListener("abort", attempt.cancel);
       flight.current = null;
-      if (modeledApiError(error, fail.current)) setLoad({
-        kind: "Failed", ref, request, connectionRequired: !remoteReady(), feedback: !remoteReady() ? { tone: "Neutral", title: "requires a connection" } : { tone: "Warning", title: "actions couldn’t load" },
+      const failure = modeledApiError(error, fail.current);
+      if (failure) setLoad({
+        kind: "Failed", ref, request, error: failure, feedback: apiTransportFeedback(failure, "actions couldn’t load") ?? { tone: "Warning", title: "actions couldn’t load", requestId: failure.requestId },
       });
     });
   }, [ref, source]);
@@ -91,7 +92,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     const attempt = flight.current;
     if (ctx.online || !installedApp || attempt === null) return;
     attempt.cancel();
-    setLoad({ kind: "Failed", ref: attempt.ref, request: attempt.request, connectionRequired: true, feedback: { tone: "Neutral", title: "requires a connection" } });
+    setLoad({ kind: "Failed", ref: attempt.ref, request: attempt.request, error: null, feedback: { tone: "Neutral", title: "requires a connection" } });
   }, [ctx.online]);
 
   const state = load !== null && load.ref === ref && !load.request.aborted ? load : null;

@@ -3959,6 +3959,7 @@ export interface components {
             color: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
             /** Exact */
             exact: string;
+            excerpt: components["schemas"]["FrozenExcerpt-Output"];
             /** Prefix */
             prefix: string | null;
             /** Suffix */
@@ -6192,6 +6193,213 @@ export interface components {
             target: components["schemas"]["ReaderEpubTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
+        /** ExcerptBody */
+        ExcerptBody: {
+            /** Content */
+            content: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl") | null;
+            /** Lang */
+            lang: string | null;
+            selection: components["schemas"]["ExcerptRange"];
+            /**
+             * Structure
+             * @enum {string}
+             */
+            structure: "captured" | "unknown" | "plain";
+        };
+        /** ExcerptBranch */
+        "ExcerptBranch-Input": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Input"] | components["schemas"]["ExcerptOrderedList-Input"] | components["schemas"]["ExcerptListItem-Input"] | components["schemas"]["ExcerptCell-Input"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "a" | "article" | "aside" | "b" | "blockquote" | "cite" | "code" | "dd" | "div" | "dl" | "dt" | "em" | "figcaption" | "figure" | "footer" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "header" | "i" | "main" | "nav" | "p" | "pre" | "s" | "section" | "span" | "strong" | "sub" | "sup" | "table" | "tbody" | "tfoot" | "thead" | "tr" | "u" | "ul" | "xref";
+            /** Lang */
+            lang: string | null;
+        };
+        /** ExcerptBranch */
+        "ExcerptBranch-Output": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "a" | "article" | "aside" | "b" | "blockquote" | "cite" | "code" | "dd" | "div" | "dl" | "dt" | "em" | "figcaption" | "figure" | "footer" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "header" | "i" | "main" | "nav" | "p" | "pre" | "s" | "section" | "span" | "strong" | "sub" | "sup" | "table" | "tbody" | "tfoot" | "thead" | "tr" | "u" | "ul" | "xref";
+            /** Lang */
+            lang: string | null;
+        };
+        /** ExcerptBreak */
+        ExcerptBreak: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "br" | "hr";
+        };
+        /** ExcerptCell */
+        "ExcerptCell-Input": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Input"] | components["schemas"]["ExcerptOrderedList-Input"] | components["schemas"]["ExcerptListItem-Input"] | components["schemas"]["ExcerptCell-Input"])[];
+            /** Col Span */
+            col_span: number;
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "td" | "th";
+            /** Lang */
+            lang: string | null;
+            /** Row Span */
+            row_span: number;
+            /** Scope */
+            scope: ("row" | "col" | "rowgroup" | "colgroup") | null;
+        };
+        /** ExcerptCell */
+        "ExcerptCell-Output": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Col Span */
+            col_span: number;
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "td" | "th";
+            /** Lang */
+            lang: string | null;
+            /** Row Span */
+            row_span: number;
+            /** Scope */
+            scope: ("row" | "col" | "rowgroup" | "colgroup") | null;
+        };
+        /** ExcerptContentView */
+        ExcerptContentView: {
+            body: components["schemas"]["ExcerptBody"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "content";
+            /** Omitted After */
+            omitted_after: boolean | null;
+            /** Omitted Before */
+            omitted_before: boolean | null;
+            /** Selected Truncated After */
+            selected_truncated_after: boolean;
+            /** Selected Truncated Before */
+            selected_truncated_before: boolean;
+        };
+        /** ExcerptExtent */
+        ExcerptExtent: {
+            /** Document Identity */
+            document_identity: string;
+            /** End Offset */
+            end_offset: number;
+            /** Fragment Id */
+            fragment_id: string;
+            /** Reading Ref */
+            reading_ref: string;
+            /** Start Offset */
+            start_offset: number;
+        };
+        /** ExcerptListItem */
+        "ExcerptListItem-Input": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Input"] | components["schemas"]["ExcerptOrderedList-Input"] | components["schemas"]["ExcerptListItem-Input"] | components["schemas"]["ExcerptCell-Input"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "li";
+            /** Lang */
+            lang: string | null;
+            /** Value */
+            value: number | null;
+        };
+        /** ExcerptListItem */
+        "ExcerptListItem-Output": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "li";
+            /** Lang */
+            lang: string | null;
+            /** Value */
+            value: number | null;
+        };
+        /** ExcerptMediaGap */
+        ExcerptMediaGap: {
+            /**
+             * Flow
+             * @enum {string}
+             */
+            flow: "inline" | "block";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media_gap";
+            /**
+             * Media Kind
+             * @enum {string}
+             */
+            media_kind: "image" | "svg" | "embed";
+        };
+        /** ExcerptOrderedList */
+        "ExcerptOrderedList-Input": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Input"] | components["schemas"]["ExcerptOrderedList-Input"] | components["schemas"]["ExcerptListItem-Input"] | components["schemas"]["ExcerptCell-Input"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ol";
+            /** Lang */
+            lang: string | null;
+            /** Reversed */
+            reversed: boolean;
+            /** Start */
+            start: number;
+        };
+        /** ExcerptOrderedList */
+        "ExcerptOrderedList-Output": {
+            /** Children */
+            children: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl" | "auto") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ol";
+            /** Lang */
+            lang: string | null;
+            /** Reversed */
+            reversed: boolean;
+            /** Start */
+            start: number;
+        };
         /** ExcerptOut */
         ExcerptOut: {
             /** Text */
@@ -6200,6 +6408,36 @@ export interface components {
             truncated_after: boolean;
             /** Truncated Before */
             truncated_before: boolean;
+        };
+        /** ExcerptPoint */
+        ExcerptPoint: {
+            /** Offset */
+            offset: number;
+            /** Path */
+            path: number[];
+        };
+        /** ExcerptRange */
+        ExcerptRange: {
+            end: components["schemas"]["ExcerptPoint"];
+            start: components["schemas"]["ExcerptPoint"];
+        };
+        /** ExcerptTableSummary */
+        ExcerptTableSummary: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "table_summary";
+        };
+        /** ExcerptText */
+        ExcerptText: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "text";
+            /** Text */
+            text: string;
         };
         /**
          * ExcludeSessionIn
@@ -6471,6 +6709,46 @@ export interface components {
              * Format: uuid4
              */
             id: string;
+        };
+        /** FrozenExcerpt */
+        "FrozenExcerpt-Input": {
+            /** Content */
+            content: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Input"] | components["schemas"]["ExcerptOrderedList-Input"] | components["schemas"]["ExcerptListItem-Input"] | components["schemas"]["ExcerptCell-Input"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl") | null;
+            /** Lang */
+            lang: string | null;
+            selection: components["schemas"]["ExcerptRange"];
+            source_extent: components["schemas"]["ExcerptExtent"] | null;
+            /**
+             * Structure
+             * @enum {string}
+             */
+            structure: "captured" | "unknown" | "plain";
+            /** Truncated After */
+            truncated_after: boolean | null;
+            /** Truncated Before */
+            truncated_before: boolean | null;
+        };
+        /** FrozenExcerpt */
+        "FrozenExcerpt-Output": {
+            /** Content */
+            content: (components["schemas"]["ExcerptText"] | components["schemas"]["ExcerptBreak"] | components["schemas"]["ExcerptMediaGap"] | components["schemas"]["ExcerptBranch-Output"] | components["schemas"]["ExcerptOrderedList-Output"] | components["schemas"]["ExcerptListItem-Output"] | components["schemas"]["ExcerptCell-Output"])[];
+            /** Dir */
+            dir: ("ltr" | "rtl") | null;
+            /** Lang */
+            lang: string | null;
+            selection: components["schemas"]["ExcerptRange"];
+            source_extent: components["schemas"]["ExcerptExtent"] | null;
+            /**
+             * Structure
+             * @enum {string}
+             */
+            structure: "captured" | "unknown" | "plain";
+            /** Truncated After */
+            truncated_after: boolean | null;
+            /** Truncated Before */
+            truncated_before: boolean | null;
         };
         /** @enum {string} */
         GenerationApiProvider: "openai" | "anthropic" | "gemini" | "deepseek" | "xai";
@@ -8962,6 +9240,7 @@ export interface components {
         };
         /** PassageCapture */
         "PassageCapture-Input": {
+            excerpt: components["schemas"]["FrozenExcerpt-Input"];
             /** Locator */
             locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
@@ -8971,6 +9250,7 @@ export interface components {
         };
         /** PassageCapture */
         "PassageCapture-Output": {
+            excerpt: components["schemas"]["FrozenExcerpt-Output"];
             /** Locator */
             locator: (components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Publication */
@@ -8980,16 +9260,19 @@ export interface components {
         };
         /** PassageResourceBodyOut */
         PassageResourceBodyOut: {
+            /** Capture Revision */
+            capture_revision: string | null;
             /** Color */
             color: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
-            exact: components["schemas"]["ExcerptOut"];
+            /** Excerpt */
+            excerpt: components["schemas"]["ExcerptContentView"] | components["schemas"]["ExcerptTableSummary"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "passage";
-            prefix: components["schemas"]["ExcerptOut"] | null;
-            suffix: components["schemas"]["ExcerptOut"] | null;
+            /** Reading Ref */
+            reading_ref: string | null;
         };
         /** PassageState */
         "PassageState-Input": {
@@ -11851,6 +12134,7 @@ export interface components {
         ResourceTargetPassageOut: {
             /** Candidate Ref */
             candidate_ref: string;
+            capture: components["schemas"]["PassageCapture-Output"];
             /** Existing Link Id */
             existing_link_id: string | null;
             item: components["schemas"]["ResourceItemOut"];
@@ -12044,12 +12328,31 @@ export interface components {
             /** Scope Ref */
             scope_ref: string;
         };
+        /** ScopeIncompleteTable */
+        ScopeIncompleteTable: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "incomplete_table";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Start Offset */
+            start_offset: number;
+        };
         /** ScopeInputsPage */
         ScopeInputsPage: {
             /** Next Cursor */
             next_cursor: string | null;
             /** Records */
-            records: (components["schemas"]["ScopeIdentity"] | components["schemas"]["ScopeWorkspaceMember"] | components["schemas"]["ScopeMediaMember"] | components["schemas"]["ScopeLibraryMember"] | components["schemas"]["ScopeConversationFact"] | components["schemas"]["ScopeSourceAlias"] | components["schemas"]["ScopeHighlightMember"] | components["schemas"]["ScopeReading"] | components["schemas"]["ScopeInterval"])[];
+            records: (components["schemas"]["ScopeIdentity"] | components["schemas"]["ScopeWorkspaceMember"] | components["schemas"]["ScopeMediaMember"] | components["schemas"]["ScopeLibraryMember"] | components["schemas"]["ScopeConversationFact"] | components["schemas"]["ScopeSourceAlias"] | components["schemas"]["ScopeHighlightMember"] | components["schemas"]["ScopeReading"] | components["schemas"]["ScopeInterval"] | components["schemas"]["ScopeIncompleteTable"])[];
             /** Restart */
             restart: boolean;
             /** Revision */
@@ -12383,6 +12686,7 @@ export interface components {
         };
         /** SelectionCapture */
         "SelectionCapture-Input": {
+            excerpt: components["schemas"]["FrozenExcerpt-Input"];
             /** Locator */
             locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
@@ -12398,6 +12702,7 @@ export interface components {
         };
         /** SelectionCapture */
         "SelectionCapture-Output": {
+            excerpt: components["schemas"]["FrozenExcerpt-Output"];
             /** Locator */
             locator: components["schemas"]["XCaptureOffsetsLocator"] | components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Passage Ref */
@@ -12486,7 +12791,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 2;
+            format_revision: 3;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -12503,7 +12808,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 2;
+            format_revision: 3;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -13405,6 +13710,11 @@ export interface components {
         UploadChanges: {
             /** Changes */
             changes: components["schemas"]["Change-Input"][];
+            /**
+             * Format Revision
+             * @constant
+             */
+            format_revision: 3;
             /**
              * Replica Id
              * Format: uuid
@@ -20094,7 +20404,11 @@ export interface operations {
     };
     get_resource_item_resource_items__resource_ref__get: {
         parameters: {
-            query?: never;
+            query?: {
+                excerpt_mode?: "compact" | "full";
+                reading_media_id?: string | null;
+                expected_capture_revision?: string | null;
+            };
             header?: never;
             path: {
                 resource_ref: string;

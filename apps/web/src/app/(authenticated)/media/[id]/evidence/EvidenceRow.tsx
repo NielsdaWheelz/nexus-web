@@ -35,7 +35,16 @@ export type EvidenceEntry =
   | { readonly kind: "link"; readonly key: string; readonly link: LocalLink }
   | { readonly kind: "remote"; readonly key: string; readonly root: EvidenceRoot };
 
-export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced }: {
+/** The same source reference can occur more than once in a mounted document. */
+export function sourceTextKey(entry: EvidenceEntry): string | null {
+  return entry.kind === "remote" && entry.root.content.kind === "SourceReference"
+    ? JSON.stringify([entry.root.source.media_id, entry.root.source.identity, `evidence/${entry.key}`]) : null;
+}
+
+export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout }: {
+  readonly sourceText: ReadonlySet<string>;
+  readonly onSourceTextChange: (key: string, open: boolean) => void;
+  readonly onSourceLayout: (key: string, pending: boolean | null) => void;
   readonly entry: EvidenceEntry;
   readonly actions: EvidenceActions;
   readonly active: boolean;
@@ -73,7 +82,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   if (entry.kind === "highlight") {
     const { annotation } = entry;
     const placement = annotation.placement.kind;
-    return <ResourceOutlineRow resourceRef={annotation.ref} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
+    return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
       omitResourceActions={!actions.sourceContext ? ["Share"] : undefined}
       annotationFocusRequest={verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
@@ -92,9 +101,10 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   }
   const { root } = entry;
   const content = root.content;
+  const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
-    sourceContent={content.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
+    sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} onLayout={onSourceLayout} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}
     resourceDetails={<>
       {placementDetails}

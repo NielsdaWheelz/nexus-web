@@ -13,6 +13,8 @@ import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOf
 import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -160,6 +162,8 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   readonly triggerRef: RefObject<HTMLButtonElement | null>;
   readonly returnFocus: () => HTMLElement | null;
 }) {
+  const pane = usePaneRuntime();
+  const touch = useTouchCapable();
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; }, [triggerRef]);
   useActionFocusRecovery(shortcutsRef, returnFocus);
@@ -194,9 +198,11 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     title={item.title} subjectKey={`import:${item.ref}:media:${item.media_id}`}
     sections={[{ id: "View", actions: commands }]}
     omitResourceActions={commands.map(action => action.id)}
-    displayedActivation={{ kind: item.can_read || item.can_play ? "route" : "none",
-      href: item.can_read || item.can_play ? `/media/${item.media_id}` : null,
-      resource_ref: `media:${item.media_id}`, unavailable_reason: null }}
+    navigation={{
+      key: `import:${item.ref}:/media/${item.media_id}:${item.can_read || item.can_play}`,
+      fork: touch && pane && (item.can_read || item.can_play)
+        ? paneForkLink({ runtime: pane, target: { href: `/media/${item.media_id}`, labelHint: item.title }, disabledReason: null }) : null,
+    }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}
   />;
   return { shortcuts, menu, feedback: open.feedback || upload.feedback ? <>{open.feedback}{upload.feedback}</> : null };

@@ -8,10 +8,12 @@ export type ResourceItem = Schema<"ResourceItemOut">;
 export async function resolveResourceItem(
   ref: string,
   signal?: AbortSignal,
+  readingRef: string | null = null,
 ): Promise<ResourceItem> {
+  const parameters = readingRef === null ? "" : `?${new URLSearchParams({ reading_media_id: readingRef.replace(/^media:/u, "") })}`;
   const response = await apiFetch<
     ApiJson<"/resource-items/{resource_ref}", "get">
-  >(`/api/resource-items/${encodeURIComponent(ref)}`, {
+  >(`/api/resource-items/${encodeURIComponent(ref)}${parameters}`, {
     signal,
     cache: "no-store",
   });

@@ -1,13 +1,6 @@
 import { codepointLength } from "./codepoints";
 
-/**
- * Test whether a codepoint is whitespace (including non-breaking space).
- * Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not,
- * so the class is spelled out to match the backend canonicalize.py exactly.
- */
-function isWsCp(cp: string): boolean {
-  return cp !== "\uFEFF" && /[\s -]/.test(cp);
-}
+import { canonicalTokens, CANONICAL_BLOCKS, isCanonicalWhitespace as isWsCp } from "@nexus/authored/canonical";
 
 
 type DomTextNode = {
@@ -36,33 +29,7 @@ export type DomTextCursor = {
 };
 
 // These sets and the built-in visibility rule match canonicalize.py.
-const BLOCK_ELEMENTS = new Set([
-  "p",
-  "li",
-  "ul",
-  "ol",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "blockquote",
-  "pre",
-  "div",
-  "section",
-  "article",
-  "header",
-  "footer",
-  "nav",
-  "aside",
-  "figure",
-  "figcaption",
-  "table",
-  "tr",
-  "td",
-  "th",
-]);
+const BLOCK_ELEMENTS = CANONICAL_BLOCKS;
 
 const SKIP_ELEMENTS = new Set(["script", "style", "noscript", "template"]);
 
@@ -231,131 +198,11 @@ function uniqueSourceSpans(spans: SourceSpan[]): SourceSpan[] {
   );
 }
 
-function normalizeNfcWithProvenance(tokens: Token[]): Token[] {
-  const text = tokens.map((token) => token.ch).join("");
-  if (!text) {
-    return [];
-  }
-  const normalizedText = text.normalize("NFC");
-  // Unchanged codepoints keep their spans unless a surrogate pair crosses nodes.
-  if (normalizedText === text && codepointLength(text) === tokens.length) return tokens;
-
-  const decomposedByCodepoint = new Map<
-    string,
-    { spans: SourceSpan[][]; nextIndex: number }
-  >();
-  for (const token of tokens) {
-    for (const ch of token.ch.normalize("NFD")) {
-      const queue = decomposedByCodepoint.get(ch);
-      if (queue) {
-        queue.spans.push(token.spans);
-      } else {
-        decomposedByCodepoint.set(ch, {
-          spans: [token.spans],
-          nextIndex: 0,
-        });
-      }
-    }
-  }
-
-  const normalized: Token[] = [];
-  for (const ch of normalizedText) {
-    const spans: SourceSpan[] = [];
-    for (const decomposed of ch.normalize("NFD")) {
-      const queue = decomposedByCodepoint.get(decomposed);
-      const source = queue?.spans[queue.nextIndex];
-      if (!queue || !source) {
-        throw new Error("Canonical NFC provenance decomposition drifted.");
-      }
-      spans.push(...source);
-      queue.nextIndex += 1;
-    }
-    normalized.push({ ch, spans: uniqueSourceSpans(spans) });
-  }
-
-  for (const queue of decomposedByCodepoint.values()) {
-    if (queue.nextIndex !== queue.spans.length) {
-      throw new Error("Canonical NFC provenance left unconsumed source text.");
-    }
-  }
-  return normalized;
-}
-
 export function buildDomTextCursor(
   root: Element,
   excludeElement: (element: Element) => boolean,
 ): DomTextCursor {
-  const joinedTokens = normalizeNfcWithProvenance(
-    collectParts(root, excludeElement).flatMap((part) => part.tokens),
-  );
-
-  const collapsedTokens: Token[] = [];
-  for (let i = 0; i < joinedTokens.length;) {
-    const token = joinedTokens[i];
-    if (token.ch !== "\n") {
-      collapsedTokens.push(token);
-      i += 1;
-      continue;
-    }
-
-    let j = i + 1;
-    let newlineCount = 1;
-    while (j < joinedTokens.length && isWsCp(joinedTokens[j].ch)) {
-      if (joinedTokens[j].ch === "\n") {
-        newlineCount += 1;
-      }
-      j += 1;
-    }
-    if (newlineCount >= 2) {
-      collapsedTokens.push({ ch: "\n", spans: [] });
-      collapsedTokens.push({ ch: "\n", spans: [] });
-      i = j;
-      continue;
-    }
-
-    collapsedTokens.push(token);
-    i += 1;
-  }
-
-  const lineTrimmedTokens: Token[] = [];
-  let lineStart = 0;
-  for (let i = 0; i <= collapsedTokens.length; i++) {
-    const atLineBreak =
-      i === collapsedTokens.length || collapsedTokens[i].ch === "\n";
-    if (!atLineBreak) {
-      continue;
-    }
-
-    let first = lineStart;
-    while (first < i && isWsCp(collapsedTokens[first].ch)) {
-      first += 1;
-    }
-    let last = i - 1;
-    while (last >= first && isWsCp(collapsedTokens[last].ch)) {
-      last -= 1;
-    }
-    for (let j = first; j <= last; j++) {
-      lineTrimmedTokens.push(collapsedTokens[j]);
-    }
-    if (i < collapsedTokens.length) {
-      lineTrimmedTokens.push({ ch: "\n", spans: [] });
-    }
-    lineStart = i + 1;
-  }
-
-  let start = 0;
-  while (
-    start < lineTrimmedTokens.length &&
-    isWsCp(lineTrimmedTokens[start].ch)
-  ) {
-    start += 1;
-  }
-  let end = lineTrimmedTokens.length - 1;
-  while (end >= start && isWsCp(lineTrimmedTokens[end].ch)) {
-    end -= 1;
-  }
-  const finalTokens =
-    start <= end ? lineTrimmedTokens.slice(start, end + 1) : [];
+  const finalTokens = canonicalTokens(collectParts(root, excludeElement).flatMap(part => part.tokens), uniqueSourceSpans);
   const emitted = finalTokens.map((token) => token.ch).join("");
 
   const nodeMap = new Map<

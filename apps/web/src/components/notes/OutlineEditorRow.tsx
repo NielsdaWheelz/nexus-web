@@ -1,8 +1,11 @@
 "use client";
 
-/** Native row controls live outside ProseMirror's contentDOM. Portals publish
- * chrome into the view's stable slots; no control creates an editing host. */
+/** React owns native controls and passive reference bodies in stable node-view
+ * slots. Editable prose remains ProseMirror's contentDOM. */
 import {createPortal} from "react-dom";
+import type {ResourceProjection} from "@nexus/authored/types";
+import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
+import {authoredItem} from "@/lib/notes/presentation";
 import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, TriangleAlert, Unlink} from "lucide-react";
 import Button from "@/components/ui/Button";
 import type {BranchRead} from "@/lib/notes/outlineController";
@@ -18,6 +21,7 @@ import styles from "./OutlineEditorRow.module.css";
 export interface OutlineRowChrome {
   row_id: string;
   ref: string | null;
+  resource: ResourceProjection | null;
   kind: "note" | "title" | "reference";
   depth: number;
   parent_id: string | null;
@@ -28,20 +32,19 @@ export interface OutlineRowChrome {
   read: BranchRead;
   open: boolean;
   terminal: boolean;
-  root: boolean;
   selected: boolean;
   toggle(): void;
   select(): void;
   unlink(): void;
   reveal(): void;
 }
-export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement}
+export interface OutlineRowMount {row_id: string; leading: HTMLElement; trailing: HTMLElement; content: HTMLElement}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
-    if (!row || row.root) return [];
+    if (!row) return [];
     const parsed = row.ref === null ? null : parseResourceRef(row.ref);
     // justify-defect: only uncommitted drafts lack a canonical resource ref.
     if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
@@ -54,7 +57,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
       onContextMenu={event => event.stopPropagation()}>
-      <ContextualActionMenu title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
+      <ContextualActionMenu navigation={null} title={row.label} subjectKey={`outline:${row.row_id}`} label={`relationship actions for ${row.label}`}
         sections={[{id: "Occurrence", actions}]} renderContextAnchor={context => row.href ? <a {...context}
           className={`${styles.control} ${styles.bullet}`} href={row.href} data-outline-bullet="true" data-row-focusable="true"
           aria-label={`open ${identity}: ${row.label}`} data-workspace-rich-target="true"
@@ -74,6 +77,8 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
           icon={row.read.error !== null ? <TriangleAlert size={14}/> : <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>}/>
         <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
       </> : null;
-    return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`)];
+    return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+        mount.content, `${row.row_id}:content`)] : [])];
   });
 }

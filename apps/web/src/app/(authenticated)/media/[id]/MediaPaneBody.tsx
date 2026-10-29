@@ -19,7 +19,7 @@ import {
 } from "react";
 import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import { SourcePieces, PieceDetails } from "@/components/media/containedWorks/Pieces";
+import HostedContents from "./HostedContents";
 import { useShareController } from "@/lib/sharing/controller";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -46,7 +46,6 @@ import { assertNever } from "@/lib/assertNever";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { localPoint } from "@/lib/documentReader/model";
-import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
   useDocumentReader,
@@ -818,13 +817,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const contents = useMemo(
     () =>
       doc?.kind === "text" && (media?.kind === "text_part" || media?.kind === "epub" || media?.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
-        <>
-          <SourceIssuesNotice issues={doc.sourceIssues} readable />
-          {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} /></>
-            : media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x" && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post") ? <SourcePieces key={`${runtime.visitId}:${id}`} source={id} reader={reader} /> : <Contents reader={reader} />}
-        </>
+        <HostedContents id={id} media={media} reader={reader} focusTarget={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? null} />
       ) : undefined,
-    [doc, id, media, reader, runtime.visitId],
+    [doc, id, media, reader],
   );
   const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
     const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;

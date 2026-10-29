@@ -11,7 +11,7 @@ import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEA
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, RETIRED_FORMAT_TABLES } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -45,6 +45,7 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
+        writeFileSync(path.join(outDir, "authored-retired-formats.json"), JSON.stringify(RETIRED_FORMAT_TABLES));
         const cursor = JSON.stringify(["a0", ""]);
         const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
           outline_window: [
@@ -55,6 +56,7 @@ export default defineConfig({
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],
           resource: [{ kind: "resource", ref: "" }],
+          excerpt: [{kind:"excerpt",ref:"",reading_ref:null}],
           source_alias: [{ kind: "source_alias", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),

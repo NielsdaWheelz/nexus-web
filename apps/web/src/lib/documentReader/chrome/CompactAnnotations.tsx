@@ -1,4 +1,7 @@
 "use client";
+import { CommandTooLargeError } from "@nexus/authored/types";
+import ReaderExcerpt from "@/components/resources/ReaderExcerpt";
+import { ExcerptCaptureError, excerptView, excerptTextParts } from "@nexus/authored/excerpt";
 
 // Annotation for hosts without the workspace composer: the downloaded shelf and saved
 // episode transcripts. One admitted selection becomes a new independent highlight,
@@ -75,6 +78,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     };
     setBusy(true);
     void run().then(finish, (error: unknown) => {
+      if (error instanceof CommandTooLargeError) {setIssue({title: "this selection is too large to save. select a shorter passage.", retry: null}); return;}
       if (error instanceof LocalCommitError) {void error.completion.then(finish, () => {}); return;}
       if (isAuthoredStorageFailure(error)) setIssue({title: "couldn’t save this annotation", retry: () => commit(run, done)}); else setDefect({error});
     }).finally(() => {if (currentInput.current.mounted) setBusy(false);});
@@ -96,9 +100,10 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     message: issue.retry ? "keep nexus open. retry saving." : undefined }} announcement="Assertive"
     actions={issue.retry ? [{ label: "retry", busy, onClick: issue.retry }] : undefined} /> : null;
   const panel = <>
+    {open === null ? issueNotice : null}
     <Dialog open={open?.kind === "selection"} title="annotate passage" onClose={close}>
       {open?.kind === "selection" ? <div className={styles.compactAnnotation}>
-        <mark className={styles.annotationQuote} data-color="yellow">{open.capture.selection.quote_exact}</mark>
+        <ReaderExcerpt excerpt={excerptView(open.capture.selection.excerpt, "full", { kind: "capture" })} color="yellow" full />
         {editor("write a note…", () => save(open.capture, true))}
         <div className={styles.compactActions}>
           <Button emphasis="strong" reserveIcon aria-busy={busy} disabled={busy || blocked} onClick={() => save(open.capture, true)}>{hasNote ? "save note" : "save highlight"}</Button>
@@ -110,7 +115,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     <Dialog open={open?.kind === "choose"} title="choose highlight" onClose={close}>
       {open?.kind === "choose" ? <ul className={styles.attachedNotes}>
         {open.marks.flatMap(mark => { const id = mark.id; const entry = annotations.annotation(id); return entry ? [<li key={id}>
-          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id, mark }); }}>{entry.selection.quote_exact}</Button>
+          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id, mark }); }}>{entry.excerpt.kind === "content" ? excerptTextParts(entry.excerpt.body).exact : "table excerpt"}</Button>
         </li>] : []; })}
       </ul> : null}
     </Dialog>
@@ -144,8 +149,15 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   current.current = { doc, mediaId };
   const onSelection = useCallback((notice: SelectionNotice) => {
     const { doc } = current.current;
-    if (notice.kind !== "Admitted" || notice.selection.kind !== "Captured" || !doc || notice.selection.identity !== doc.identity) return;
-    const capture = captureSelection(doc, current.current.mediaId, notice.selection.anchor);
+    if (notice.kind !== "Admitted" || !doc || notice.selection.identity !== doc.identity) return;
+    if (notice.selection.kind === "Rejected") { setIssue({ title: notice.selection.reason === "UnsupportedExcerpt" ? "this passage contains text that can’t be captured faithfully yet." : "select within one text section.", retry: null }); return; }
+    let capture: Capture | null;
+    try { capture = captureSelection(doc, current.current.mediaId, notice.selection.anchor, notice.selection.excerpt, notice.selection.excerpt_start, notice.selection.excerpt_end); }
+    catch (error) {
+      if (!(error instanceof ExcerptCaptureError)) throw error;
+      setIssue({ title: "this passage contains text that can’t be captured faithfully yet.", retry: null });
+      return;
+    }
     if (capture) { setIssue(null); setOpen({ kind: "selection", capture }); }
   }, []);
   const onMarks = useCallback((event: MarkEvent) => {

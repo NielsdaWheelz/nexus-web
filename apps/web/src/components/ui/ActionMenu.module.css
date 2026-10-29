@@ -16,6 +16,7 @@
 }
 
 .menuItemIcon {
+  position: relative;
   display: inline-flex;
   flex: 0 0 16px;
   inline-size: 16px;
@@ -59,6 +60,10 @@
   min-inline-size: 0;
 }
 
+.sheetBody :is(button, a) {
+  min-block-size: 48px;
+}
+
 .menuItemIcon > svg {
   inline-size: 16px;
   block-size: 16px;
@@ -79,3 +84,40 @@
 .menu { padding-inline-end: calc(var(--size-xl) + var(--space-2)); }
 .menuContents { min-width: 0; }
 .recoverySlot { position: absolute; inset-inline-end: var(--space-1); inset-block-start: var(--space-1); }
+.currentMarker {
+  position: absolute;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  color: var(--accent);
+}
+
+.menuItemIcon:has(> svg) .currentMarker {
+  inset-block-end: 0;
+  inset-inline-end: 0;
+}
+
+@media (forced-colors: active) {
+  .currentMarker {
+    color: Highlight;
+  }
+}
+
+/* Initial controls own the width; prepared verbs and trailing facts share its room. */
+.delayedRegion {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.preparedRegion,
+.delayedRegion > .separator {
+  flex: 0 0 auto;
+}
+
+.delayedRegion > .trailingRegion {
+  flex: 0 1 auto;
+  min-block-size: 0;
+}

@@ -104,7 +104,7 @@ export default function LibraryChooser({
   const searchContext = JSON.stringify([context, query]);
   const current = reconcileSearchActive({
     context: searchContext, admitted: true, options,
-    firstExistingKey: matching.find(row => row.action.kind === "Set")?.id ?? null, active,
+    initialKey: matching.find(row => row.action.kind === "Set")?.id ?? null, active,
   });
   if (current !== active) setActive(current);
   const navigation = useSearchOptions({

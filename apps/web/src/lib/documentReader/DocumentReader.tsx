@@ -1,4 +1,6 @@
 "use client";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
+import type { ExcerptBody } from "@nexus/authored/excerpt";
 
 // The reader primitive. A host builds a source (and optionally a progress
 // port), gets a Reader from useDocumentReader, and renders DocumentReaderView
@@ -11,7 +13,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -23,7 +24,6 @@ import {
   FeedbackState,
   FeedbackStatus,
   type FeedbackAnnouncement,
-  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -43,7 +43,7 @@ import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import type { NavigationFailure } from "./navigator";
+import { navigationFailureContent } from "./navigationFeedback";
 
 export type {
   Reader,
@@ -101,8 +101,8 @@ export interface Inspection {
   readonly precision: "exact" | "approximate" | "page" | "time";
 }
 export type SelectionCandidate =
-  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string }
-  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" };
+  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
 export type SelectionEvent = SelectionCandidate & {
   readonly identity: string;
   readonly input: "pointer" | "keyboard" | "touch";
@@ -203,24 +203,6 @@ export function useReaderState<T>(
 ): T {
   const read = () => select(reader.getState());
   return useSyncExternalStore(reader.subscribe, read, read);
-}
-
-/** Each reader font family's stack: the reader surface's face and its specimen. */
-export const READER_FONT_STACKS: Record<Schema<"ReaderProfileOut">["font_family"], string> = {
-  serif: "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif",
-  sans: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-};
-
-/** Typography as CSS custom properties, from the reader profile. */
-export function readerSurfaceStyle(
-  profile: Schema<"ReaderProfileOut">,
-): CSSProperties {
-  return {
-    "--reader-font-family": READER_FONT_STACKS[profile.font_family],
-    "--reader-font-size-px": `${profile.font_size_px}px`,
-    "--reader-line-height": String(profile.line_height),
-    "--reader-column-width-ch": `${profile.column_width_ch}ch`,
-  } as CSSProperties;
 }
 
 export default function DocumentReaderView(
@@ -329,24 +311,6 @@ export default function DocumentReaderView(
       </div>
     </div>
   );
-}
-
-const NAVIGATION_TITLES: Record<NavigationFailure["operation"], string> = {
-  Open: "couldn’t open that passage",
-  Restore: "couldn’t restore your reading position",
-  Return: "couldn’t return to your held place",
-  Reflow: "couldn’t keep this passage in view",
-  Continue: "couldn’t set your reading position here",
-};
-
-/** Copy follows the failed intention; capture has its own explanation except on adoption. */
-function navigationFailureContent(failure: NavigationFailure): FeedbackContent {
-  return {
-    tone: "Warning",
-    title: failure.operation !== "Continue" && failure.reason === "CaptureUnavailable"
-      ? "couldn’t hold your current place"
-      : NAVIGATION_TITLES[failure.operation],
-  };
 }
 
 /** Where the held spot is: its section, its page, or how far through. */

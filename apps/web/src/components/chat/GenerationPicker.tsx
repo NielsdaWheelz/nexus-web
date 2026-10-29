@@ -12,6 +12,7 @@ import {
   chooseThinking,
   editorRoute,
   editorVariant,
+  MISSING_SELECTION,
   modelKeyOf,
   modelVariants,
   routeKey,
@@ -70,8 +71,8 @@ export default function GenerationPicker({
   const missingId = JSON.stringify(value);
   const providerId = route ? routeKey(route) : value.kind === "Selected" ? missingId : null;
   if (providerId !== null && !providers.some((option) => option.id === providerId))
-    providers.unshift({ id: providerId, label: routeRow?.label ?? (route?.kind === "ProviderApi" ? route.provider : route?.kind === "CodexPersonal" ? "Codex" : "provider unavailable"), detail: null,
-      unavailable_reason: "this provider has no available chat models" });
+    providers.unshift({ id: providerId, label: routeRow?.label ?? (route?.kind === "ProviderApi" ? route.provider : route?.kind === "CodexPersonal" ? "Codex" : "selection unavailable"), detail: null,
+      unavailable_reason: route ? "this provider has no available chat models" : MISSING_SELECTION });
   const variants = modelVariants(routeRow);
   const models: ChoiceOption[] = variants.map((item) => ({
     id: item.key,
@@ -93,7 +94,7 @@ export default function GenerationPicker({
     models.unshift({ id: modelId, label, detail: null,
       unavailable_reason: routeRow && routeRow.readiness.kind !== "Ready" ? routeRow.readiness.explanation
         : variant ? choiceUnavailable(variant.reasoning[0])
-        : "this model or mode is no longer available" });
+        : MISSING_SELECTION });
   }
   return (
     <div className={styles.picker}>

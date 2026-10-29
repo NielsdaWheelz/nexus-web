@@ -15,6 +15,7 @@ import {
 import { MapRail } from "@/lib/documentReader/chrome/MapRail";
 import { CompactAnnotationLayer, type ReaderAnnotationProps } from "@/lib/documentReader/chrome/CompactAnnotations";
 import { AuthoredProvider } from "@/lib/authored/provider";
+import { ReaderProfileProvider } from "@/lib/reader/ReaderProfileContext";
 import { ReaderNoteEditorHost } from "@/lib/notes/editorHost";
 import DocumentReaderView, {
   useDocumentReader,
@@ -167,7 +168,7 @@ export default function ShelfReader({
   const notice = progress && NOTICE[progress];
   // one tree for both states: the annotation layer keeps its place across a retried load.
   return (
-    <div className={styles.documentReader} ref={frame} tabIndex={-1}>
+    <ReaderProfileProvider profile={SHELF_PROFILE}><div className={styles.documentReader} ref={frame} tabIndex={-1}>
       {document.status === "failed" ? (
         <FeedbackState
           content={{ tone: "Warning", title: "downloaded copy couldn’t open", message: "retry opening it. you can also remove this copy and download it again from nexus." }}
@@ -225,7 +226,7 @@ export default function ShelfReader({
         </div>
       </>}
       {layer}
-    </div>
+    </div></ReaderProfileProvider>
   );
 }
 

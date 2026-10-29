@@ -28,6 +28,7 @@ import { OutlineEmbeddingOccurrence, useEditorDraft, useNoteEditorHost, useOptio
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import ReferencePicker from "@/components/resources/ReferencePicker";
+import { getInteractionOwner } from "@/lib/ui/overlay";
 import {
   useReferenceInput,
   type ReferenceInputHost,
@@ -119,7 +120,10 @@ export interface StructuralKeys {
 
 /** The outline can preserve an occurrence's caret without reaching into its view. */
 export interface NoteEditorHandle {
+  readText(): string;
+  encodedBytes(): number;
   readSelection(): { anchor: number; head: number };
+  /** Snapshot reconciled editor state; never change native selection during focus. */
   captureSelection(): (document: WritingDocument) => FocusSelection;
   focus(selection: FocusSelection | ((document: WritingDocument) => FocusSelection), preventScroll?: boolean): void;
   canArrange(): boolean;
@@ -168,6 +172,8 @@ export interface NoteEditorProjection {
 
 export interface NoteEditorProps {
   projection?: NoteEditorProjection;
+  embedding?: {row_id: string; context: ReturnType<NoteEditorProjection["context"]>};
+  header?: true;
   reference?: ReferenceInputHost | null;
   writingDocument?: WritingDocument;
   writingOrigin?: unknown;
@@ -1274,6 +1280,12 @@ function NoteEditorContent(props: NoteEditorProps) {
     viewRef.current = view;
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
+      encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
+      readText() {
+        flushNativeDOM(view);
+        const field = editingField(view.state);
+        return field ? clipboardPlainText(field.node.content) : "";
+      },
       readSelection() {
         latest.current.projection?.onFocus();
         if (!nativeInputOpen.current && !view.composing && compositionBase.current === null) syncNativeSelection(view);
@@ -1283,7 +1295,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         return selection;
       },
       captureSelection() {
-        const selection = handle.readSelection();
+        const field = editingField(view.state);
+        const selection = field ? fieldSelection(view.state, field) : {anchor: 1, head: 1};
         if (!binding?.baseline) return () => selection;
         const inline = editingField(view.state)?.kind === "title" ? binding.baseline.getText("title") : bodyInline(binding.baseline);
         const relative = (position: number) => Y.createRelativePositionFromTypeIndex(inline,
@@ -1317,9 +1330,9 @@ function NoteEditorContent(props: NoteEditorProps) {
           compositionBase.current === null && referenceRef.current.getState() === null;
       },
       settleNativeInput() {
-        if (!handle.canArrange()) return false;
+        if (nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         reconcile(view);
-        if (view.isDestroyed || !handle.canArrange()) return false;
+        if (view.isDestroyed || nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         syncNativeSelection(view);
         return true;
       },
@@ -1408,9 +1421,15 @@ function NoteEditorContent(props: NoteEditorProps) {
       tabIndex={-1}
       data-row-focusable="true"
       className={styles.shell}
+      data-header-editor={props.header ? "true" : undefined}
       onKeyDownCapture={(event) => {
+        if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         const view = viewRef.current;
         const intent = view && activeReference(view.state);
+        if (event.key === "Escape" && (view?.composing || compositionBase.current !== null || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) {
+          event.stopPropagation();
+          return;
+        }
         if (
           event.key !== "Escape" ||
           !view ||
@@ -1428,6 +1447,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
           if (shell.current?.contains(document.activeElement)) return;
+          const owner = getInteractionOwner();
+          const opener = owner?.opener instanceof HTMLElement ? owner.opener : owner?.opener?.element;
+          if (owner?.options.current.kind === "modal" && opener && shell.current?.contains(opener)
+            && owner.element?.contains(document.activeElement)) return;
           suspended.current = true;
           setReferenceFocused(false);
           setToolbar(false);
@@ -1457,11 +1480,12 @@ function NoteEditorContent(props: NoteEditorProps) {
         },
       }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {editorHost.embedded_preview === "workspace" ? [...embeds].map(([dom, embed]) => {
-        const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : null;
+        const owner = embed.row_id ?? props.embedding?.row_id ?? null;
+        const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : props.embedding?.context;
         // A portal has a mount identity; history names the stable field occurrence.
-        const scope = embed.row_id !== null ? `${embed.row_id}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
+        const scope = owner !== null ? `${owner}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
-        return createPortal(<OutlineEmbeddingOccurrence value={embed.row_id}><EmbeddedResource
+        return createPortal(<OutlineEmbeddingOccurrence value={owner}><EmbeddedResource
           resourceRef={embed.ref} supplied={props.embeddedItem ?? null}
           scope={scope}
           branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
@@ -1470,11 +1494,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
       }) : null}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <ReferencePicker
-          input={reference}
-          returnFocus={() => viewRef.current?.dom ?? null}
-          onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
-        />
+        <div data-collection-constrained={props.header || undefined}>
+          <ReferencePicker
+            input={reference}
+            returnFocus={() => viewRef.current?.dom ?? null}
+            onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
+          />
+        </div>
       ) : null}
       {props.editable && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
         <div
@@ -1524,7 +1550,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       {link && linkVisible ? (
         <div
           className={styles.linkDialog}
-          style={{ left: link.left, top: link.top }}
+          style={props.header ? undefined : { left: link.left, top: link.top }}
           role="dialog"
           aria-label="Add hyperlink"
         >

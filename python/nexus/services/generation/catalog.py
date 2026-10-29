@@ -286,11 +286,14 @@ def _chat_defaults(provider: GenerationApiProvider | None, model: _Model) -> set
 def _reasoning_labels(
     row: AgentReasoningFacts | ApiReasoningFacts,
 ) -> tuple[str | None, str, str]:
+    if row.mode is None and row.effort == "default":
+        return None, "default", row.label
     mode = (
         {
             "standard": "Standard",
             "pro": "Pro",
             "adaptive": "Adaptive",
+            "between_tools": "Between tools",
             "disabled": "Thinking Off",
         }.get(row.mode, row.mode)
         if row.mode is not None
@@ -298,6 +301,7 @@ def _reasoning_labels(
     )
     effort = {
         "none": "None",
+        "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
         "high": "High",
@@ -331,10 +335,16 @@ def _compose(
         (
             None,
             codex_readiness,
-            [] if codex is None else [_codex_model(codex, row) for row in codex.models],
+            []
+            if codex is None
+            else [_codex_model(codex, row) for row in codex.models if row.offered],
         ),
         *(
-            (provider, Ready(last_checked=now), [_api_model(row) for row in api.models])
+            (
+                provider,
+                Ready(last_checked=now),
+                [_api_model(row) for row in api.models if row.offered and row.provider == provider],
+            )
             for provider in providers
         ),
     ]
@@ -344,8 +354,6 @@ def _compose(
         label, billing, privacy, chain = _disclosure(provider)
         model_rows: list[GenerationModelRow] = []
         for model in models:
-            if isinstance(model.target, ProviderTarget) and model.target.provider != provider:
-                continue
             state: SelectionState = Selectable()
             if not model.chat_capable:
                 state = Ineligible(

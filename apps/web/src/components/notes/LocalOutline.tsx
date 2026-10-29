@@ -13,6 +13,7 @@ import {OutlineController, OutlineActionRefusal, type BranchRequest, type RootFi
 import {OutlinePendingInput} from "@/lib/notes/outlinePending";
 import {OutlineHistory} from "@/lib/notes/structure";
 import {useOutlineWindow} from "@/lib/notes/useOutlineWindow";
+import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
@@ -26,10 +27,12 @@ import type {WritingDocument} from "@/lib/notes/runtime";
 import NoteEditor, {type NoteEditorHandle} from "./NoteEditor";
 import OutlineEditorRows from "./OutlineEditorRow";
 import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
+import {useAuthoredPaneRoot} from "./AuthoredPaneRoot";
 
 export interface LocalOutlineHandle {
   append(): Promise<void>;
-  focusRoot(resolve?: (document: WritingDocument) => FocusSelection): Promise<void>;
+  revealRoot(): void;
+  focusRoot(resolve?: (document: WritingDocument) => FocusSelection, mayFocus?: () => boolean): Promise<void>;
   focusNote(ref: string, signal?: AbortSignal): Promise<boolean>;
   focusFirst(): void;
   rootText(): string;
@@ -53,6 +56,9 @@ export type OutlineRootMetadata =
   | {ref: string; known: false; resource: null; store_revision: null}
   | {ref: string; known: true; resource: ResourceProjection | null; store_revision: string};
 export interface LocalOutlineRoot {
+  rootEditor: PaneHeaderEditor | null;
+  rootTitle: string | null;
+  rootReady: boolean;
   rootRead: OutlineRootMetadata;
   error: unknown | null;
   retry(): void;
@@ -103,11 +109,17 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     // Presentation and latent-page props update the mounted session below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, input, rootRef, branch, notify, changed]);
+  const presentation = useAuthoredPaneRoot(current?.controller ?? null, configuredField);
+  const wrap = (node: ReactNode) => <SharedOutline value={current?.controller ?? null}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
+  const rootEditor = presentation.rootEditor;
+  const published = rootEditor === null ? null : rootEditor.kind === "Inline"
+    ? {...rootEditor, content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)}
+    : {...rootEditor, control: wrap(rootEditor.control), content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)};
   const view = current ? <MountedOutline key={current.id} controller={current.controller} pending={pending}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
     rootRead={read} onReady={setEditor}/>
     : <FeedbackBusy subject={`${accountId}:${rootRef}`} pending/>;
-  return {rootRead, error: read.error, retry: read.retry, ready: current !== null && editor === current.controller, view};
+  return {rootEditor: published, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read.error, retry: read.retry, ready: current !== null && editor === current.controller, view};
 }
 
 function MountedOutline({controller, pending, rootRef, rootField, filter, occurrencePrefix, failure, setFailure, rootRead, onReady}: {
@@ -185,9 +197,9 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       {[...controller.documents.values()].map(({document}) => <DocumentReadFailure key={document.ref} document={document}/>)}
       {[...controller.requests.values()].filter(request => request.parent_id !== pending.value.input.root_id).map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
-        projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label={rootField?.label ?? "edit outline"}
-        placeholder={rootField?.placeholder ?? "write or @ to link"} compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
-        onEdit={() => {}} inspection={rootField?.inspection} onEditorReady={editorReady}/>
+        projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items"
+        placeholder="write or @ to link" compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
+        onEdit={() => {}} onEditorReady={editorReady}/>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
     </div>
   </SharedOutline>;

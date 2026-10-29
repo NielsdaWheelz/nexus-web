@@ -1,4 +1,6 @@
 "use client";
+import { ExcerptCaptureError } from "@nexus/authored/excerpt";
+import { CommandTooLargeError } from "@nexus/authored/types";
 
 // What a reader does with a selection or a mark. A selection is not yet a
 // resource: highlight, note and share create a new independent highlight and
@@ -21,7 +23,7 @@ import {
   type SelectionNotice,
 } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
-import { captureSelection, recolorHighlight, resizeHighlight, type SourceLabel } from "@/lib/documentReader/annotations";
+import { captureSelection, recolorHighlight, resizeHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
 import { deleteResource } from "@/lib/resourceGraph/links";
 import type { HighlightColor } from "@/lib/documentReader/model";
 
@@ -175,6 +177,7 @@ export function useAnnotationVerbs(input: {
 
   const fail = useCallback(
     (error: unknown, title: string) => {
+      if (error instanceof CommandTooLargeError) { showNotice({ tone: "Warning", title: "this selection is too large to save. select a shorter passage." }); return; }
       if (handleUnauthenticatedApiError(error)) return;
       // an uncommitted local frame is retried from the pane's writing error notice.
       if (error instanceof LocalCommitError) return;
@@ -217,15 +220,22 @@ export function useAnnotationVerbs(input: {
   };
   const rejectedSelection = (next: Extract<SelectionEvent, { kind: "Rejected" }>) => {
     const shown = reader.getState().document;
-    setSelectionIssue(next.reason === "CrossUnit" ? (shown.status === "ready" && shown.doc.kind === "text" && shown.doc.units.some(unit => unit.xPost !== null)
+    setSelectionIssue(next.reason === "UnsupportedExcerpt" ? "this passage contains text that can’t be captured faithfully yet." : next.reason === "CrossUnit" ? (shown.status === "ready" && shown.doc.kind === "text" && shown.doc.units.some(unit => unit.xPost !== null)
       ? "select text within one post" : "select within one text section.") : "select within one pdf page.");
   };
   /** The new extent's exact capture, when it may replace this highlight's selection. */
   const boundsCapture = (session: BoundsSession, next: SelectionEvent) => {
     const annotation = store.annotation(session.highlightId);
     const shown = reader.getState().document;
-    const capture = next.kind === "Captured" && annotation && shown.status === "ready" && shown.doc.identity === next.identity
-      ? captureSelection(shown.doc, mediaId, next.anchor) : null;
+    let capture: Capture | null = null;
+    if (next.kind === "Captured" && annotation && shown.status === "ready" && shown.doc.identity === next.identity) {
+      try { capture = captureSelection(shown.doc, mediaId, next.anchor, next.excerpt, next.excerpt_start, next.excerpt_end); }
+      catch (error) {
+        if (!(error instanceof ExcerptCaptureError)) throw error;
+        showBounds({ ...session, issue: "this passage contains text that can’t be captured faithfully yet." });
+        return null;
+      }
+    }
     const scope = session.scope;
     const fits = next.kind === "Captured" && capture !== null && capture.sourceRef === annotation?.sourceRef && session.identity === next.identity && (
       scope.kind === "unit" ? next.anchor.kind === "text" && next.anchor.unit === scope.unit
@@ -240,15 +250,13 @@ export function useAnnotationVerbs(input: {
   const applyBounds = (session: BoundsSession, next: SelectionEvent) => {
     const admitted = boundsCapture(session, next);
     if (!admitted || !writing) return;
-    // relocation moves the location only: the saved literal quote stays exactly as written.
-    const capture = session.scope.kind === "quote"
-      ? { ...admitted.capture, selection: { ...admitted.capture.selection, quote_exact: admitted.annotation.selection.quote_exact } } : admitted.capture;
+    const capture = admitted.capture;
     const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
     showBounds(submitted);
     const owns = () => activeRef.current && currentBounds.current?.id === submitted.id;
     void resizeHighlight(writing, admitted.annotation, capture).then(
       () => { if (owns()) showBounds(null); },
-      (error: unknown) => { if (owns()) showBounds(null); fail(error, "highlight wasn’t changed"); },
+      (error: unknown) => { if (owns()) showBounds(error instanceof CommandTooLargeError ? { ...session, phase: "Selecting", issue: "this selection is too large to save. select a shorter passage." } : null); fail(error, "highlight wasn’t changed"); },
     );
   };
   const ensureSelection = async (subject: MobileSelection) => {

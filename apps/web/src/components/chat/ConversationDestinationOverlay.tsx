@@ -85,7 +85,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   const context = JSON.stringify([id, mediaId, view, query]);
   const options = items.map(item => ({ key: item.id, disabledReason: null }));
   const reconciled = reconcileSearchActive({ context, admitted: selectable, options,
-    firstExistingKey: items[0]?.id ?? null, active });
+    initialKey: items[0]?.id ?? null, active });
   useEffect(() => { if (active !== reconciled) setActive(reconciled); }, [active, reconciled]);
   const bindings = useSearchOptions({ listId: `${id}-list`, label: "chats", open: true, options,
     activeKey: selectable ? reconciled?.key ?? null : null,
