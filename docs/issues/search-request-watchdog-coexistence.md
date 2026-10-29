@@ -10,9 +10,14 @@ retirement remains joined before capacity reuse.
 
 historical synthetic held-gate checks and real warm c6 global-refresh/foreground
 coexistence completed with useful lexical/hybrid results and physical retirement.
-those historical 0321 components do not qualify the integrated 0329 source. the 7173
-mixed case failed in notes before writing; cleanup was confirmed. no full mixed,
-cold, due-feed, phone or actual 2 gib pass follows from those observations.
+the 7173 e8 case also completed real foreground overlap, semantic witness, writing
+and final two-feed convergence at input 1212; its overall FAILED verdict was an
+invalid backup filename rejected before creation. the next 1b case instead failed
+the memory envelope with a parent oom/kill despite later verified backup. see
+[capacity](search-backup-overlap-oom.md). neither promotes historical 0321 proof
+to integrated 0329, cold, deployed-transport, phone or actual 2 gib acceptance.
+the current ff83 canonical/semantic lab pass uses fake providers and does not
+exercise this native contention or deployed-transport gate.
 
 retained production function metadata reported 300 seconds; loaded caddy had no
 explicit reverse-proxy timeout. the candidate's deployed chain and actual ordinary

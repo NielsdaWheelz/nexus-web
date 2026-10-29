@@ -12,9 +12,15 @@ are outside this server component.
 fresh postgres was restored inside its final 512 mib/no-swap leaf and parent;
 restore/analyze warmed its data/cache. fresh application processes are not an
 os/database-cache-cold proof. retained-account/shared-image cache charges can
-also predate the measured parent. the 7173 mixed run failed before writing;
-backup was interrupted by cleanup, while manual maintenance exited 0. cleanup
-was confirmed. there is no completed aggregate workload or online-backup pass.
+also predate the measured parent. the 7173 e8 run completed the functional flow,
+including writing and settled feed convergence, but backup creation rejected its
+invalid filename and the overall verdict stayed FAILED. the next 1b run used a
+valid backup key and recorded oom 1/kill 1 in the 1280 mib parent; a strict job settled
+DEAD attempt 1 with `E_RESOURCE_LIMIT`. backup naturally completed full verification
+and maintenance exited 0. that does not repair the failed memory overlap or prove
+actual 2 gib fit. [the overlap issue](search-backup-overlap-oom.md) retains attribution
+and confirmed cleanup. current ff83/0329 canonical/semantic lab composition
+passed with fake providers; full native runtime remains unqualified.
 
 resolve the [capacity gate](production-database-connection-budgets-implicit.md)
 on the actual 2 gib topology with all included leaves/reserves, cold and warm work,

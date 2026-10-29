@@ -69,10 +69,12 @@ replace ann/count routing, repeated source reads and subsecond verdicts. finite
 role pools, control reserves, joined retirement and one bulk-hydration permit
 retain bounded resource ownership. generated output, migrations, configuration,
 manifests, locks, docs and lab tooling are excluded; executable runtime settings
-in `python/nexus/config.py` are counted. migration0329 and the deployed0317 upgrade,
-integrated native mixed-workload completion and actual2gib qualification remain
-pending; historical0321 component proof does not qualify them. existing area
-totals retain their stated bases.
+in `python/nexus/config.py` are counted. integrated ff83 passed the sole static
+gate, three canonical lab scenarios and a temporary semantic extension with fake
+providers and confirmed cleanup. migration 0329 from deployed 0317, full native
+mixed-workload qualification, new immutable images, actual 2 gib, paired phone and
+live-provider gates remain open; historical 0321 components do not qualify them.
+existing area totals retain their stated bases.
 
 recent resources against `10aa3df7b`: +915 net authored runtime lines
 (1,275 added, 360 deleted): web +591, android +352, python -28. device-local

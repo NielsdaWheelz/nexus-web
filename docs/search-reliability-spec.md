@@ -2,9 +2,10 @@
 
 contract revised 2026-10-28; implementation status reconciled 2026-10-29.
 historical evidence retains its recorded source and migration identity. the isolated
-integration of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
+integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
 migration 0329/down 0328 and passed the sole static gate. that closes the source/head
-collision; integrated migration, runtime and release qualification remain open.
+collision. current disposable functional composition also passed as scoped below;
+integrated migration, full native runtime and release qualification remain open.
 the previous spec is preserved at
 `.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
 
@@ -72,17 +73,39 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   `.nexus-local/native-real-overlap-c6aa98b08-actual.private.tar`.
   this proves feasibility for that warm selected 0321 component, not cold reads
   or the actual 2 gib topology.
-- **observed failure:** mixed run `mac-search-7173b6a91-7d7ce9565a2f` failed because
-  notes exposed no new-page input; no authored writing committed. short generation,
-  sustained generation with active cancellation and the fixed strict-scan job
-  succeeded on normal first attempts. cleanup was confirmed. backup was interrupted
-  by cleanup, so its exit 1 is not verified backup-overlap proof; manual maintenance
-  exited 0. this 1280 mib docker component on a larger host is not an actual 2 gib pass.
-  [bulk hydration/notes](issues/authored-scope-starves-ordinary-pool.md) retains the
-  remaining diagnosis and writing gate. historical 0321 receipts do not qualify
-  integrated 0329.
+- **observed current-source composition:** integration `ff83a5318` passed the three
+  canonical lab scenarios plus a temporary semantic extension in
+  `20261029-042930-e7ded121bbd8`, with complete cleanup. normal reindexing succeeded
+  on attempt 1 and produced one current ready vector. an absent-token lexical
+  query returned zero; hybrid returned the intended semantic passage. another
+  library's scope excluded it, all scope included it, and hidden content stayed
+  excluded. this uses fake providers: it proves composition, not live retrieval
+  quality or native capacity. the first extension receipt guard failed after the
+  canonical scenarios passed; that failed attempt remains failed.
+- **observed functional completion:** run `mac-search-7173b6a91-e8dbfac99e3d`
+  reached its final recheck: global/named publications had 32/16 refs at input 1212
+  with cleared job pointers; overlapping lexical/hybrid reads returned 200 with
+  the semantic witness. reading, normal writing/reload and accepted prefix 2,
+  ui stop, indexing and fixed/new-note scans completed. its overall verdict
+  remained FAILED because an invalid auxiliary filename was rejected before
+  backup creation; it is not backup-overlap or full memory acceptance.
+- **resolved setup findings:** the bulk permit is functionally exercised on 7173.
+  the earlier notes failure was instrumentation-only in the two-browser control;
+  no actual failed upload `POST` was captured. normal online writing/reload does
+  not prove injected upload-failure retry. earlier proofs retain their own source.
+- **observed memory failure:** run `mac-search-7173b6a91-1b9ec08d05a6` used a valid
+  backup key but its 1280 mib parent recorded oom 1/kill 1. a strict-scan child failure
+  settled DEAD attempt 1 with `E_RESOURCE_LIMIT`; postgres kept its epoch.
+  backup later completed canonical create/full-byte verification naturally and
+  manual maintenance exited 0. those successes do not repair the failed memory
+  workload. [backup overlap](issues/search-backup-overlap-oom.md) owns the remaining
+  attribution. auxiliary/runtime recovery and preparation-owned cleanup are
+  confirmed; a private full database snapshot preceded removal of the prepared
+  database/volume/network/parent. the protected original database and shared daemon
+  were unchanged. the original failed verdict is unchanged. these historical
+  0321 components do not qualify integrated 0329 or the actual 2 gib topology.
 - **open:** full mixed-workload progress, cold and actual 2 gib topology,
-  integrated migration/runtime and phone acceptance. brave
+  integrated migration/full native runtime and phone acceptance. brave
   import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
   no search-repair production deployment has occurred.
 
@@ -237,7 +260,7 @@ to shrink anchors, families, thresholds or candidate windows.
 | delete | hard subsecond hold verdicts and computation-expiry refunds; these reject useful work or hide noncompletion |
 | removed from the selected exact path | count-proof routing, multi-domain ann cursor plumbing, half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction. dimension/model and valid finite nonzero-vector checks remain |
 | selected package | pinned stock pgvector with exact original-float retrieval, without the normalized-half index or local cancellation patch. retained lifecycle proofs have their recorded source/package identities; integration still needs its own qualification |
-| migration owner | selected unreleased 0329 follows main 0328; the integrated source has one head and passed static verification. historical selected 0321-after-0320 receipts belong to a different lineage and remain historical. migration/value-preservation and runtime proof are still required for 0329 |
+| migration owner | selected unreleased 0329 follows main 0328; the integrated source has one head and passed static verification. historical selected 0321-after-0320 receipts belong to a different lineage and remain historical. migration/value-preservation and full native runtime proof are still required for 0329 |
 
 trade-offs are explicit: serialized work lowers throughput and can lengthen
 foreground waits; exact retrieval spends more scan/io time to preserve recall;

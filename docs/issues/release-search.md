@@ -15,8 +15,11 @@ historical timing targets and waivers remain historical under the
 
 - the isolated integration of search 7173 with main `96a3b7bdf` has one selected
   unreleased migration 0329, down 0328, and passed `./scripts/test`. this closes
-  the implementation/head collision only. its migration, runtime and release
-  behavior remain unqualified. preserve main's capture/annotation contracts.
+  the implementation/head collision. at `ff83a5318`, the three canonical lab
+  scenarios and temporary semantic extension passed with complete cleanup
+  (`20261029-042930-e7ded121bbd8`). this fake-provider composition proof does not
+  qualify live quality, full native runtime or release behavior. preserve main's
+  capture/annotation contracts; the integrated migration rehearsal remains open.
 
 - rehearse the real deployed 0317 upgrade through the complete integrated main
   chain to 0328 and selected 0329 from a verified backup. prove original-vector,
@@ -27,14 +30,22 @@ historical timing targets and waivers remain historical under the
 
 - qualify current-source useful retrieval, foreground/background progress,
   due-feed convergence, authored writing/retry and stop controls under unchanged
-  service limits. the 7173 larger-host 1280 mib component FAILED at notes before
-  any authored writing committed. short generation, active cancellation and the
-  fixed strict scan succeeded attempt 1; cleanup was confirmed. backup was
-  interrupted by cleanup, while manual maintenance exited 0. neither is a
-  completed aggregate or actual 2 gib capacity pass. retain
-  [bulk/notes](authored-scope-starves-ordinary-pool.md),
+  service limits. the 7173 e8 run completed the full functional recheck, including
+  both publications at input 1212, foreground overlap, ordinary writing/reload,
+  prefix 2, ui stop and strict/index work, but FAILED on an invalid backup filename
+  before backup creation. the next 1b run used the valid key and suffered a parent
+  oom/kill; its strict job remains DEAD attempt 1. backup then verified naturally
+  and maintenance exited 0. neither is a full memory or actual 2 gib pass. retain
+  [backup/capacity](search-backup-overlap-oom.md),
   [watchdog/transport](search-request-watchdog-coexistence.md) and
   [whole-host](search-whole-host-qualification-environment.md) ownership.
+
+- the bulk permit and normal online writing are functionally exercised on 7173;
+  the earlier missing notes control was instrumentation-only. no actual failed
+  upload `POST` was captured, so injected original-change retry is not newly proved.
+  current integrated full native workload/writing, migration, actual 2 gib, paired
+  phone and live-provider gates remain open; prior proofs retain their source and
+  lineage. build and qualify new immutable integrated images before release.
 
 - review the captured `DATABASE_POOL_TIMEOUT_SECONDS`: ordinary checkout now
   defaults to 5s; remove an obsolete explicit 0.25 override or deliberately retain

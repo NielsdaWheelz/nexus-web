@@ -7,11 +7,13 @@ literal evidence and ordered family winners. selected exact-window and reading-r
 tie proofs retain their original source identities; they do not execute the
 integrated strict-discovery owner through useful publication.
 
-in the failed 7173 mixed case, the fixed authorized source's strict scan completed
-normal attempt 1, alongside short generation and active cancellation. no authored
-writing committed and the combined scenario failed. this is evidence for that
-specific job on the historical 0321 fixture, not an integrated 0329 quality or
-whole-topology pass.
+the 7173 e8 run completed fixed/new-note strict scans, indexing, writing/reload,
+foreground overlap and final settled two-feed publication. its overall FAILED
+verdict was invalid backup naming before creation. the next 1b run had an actual
+parent oom/kill; strict job `01a1875b-80ca-7de0-8444-d043ea72881c` settled
+DEAD attempt 1 with `E_RESOURCE_LIMIT` and remains unreset. preserve that
+[failure](search-backup-overlap-oom.md). the earlier functional completion is
+historical 0321 evidence, not current ff83/0329 quality or whole-topology proof.
 
 resolve with the current integrated candidate: an authorized ready source, grounded
 candidate/evidence identity, real generation, normal claim-fenced completion and

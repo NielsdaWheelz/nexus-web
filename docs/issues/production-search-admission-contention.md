@@ -15,12 +15,17 @@ finite physical pools and retirement before reuse. contention alone refunds an
 attempt; admitted expiry spends its existing failure budget. prior c6 native
 component evidence includes useful global publication and overlapping lexical/
 hybrid success: `.nexus-local/native-real-overlap-c6aa98b08-actual.private.tar`.
-the `7173b6a91` mixed case used a 1280 mib docker component on a larger host and
-FAILED at notes before writing. short/active-cancel generation and the fixed
-strict job completed normal attempt 1; cleanup was confirmed. backup was interrupted
-by cleanup and manual maintenance exited 0. no complete mixed-load, actual 2 gib or
-production/phone pass follows. integrated 0329/down 0328 has only static/head proof;
-the executed 0321 component receipts belong to its predecessor lineage.
+the 7173 e8 run completed final functional recheck: both feeds published 32/16 refs
+at input 1212 with null pointers; real lexical/hybrid overlap and semantic witness,
+reading, writing/reload/prefix 2, ui stop and strict/index work completed. its
+overall FAILED verdict comes from invalid backup naming before creation. the
+next 1b run recorded a parent oom/kill and a DEAD first-attempt strict job despite
+later natural backup verification and maintenance 0. preserve that
+[capacity failure](search-backup-overlap-oom.md). integrated ff83/0329 passed
+static/head checks and fake-provider canonical/semantic lab composition. that
+functional proof does not establish native contention, actual 2 gib or
+production/phone acceptance. genuine injected upload-failure retry is not
+newly proved; the earlier missing notes input was instrumentation-only.
 
 resolve under [the spec](../search-reliability-spec.md): complete five-anchor,
 both-family refreshes and strict discovery through normal claims/publication;
