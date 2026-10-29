@@ -59,11 +59,12 @@ function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevisio
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
   const recent = useRecent();
-  const [confirmedRecentRemovals, setConfirmedRecentRemovals] = useState(() => new Set<string>());
+  const [confirmedRecentRemovals, setConfirmedRecentRemovals] = useState(() => new Map<string, string>());
   const confirmRecentRemoved = useCallback((entry: RecentEntry) => setConfirmedRecentRemovals(previous => {
-    const key = `${recentTargetKey(entry.target)}:${entry.used_revision}`;
-    if (previous.has(key)) return previous;
-    return new Set(previous).add(key);
+    const key = recentTargetKey(entry.target);
+    const before = previous.get(key);
+    if (before && BigInt(before) >= BigInt(entry.used_revision)) return previous;
+    return new Map(previous).set(key, entry.used_revision);
   }), []);
   const store = useAuthoredStore();
   const catalog = useCatalogState().data;
@@ -164,12 +165,13 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   }, [forVisit]);
   const isRecentRemoved = useCallback((entry: RecentEntry): boolean => {
     const target = entry.target;
-    if (confirmedRecentRemovals.has(`${recentTargetKey(target)}:${entry.used_revision}`)) return true;
+    const removedAt = confirmedRecentRemovals.get(recentTargetKey(target));
+    if (removedAt && BigInt(removedAt) >= BigInt(entry.used_revision)) return true;
     if (target.kind === "preview" || target.kind === "x_capture" || target.kind === "daily_date") return false;
     const key = panePresentationLocatorKey(target);
     if (authored(target)) {
       const result = local.entries.get(key);
-      return result?.used_revision === entry.used_revision && result.facts === null;
+      return result?.used_revision !== undefined && BigInt(result.used_revision) >= BigInt(entry.used_revision) && result.facts === null;
     }
     return remoteStatus === "ready" && !remoteFailed && remoteFacts?.has(key) === true && remoteFacts.get(key) === null;
   }, [confirmedRecentRemovals, local.entries, remoteStatus, remoteFailed, remoteFacts]);

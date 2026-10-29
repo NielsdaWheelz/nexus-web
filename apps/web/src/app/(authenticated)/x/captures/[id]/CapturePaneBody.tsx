@@ -64,6 +64,8 @@ function CaptureReader({ id }: { readonly id: string }) {
   const state = useReaderState(reader, value => value);
   const retriedSequence = useRef<string | null>(null);
   const retryEvidence = useRef<RecentEntry | null>(null);
+  const lastRecentEntry = useRef<RecentEntry | null>(null);
+  const missingEvidence = useRef<RecentEntry | null>(null);
   const attemptedRevision = useRef<string | null>(null);
   const recentSnapshot = recent.snapshot;
   const recentRef = useRef(recent);
@@ -87,6 +89,8 @@ function CaptureReader({ id }: { readonly id: string }) {
           const entry = recentRef.current.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
           if (evidence && (!entry || entry.used_revision === evidence.used_revision)) {
             confirmRecentRemoved(evidence);
+            if (missingEvidence.current && missingEvidence.current.used_revision !== evidence.used_revision) confirmRecentRemoved(missingEvidence.current);
+            missingEvidence.current = null;
             recentRef.current.reconcile({ target: evidence.target, expected_used_revision: evidence.used_revision, replacement: null });
           } else if (entry && entry.used_revision !== attemptedRevision.current) {
             retryEvidence.current = entry;
@@ -100,7 +104,7 @@ function CaptureReader({ id }: { readonly id: string }) {
         const current = reader.getState().document;
         if (current.status === "failed" && !current.retrying) {
           retriedSequence.current = command_seq;
-          retryEvidence.current = recentRef.current.snapshot?.entries.find(entry => entry.target.kind === "x_capture" && entry.target.capture_id === id) ?? null;
+          retryEvidence.current = recentRef.current.snapshot?.entries.find(entry => entry.target.kind === "x_capture" && entry.target.capture_id === id) ?? missingEvidence.current;
           attemptedRevision.current = retryEvidence.current?.used_revision ?? null;
           reader.retryLoad();
         }
@@ -117,7 +121,17 @@ function CaptureReader({ id }: { readonly id: string }) {
     return () => { controller.abort(); stop(); };
   }, [confirmRecentRemoved, id, missing, reader, recentSnapshot, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
-  useEffect(() => { if (doc) { retryEvidence.current = null; attemptedRevision.current = null; } }, [doc]);
+  useEffect(() => {
+    if (!recentSnapshot) return;
+    const entry = recentSnapshot.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
+    if (entry) { lastRecentEntry.current = entry; return; }
+    if (lastRecentEntry.current && reader.getState().document.status === "ready") {
+      missingEvidence.current = lastRecentEntry.current;
+      lastRecentEntry.current = null;
+      reader.retryLoad();
+    }
+  }, [id, reader, recentSnapshot]);
+  useEffect(() => { if (doc) { retryEvidence.current = null; missingEvidence.current = null; attemptedRevision.current = null; retriedSequence.current = null; } }, [doc]);
   useEffect(() => {
     if (!doc) return;
     const entry = recent.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
