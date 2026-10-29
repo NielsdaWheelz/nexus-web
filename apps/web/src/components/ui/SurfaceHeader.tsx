@@ -253,7 +253,7 @@ export default function SurfaceHeader({
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
                 renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
             ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
-              <ContextualActionMenu title={header.title} subjectKey={identityId}
+              <ContextualActionMenu navigation={null} title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}
                 resourceRef={resourceRef} actionFocus={actionFocus} omitResourceActions={narrow ? [...seen] : undefined} triggerRef={setMore}
@@ -295,7 +295,7 @@ export default function SurfaceHeader({
 }
 
 /** The narrow menu invokes the same media capabilities as the hidden shortcuts. */
-function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<ComponentProps<typeof ContextualActionMenu>, "actionFocus"> & {
+function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<ComponentProps<typeof ContextualActionMenu>, "actionFocus" | "navigation"> & {
   subject: Extract<ResourceActionSubject, { kind: "Media" }>;
   actionFocus: { trigger: HTMLElement | null; returnFocus: () => HTMLElement | null; afterRemoval: () => HTMLElement | null };
 }) {
@@ -307,7 +307,7 @@ function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<Comp
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ ...actionFocus, trigger: triggerEl }),
   }));
-  return <ContextualActionMenu {...props} actionFocus={actionFocus}
+  return <ContextualActionMenu navigation={null} {...props} actionFocus={actionFocus}
     omitResourceActions={[...present, ...shortcuts.map(action => action.id)]}
     sections={sections.map(section => section.id === "View" ? { ...section, actions: [...section.actions, ...actions] } : section)} />;
 }

@@ -489,7 +489,7 @@ export default function Companion(props: {
         <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
       )}
       {presentation === "Sheet" && props.resourceRef ? (
-        <ContextualActionMenu
+        <ContextualActionMenu navigation={null}
           sections={[]}
           resourceRef={props.resourceRef}
           title={props.resourceTitle}

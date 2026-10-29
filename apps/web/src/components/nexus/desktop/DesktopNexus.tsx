@@ -104,12 +104,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       default: assertNever(target);
     }
   }
-  const menuAvailable = active?.secondary?.kind === "ResourceMenu";
-  const help = [rows.length > 0 ? "up/down browse" : null, canSelect ? opensDestination ? "enter open · shift+enter new pane" : "enter select" : null, menuAvailable ? "tab for options" : null].filter(Boolean).join(" · ");
+  const menuAvailable = controller.rootMode === "NewPane" ? Boolean(active?.matchingPassage) : active?.secondary?.kind === "TargetMenu";
+  const help = [rows.length > 0 ? "up/down browse" : null, canSelect ? opensDestination ? controller.rootMode === "NewPane" ? "enter open" : "enter open · shift+enter new pane" : "enter select" : null, menuAvailable ? "tab for options" : null].filter(Boolean).join(" · ");
 
   const root = (
     <>
-      <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
+      {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><button type="button" className={styles.allPanes} onClick={controller.escape}>cancel</button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
       <label className={styles.inputRow}>
         <span className="sr-only">Find anything…</span>
         <Input
@@ -166,7 +166,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               controller.submitInput({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
             } else if (event.key === "Escape") {
               event.preventDefault();
-              if (controller.query) controller.setQuery("");
+              if (controller.rootMode === "NewPane") controller.escape();
+              else if (controller.query) controller.setQuery("");
               else controller.escape();
             }
           }}
@@ -175,11 +176,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       <div className={styles.help} aria-hidden="true">{help}</div>
       <span id={HELP_ID} className="sr-only">
         {rows.length > 0 ? "up and down arrows browse results. " : ""}
-        {canSelect ? opensDestination ? "enter opens the selected result. shift plus enter opens in a new pane. " : "enter selects the highlighted action. " : ""}
+        {canSelect ? opensDestination ? controller.rootMode === "NewPane" ? "enter opens the selected result in a new pane. " : "enter opens the selected result. shift plus enter opens in a new pane. " : "enter selects the highlighted action. " : ""}
         {menuAvailable ? "tab reaches options for the selected result." : ""}
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
+      {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
       {controller.lookupGuidance === null ? null : <div id="desktop-nexus-guidance" className={styles.help}>{controller.lookupGuidance}</div>}
       <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
@@ -267,7 +269,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           onBlur: () => { focusedSecondary.current = null; } },
                       }} />
                     </div>
-                    {row.secondary?.kind === "ClosePane" ? (
+                    {row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && row.secondary?.kind === "ClosePane" ? (
                       <Button
                         iconOnly
                         tabIndex={selected ? 0 : -1}
@@ -288,10 +290,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           if (row.secondary?.kind === "ClosePane" && controller.closePane(row.secondary.paneId) !== null) inputRef.current?.focus({ preventScroll: true });
                         }}
                         icon={<X size={18} aria-hidden="true" />} />
-                    ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
+                    ) : row.secondary?.kind === "TargetMenu" || (controller.rootMode === "NewPane" && row.matchingPassage) ? <NexusRowMenu
                       row={row}
                       activate={controller.activate}
                       closePane={controller.closePane}
+                      destinationHref={controller.destinationHref}
+                      mobile={false}
+                      picker={controller.rootMode === "NewPane"}
                       menuProps={{
                         label: `options for ${row.label}`,
                         align: "end",
