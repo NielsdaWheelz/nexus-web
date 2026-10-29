@@ -29,7 +29,7 @@ export function parseRecentSnapshot(raw: unknown): RecentSnapshot {
   let previous = BigInt(row.revision) + 1n;
   const entries = row.entries.map(rawEntry => {
     const entry = expectExactRecord(rawEntry, ["target", "href", "title_hint", "detail_hint", "used_revision"], "recent entry");
-    if (typeof entry.href !== "string" || !revision(entry.used_revision) || BigInt(entry.used_revision) >= previous || (entry.title_hint !== null && typeof entry.title_hint !== "string") || (entry.detail_hint !== null && typeof entry.detail_hint !== "string")) throw new TypeError("invalid recent entry");
+    if (typeof entry.href !== "string" || !revision(entry.used_revision) || BigInt(entry.used_revision) < 2n || BigInt(entry.used_revision) >= previous || (entry.title_hint !== null && typeof entry.title_hint !== "string") || (entry.detail_hint !== null && typeof entry.detail_hint !== "string")) throw new TypeError("invalid recent entry");
     previous = BigInt(entry.used_revision);
     if (normalizeVisitTitleHint(entry.title_hint) !== entry.title_hint || normalizeVisitTitleHint(entry.detail_hint) !== entry.detail_hint) throw new TypeError("invalid recent hints");
     const value = recentValueForHref(entry.href, entry.title_hint);

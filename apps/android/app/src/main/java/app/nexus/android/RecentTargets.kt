@@ -129,7 +129,7 @@ internal class RecentTargets(directory: File) {
             val entry = entries.getJSONObject(i)
             value(entry, true)
             val used = revision(entry.getString("used_revision"))
-            require(used <= previous && (i == 0 || used < previous))
+            require(used >= 2 && used <= previous && (i == 0 || used < previous))
             previous = used
             require(keys.add(key(entry.getJSONObject("target"))))
         }

@@ -390,7 +390,7 @@ export function candidateRows(input: {
   }
   const seenResources = new Set<string>();
   return rows.filter(row => {
-    if (row.placement?.home !== "Resources") return true;
+    if (row.placement?.home !== "Resources" && row.placement?.home !== "Saved") return true;
     if (seenResources.has(row.key)) return false;
     seenResources.add(row.key);
     return true;

@@ -37,7 +37,7 @@ import {
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
-import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
+import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction, type RecentItem } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
@@ -96,7 +96,8 @@ export function useNexusController() {
   const presentations = useWorkspacePresentations();
   const recent = useRecent();
   const readRecent = recent.read;
-  const heldRecent = useRef<{ target: string; revision: string; href: string }[] | null>(null);
+  const heldRecent = useRef<RecentItem[] | null>(null);
+  const heldRemoved = useRef(new Set<string>());
 
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
@@ -152,7 +153,7 @@ export function useNexusController() {
   }, [viewport.isMobile, page.kind]);
   const wasOpen = useRef(false);
   useEffect(() => {
-    if (open && !wasOpen.current) { presentations.retryTitles(); readRecent(); heldRecent.current = null; }
+    if (open && !wasOpen.current) { presentations.retryTitles(); readRecent(); heldRecent.current = null; heldRemoved.current.clear(); }
     wasOpen.current = open;
   }, [open, presentations, readRecent]);
 
@@ -172,23 +173,30 @@ export function useNexusController() {
       })),
     [presentations, state],
   );
+  const allRecentItems = useMemo(() => (recent.snapshot?.entries ?? []).map(entry => ({
+    entry, presentation: presentations.forRecent(entry),
+    resourceRef: presentations.resourceRefForVisit({ id: "", href: entry.href, title_hint: entry.title_hint }),
+  })), [recent.snapshot, presentations]);
   const recentItems = useMemo(() => {
     const seen = new Set<string>();
-    return (recent.snapshot?.entries ?? []).flatMap(entry => {
-      const resourceRef = presentations.resourceRefForVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
-      const key = resourceRef ?? recentTargetKey(entry.target);
-      if (seen.has(key)) return [];
+    return allRecentItems.filter(item => {
+      const key = item.resourceRef ?? recentTargetKey(item.entry.target);
+      if (seen.has(key)) return false;
       seen.add(key);
-      return [{ entry, presentation: presentations.forRecent(entry), resourceRef }];
+      return true;
     });
-  }, [recent.snapshot, presentations]);
+  }, [allRecentItems]);
   const visibleRecent = heldRecent.current === null ? recentItems : heldRecent.current.flatMap(held => {
-    const item = recentItems.find(candidate => recentTargetKey(candidate.entry.target) === held.target || candidate.entry.used_revision === held.revision);
-    return item ? [{ ...item, rowKey: held.revision, heldHref: held.href }] : [];
+    const heldRef = presentations.resourceRefForVisit({ id: "", href: held.entry.href, title_hint: held.entry.title_hint });
+    const current = allRecentItems.find(candidate => recentTargetKey(candidate.entry.target) === recentTargetKey(held.entry.target) || candidate.entry.used_revision === held.entry.used_revision)
+      ?? (heldRef === null ? undefined : allRecentItems.find(candidate => candidate.resourceRef === heldRef));
+    if (presentations.isRecentRemoved(current?.entry ?? held.entry)) heldRemoved.current.add(held.entry.used_revision);
+    if (heldRemoved.current.has(held.entry.used_revision)) return [];
+    return [{ ...held, presentation: current?.presentation ?? presentations.forRecent(held.entry), rowKey: held.entry.used_revision, heldHref: held.entry.href }];
   });
   const interact = () => {
     find.interact();
-    if (!parsed.text && heldRecent.current === null) heldRecent.current = recentItems.slice(0, 8).map(item => ({ target: recentTargetKey(item.entry.target), revision: item.entry.used_revision, href: item.entry.href }));
+    if (!parsed.text && heldRecent.current === null) heldRecent.current = recentItems.slice(0, 8);
   };
   useLayoutEffect(() => {
     if (!finding) return;
@@ -579,7 +587,7 @@ export function useNexusController() {
     setAnnouncement("");
     setQueryState(next);
     if (viewport.isMobile) setRootMode("Search");
-    if (next !== query) { rootScroll.current.Search = 0; heldRecent.current = null; }
+    if (next !== query) { rootScroll.current.Search = 0; heldRecent.current = null; heldRemoved.current.clear(); }
   }
 
   function setActive(key: string, deliberate = true) {
@@ -700,6 +708,7 @@ export function useNexusController() {
     refreshResults: () => {
       find.refresh();
       heldRecent.current = null;
+      heldRemoved.current.clear();
       setSearchRefreshRevision(current => current + 1);
       setList(EMPTY_LIST);
       setFocusRevision(current => current + 1);

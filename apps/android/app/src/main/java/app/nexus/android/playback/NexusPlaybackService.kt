@@ -93,6 +93,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var releaseStop: (() -> Unit)? = null
     private var account: UUID? = null
     private var accountLifetime: Long = -1
+    private data class PendingRecent(val generation: Long, val loadId: String?, val key: String?, val owner: UUID, val lifetime: Long)
+    private var pendingRecent: PendingRecent? = null
     private var store: PlaybackStore? = null
     private var undoQueue: JSONObject? = null
     private var pendingCheckpoint: Pair<PlaybackStore, JSONObject>? = null
@@ -996,15 +998,29 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         return ok()
     }
 
+    /** Only an occurrence actually playing has accepted audio activation. */
     private fun recordRecentPlayback() {
         val owner = account ?: return
         val lifetime = accountLifetime
         if (owner != device.accountId() || lifetime != device.recentLifetime()) return
-        val current = { owner == device.accountId() && lifetime == device.recentLifetime() }
-        val id = if (isEpisode()) key()?.let { runCatching { UUID.fromString(it) }.getOrNull() } else null
+        pendingRecent = PendingRecent(activationGeneration, loadId, key(), owner, lifetime)
+        publishRecentPlaybackIfReady()
+    }
+
+    private fun publishRecentPlaybackIfReady() {
+        val pending = pendingRecent ?: return
+        if (pending.generation != activationGeneration || pending.loadId != loadId || pending.key != key() ||
+            pending.owner != device.accountId() || pending.lifetime != device.recentLifetime()) {
+            pendingRecent = null
+            return
+        }
+        if (!player.isPlaying) return
+        pendingRecent = null
+        val current = { pending.owner == device.accountId() && pending.lifetime == device.recentLifetime() }
+        val id = if (isEpisode()) pending.key?.let { runCatching { UUID.fromString(it) }.getOrNull() } else null
         runCatching {
             if (id != null) device.recordRecentMedia(id, current = current)
-            else if (!isEpisode()) descriptor()?.optString("target")?.takeIf { it.isNotEmpty() }?.let { device.recordRecentPreview(it, current) }
+            else if (!isEpisode()) pending.key?.takeIf { it.isNotEmpty() }?.let { device.recordRecentPreview(it, current) }
         }
     }
 
@@ -1045,7 +1061,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         pendingEnd = null
     }
 
-    private fun retireActivation(): Long = ++activationGeneration
+    private fun retireActivation(): Long { pendingRecent = null; return ++activationGeneration }
 
     /** Explicit account departure pauses before checkpoint/delivery suspension, even when saving fails. */
     private suspend fun unbind() {
@@ -1301,6 +1317,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         device.setPlaybackActive(isPlaying)
         if (isPlaying) {
+            publishRecentPlaybackIfReady()
             error = if (source?.optBoolean("local_content_repair") == true) "downloaded content needs repair · streaming current version" else null
             playbackFailed = false
         }
@@ -1322,6 +1339,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
+        if (playbackState == Player.STATE_READY) publishRecentPlaybackIfReady()
         if (playbackState == Player.STATE_ENDED) {
             player.pause() // ended means paused, as in the browser: a later seek does not resume by itself
             if (isEpisode()) {
@@ -1362,6 +1380,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onPlayerError(error: PlaybackException) {
+        pendingRecent = null
         playbackFailed = isEpisode() && loadedEntryId != null && loadedEntryId == store?.queue?.nullableString("current_entry_id")
         this.error = getString(R.string.player_source_failure)
         publish()

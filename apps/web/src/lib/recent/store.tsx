@@ -90,9 +90,9 @@ function createRecent(accountId: string, lifetime: string | null) {
       } catch { publish({ readFailure: true }); }
     });
   };
-  const submit = (input: Operation, initial = false): Promise<RecentEntry | null> => {
+  const submit = (input: Operation | null, initial = false): Promise<RecentEntry | null> => {
     const normalize = (value: RecentValue): RecentValue => ({ ...value, title_hint: normalizeVisitTitleHint(value.title_hint), detail_hint: normalizeVisitTitleHint(value.detail_hint) });
-    const op: Operation = input.kind === "use" ? { kind: "use", value: normalize(input.value) } : { kind: "reconcile", input: { ...input.input, replacement: input.input.replacement === null ? null : normalize(input.input.replacement) } };
+    const op: Operation | null = input === null ? null : input.kind === "use" ? { kind: "use", value: normalize(input.value) } : { kind: "reconcile", input: { ...input.input, replacement: input.input.replacement === null ? null : normalize(input.input.replacement) } };
     const result = queue.then(async (): Promise<RecentEntry | null> => {
       try {
         const opened = await ensureOpen();
@@ -101,6 +101,7 @@ function createRecent(accountId: string, lifetime: string | null) {
           if (initialDocuments.has(key)) return null;
           initialDocuments.add(key);
         }
+        if (op === null) return null;
         const result = installedApp ? op.kind === "use" ? await useRecentTarget(opened.snapshot.epoch, op.value) : await reconcileRecentTarget(opened.snapshot.epoch, op.input)
           : { snapshot: await browserOperation(accountId, lifetime!, opened.snapshot.epoch, op, () => active), write_failure: op.kind === "use" ? null : view.writeFailure };
         if (op.kind === "use" && result.write_failure === null) { localFailure = null; failureFloor = null; }
@@ -109,6 +110,7 @@ function createRecent(accountId: string, lifetime: string | null) {
         const first = result.snapshot.entries[0];
         return op.kind === "use" && result.write_failure === null && first && recentTargetKey(first.target) === recentTargetKey(op.value.target) ? first : null;
       } catch (error) {
+        if (op === null) { publish({ readFailure: true }); return null; }
         const uncertain = installedApp && (!(error instanceof ApiError) || error.code === "E_NATIVE_TIMEOUT" || error.code === "E_INVALID_RESPONSE");
         localFailure = uncertain ? "unconfirmed" : "failed";
         failureFloor = null;
@@ -128,7 +130,7 @@ function createRecent(accountId: string, lifetime: string | null) {
     return result;
   };
   return { subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, value: () => view,
-    read, use: (value: RecentValue) => submit({ kind: "use", value }), useInitial: (value: RecentValue) => submit({ kind: "use", value }, true), reconcile: (input: RecentReconcile) => { void submit({ kind: "reconcile", input }); },
+    read, use: (value: RecentValue) => submit({ kind: "use", value }), useInitial: (value: RecentValue | null) => submit(value === null ? null : { kind: "use", value }, true), reconcile: (input: RecentReconcile) => { void submit({ kind: "reconcile", input }); },
     start: () => { active = true; read(); },
     close: () => { active = false; channel?.close(); channel = null; } };
 }

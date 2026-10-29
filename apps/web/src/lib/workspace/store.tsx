@@ -180,7 +180,7 @@ function createWorkspaceStore(
   projectHref: (href: string, replace?: boolean) => void,
   recordUse: (value: RecentValue) => Promise<RecentEntry | null>,
   rekey: (from: RecentValue, to: RecentValue, pending: Promise<RecentEntry | null> | null) => void,
-  recordInitialUse: (value: RecentValue) => Promise<RecentEntry | null>,
+  recordInitialUse: (value: RecentValue | null) => Promise<RecentEntry | null>,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
@@ -201,7 +201,9 @@ function createWorkspaceStore(
   function recordInitial(): void {
     if (initialRequested || document.visibilityState !== "visible") return;
     initialRequested = true;
-    record(find(data.state.active_primary_pane_id), undefined, true);
+    const pane = find(data.state.active_primary_pane_id);
+    if (pane && recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint)) record(pane, undefined, true);
+    else void recordInitialUse(null);
   }
   let data: Data = {
     state: initial,
@@ -711,11 +713,6 @@ function createWorkspaceStore(
       if (!pane || routeKeyOf(pane) !== routeKey) return;
       if (JSON.stringify(current?.routeKey === routeKey ? current.value : null) === JSON.stringify(page)) return;
       const pages = new Map(data.dailyPageByPaneId);
-      if (page?.pageId && resolvePaneRouteModel(pane.current_visit.href).id === "dailyDate") {
-        const from = recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint);
-        const to = recentValueForHref(`/pages/${page.pageId}`, pane.current_visit.title_hint);
-        if (from && to) rekey(from, to, pendingUses.get(recentTargetKey(from.target)) ?? null);
-      }
       if (page) pages.set(paneId, { routeKey, value: page });
       else pages.delete(paneId);
       set({ dailyPageByPaneId: pages });
