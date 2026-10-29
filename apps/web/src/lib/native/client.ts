@@ -8,6 +8,7 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { SettingsIdentity, EmailChangeResult, IdentityDeleteResult } from "@/lib/account/settingsWire";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import type { CatalogStatus, DeviceStartup, RemoteAdmission, SignInResult } from "./contracts";
+import { parseRecentObservation, type RecentObservation, type RecentValue, type RecentReconcile } from "@/lib/recent/model";
 import { bindSessionCheck, publishAdmission, observeRemoteFailure } from "./admission";
 
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: unknown }) => void) | null };
@@ -24,6 +25,15 @@ function readAdmission(value: unknown): RemoteAdmission {
     default: throw invalidReply();
   }
 }
+const recentListeners = new Set<() => void>();
+export function subscribeRecentChanged(listener: () => void): () => void {
+  recentListeners.add(listener);
+  return () => { recentListeners.delete(listener); };
+}
+export async function openRecent(): Promise<RecentObservation> { return parseRecentObservation((await call("recent_open")).observation); }
+export async function readRecent(epoch: string): Promise<RecentObservation> { return parseRecentObservation((await call("recent_read", { epoch })).observation); }
+export async function useRecentTarget(epoch: string, value: RecentValue): Promise<RecentObservation> { return parseRecentObservation((await call("recent_use", { epoch, value })).observation); }
+export async function reconcileRecentTarget(epoch: string, input: RecentReconcile): Promise<RecentObservation> { return parseRecentObservation((await call("recent_reconcile", { epoch, input })).observation); }
 const catalogListeners = new Set<(status: CatalogStatus) => void>();
 let keyboardVisible: boolean | null = null;
 const keyboardListeners = new Set<() => void>();
@@ -60,6 +70,10 @@ if (port) port.onmessage = ({ data }) => {
     const frame: unknown = JSON.parse(typeof data === "string" ? data : "");
     if (!isRecord(frame)) throw invalidReply();
     if ("kind" in frame) {
+      if (frame.kind === "recent_changed") {
+        for (const listener of recentListeners) listener();
+        return;
+      }
       if (frame.kind === "keyboard_changed") {
         publishKeyboardVisibility(frame.visible);
         return;

@@ -21,7 +21,9 @@ import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
 import { conversationEndpoint } from "@/lib/chat/view";
 import { useWorkGuard, type WorkGuard, type WorkScope } from "@/lib/unsavedWork";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { recentValueForHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { useRecent } from "@/lib/recent/store";
+import { recentTargetKey, type RecentEntry, type RecentValue } from "@/lib/recent/model";
 import { NEW_PAGE_IDENTITY, type NewPageIdentity } from "@/lib/panes/pageAuthoring";
 import {
   getSecondaryGroupForSurface,
@@ -176,9 +178,33 @@ function createWorkspaceStore(
   guard: WorkGuard,
   timeZone: () => string,
   projectHref: (href: string, replace?: boolean) => void,
+  recordUse: (value: RecentValue) => Promise<RecentEntry | null>,
+  rekey: (from: RecentValue, to: RecentValue, pending: Promise<RecentEntry | null> | null) => void,
+  recordInitialUse: (value: RecentValue | null) => Promise<RecentEntry | null>,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
+  let initialRequested = false;
+  const pendingUses = new Map<string, Promise<RecentEntry | null>>();
+  function record(pane: WorkspacePane | undefined, previous?: WorkspacePane, initial = false): void {
+    if (!mounted || !pane) return;
+    const value = recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint);
+    const before = previous && recentValueForHref(previous.current_visit.href, previous.current_visit.title_hint);
+    if (value && (!before || recentTargetKey(value.target) !== recentTargetKey(before.target))) {
+      const key = recentTargetKey(value.target);
+      const pending = initial ? recordInitialUse(value) : recordUse(value);
+      pendingUses.delete(key);
+      pendingUses.set(key, pending);
+      if (pendingUses.size > 100) pendingUses.delete(pendingUses.keys().next().value!);
+    }
+  }
+  function recordInitial(): void {
+    if (initialRequested || document.visibilityState !== "visible") return;
+    initialRequested = true;
+    const pane = find(data.state.active_primary_pane_id);
+    if (pane && recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint)) record(pane, undefined, true);
+    else void recordInitialUse(null);
+  }
   let data: Data = {
     state: initial,
     desktopMaximized: false,
@@ -338,7 +364,9 @@ function createWorkspaceStore(
 
   /** Also restores a minimized pane. */
   function activatePane(paneId: string): void {
-    if (find(paneId)) commit(activated(data.state, paneId));
+    const pane = find(paneId);
+    const previous = find(data.state.active_primary_pane_id);
+    if (pane) { commit(activated(data.state, paneId)); record(pane, previous); }
   }
 
   const commands = {
@@ -355,21 +383,29 @@ function createWorkspaceStore(
       const state = activated(data.state, pane.id);
       if (!admit(state, input.discardOwnerIds)) return { kind: "Cancelled" };
       const kind = state === data.state ? "Unchanged" : "ActivatedExisting";
+      const previous = find(data.state.active_primary_pane_id);
       commit(state, { pendingPaneFocus: { paneId: pane.id, visitId: pane.current_visit.id } });
+      record(pane, previous);
       return { kind, paneId: pane.id };
     },
     maximizePane(paneId: string): WorkspaceSelection | null {
       if (!find(paneId)) return null;
+      const previous = find(data.state.active_primary_pane_id);
       const next = activated(data.state, paneId);
-      if (next !== data.state || !data.desktopMaximized)
+      if (next !== data.state || !data.desktopMaximized) {
         commit(next, { desktopMaximized: true });
+        record(find(paneId), previous);
+      }
       return selection();
     },
     restoreCanvas(paneId: string): WorkspaceSelection | null {
       if (!find(paneId)) return null;
+      const previous = find(data.state.active_primary_pane_id);
       const next = activated(data.state, paneId);
-      if (next !== data.state || data.desktopMaximized)
+      if (next !== data.state || data.desktopMaximized) {
         commit(next, { desktopMaximized: false });
+        record(find(paneId), previous);
+      }
       return selection();
     },
     activateAdjacentPane(input: { direction: WorkspaceAdjacentPaneDirection }) {
@@ -379,7 +415,9 @@ function createWorkspaceStore(
       );
       const pane = visible[index + (input.direction === "Next" ? 1 : -1)];
       if (!pane) return { kind: "Unchanged" } as const;
+      const previous = find(data.state.active_primary_pane_id);
       commit(activated(data.state, pane.id));
+      record(pane, previous);
       return { kind: "Activated", paneId: pane.id } as const;
     },
     activateWorkspaceTarget(
@@ -442,10 +480,12 @@ function createWorkspaceStore(
         if (previous) memento.forgetWorkOwner(paneEntryWorkOwnerId(previous));
         deliveries.set(paneId, delivery);
       }
+      const previousForeground = find(data.state.active_primary_pane_id);
       commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
         pendingPaneFocus: { paneId, visitId: visit.id },
       }, entry?.kind === "InspectSource" && entry.purpose === "Open" ? visit.id : null);
+      record(state.panes.find(current => current.id === paneId), previousForeground);
       return { kind: plan.kind, paneId };
     },
     /** Persist a chat view without navigating or inferring another source arrival. */
@@ -521,8 +561,15 @@ function createWorkspaceStore(
         });
       }
       else deliveries.delete(paneId);
+      const previousForeground = find(data.state.active_primary_pane_id);
       commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null,
         materializing ? { visitId: visit.id, previousRoute: previousRoute.routeKey, routeKey: resolvePaneRouteModel(target).routeKey } : null);
+      if (options.activate !== false || materializing && state.active_primary_pane_id === paneId) record(find(paneId), previousForeground);
+      else if (options.replace) {
+        const from = recentValueForHref(pane.current_visit.href, pane.current_visit.title_hint);
+        const to = recentValueForHref(target, options.labelHint ?? null);
+        if (from?.target.kind === "preview" && to && to.target.kind !== "preview") rekey(from, to, pendingUses.get(recentTargetKey(from.target)) ?? null);
+      }
       return "committed";
     },
     goBackPane(paneId: string, options: PaneHistoryOptions): WorkspaceNavigationResult {
@@ -593,6 +640,7 @@ function createWorkspaceStore(
       const state = trimHistory({ active_primary_pane_id: paneId, panes });
       if (!admit(state)) return "cancelled";
       commit(state, { recentlyClosedPanes: data.recentlyClosedPanes.filter(current => current !== closed) });
+      record(find(paneId));
       return "committed";
     },
     minimizePane(paneId: string): WorkspaceSelection {
@@ -706,6 +754,7 @@ function createWorkspaceStore(
       pendingPaneEntryDeliveryByPaneId: deliveries,
       pendingPaneFocus: { paneId: destination.id, visitId: destination.current_visit.id },
     });
+    record(find(destination.id));
     return { kind: "CreatedPane", paneId: destination.id };
   }
 
@@ -729,10 +778,12 @@ function createWorkspaceStore(
       entry: { kind: "InspectSource", target, purpose: "RestoreVisit" },
     });
     else deliveries.delete(pane.id);
+    const previousForeground = find(data.state.active_primary_pane_id);
     commit(next, {
       pendingPaneEntryDeliveryByPaneId: deliveries,
       pendingPaneFocus: { paneId: pane.id, visitId: visit.id },
     });
+    record(find(pane.id), previousForeground);
     return "committed";
   }
 
@@ -772,6 +823,8 @@ function createWorkspaceStore(
         if (href !== "/") commands.activateWorkspaceTarget({ originPaneId: data.state.active_primary_pane_id, target: { href }, disposition: { kind: "Follow" } });
       } else foldHash();
       mounted = true;
+      recordInitial();
+      document.addEventListener("visibilitychange", recordInitial);
       project(true);
       const navigate = (event: Event) => {
         event.preventDefault();
@@ -787,6 +840,7 @@ function createWorkspaceStore(
       if (installedApp) void hello().catch(error => reportError(error));
       return () => {
         mounted = false;
+        document.removeEventListener("visibilitychange", recordInitial);
         window.removeEventListener("nexus:navigate", navigate);
         window.removeEventListener("hashchange", foldHash);
         window.removeEventListener("popstate", foldHash, true);
@@ -804,12 +858,22 @@ export function WorkspaceStoreProvider(props: {
   children: ReactNode;
 }) {
   const guard = useWorkGuard();
+  const recent = useRecent();
+  const recentRef = useRef(recent);
+  recentRef.current = recent;
   const host = useHostPolicy();
   const { calendarTimeZone } = useAuthenticatedAccount();
   const zone = useRef(calendarTimeZone);
   const [memento] = useState(() => createPaneReturnMemento(guard));
   const [store] = useState(() =>
-    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, guard, () => zone.current, host.project),
+    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, guard, () => zone.current, host.project, recent.use, (from, to, pending) => {
+      const current = recentRef.current;
+      const entry = current.snapshot?.entries.find(item => recentTargetKey(item.target) === recentTargetKey(from.target));
+      const apply = (source: RecentEntry | null) => {
+        if (source) recentRef.current.reconcile({ target: source.target, expected_used_revision: source.used_revision, replacement: to });
+      };
+      if (pending) void pending.then(apply); else apply(entry ?? null);
+    }, recent.useInitial),
   );
   useLayoutEffect(() => { zone.current = calendarTimeZone; }, [calendarTimeZone]);
   useLayoutEffect(

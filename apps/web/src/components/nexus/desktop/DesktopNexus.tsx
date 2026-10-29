@@ -234,8 +234,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     onPointerMove={event => {
                       const press = pointerPress.current;
                       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
-                      if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)
-                        && document.activeElement === inputRef.current) controller.setActive(row.key);
+                      if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)) {
+                        controller.interact();
+                        if (document.activeElement === inputRef.current) controller.setActive(row.key);
+                      }
                     }}
                   >
                     <div

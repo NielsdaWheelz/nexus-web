@@ -66,6 +66,57 @@ internal class DeviceSession private constructor(private val context: Context) {
     private val credentials = Mutex()
     private val file = AtomicFile(File(context.filesDir, "device-startup.json"))
     private val lifetime = AtomicLong(0)
+    private val recent = RecentTargets(context.filesDir)
+    private val recentJobs = kotlinx.coroutines.channels.Channel<suspend () -> Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val recentListeners = CopyOnWriteArrayList<() -> Unit>()
+    fun subscribeRecent(listener: () -> Unit): () -> Unit {
+        recentListeners += listener
+        return { recentListeners -= listener }
+    }
+    private fun publishRecent() { main.post { recentListeners.forEach { it() } } }
+    fun recentOperation(op: String, epoch: String?, input: JSONObject?, currentDocument: () -> Boolean = { true }): CompletableDeferred<JSONObject> {
+        val result = CompletableDeferred<JSONObject>()
+        val generation = lifetime.get()
+        val owner = accountId()
+        recentJobs.trySend {
+            try {
+                val observation = files.withLock {
+                    if (owner == null || accountId() != owner || lifetime.get() != generation || !currentDocument())
+                        throw LocalStateError("E_RECENT_RETIRED", "recent account retired")
+                    val opened = if (op == "record") recent.operation(owner, "open", null, null) else null
+                    val result = recent.operation(owner, if (op == "record") "use" else op,
+                        opened?.getJSONObject("snapshot")?.getString("epoch") ?: epoch, input)
+                    if (accountId() != owner || lifetime.get() != generation || !currentDocument())
+                        throw LocalStateError("E_RECENT_RETIRED", "recent account retired")
+                    result
+                }
+                if (op == "use" || op == "record" || op == "reconcile") publishRecent()
+                result.complete(observation)
+            } catch (error: Exception) {
+                if ((op == "record" || op == "use") && owner != null && accountId() == owner && lifetime.get() == generation &&
+                    (error !is LocalStateError || error.code !in setOf("E_RECENT_IO", "E_RECENT_RETIRED"))) {
+                    files.withLock {
+                        if (accountId() == owner && lifetime.get() == generation) recent.failed()
+                    }
+                }
+                if (op == "record" || op == "use") publishRecent()
+                result.completeExceptionally(error)
+            }
+        }.getOrThrow()
+        return result
+    }
+    fun recentLifetime(): Long = lifetime.get()
+    fun recordRecentPreview(target: String, current: () -> Boolean = { true }) {
+        val value = JSONObject().put("target", JSONObject().put("kind", "preview").put("target", target))
+            .put("href", "/browse/preview?target=$target").put("title_hint", JSONObject.NULL).put("detail_hint", JSONObject.NULL)
+        recentOperation("record", null, value, current)
+    }
+    fun recordRecentMedia(mediaId: UUID, current: () -> Boolean = { true }) {
+        val target = JSONObject().put("kind", "resource_ref").put("ref", "media:$mediaId")
+        val value = JSONObject().put("target", target).put("href", "/media/$mediaId")
+            .put("title_hint", JSONObject.NULL).put("detail_hint", JSONObject.NULL)
+        recentOperation("record", null, value, current)
+    }
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
     private val origin = NexusOriginClient()
@@ -97,6 +148,7 @@ internal class DeviceSession private constructor(private val context: Context) {
     }
 
     init {
+        scope.launch { for (job in recentJobs) job() }
         context.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(
             object : ConnectivityManager.NetworkCallback() {
                 override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -462,6 +514,7 @@ internal class DeviceSession private constructor(private val context: Context) {
 
     private suspend fun cleanup(stopJobs: Boolean) = withContext(NonCancellable) {
         account = null
+        files.withLock { recent.purge() }
         app.nexus.android.authored.AuthoredBridge.purge(context)
         catalog.purge()
         if (stopJobs) OfflineJobService.stopForSignOut(context)

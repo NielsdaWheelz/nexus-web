@@ -12,12 +12,12 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
 import { enterWorkspace } from "@/lib/workspace/model";
-import { beginBrowserSignIn, browserSignedOut, readBrowserRetiring, readBrowserBinding, writeBrowserBinding, type BrowserBinding } from "./binding";
+import { readBrowserAdmission, beginBrowserSignIn, browserSignedOut, readBrowserRetiring, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
 import { finishBrowserRetirement, type BrowserRetirementPending } from "./signOut";
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
-  const [binding, setBinding] = useState<BrowserBinding | null>(null);
+  const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string }) | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
   const [retiring, setRetiring] = useState(false);
   const [retirementPending, setRetirementPending] = useState<BrowserRetirementPending | null>(null);
@@ -36,7 +36,9 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     void (async () => {
       if (await readBrowserRetiring() !== null) { await finishRetirement(); return; }
       if (await browserSignedOut()) { if (live) { setRetiring(false); setSignedOut(true); setFailure(null); } return; }
-      let saved = await readBrowserBinding();
+      const admission = await readBrowserAdmission();
+      let saved = admission.binding;
+      const lifetime = admission.lifetime;
       if (saved === null) {
         const [me, profile, workspace] = await Promise.all([
           apiFetch<ApiJson<"/me", "get">>("/api/me"),
@@ -45,7 +47,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
         ]);
         saved = { account: { account_id: me.data.user_id, calendar_time_zone: me.data.calendar_time_zone }, reader_profile: profile.data, workspace: enterWorkspace(workspace.data.own, workspace.data.most_recent_elsewhere, null) };
         if (handlingRetirement) return;
-        await writeBrowserBinding(saved);
+        await writeBrowserBinding(saved, lifetime);
         admitAuthoredAccount(saved.account.account_id);
       }
       if (handlingRetirement) return;
@@ -54,7 +56,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
       const tooLong = raw.length > MAX_WORKSPACE_HREF_LENGTH;
       const canonical = url.pathname === "/" || tooLong ? null : normalizeWorkspaceHref(parseNexusOpenUrl(url)?.href ?? raw);
       const href = canonical === null ? null : resolveTodayHref(canonical, saved.account.calendar_time_zone);
-      if (live) { setBinding({ ...saved, workspace: enterWorkspace(saved.workspace, null, href) }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
+      if (live) { setBinding({ ...saved, lifetime, workspace: enterWorkspace(saved.workspace, null, href) }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
     })().catch(async error => {
       let ended = false;
       try { ended = await browserSignedOut(); } catch { /* Preserve the original startup failure. */ }
@@ -89,7 +91,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
-    readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
+    browserLifetime={binding.lifetime} readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
     seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}
   /></AuthenticatedWorkspaceErrorBoundary></WorkProvider>;
 }

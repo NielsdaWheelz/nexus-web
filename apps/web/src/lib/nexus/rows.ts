@@ -1,3 +1,5 @@
+import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
+import type { PanePresentation } from "@/lib/workspace/presentations";
 import { authoredItem } from "@/lib/notes/presentation";
 import type { SearchActive } from "@/lib/ui/searchOptions";
 // One relevance order precedes the visible cap. Interaction holds complete displayed snapshots.
@@ -15,6 +17,7 @@ import type { Schema } from "@/lib/api/wire";
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
 import {
   getPaneRouteIcon,
+  recentValueForHref,
   resolvePaneRouteModel,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
@@ -31,7 +34,6 @@ import type {
   NexusPage,
   NexusPane,
   NexusRankTier,
-  NexusRecent,
   NexusRow,
   NexusRootMode,
   NexusTarget,
@@ -40,7 +42,7 @@ import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, 
 
 const RESULT_CAP = 8;
 const OPEN_CAP = 5;
-const RECENT_CAP = 3;
+const RECENT_CAP = 8;
 const TIERS: readonly NexusRankTier[] = [
   "ExplicitIntent",
   "Exact",
@@ -121,7 +123,7 @@ function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexu
     state: paneState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
     secondary: { kind: "ClosePane", paneId: pane.id },
-    source: "Workspace",
+    learns_selection: true,
     rank: { stream: "Navigation", tier, score: pane.current ? 1 : 0, frecency: frecency[pane.href] ?? 0 },
   };
 }
@@ -143,7 +145,7 @@ function placeRow(place: Destination, tier: NexusRankTier, frecency: Frecency): 
         ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
         : { kind: "InternalHref", href: place.href, labelHint: place.label },
     },
-    source: today ? undefined : "Static",
+    learns_selection: !today,
     rank: { stream: "Navigation", tier, score: 0, frecency: frecency[place.href] ?? 0 },
   };
 }
@@ -256,7 +258,7 @@ function resourceRow(item: ResourceItem, panes: readonly NexusPane[]): NexusRow 
     state: pane ? paneState(pane) : undefined,
     action: resourceAction(item),
     secondary: targetMenu(item.action_ref, matching),
-    source: "Search", rank: UNRANKED,
+    learns_selection: true, rank: UNRANKED,
   };
 }
 
@@ -280,7 +282,22 @@ function localRow(match: LocalMatch, panes: readonly NexusPane[]): NexusRow {
     action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
       : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
     secondary: targetMenu(ref, matching),
-    source: "Search", rank: { ...UNRANKED, stream: "Local", tier: nameTier(match.nameMatch) },
+    learns_selection: true, rank: { ...UNRANKED, stream: "Local", tier: nameTier(match.nameMatch) },
+  };
+}
+
+export type RecentItem = { entry: RecentEntry; presentation: PanePresentation; resourceRef: string | null };
+export function recentRow(item: RecentItem, panes: readonly NexusPane[], blank: boolean): NexusRow {
+  const { entry, presentation, resourceRef } = item;
+  const matching = panes.filter(pane => resourceRef !== null ? pane.resourceRef === resourceRef : pane.href === entry.href);
+  const pane = matching.find(candidate => candidate.current) ?? matching[0];
+  return {
+    key: blank ? `Recent:${entry.used_revision}` : resourceRef ? `Resource:${resourceRef}` : `Recent:${recentTargetKey(entry.target)}`,
+    localMatch: null, recentEntry: entry, label: presentation.title, icon: getPaneRouteIcon(entry.href),
+    detail: presentation.detail ?? undefined, state: pane ? paneState(pane) : undefined,
+    action: { kind: "Available", target: { kind: "InternalHref", href: entry.href, labelHint: presentation.title } },
+    ...(resourceRef ? { secondary: targetMenu(resourceRef, matching) } : {}),
+    learns_selection: true, rank: UNRANKED,
   };
 }
 
@@ -302,6 +319,7 @@ export function candidateRows(input: {
   readonly localReferenceMissing: boolean;
   readonly retained: readonly NexusRow[];
   readonly missingLocal: ReadonlySet<string>;
+  readonly recent: readonly RecentItem[];
 }): { readonly rows: readonly NexusRow[]; readonly updates: readonly NexusRow[] } {
   const { query, panes, preview } = input;
   const admit = (rows: NexusRow[]): NexusRow[] => input.picker ? pickerRows(rows, panes, query) : rows;
@@ -361,7 +379,13 @@ export function candidateRows(input: {
       }]));
     }
   }
-  const streams = [navigation, local, resources, saved, passages];
+  const recent = filters.requestedKinds === null && filters.formats.length + filters.authors.length + filters.roles.length === 0 && filters.scope === "all"
+    ? admit(input.recent.flatMap(item => {
+      const row = recentRow(item, panes, false);
+      const tier = textTier(filters.text, row.label, {});
+      return tier ? [{ ...row, rank: { ...row.rank, tier } }] : [];
+    })) : [];
+  const streams = [navigation, local, recent, resources, saved, passages];
   const owners = new Map<string, NexusRow>();
   for (const stream of streams) for (const row of stream) {
     const previous = owners.get(row.key);
@@ -372,16 +396,25 @@ export function candidateRows(input: {
     const ordinals = new Map<NexusRankTier, number>();
     return stream.flatMap(row => {
       if (owners.get(row.key) !== row) return [];
-      const ordinal = ordinals.get(row.rank.tier) ?? 0;
-      ordinals.set(row.rank.tier, ordinal + 1);
-      return [{ row, source, ordinal }];
+      const titleTier = row.key.startsWith("Resource:") || row.key.startsWith("Recent:") ? textTier(filters.text, row.label, {}) : null;
+      const chosen = titleTier === "Exact" || titleTier === "PrefixOrToken" ? { ...row, rank: { ...row.rank, tier: titleTier } } : row;
+      const ordinal = ordinals.get(chosen.rank.tier) ?? 0;
+      ordinals.set(chosen.rank.tier, ordinal + 1);
+      return [{ row: chosen, source, ordinal }];
     });
   }).sort((a, b) => TIERS.indexOf(a.row.rank.tier) - TIERS.indexOf(b.row.rank.tier)
     || a.ordinal - b.ordinal || a.source - b.source || (a.row.key < b.row.key ? -1 : a.row.key > b.row.key ? 1 : 0));
+  const paneTargets = new Set(ranked.flatMap(({ row }) => {
+    const pane = panes.find(candidate => row.key === `Pane:${candidate.id}`);
+    const value = pane ? recentValueForHref(pane.href) : null;
+    return value ? [recentTargetKey(value.target)] : [];
+  }));
   const targets = new Set<string>();
   const updates = ranked.flatMap(({ row }) => {
-    const target = row.action.kind === "Available" && row.action.target.kind === "InternalHref"
-      ? resolveWorkspaceActivationRouteId(row.action.target.href) : row.key;
+    if (row.recentEntry && paneTargets.has(recentTargetKey(row.recentEntry.target))) return [];
+    const target = row.recentEntry && row.key.startsWith("Recent:")
+      ? row.key : row.action.kind === "Available" && row.action.target.kind === "InternalHref"
+        ? resolveWorkspaceActivationRouteId(row.action.target.href) : row.key;
     if (targets.has(target)) return [];
     targets.add(target);
     return [row];
@@ -448,7 +481,7 @@ export function mergeResults(previous: NexusList, identity: string, incoming: re
       const row = next.get(old.key);
       if (removed.has(old.key)) return [];
       if (!row) return [old];
-      return [{ ...old, state: row.state, secondary: row.secondary,
+      return [{ ...old, ...(old.recentEntry ? { label: row.label, detail: row.detail, icon: row.icon } : {}), state: row.state, secondary: row.secondary,
         action: row.action.kind === "Unavailable" ? row.action : old.action }];
     });
     return rows.length ? [{ ...group, rows }] : [];
@@ -475,7 +508,7 @@ export function queryActions(query: NexusQuery): NexusRow[] {
   const searchQuery = literal ? { ...emptySearchQuery(), text: query.text } : query.searchQuery;
   const search: NexusRow = {
     key: "Continuation:SeeAll", localMatch: null, label: literal ? `search for “${query.text}”` : "search all results",
-    icon: Search, action: nexusSearchAction(searchQuery), source: "Search", rank: UNRANKED,
+    icon: Search, action: nexusSearchAction(searchQuery), learns_selection: true, rank: UNRANKED,
   };
   if (literal) return [search];
   return [search, { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: FileText,
@@ -491,24 +524,15 @@ export function nexusGroups(input: {
   readonly panes: readonly NexusPane[];
   readonly panesExpanded: boolean;
   readonly playback: NexusRow | null;
-  readonly recent: readonly NexusRecent[];
+  readonly recent: readonly RecentItem[];
   readonly frecency: Frecency;
 }): NexusGroup[] {
   const { desktop, query, panes, frecency } = input;
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] => rows.length ? [{ id, label, rows }] : [];
-  if (!desktop && input.rootMode === "Overview") return mobileOverview(input);
+  if (!desktop && input.rootMode === "Overview") return [...mobileOverview(input), ...group("Recent", "recent picks", input.recent.slice(0, RECENT_CAP).map(item => mobileRow(recentRow(item, panes, true))))];
   if (query.text) return [...group("Results", "", desktop ? input.results : input.results.map(mobileRow)), ...group("Continuations", "", queryActions(query))];
   const open = (input.panesExpanded ? panes : nexusPanePreview(panes, false)).map(pane => paneRow(pane, "FuzzyOrSynonym", frecency));
-  const seen = new Set(input.rootMode === "NewPane" ? [] : panes.map(pane => resolveWorkspaceActivationRouteId(pane.href)));
-  const recent = input.recent.flatMap((entry): NexusRow[] => {
-    const routeId = resolveWorkspaceActivationRouteId(entry.target_href);
-    if (seen.has(routeId)) return [];
-    seen.add(routeId);
-    return [{ key: `Resource:Route:${entry.target_href}`, localMatch: null, label: entry.label_snapshot,
-      icon: getPaneRouteIcon(entry.target_href),
-      action: { kind: "Available", target: { kind: "InternalHref", href: entry.target_href, labelHint: entry.label_snapshot } },
-      source: "Recent", rank: UNRANKED }];
-  }).slice(0, RECENT_CAP);
+  const recent = input.recent.slice(0, RECENT_CAP).map(item => recentRow(item, panes, true));
   if (input.rootMode === "NewPane") return [
     ...group("Recent", "recent picks", recent.map(mobileRow)),
     ...group("Places", "places", MOBILE_PLACES.map(id => mobileRow(placeRow(getDestination(id), "FuzzyOrSynonym", frecency)))),

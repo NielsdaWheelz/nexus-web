@@ -1,5 +1,8 @@
 # App navigation
 
+[recent resources](recent-history.md) owns device-local recall, accepted-use capture
+and history feedback.
+
 App navigation has two projections with distinct jobs:
 
 - the desktop rail is a small, fixed projection of Nexus's highest-frequency
@@ -151,10 +154,10 @@ overlay contract is documented in
 
 nexus is one typed intent router with platform-native renderers. its input is
 labelled and placeholdered **find anything…**. blank desktop shows `tabs · {total}`,
-up to three `recent picks`, then `actions`: quick note, new chat, import, and
-resume only for paused playback. recent picks retains the palette-selection
-history owner and existing route/open-target deduplication. unknown history is
-not empty; failure exposes retry while usable rows remain visible.
+up to eight resource rows under `recent picks`, then `actions`: quick note, new chat, import, and
+resume only for paused playback. recent retains deliberately accepted resource
+use on this device, including open panes. unknown history is not empty; failure
+exposes retry while usable rows remain visible.
 
 the tabs heading discloses the complete ordered pane list. complete lists allow
 drag or one-shot numbered placement, with only close as a row accessory.
@@ -292,7 +295,8 @@ actions remain accessible through nexus and ordinary controls.
 | Passive imports menu label/count and complete status copy          | `apps/web/src/components/imports/ImportsBadge.tsx` and `lib/imports/copy.ts` |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
-| Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
+| Nexus retrieval, latency gate, and selection ranking                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
+| device-local recent resource history                              | `apps/web/src/lib/recent/store.tsx`                                                                                |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | The rail itself: activation, collapse, indicator, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
 | collapsed rail help and dismissal | `Tooltip` (`placement: "right"`) in `apps/web/src/components/appnav/AppNav.tsx` |
@@ -308,7 +312,7 @@ actions remain accessible through nexus and ordinary controls.
 | Daily Page location and note entries                             | `/daily/{date}` (`dailyDateFor` in `lib/notes/api.ts`) with `AppendNote` / `FocusNote`; the store delivers the entry to the visit the target lands on |
 | fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |
 | read-only shortcut reference                                     | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
-| Nexus history href canonicalization                              | `python/nexus/services/nexus_history.py`                                                                          |
+| Nexus selection-ranking href canonicalization                              | `python/nexus/services/nexus_ranking.py`                                                                          |
 
 The separations are deliberate. A destination can exist without occupying
 fixed navigation; a pane route can identify its owning section without
@@ -423,8 +427,8 @@ When adding or changing a destination:
    `sectionDestinationId`.
 4. Add a destination to mobile Places only through the closed projection in
    `lib/nexus/rows.ts`; do not duplicate its identity outside the registry.
-   Nexus history accepts any relative href, so the
-   backend needs no change.
+   resource recall requires an explicit route projection in
+   `lib/panes/paneRouteModel.ts`; utility destinations do not enter recent.
 5. Verify desktop and mobile projection membership separately, semantic
    detail-route activity, native modified clicks,
    exact-pane reuse, minimized-pane restoration, and focus handoff.

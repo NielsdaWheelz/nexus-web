@@ -9,7 +9,7 @@ import type { SearchFamily } from "@nexus/authored/scope";
 import type { AuthoredQuery } from "@nexus/authored/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useFeedback, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, apiTransportFeedback, isApiError, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
@@ -25,13 +25,12 @@ import { fetchSearchPreview } from "@/lib/search/searchApi";
 import { searchQueryToParams } from "@/lib/search/searchParams";
 import { WRITING_REF, localResult, localSearchApplies, localSearchScopes, useLocalSearchPreview, type LocalMatch } from "@/lib/search/localSearch";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
-import type { NexusRecent, NexusSource } from "./model";
+import type { NexusSource } from "./model";
 import type { NexusQuery } from "./query";
 
-type History = ApiJson<"/me/nexus-history", "get">;
+type Ranking = ApiJson<"/me/nexus-ranking", "get">;
 type RetainedLocalTarget = Extract<AuthoredQuery, {kind: "search_admission"}>["targets"][number];
 
-const EMPTY_RECENT: readonly NexusRecent[] = [];
 const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
 const EMPTY_LOCAL: readonly LocalMatch[] = [];
 /** A remote row's matching passage may be the server's copy of authored text; local owns that. */
@@ -50,18 +49,18 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   }, []);
   const feedback = useFeedback();
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
-  const [historyWanted, setHistoryWanted] = useState(false);
+  const [rankingWanted, setRankingWanted] = useState(false);
   const [revision, setRevision] = useState(0);
   const fail = useThrowLater();
   useEffect(() => {
-    if (open) setHistoryWanted(true);
+    if (open) setRankingWanted(true);
   }, [open]);
 
   const text = query.text;
-  const base = usePaneFreeServerValue<History>({
-    key: historyWanted ? `${accountId}:nexus-history` : null,
+  const base = usePaneFreeServerValue<Ranking>({
+    key: rankingWanted ? `${accountId}:nexus-ranking` : null,
     stale: String(revision),
-    load: (signal) => apiFetch<History>("/api/me/nexus-history", { signal }),
+    load: (signal) => apiFetch<Ranking>("/api/me/nexus-ranking", { signal }),
   });
 
   const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
@@ -95,11 +94,11 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   params.delete("view");
   params.set("phase", "lexical");
   const previewHref = `/api/search/preview?${params}`;
-  const historyHref: `/api/${string}` = `/api/me/nexus-history?${new URLSearchParams({ query: text })}`;
+  const rankingHref: `/api/${string}` = `/api/me/nexus-ranking?${new URLSearchParams({ query: text })}`;
   // Search must fit both its GET transports and its eventual workspace address.
   // Explicit authoring commands never send their arguments through discovery.
   const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH &&
-    historyHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
+    rankingHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
   const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
   const identityKey = open && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
@@ -156,10 +155,10 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const lexicalSettled = lexicalKey !== null && lexical.status !== "loading";
   const hybridSettled = hybridKey !== null && hybrid.status !== "loading";
   const typedId = identityKey !== null && (wantsLexical ? lexicalSettled && (!wantsHybrid || hybridSettled) : directSettled) ? text : null;
-  const typed = usePaneFreeServerValue<History>({
-    key: typedId === null ? null : `${accountId}:nexus-history:${typedId}`,
+  const typed = usePaneFreeServerValue<Ranking>({
+    key: typedId === null ? null : `${accountId}:nexus-ranking:${typedId}`,
     stale: String(revision),
-    load: signal => apiFetch<History>(historyHref, { signal }),
+    load: signal => apiFetch<Ranking>(rankingHref, { signal }),
   });
   // remote search reads synchronized projections; local authored rows are canonical.
   const preview = useMemo(() => remotePreview && { ...remotePreview,
@@ -202,8 +201,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     setAttempts(current => ({ ...current, [phase]: current[phase] + 1 }));
   };
   const baseData = base.status === "ready" ? base.data.data : null;
-  const recentError = base.status === "loading" ? null : base.error;
-  const recentOccurrence = useFeedbackOccurrence(recentError !== null, `${accountId}:nexus-history`);
   const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
   /** Record an accepted selection now; a transport failure offers one retry (a retry after a lost answer counts twice). */
@@ -215,14 +212,14 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
       if (!live.current) return Promise.resolve();
       if (sending) return sending;
       sending =
-      apiFetch<ApiJson<"/me/nexus-selections", "post">>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
+      apiFetch<void>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
         () => { if (live.current) setRevision((value) => value + 1); },
         (error: unknown) => {
           if (!live.current) return;
           if (handleUnauthenticatedApiError(error)) return;
-          const content = isApiError(error) ? apiTransportFeedback(error, "recent selection not confirmed") : null;
+          const content = isApiError(error) ? apiTransportFeedback(error, "selection not confirmed") : null;
           if (content === null) {
-            // justify-defect: history admits only auth recovery and transport feedback (a stale build too).
+            // justify-defect: ranking admits only auth recovery and transport feedback (a stale build too).
             fail({ error });
             return;
           }
@@ -243,15 +240,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     presentation = { kind: null, text: "", action: null };
 
   return {
-    recent: baseData?.recent ?? EMPTY_RECENT,
-    recentRead: {
-      status: base.status,
-      error: recentError,
-      occurrence: recentOccurrence,
-      pending: historyWanted && (base.status === "loading" || (base.status === "failed" ? base.retrying : base.error !== null && base.refreshing)),
-      retrying: base.status === "failed" ? base.retrying : base.status === "ready" && base.refreshing,
-      retry: base.refetch,
-    },
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
     preview,
     reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,

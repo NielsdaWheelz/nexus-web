@@ -14,11 +14,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.nexus_history import (
-    NexusHistoryOut,
-    NexusSelectionRecordOut,
-    NexusSelectionRecordRequest,
-)
+from nexus.schemas.nexus_ranking import NexusRankingOut, NexusSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
 from nexus.schemas.workspace_presentations import (
@@ -27,7 +23,7 @@ from nexus.schemas.workspace_presentations import (
 )
 from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
 from nexus.services import libraries as libraries_service
-from nexus.services import nexus_history as nexus_history_service
+from nexus.services import nexus_ranking as nexus_ranking_service
 from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
 from nexus.services import workspace_presentations as workspace_presentations_service
@@ -95,26 +91,24 @@ def patch_reader_profile(
     return Data(data=reader_profile_service.patch_reader_profile(db, viewer.user_id, body))
 
 
-@router.get("/me/nexus-history")
-def get_nexus_history(
+@router.get("/me/nexus-ranking")
+def get_nexus_ranking(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     query: Annotated[str | None, Query(max_length=500)] = None,
-) -> Data[NexusHistoryOut]:
-    """Get Nexus usage history for the current viewer."""
-    return Data(data=nexus_history_service.get_history_for_viewer(db, viewer.user_id, query))
+) -> Data[NexusRankingOut]:
+    """Get Nexus selection ranking for the current viewer."""
+    return Data(data=nexus_ranking_service.get_ranking_for_viewer(db, viewer.user_id, query))
 
 
-@router.post("/me/nexus-selections")
+@router.post("/me/nexus-selections", status_code=204)
 def post_nexus_selection(
     body: NexusSelectionRecordRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> Data[NexusSelectionRecordOut]:
+) -> None:
     """Record one accepted internal Nexus selection for the current viewer."""
-    return Data(
-        data=nexus_history_service.record_selection_for_viewer(db, viewer.user_id, request=body)
-    )
+    nexus_ranking_service.record_selection_for_viewer(db, viewer.user_id, request=body)
 
 
 @router.get("/me/workspace-session")
