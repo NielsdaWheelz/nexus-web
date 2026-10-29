@@ -28,6 +28,6 @@ reproduce: acquire the real linux unplugged feed through sealed discovery and
 ordinary podcast import; at 390×844 open its episode list and click episode
 690's play control; repeat with its focused enter activation. inspect actual queue admission and the visible player.
 
-resolved when both pointer and keyboard gestures start the intended episode, publishes
+resolved when both pointer and keyboard gestures start the intended episode, publish
 its real playback queue/session and exposes the matching now-playing opener;
 confirm against integrated main and retain chapter-menu qualification.
