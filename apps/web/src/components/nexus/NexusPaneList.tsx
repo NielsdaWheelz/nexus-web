@@ -29,7 +29,7 @@ export function paneCandidateName(controller: NexusController, row: NexusRow, in
   if (placement?.kind === "ChoosePosition") return `place ${controller.reorder.sourceName} at position ${index + 1} of ${controller.panes.length}; currently ${row.label}`;
   const name = paneRowName(controller, row);
   const duplicate = controller.panes.filter(pane => pane.presentation.title === row.label).length > 1;
-  return placement?.kind === "ChoosePane" ? `move ${name}` : rowName([name, duplicate ? row.state?.toLowerCase() : rowFacts(row, false)]);
+  return placement?.kind === "ChoosePane" ? `move ${name}` : rowName([name, duplicate ? row.state?.toLowerCase() : rowFacts(row)]);
 }
 
 export function NexusPaneSortable({ controller, row, children }: {
@@ -120,13 +120,13 @@ export function NexusPaneListHeader({ controller, mobile }: { controller: NexusC
   const listId = mobile ? "mobile-nexus-open-panes" : "desktop-nexus-open-panes";
   return <>
     <div className={styles.paneListHeading}>
-      <h3 id={mobile ? "mobile-nexus-group-Open" : "desktop-nexus-section-Open"}>open panes · {controller.panes.length}</h3>
+      <h3 id={mobile ? "mobile-nexus-group-Open" : "desktop-nexus-section-Open"}>tabs · {controller.panes.length}</h3>
       <div className={styles.paneListActions}>
         {controller.reorder.available || placement !== null ? <Button className={styles.paneListAction} data-nexus-control="Reorder"
           onKeyDown={event => { if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)) event.preventDefault(); }}
           onClick={event => { if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { if (placement === null) controller.reorder.start(); else controller.reorder.cancel(); } }}>{placement === null ? "reorder" : "cancel"}</Button> : null}
         {controller.panePreviewCount < controller.panes.length ? <Button className={styles.paneListAction} data-nexus-control="PanesDisclosure" aria-controls={listId} aria-expanded={controller.panesExpanded}
-          aria-label={controller.panesExpanded ? `collapse open panes, show ${controller.panePreviewCount} of ${controller.panes.length}` : `expand open panes, show all ${controller.panes.length}`}
+          aria-label={controller.panesExpanded ? `collapse tabs, show ${controller.panePreviewCount} of ${controller.panes.length}` : `expand tabs, show all ${controller.panes.length}`}
           onClick={controller.togglePanesExpanded} icon={controller.panesExpanded ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}><span className={styles.paneDisclosureText}><span aria-hidden>collapse</span><span>{controller.panesExpanded ? "collapse" : "expand"}</span></span></Button> : null}
       </div>
     </div>

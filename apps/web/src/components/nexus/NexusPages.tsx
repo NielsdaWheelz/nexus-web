@@ -33,15 +33,16 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
   switch (page.kind) {
     case "Root":
       return null;
+    case "UseText":
     case "ChooseCreate":
     case "ChooseBrowse":
       return (
         <section className={styles.page}>
           <Header
-            title={mobile ? page.kind === "ChooseCreate" ? page.draft ? "create from text" : "new" : "browse" : page.kind === "ChooseCreate" ? `Create “${page.draft}”` : `Browse${page.query ? ` for “${page.query}”` : ""}`}
-            subtitle={mobile ? (page.kind === "ChooseCreate" ? page.draft : page.query) ? <span className={styles.draftPreview}>{page.kind === "ChooseCreate" ? page.draft : page.query}</span> : undefined : page.kind === "ChooseCreate" ? "Choose where this draft belongs." : "Choose one source kind."}
+            title={page.kind === "UseText" ? "use this text" : page.kind === "ChooseCreate" ? "create" : "browse"}
             onBack={controller.back}
           />
+          {(page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query) ? <p className={styles.textPreview}>{page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query}</p> : null}
           <div className={styles.choices}>
             {controller.choices.map((row) => {
               const activate = (event: import("@/lib/ui/targetActivation").TargetActivationEvent) => {
@@ -70,7 +71,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CaptureToday":
       return (
         <section className={styles.page}>
-          <Header title={mobile ? "add to today" : "Add to Today"} onBack={controller.back} />
+          <Header title="add to today" onBack={controller.back} />
           {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}

@@ -1,6 +1,7 @@
 /** local labels and routes. search may supply its selected reading without changing
  * the captured source identity. rows and menus use canonical routes; no server read. */
 import type { ResourceProjection, ResourceRef } from "@nexus/authored/types";
+import { pageTitle } from "@nexus/authored/queries";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
@@ -37,7 +38,7 @@ export function localResourceHref(resource: ResourceProjection,
 export function localResourceLabel(resource: ResourceProjection): string {
   switch (resource.kind) {
     case "note": return resource.body_text?.split("\n")[0]?.trim() || "empty note";
-    case "page": return resource.title?.trim() || resource.local_date || "untitled page";
+    case "page": return pageTitle(resource.title ?? "", resource.local_date);
     case "highlight": return resource.selection?.quote_exact.trim() || "highlight";
     case "source": return resource.title?.trim() || resource.ref;
   }

@@ -1,4 +1,4 @@
-/* Desktop palette: a query, contextual help, and one candidate cell per row. */
+/* A fixed query and one scrollport containing candidates and notices. */
 
 .backdrop {
   position: fixed;
@@ -13,7 +13,7 @@
 .surface {
   display: flex;
   flex-direction: column;
-  width: min(720px, calc(100vw - 48px));
+  width: min(640px, calc(100vw - 48px));
   max-height: 70dvh;
   overflow: hidden;
   border: 1px solid var(--edge);
@@ -33,23 +33,27 @@
 }
 
 .inputRow {
-  display: block;
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--edge-subtle);
 }
 
 .inputRow .input {
+  flex: 1;
+  min-width: 0;
   width: 100%;
-  min-height: 56px;
+  min-height: 48px;
   padding: var(--space-3) 0;
   color: var(--ink);
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
 }
 
-.grid { padding: var(--space-2); }
+.resultScroll { min-height: 0; padding: var(--space-2); scrollbar-gutter: stable; }
+.gridRow { min-height: 36px; }
 .group + .group { margin-top: var(--space-2); }
-.help { flex: 0 0 auto; padding: var(--space-2) var(--space-4); color: var(--ink-faint); font-size: var(--text-xs); }
 
 .headingRow h3 {
   margin: 0;
@@ -67,30 +71,29 @@
   align-items: center;
 }
 
-.primaryCell { display: flex; flex: 1; min-width: 0; min-height: 32px; align-items: center; gap: var(--space-3); cursor: pointer; }
-.gridRow[data-nested="true"] .primaryCell { padding-left: var(--space-6); }
+.primaryCell { display: flex; flex: 1; min-width: 0; min-height: 28px; align-items: center; gap: var(--space-3); cursor: pointer; }
 .candidateCell > .actionsButton,
 .candidateCell > .rowMenu { flex: 0 0 auto; margin-inline-end: var(--space-2); }
 
-/* Source failures: under the input on desktop, atop the list on mobile. */
+/* Notices remain after the complete candidate grid. */
 .failures { display: grid; gap: var(--space-2); }
-.surface > .failures { padding: var(--space-2) var(--space-4) 0; }
-
 
 /* Row body, shared. The mobile row is the base; the desktop cell is denser and single-line. */
 
 .rowIcon { width: 20px; }
 .rowBody { align-items: flex-start; }
-.rowLabel { max-width: 100%; font-weight: 600; overflow-wrap: anywhere; }
-.rowLabel [data-resource-primary] { white-space: inherit; }
-.rowPassage { min-width: 0; max-width: 100%; }
-
-.rowSnippet {
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.rowBody .rowLabel:has([data-resource-inline-evidence]) { white-space: normal; overflow-wrap: anywhere; }
+.rowLabel { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; max-width: 100%; overflow: hidden; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rowLabel:has([data-resource-primary]) { -webkit-line-clamp: 2; }
+.rowSupplement { display: flex; width: 100%; min-width: 0; align-items: baseline; gap: var(--space-2); color: var(--ink-muted); font-size: var(--text-xs); }
+.rowMetadata { flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowMetadata:only-child { max-width: 100%; }
+.rowSnippet { display: -webkit-box; flex: 1; min-width: 0; max-width: 100%; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rowSnippet > div { margin: 0; }
+.queryStatus { display: flex; flex: 0 0 32px; min-width: 32px; min-height: 32px; align-items: center; justify-content: center; color: var(--ink-muted); }
+.queryStatusButton { --control-min-size: 32px; }
+.notices { display: grid; gap: var(--space-2); padding: var(--space-2); overflow-wrap: anywhere; }
+.notices:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
+.textPreview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-muted); }
 
 .primaryCell .rowLabel { color: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); }
 
@@ -164,6 +167,7 @@
 }
 
 .searchScroll {
+  scrollbar-gutter: stable;
   display: grid;
   flex: 1 1 auto;
   min-width: 0;
@@ -200,7 +204,6 @@
 }
 
 .row { display: flex; min-width: 0; background: var(--surface-2); }
-.row[data-nested="true"] { padding-inline-start: var(--space-4); }
 
 .rowMain { flex: 1; }
 
@@ -323,7 +326,6 @@
 
 @media (max-width: 640px), (pointer: coarse) {
   .backdrop { padding-inline: var(--space-3); }
-  .surface { width: min(720px, calc(100vw - 24px)); }
 }
 
 /* Mobile workspace index. Its canvas and geometry do not leak into the desktop grid. */
@@ -384,7 +386,6 @@
 }
 
 .mobile .searchField input::-webkit-search-cancel-button { display: none; }
-.searchStatus { min-height: 24px; padding-block-start: var(--space-1); color: var(--ink-muted); font-size: var(--text-sm); }
 .mobile .searchScroll { gap: var(--space-5); padding-block-start: var(--space-3); padding-block-end: var(--space-5); }
 .mobile .section { gap: var(--space-2); }
 .mobile .section h3 { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-muted); }
@@ -398,7 +399,6 @@
 }
 
 .mobile .row { align-items: center; border-radius: var(--radius-md); background: transparent; }
-.mobile .row[data-nested="true"] { margin-inline-start: var(--space-3); padding-inline-start: 0; border-inline-start: 1px solid var(--edge-subtle); }
 .mobile .rowMain {
   min-height: 64px;
   gap: var(--space-3);
@@ -407,33 +407,8 @@
 }
 
 .mobile .rowLabel { font-size: var(--text-md); font-weight: var(--weight-medium); line-height: 1.4; }
-.draftPreview {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 
 .mobile .row .rowMenu { --control-min-size: 48px; flex: 0 0 auto; align-self: center; }
-
-.useText {
-  display: inline-flex;
-  min-width: 48px;
-  min-height: 48px;
-  align-items: center;
-  gap: var(--space-2);
-  justify-self: start;
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-size: var(--text-sm);
-  text-align: start;
-}
 
 .mobile [data-mode="Overview"] [data-group="Places"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: var(--space-1) var(--space-3); }
 .mobile [data-mode="Overview"] [data-group="Places"] .rowMain { min-height: 52px; padding-block: var(--space-2); }
@@ -450,9 +425,7 @@
 .mobile .form { --control-min-size: 48px; }
 .mobile :is(.rowMain, .choices button):focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
 
-
 @media (hover: hover) {
-  .mobile .useText:hover,
   .mobile .choices button:hover { background: var(--surface-hover); color: var(--ink); }
 }
 /* One ordered pane list; source, destination and current pane are separate facts. */
@@ -483,3 +456,12 @@
   .mouseDragHint { display: none; }
   .touchDragHint { display: inline; }
 }
+
+@media (pointer: coarse) {
+  .gridRow { min-height: 44px; }
+  .surface .actionsButton { --control-min-size: 44px; }
+  .queryStatus { flex-basis: 44px; min-width: 44px; min-height: 44px; }
+  .queryStatusButton { --control-min-size: 44px; }
+}
+.mobile .queryStatus { flex-basis: 48px; min-width: 48px; min-height: 48px; }
+.mobile .queryStatusButton { --control-min-size: 48px; }

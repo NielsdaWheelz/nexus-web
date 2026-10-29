@@ -73,6 +73,8 @@ export type AuthoredQuery =
   | { kind: "annotations"; source_ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "backlinks"; ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "search"; text: string; cursor: string | null; limit: number; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
+  | { kind: "search_preview"; text: string; limit: number; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
+  | { kind: "search_admission"; text: string; refs: ResourceRef[]; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */

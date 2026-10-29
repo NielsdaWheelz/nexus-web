@@ -46,7 +46,8 @@ export default defineConfig({
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         const cursor = JSON.stringify(["a0", ""]);
-        const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
+        type SingleQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
+        const samples: Record<SingleQuery["kind"], SingleQuery[]> = {
           outline_window: [
             {kind: "outline_window", ref: "", cursor: null, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
             {kind: "outline_window", ref: "", cursor, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},

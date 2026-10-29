@@ -2,7 +2,7 @@
  * receives renderer SQL. Parameters and the closed query remain ordinary data. */
 import { compileQuery, type CompiledQuery } from "@nexus/authored/queries";
 import type { AuthoredQuery } from "@nexus/authored/types";
-export async function nativeQueryPlan(query: AuthoredQuery): Promise<{ plan_key: string; params: (string | number | null)[] }> {
+export async function nativeQueryPlan(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>): Promise<{ plan_key: string; params: (string | number | null)[] }> {
   return statementPlan(compileQuery(query), query.kind);
 }
 export async function nativeSearchPlan(compiled: CompiledQuery): Promise<{ plan_key: string; params: (string | number | null)[] }> {

@@ -2,15 +2,14 @@
 
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
-import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
+import { ArrowLeft, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "@/components/nexus/NexusPaneList";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { NexusController } from "@/components/nexus/useNexusController";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
@@ -19,9 +18,10 @@ import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
-import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import styles from "@/components/nexus/Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
+
+const NOTICE_ID = "mobile-nexus-notices";
 
 export default function SwitchboardTask({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,7 +84,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   });
 
   const typed = controller.query.trim().length > 0;
-  const results = controller.groups.filter((group) => group.id !== "QuickActions").reduce((count, group) => count + group.rows.length, 0);
+  const results = controller.groups.filter((group) => group.id === "Results").reduce((count, group) => count + group.rows.length, 0);
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountId = isAccountDestinationId(section) ? section : null;
@@ -117,7 +117,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   };
 
   const root = (
-    <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { focusedControl.current = event.target instanceof HTMLElement ? event.target : null; }}>
+    <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { if (event.target instanceof HTMLElement && bodyRef.current?.contains(event.target)) focusedControl.current = event.target; }}>
       <header className={styles.header}>
         {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
@@ -142,13 +142,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         </div>
       </header>
       <div className={styles.searchInput}>
-        <div className={styles.searchField}>
+        <div className={styles.searchField} onPointerDownCapture={controller.interact}>
           <Search size={19} aria-hidden="true" />
           <input
             ref={inputRef}
             type="search"
             aria-label="search"
-            aria-describedby={searching && controller.lookupGuidance !== null ? "mobile-nexus-guidance" : undefined}
+            aria-describedby={searching && controller.lookupGuidance !== null ? `${NOTICE_ID}-guidance` : undefined}
             value={controller.query}
             placeholder="find anything…"
             autoComplete="off"
@@ -164,6 +164,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 event.stopPropagation();
                 return;
               }
+              controller.interact();
               if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -176,25 +177,22 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               }
             }}
           />
+          {searching ? <NexusQueryStatus controller={controller} noticeId={NOTICE_ID} /> : null}
           {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
-        {searching ? <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} /> : null}
-        {searching && controller.lookupGuidance !== null ? <p id="mobile-nexus-guidance" className={styles.empty}>{controller.lookupGuidance}</p> : null}
       </div>
       <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
       <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
-        <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
             {group.id === "Open" && controller.paneListPresented ? <NexusPaneListHeader controller={controller} mobile /> : group.label ? <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3> : null}
             <ul className={styles.rows} id={group.id === "Open" && controller.paneListPresented ? "mobile-nexus-open-panes" : undefined}>
               {group.rows.map((row, rowIndex) => {
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
-                const name = rowName([row.label, rowFacts(row, false), unavailable]);
-                const body = row.item?.preview.body;
-                const hasEvidence = row.matchingPassage || (body && ((body.kind !== "named" && body.kind !== "media") || (row.match && row.match.excerpt.text !== (body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null))));
+                const name = rowName([nexusRowPrimaryText(row), rowFacts(row), unavailable]);
+                const hasEvidence = nexusRowEvidenceText(row) !== null;
                 return (
-                  <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <li ref={drag.setNodeRef} style={paneDragStyle(drag)} data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined} data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined} className={styles.row} data-current={row.state === "Current" || undefined} data-nested={row.parent ? true : undefined} onPointerDown={() => controller.setActive(row.key)}>
+                  <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <li ref={drag.setNodeRef} style={paneDragStyle(drag)} data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined} data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined} className={styles.row} data-current={row.state === "Current" || undefined} onPointerDown={() => controller.setActive(row.key)}>
                     <button
                       type="button"
                       ref={drag.setActivatorNodeRef}
@@ -238,17 +236,12 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             {group.id === "Open" ? <NexusClosedPanes controller={controller} mobile /> : null}
           </section>
         ))}
-        {searching && typed && controller.textActions.length > 0 ? (
-          <ActionMenu label="use this text…" align="start" triggerAttributes={{ "data-nexus-control": "UseText" }}
-            source={{ kind: "Immediate", subjectKey: `nexus-text:${controller.query}`, title: controller.query, content: { sections: [{ id: "Text", label: null, options: controller.textActions.map((row) => ({ kind: "command", id: row.key, label: row.label, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) })) }] } }}
-            renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
-          />
-        ) : null}
+        <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => searching ? inputRef.current : headingRef.current} />
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>
       </NexusPaneDrag>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement || (searching ? controller.lookupGuidance : null), controller.titlesFailed ? PANE_TITLES_FAILED : null, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {[controller.announcement, controller.noticeText, searching && controller.searchProgress.kind === "Pending" ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
       </div>
     </div>
   );
