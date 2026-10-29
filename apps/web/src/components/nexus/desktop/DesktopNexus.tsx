@@ -143,7 +143,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             if (event.defaultPrevented || !isTopmostInteractionOwner("Nexus")) return;
             controller.interact();
             const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain && rows.length > 0) {
+            if (event.key === "Tab" && plain && active) {
+              const secondary = document.getElementById(candidateId(active.key))?.querySelector<HTMLButtonElement>("[data-nexus-secondary]");
+              if (secondary) {
+                event.preventDefault();
+                secondary.focus();
+              }
+            } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain && rows.length > 0) {
               event.preventDefault();
               const down = event.key === "ArrowDown";
               const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
@@ -273,6 +279,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         iconOnly
                         tabIndex={selected ? 0 : -1}
                         className={styles.actionsButton}
+                        data-nexus-secondary=""
                         data-nexus-control={`ClosePane:${row.secondary.paneId}`}
                         aria-label={`close ${paneRowName(controller, row)}`}
                         aria-describedby={CLOSE_HELP_ID}
@@ -304,6 +311,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         renderTrigger: (trigger) => (
                           <OverflowMenuButton
                             {...trigger}
+                            data-nexus-secondary=""
                             aria-describedby={MENU_HELP_ID}
                             className={styles.actionsButton}
                             onFocus={(event) => {
