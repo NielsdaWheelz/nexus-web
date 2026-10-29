@@ -28,7 +28,7 @@ global mod+shift+left/right retain the separate sequential traversal contract.
 there are no global shift-letter commands.
 
 `lib/workspace/paneControls.ts` projects ordered slots, commands, icons, accessible
-names, help and disabled reasons from live workspace state, the resolved title,
+names, help and disabled reasons from live workspace state, the resolved title and
 desktop mode. the strip renders shared
 `Button` controls and dispatch through their command owners. keys and refs use
 stable slots; a glyph change retains the focused node.

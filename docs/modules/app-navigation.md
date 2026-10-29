@@ -148,7 +148,7 @@ by its projection, in this hierarchy:
 
 1. a factual type label;
 2. an owner or source;
-3. `Open` only for an existing workspace pane;
+3. `current` or `minimized` for an existing workspace pane, omitting ordinary open state;
 4. an existing matched excerpt.
 
 The primary label remains dominant. Nexus never invents a summary, confidence,
