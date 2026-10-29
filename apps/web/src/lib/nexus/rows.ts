@@ -1,3 +1,4 @@
+import { authoredItem } from "@/lib/notes/presentation";
 import type { SearchActive } from "@/lib/ui/searchOptions";
 // One relevance order precedes the visible cap. Interaction holds complete displayed snapshots.
 import {
@@ -257,12 +258,19 @@ function resourceRow(item: ResourceItem, panes: readonly NexusPane[]): NexusRow 
 /** A local authored match: canonical label, literal excerpt and its exact target. */
 function localRow(match: LocalMatch, panes: readonly NexusPane[]): NexusRow {
   const ref = match.resource.ref;
+  const excerpt = match.excerpt;
   const matching = panes.filter((candidate) => candidate.resourceRef === ref);
   const pane = matching.find((pane) => pane.current) ?? matching[0];
+  const evidence = excerpt === null ? null : { excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after }, ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })) };
+  const item = authoredItem(match.resource, match.readingRef);
+  const body = item.preview.body;
   return {
     key: `Resource:${ref}`, localMatch: match, label: match.label,
+    // A matched note paints its matched literal window as the primary prose, so its ranges are inline.
+    item: match.resource.kind === "note" && body.kind === "prose" && evidence !== null
+      ? { ...item, preview: { ...item.preview, body: { ...body, excerpt: evidence.excerpt } } } : item,
+    match: evidence,
     icon: resourceIconForScheme(parseResourceRef(ref)!.scheme), type: resourceTypeLabel(parseResourceRef(ref)!.scheme),
-
     state: pane ? paneState(pane) : undefined,
     action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
       : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
@@ -320,8 +328,8 @@ export function candidateRows(input: {
   }));
   // Bounded omission does not revoke a previously admitted canonical target.
   for (const previous of input.retained) {
-    if (previous.localMatch && !input.missingLocal.has(previous.localMatch.resource.ref)
-      && !local.some(row => row.key === previous.key)) {
+    if (previous.localMatch) {
+      if (input.missingLocal.has(previous.localMatch.resource.ref) || local.some(row => row.key === previous.key)) continue;
       const current = localRow(previous.localMatch, panes);
       local.push({ ...previous, state: current.state, secondary: current.secondary });
     } else if (previous.item && ![...resources, ...saved, ...passages].some(row => row.key === previous.key)) {
@@ -379,7 +387,7 @@ export function candidateRows(input: {
     let changed = false;
     for (const row of passages) {
       const ref = row.item?.preview.source?.ref;
-      const owner = ref ? visible.find(candidate => candidate.key === `Resource:${ref}` && candidate.item) : null;
+      const owner = ref ? visible.find(candidate => candidate.key === `Resource:${ref}` && candidate.item && !candidate.localMatch) : null;
       if (!owner || !row.item || !row.matchMethod || suppressed.has(row.key)) continue;
       const at = composed.indexOf(owner);
       composed[at] = { ...owner, matchingPassage: owner.matchingPassage ?? { item: row.item, match: row.match ?? null, match_method: row.matchMethod } };

@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
+import { NexusRowBody, NexusRowEvidence, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "@/components/nexus/NexusPaneList";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
@@ -229,6 +229,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                         renderTrigger: (trigger) => <OverflowMenuButton {...trigger} className={styles.rowMenu} />,
                       }} />
                     ) : null}
+                    <NexusRowEvidence row={row} />
                   </li>}</NexusPaneSortable>
                 );
               })}

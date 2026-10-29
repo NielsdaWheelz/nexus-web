@@ -1,5 +1,6 @@
 "use client";
 /** Local content overlays admitted context without changing membership or authority. */
+import { excerptView } from "@nexus/authored/excerpt";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { authoredPreview } from "@/lib/notes/presentation";
 import { localResourceHref } from "@/lib/resources/localResource";
@@ -13,14 +14,21 @@ export function useContextItem(supplied: ResourceItem): {
   const kind = supplied.ref.split(":", 1)[0];
   const ownedKind = kind === "note_block" ? "note" : kind === "page" ? "page" : kind === "highlight" ? "highlight" : null;
   const owned = supplied.authored_by_viewer && ownedKind !== null;
-  const authoredRead = useAuthoredQuery(owned ? { kind: "resource", ref: supplied.ref } : null);
+  const readingRef = supplied.preview.body.kind === "passage" ? supplied.preview.body.reading_ref : null;
+  const authoredRead = useAuthoredQuery(owned ? ownedKind === "highlight" && readingRef !== null ? { kind: "excerpt", ref: supplied.ref, reading_ref: readingRef } : { kind: "resource", ref: supplied.ref } : null);
   const resource = authoredRead.data?.rows.find(row => row.resource.ref === supplied.ref && row.resource.kind === ownedKind && row.resource.visible && row.resource.authored_by_viewer)?.resource;
   const eligible = kind === "highlight" && (owned ? resource !== undefined : !supplied.missing && supplied.preview.body.kind === "passage");
   const annotationRead = useAuthoredQuery(eligible ? { kind: "highlight_notes", ref: supplied.ref } : null);
   if (!owned) return { item: supplied, authored: null, annotations: eligible ? annotationRead : null };
   if (!resource) return { item: null, authored: authoredRead, annotations: null };
-  const preview = authoredPreview(resource);
-  const source = resource.kind === "highlight" && supplied.preview.source ? { ...supplied.preview.source, location_label: null } : supplied.preview.source;
+  const full = resource.excerpt;
+  const compact = full?.kind === "content" ? excerptView({ ...full.body, source_extent: null,
+    truncated_before: full.omitted_before, truncated_after: full.omitted_after }, "compact", { kind: "capture" }) : full;
+  const excerpt = compact?.kind === "content" && full?.kind === "content" ? { ...compact,
+    selected_truncated_before: compact.selected_truncated_before || full.selected_truncated_before,
+    selected_truncated_after: compact.selected_truncated_after || full.selected_truncated_after } : compact;
+  const preview = authoredPreview({ ...resource, excerpt }, readingRef);
+  const source = supplied.preview.source;
   const href = resource.kind === "highlight" ? null : localResourceHref(resource);
   const activation: ResourceItem["activation"] = resource.kind === "highlight" ? supplied.activation : { resource_ref: resource.ref, kind: href === null ? "none" : "route", href, unavailable_reason: null };
   return { item: { ...supplied, label: preview.label, preview: { body: preview.body, source }, activation, missing: false }, authored: authoredRead, annotations: eligible ? annotationRead : null };

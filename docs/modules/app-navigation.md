@@ -171,6 +171,13 @@ fetch metadata to decorate a row. preserve source paragraph boundaries, omission
 marks and literal match ranges. essential identity and refusal reasons may wrap;
 secondary evidence stays bounded, without selection-driven expansion.
 
+captured highlights and passages use the admitted frozen excerpt and reading.
+their primary is the selected literal; identical match evidence highlights there,
+while distinct context uses the evidence line. `show excerpt` opens the existing
+full-excerpt dialog explicitly. it is a separate native control after options,
+outside the primary action's disabled state, with the row identity in its name.
+opening it does not navigate or enrich the held row.
+
 desktop is at most 640px wide with a 48px query and 36px ordinary rows; coarse
 pointer targets remain 44px and mobile targets 48px. one scrollport owns results
 and following notices. a reserved query slot shows delayed busy or explicit notice

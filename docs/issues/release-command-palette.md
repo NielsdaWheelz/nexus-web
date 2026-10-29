@@ -11,8 +11,10 @@ complete. the owner deferred physical touch and spoken accessibility on
 - regenerate web wire types after `/search/preview` declared maxima change
   from `4/2/2` to `8/8/8`. wire 17 already follows deployed wire 16 (see `docs/reauthoring.md`);
   retain that unreleased bump. use the existing paired-client reload/refusal steps.
-- no authored format change, database migration, corpus rebuild or new index
-  belongs to this design. record a newly demonstrated requirement before adding it.
+- the palette adds no authored format change, database migration, corpus rebuild
+  or new index. current main's [highlight-excerpt cutover](release-highlight-excerpts.md)
+  separately owns format 3, migration 0326 and paired device draining; preserve
+  those prerequisites when releasing this combined source.
 
 resolved when paired artifacts, observed qualification, deferred observations
 and the wire decision are recorded in the implementation pr/release. this record authorizes

@@ -1,0 +1,27 @@
+.excerpt {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--ink-muted);
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-weight: var(--weight-regular);
+}
+.excerpt[data-structure="plain"],
+.excerpt[data-structure="unknown"] { white-space: pre-wrap; }
+.excerpt pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+.tableScroll { max-width: 100%; overflow-x: auto; }
+.notice[data-flow="block"] { display: block; }
+.selected { color: var(--ink); background: var(--accent-muted); box-decoration-break: clone; }
+.selected[data-color="yellow"] { background: var(--highlight-yellow); }
+.selected[data-color="green"] { background: var(--highlight-green); }
+.selected[data-color="blue"] { background: var(--highlight-blue); }
+.selected[data-color="pink"] { background: var(--highlight-pink); }
+.selected[data-color="purple"] { background: var(--highlight-purple); }
+.notice { color: var(--ink-muted); font-size: var(--text-sm); font-family: var(--font-sans); user-select: none; }
+@media (forced-colors: active) {
+  .excerpt, .notice { color: CanvasText; }
+  .selected, .selected[data-color] { color: HighlightText; background: Highlight; forced-color-adjust: none; }
+}

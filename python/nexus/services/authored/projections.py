@@ -49,6 +49,8 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
     visibility_changes = []
     changed_notes = []
     for item in result.projections:
+        if item.kind == "source":
+            continue
         ref = require_ref(item.ref)
         scalar = "body_text" if item.kind == "note" else "NULL"
         previous = db.execute(
@@ -130,6 +132,14 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 queue_connection_discovery_scan(
                     db, user_id=account_id, ref=ref, reason="authored_create"
                 )
+    passage_previews = {
+        item.ref: {
+            "excerpt": item.excerpt.model_dump(mode="json"),
+            "capture_revision": item.capture_revision,
+        }
+        for item in result.projections
+        if item.kind == "source" and item.excerpt is not None
+    }
     for passage in result.passages:
         owner = require_ref(passage.source_ref)
         quote = {
@@ -176,9 +186,9 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 }
         db.execute(
             text(
-                "INSERT INTO passage_anchors(id,user_id,owner_scheme,owner_id,anchor_key,selector) "
-                "VALUES (:id,:a,:scheme,:owner,:key,CAST(:selector AS jsonb)) ON CONFLICT(id) "
-                "DO UPDATE SET selector=excluded.selector"
+                "INSERT INTO passage_anchors(id,user_id,owner_scheme,owner_id,anchor_key,selector,excerpt_preview) "
+                "VALUES (:id,:a,:scheme,:owner,:key,CAST(:selector AS jsonb),CAST(:preview AS jsonb)) ON CONFLICT(id) "
+                "DO UPDATE SET selector=excluded.selector,excerpt_preview=excluded.excerpt_preview"
             ),
             {
                 "id": passage.anchor_id,
@@ -187,6 +197,7 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 "owner": owner.id,
                 "key": key,
                 "selector": json.dumps({"quote": quote, "locator_hint": hint}),
+                "preview": json.dumps(passage_previews[f"passage_anchor:{passage.anchor_id}"]),
             },
         )
     highlight_ids = _project_links(db, account_id, result, visibility_changes)
@@ -358,10 +369,10 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
     )
     db.execute(
         text(
-            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible) "
-            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible) "
+            "INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix,authored_visible,excerpt_preview) "
+            "VALUES (:id,:a,:kind,:media,:color,:exact,:prefix,:suffix,:visible,CAST(:preview AS jsonb)) "
             "ON CONFLICT(id) DO UPDATE SET color=excluded.color,exact=excluded.exact, "
-            "prefix=excluded.prefix,suffix=excluded.suffix,authored_visible=excluded.authored_visible,updated_at=now()"
+            "prefix=excluded.prefix,suffix=excluded.suffix,authored_visible=excluded.authored_visible,excerpt_preview=excluded.excerpt_preview,updated_at=now()"
         ),
         {
             "id": ref.id,
@@ -373,6 +384,12 @@ def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:
             "prefix": capture.prefix or "",
             "suffix": capture.suffix or "",
             "visible": item.visible,
+            "preview": json.dumps(
+                {
+                    "excerpt": item.excerpt.model_dump(mode="json") if item.excerpt else None,
+                    "capture_revision": item.capture_revision,
+                }
+            ),
         },
     )
     if isinstance(

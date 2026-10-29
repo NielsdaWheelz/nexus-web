@@ -7,13 +7,14 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
+import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowExcerptItem, nexusRowExcerptName, nexusRowPrimaryText } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "../NexusPaneList";
 import type { NexusController } from "../useNexusController";
@@ -327,6 +328,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         ),
                       }}
                     /> : null}
+                    <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{
+                      tabIndex: selected ? 0 : -1,
+                      "aria-label": nexusRowExcerptName(row),
+                      onFocus: event => { focusedSecondary.current = event.currentTarget; controller.setActive(row.key); },
+                      onBlur: () => { focusedSecondary.current = null; },
+                    }} />
                   </div>
                 </div>}</NexusPaneSortable>
               );

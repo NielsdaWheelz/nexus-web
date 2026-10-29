@@ -11,10 +11,11 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { ControlContents } from "@/components/ui/control";
 import type { Schema } from "@/lib/api/wire";
-import type { LocalMatch } from "@/lib/search/localSearch";
+import { excerptTextParts } from "@nexus/authored/excerpt";
 import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
 import ActionMenu from "@/components/ui/ActionMenu";
-import ResourceBody, { ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
+import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
+import ResourceBody, { ExcerptText, ResourceIndexBody, ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import type { ResourceItem } from "@/lib/resources/items";
 import type { NexusRow } from "@/lib/nexus/model";
@@ -27,95 +28,113 @@ import collection from "@/components/ui/Collection.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
 type RowActions = Pick<NexusController, "activate" | "closePane">;
+type Body = Schema<"ResourceItemOut">["preview"]["body"];
 
+/** A capture's displayed literal: its selected text and selection omission marks. null paints a placeholder. */
+function selectedLiteral(body: Extract<Body, { kind: "passage" }>): Schema<"ExcerptOut"> | null {
+  if (body.excerpt.kind !== "content") return null;
+  const exact = excerptTextParts(body.excerpt.body).exact;
+  return exact ? { text: exact, truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after } : null;
+}
+
+/** Compact rows paint a capture's selected literal, with ranges when the match is that literal; the full excerpt is an explicit disclosure. */
+function RowContent({ body, match }: { body: Body; match: Schema<"SearchMatchOut"> | null }) {
+  if (body.kind !== "passage") return <ResourceBody body={body} match={match} />;
+  const literal = selectedLiteral(body);
+  return <span data-resource-primary>{literal ? <ExcerptText excerpt={literal} match={match} /> : <ResourceIndexBody body={body} />}</span>;
+}
+
+/** Mobile rows are one native button, so only phrasing content belongs here; evidence follows it. */
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
   const Icon = row.icon;
+  const Content = desktop ? "div" : "span";
   const facts = rowFacts(row);
-  const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
   return (
     <>
       <span className={`${collection.adornment} ${styles.rowIcon}`} aria-hidden="true">
         <Icon size={18} aria-hidden="true" />
       </span>
-      <div className={`${collection.content} ${styles.rowBody}`}>
-        {row.item ? <NexusResourceContent item={row.item} row={row} excerptId={excerptId} /> : row.localMatch ? <NexusLocalContent match={row.localMatch} title={nexusRowPrimaryText(row)} facts={facts} excerptId={excerptId} /> : <>
-          <span className={styles.rowLabel} title={nexusRowPrimaryText(row)}>{row.label}</span>
+      <Content className={`${collection.content} ${styles.rowBody}`}>
+        {row.item && desktop ? <NexusResourceContent item={row.item} row={row} facts={facts} /> : <>
+          <span className={styles.rowLabel} title={nexusRowPrimaryText(row)}>{row.item ? <RowContent body={row.item.preview.body} match={row.match ?? null} /> : row.label}</span>
           {facts ? <span className={collection.detail}>{facts}</span> : null}
         </>}
         {row.action.kind === "Unavailable" ? <span className={collection.detail}>{row.action.reason}</span> : null}
-      </div>
+      </Content>
     </>
   );
-}
-
-function localContent(match: LocalMatch) {
-  const excerpt = match.excerpt;
-  const evidence: Schema<"SearchMatchOut"> | null = excerpt ? {
-    excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after },
-    ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })),
-  } : null;
-  const body: Schema<"ResourceItemOut">["preview"]["body"] = match.resource.kind === "note"
-    ? { kind: "prose", excerpt: evidence?.excerpt ?? { text: match.label, truncated_before: false, truncated_after: false }, format: "plain", image_count: 0, role: null }
-    : match.resource.kind === "highlight"
-      ? { kind: "passage", exact: { text: match.resource.selection?.quote_exact ?? match.label, truncated_before: false, truncated_after: false }, prefix: null, suffix: null, color: match.resource.color }
-      : { kind: "named", title: match.label, contributors: null, image_url: null, media_kind: null };
-  const separate = separateMatchEvidence(body, evidence);
-  return { body, evidence, separate };
 }
 
 /** Names and tooltips describe the literal primary content the row actually paints. */
 export function nexusRowPrimaryText(row: NexusRow): string {
   const literal = (excerpt: Schema<"ExcerptOut">) => `${excerpt.truncated_before ? "…" : ""}${excerpt.text}${excerpt.truncated_after ? "…" : ""}`;
-  const body = row.localMatch ? localContent(row.localMatch).body : row.item?.preview.body;
+  const body = row.item?.preview.body;
   if (!body) return row.label;
   switch (body.kind) {
     case "named": return body.title || "untitled";
     case "prose": return body.excerpt.text ? literal(body.excerpt) : row.label;
-    case "passage": return [body.prefix && !body.exact.truncated_before ? literal(body.prefix) : "", literal(body.exact), body.suffix && !body.exact.truncated_after ? literal(body.suffix) : ""].join("") || row.label;
+    case "passage": return body.excerpt.kind === "content" ? literal({ text: excerptTextParts(body.excerpt.body).exact || "selected region",
+      truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }) : "table excerpt";
     case "images": return [body.count === 1 ? "image" : `${body.count} images`, ...body.alts.flatMap(alt => alt ? [literal(alt)] : [])].join("\n");
     case "reference": return body.label?.text ? `reference · ${literal(body.label)}` : "embedded resource";
     case "media": return body.media_summary.title;
   }
 }
 
-function rowEvidence(body: Schema<"ResourceItemOut">["preview"]["body"], match: Schema<"SearchMatchOut"> | null) {
+/** Evidence is separate unless it is exactly the literal `RowContent` already paints with its ranges. */
+function bodyEvidence(body: Body, match: Schema<"SearchMatchOut"> | null): Schema<"SearchMatchOut"> | null {
   if (body.kind === "media" && match?.excerpt.text === body.media_summary.title
     && !match.excerpt.truncated_before && !match.excerpt.truncated_after) return null;
+  if (body.kind === "passage" && match?.excerpt.text && match.excerpt.text === selectedLiteral(body)?.text) return null;
   return separateMatchEvidence(body, match);
+}
+
+/** A matching passage replaces the row's own evidence. */
+function rowEvidence(row: NexusRow): Schema<"SearchMatchOut"> | null {
+  if (row.matchingPassage) return bodyEvidence(row.matchingPassage.item.preview.body, row.matchingPassage.match);
+  return row.item ? bodyEvidence(row.item.preview.body, row.match ?? null) : null;
 }
 
 /** Supplemental evidence excludes a complete literal already spoken as the primary name. */
 export function nexusRowEvidenceText(row: NexusRow): string | null {
-  if (row.localMatch) return localContent(row.localMatch).separate?.excerpt.text ?? null;
   if (row.matchingPassage) return row.matchingPassage.match?.excerpt.text ?? row.matchingPassage.item.label;
-  return row.item ? rowEvidence(row.item.preview.body, row.match ?? null)?.excerpt.text ?? null : null;
+  return rowEvidence(row)?.excerpt.text ?? null;
 }
 
-function NexusLocalContent({ match, title, facts, excerptId }: { match: LocalMatch; title: string; facts: string; excerptId: string | undefined }) {
-  const { body, evidence, separate } = localContent(match);
+function RowEvidence({ row, evidence }: { row: NexusRow; evidence: Schema<"SearchMatchOut"> | null }) {
+  return evidence ? <ResourceMatchEvidence match={evidence} />
+    : row.matchingPassage ? <RowContent body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /> : null;
+}
+
+function NexusResourceContent({ item, row, facts }: { item: ResourceItem; row: NexusRow; facts: string }) {
+  const evidence = rowEvidence(row);
   return <>
-    <div className={styles.rowLabel} title={title} id={separate ? undefined : excerptId}><ResourceBody body={body} match={evidence} /></div>
-    {facts || separate ? <div className={styles.rowSupplement}>
+    <div className={styles.rowLabel} title={nexusRowPrimaryText(row)}><RowContent body={item.preview.body} match={row.match ?? null} /></div>
+    {facts || row.matchingPassage || evidence ? <div className={styles.rowSupplement}>
       {facts ? <span className={styles.rowMetadata} title={facts}>{facts}</span> : null}
-      {separate ? <div className={styles.rowSnippet} id={excerptId}><ResourceMatchEvidence match={separate} /></div> : null}
+      {row.matchingPassage || evidence ? <div className={styles.rowSnippet}><RowEvidence row={row} evidence={evidence} /></div> : null}
     </div> : null}
   </>;
 }
 
-function NexusResourceContent({ item, row, excerptId }: { item: ResourceItem; row: NexusRow; excerptId: string | undefined }) {
-  const body = item.preview.body;
-  const metadata = rowFacts(row);
-  const passage = row.matchingPassage;
-  const evidence = passage ? separateMatchEvidence(passage.item.preview.body, passage.match) : rowEvidence(body, row.match ?? null);
-  return <>
-    <div className={styles.rowLabel} title={nexusRowPrimaryText(row)} id={passage || evidence ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
-    {metadata || passage || evidence ? <div className={styles.rowSupplement}>
-      {metadata ? <span className={styles.rowMetadata} title={metadata}>{metadata}</span> : null}
-      {passage || evidence ? <div className={styles.rowSnippet} id={excerptId}>
-        {evidence ? <ResourceMatchEvidence match={evidence} /> : passage ? <ResourceBody body={passage.item.preview.body} match={passage.match} /> : null}
-      </div> : null}
-    </div> : null}
-  </>;
+/** The row's capture: its matching passage when one was absorbed, else its own item. */
+export function nexusRowExcerptItem(row: NexusRow): ResourceItem | null {
+  return row.matchingPassage?.item ?? row.item ?? null;
+}
+
+/** The visible copy stays "show excerpt"; its name carries the row's complete primary identity. */
+export function nexusRowExcerptName(row: NexusRow): string {
+  return `show excerpt for ${nexusRowPrimaryText(row)}`;
+}
+
+/** Mobile evidence is selectable flow content after the native activation button and its options. */
+export function NexusRowEvidence({ row }: { row: NexusRow }) {
+  if (!row.item) return null;
+  const evidence = rowEvidence(row);
+  return <div className={styles.mobileEvidence}>
+    {row.matchingPassage || evidence ? <div className={styles.rowSnippet} id={`mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}><RowEvidence row={row} evidence={evidence} /></div> : null}
+    <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{ "aria-label": nexusRowExcerptName(row) }} />
+  </div>;
 }
 
 function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
@@ -131,12 +150,13 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
   if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
     ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
   const target = row.action.kind === "Available" ? row.action.target : null;
-  const activation = row.action.kind === "Unavailable" ? { kind: "none" as const, href: null, resource_ref: row.item?.ref ?? (secondary?.kind === "ResourceMenu" ? secondary.resourceRef : row.key), unavailable_reason: null } : row.item?.activation ?? (target?.kind === "Resource" ? target.activation : {
+  // The menu displays the row's own primary target; an authored item's projected route may differ.
+  const activation = row.action.kind === "Unavailable" ? { kind: "none" as const, href: null, resource_ref: row.item?.ref ?? (secondary?.kind === "ResourceMenu" ? secondary.resourceRef : row.key), unavailable_reason: null } : target?.kind === "Resource" ? target.activation : {
     kind: target?.kind === "InternalHref" ? "route" as const : "none" as const,
     href: target?.kind === "InternalHref" ? target.href : null,
     resource_ref: secondary?.kind === "ResourceMenu" ? secondary.resourceRef : row.key,
     unavailable_reason: null,
-  });
+  };
   return <ContextualActionMenu {...menuProps} title={row.label} subjectKey={`nexus:${row.key}`}
     resourceRef={secondary?.kind === "ResourceMenu" ? secondary.resourceRef : undefined}
     showSourceSubject={row.item !== undefined && row.item.action_ref !== row.item.ref}

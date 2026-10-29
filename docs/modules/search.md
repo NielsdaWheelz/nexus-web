@@ -334,6 +334,12 @@ remote names retain unicode casefold. cross-source unicode equivalence is not
 promised. ordinary full-search/picker `search` retains its existing cursor.
 server preview excludes viewer-authored projections before its limits.
 
+local capture candidates resolve their scoped frozen excerpt before consuming an
+admission slot. preview and held-ref admission use the same resolution as ordinary
+search, within the same host revision; unresolved captures consume no result slot.
+an unfiltered preview means the shared discovery-family vocabulary. unsupported
+source-stub families cannot consume its bounded slots and disappear in the renderer.
+
 independent preview delays are direct80/lexical120/hybrid160 ms; one codepoint
 uses direct immediately. hybrid requires two codepoints and an eligible semantic
 family. canonical refs bypass textual requests. retain proven direct names
