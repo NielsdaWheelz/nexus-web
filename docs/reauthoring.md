@@ -45,7 +45,7 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-compact palette and inline pane list against `18cff5029`: +696 net authored
+compact palette and inline pane list against `f0b23ce0d`: +696 net authored
 runtime lines (1,669 added, 973 deleted): web +609, shared authored +74,
 search python +13. the retained search fixture's format-3 capture update adds
 27 verification lines (37 added, 10 deleted). one relevance-ordered list and
