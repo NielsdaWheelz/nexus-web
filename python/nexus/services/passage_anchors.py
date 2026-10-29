@@ -32,7 +32,7 @@ from nexus.services import authored, library_entries, locator_resolver, text_quo
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
-PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block", "fragment")
+PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block", "highlight", "fragment")
 
 
 def normalize_quote_text(text: str) -> str:
@@ -72,7 +72,7 @@ def materialize_or_reuse(
     the account head precedes the post's media family lock, as in every authored writer.
     """
     if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
-        raise AssertionError(  # justify-defect: callers pass the closed media|note_block|fragment set
+        raise AssertionError(  # justify-defect: callers pass the closed media|note_block|highlight|fragment set
             f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
         )
     authored.lock_account(db, user_id)
@@ -93,6 +93,9 @@ def materialize_or_reuse(
         exact=quote_exact,
         prefix=normalize_quote_text(prefix or ""),
         suffix=normalize_quote_text(suffix or ""),
+        source_reads=locator_resolver.read_passage_sources(
+            db, [(owner_scheme, owner_id)], viewer_id=user_id
+        ),
     )
     if resolution.status is not QuoteStatus.unique:
         raise ApiError(

@@ -27,6 +27,7 @@ from nexus.schemas.assistant_writes import (
     MachineAuthorshipOut,
     TargetKind,
 )
+from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionCreationOut
 from nexus.services import library_entries, users
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
@@ -53,6 +54,7 @@ def authorships(row: Any) -> list[MachineAuthorshipOut]:
         MachineAuthorshipOut(
             target_kind=_TARGET_KIND[ref["kind"]],
             target_id=UUID(ref["id"]),
+            field=ref["field"],
             generation_id=row.generation_id,
             generation_seq=row.generation_seq,
             tool_position=row.position,
@@ -63,11 +65,19 @@ def authorships(row: Any) -> list[MachineAuthorshipOut]:
     ]
 
 
-def _authorship_of(row: Any, target_id: UUID) -> MachineAuthorshipOut:
-    return next(a for a in authorships(row) if a.target_id == target_id)
+def _authorship_of(
+    row: Any, target_kind: TargetKind, target_id: UUID, field: ResourceField
+) -> MachineAuthorshipOut:
+    return next(
+        a
+        for a in authorships(row)
+        if (a.target_kind, a.target_id, a.field) == (target_kind, target_id, field)
+    )
 
 
-def authorship_for_target(db: Session, viewer_id: UUID, uri: str) -> MachineAuthorshipOut | None:
+def authorship_for_target(
+    db: Session, viewer_id: UUID, uri: str, *, field: ResourceField
+) -> MachineAuthorshipOut | None:
     """Whether the viewer's assistant wrote the note block or highlight at ``uri``."""
 
     ref = parse_resource_ref(uri)
@@ -78,9 +88,9 @@ def authorship_for_target(db: Session, viewer_id: UUID, uri: str) -> MachineAuth
             "SELECT * FROM tool_calls WHERE principal_user_id = :viewer AND status = 'complete'"
             " AND created_refs @> :probe"
         ).bindparams(bindparam("probe", type_=JSONB)),
-        {"viewer": viewer_id, "probe": [{"kind": ref.scheme, "id": str(ref.id)}]},
+        {"viewer": viewer_id, "probe": [{"kind": ref.scheme, "id": str(ref.id), "field": field}]},
     ).one_or_none()
-    return None if row is None else _authorship_of(row, ref.id)
+    return None if row is None else _authorship_of(row, ref.scheme, ref.id, field)
 
 
 def _edge_rows(db: Session, viewer_id: UUID, edge_ids: Iterable[UUID]) -> list[Any]:
@@ -91,7 +101,7 @@ def _edge_rows(db: Session, viewer_id: UUID, edge_ids: Iterable[UUID]) -> list[A
                 " FROM tool_calls t CROSS JOIN jsonb_array_elements(t.created_refs) ref"
                 " LEFT JOIN messages m ON m.id = t.assistant_message_id"
                 " WHERE t.principal_user_id = :viewer AND t.tool_id = 'nexus.edge.create'"
-                " AND t.status = 'complete' AND ref ->> 'id' = ANY(:edges)"
+                " AND t.status = 'complete' AND ref ->> 'kind'='edge' AND ref -> 'field'='null'::jsonb AND ref ->> 'id' = ANY(:edges)"
             ),
             {"viewer": viewer_id, "edges": [str(edge_id) for edge_id in edge_ids]},
         )
@@ -104,7 +114,8 @@ def edge_authorships(
     """The viewer's assistant-created edges among ``edge_ids``, with their authorship."""
 
     return {
-        row.edge_id: _authorship_of(row, row.edge_id) for row in _edge_rows(db, viewer_id, edge_ids)
+        row.edge_id: _authorship_of(row, "resource_edge", row.edge_id, None)
+        for row in _edge_rows(db, viewer_id, edge_ids)
     }
 
 
@@ -115,7 +126,7 @@ def edge_provenance(
 
     return {
         row.edge_id: ConnectionCreationOut(
-            authorship=_authorship_of(row, row.edge_id),
+            authorship=_authorship_of(row, "resource_edge", row.edge_id, None),
             tool_call_id=row.id,
             generation_id=row.generation_id,
             conversation_id=row.conversation_id,
@@ -238,7 +249,14 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
             )
         owners: set[str] = set()
         libraries: set[UUID] = set()
+        whole_highlights = {
+            ref["id"]
+            for ref in row.created_refs
+            if ref["kind"] == "highlight" and ref["field"] is None
+        }
         for ref in row.created_refs:
+            if ref["field"] == "annotation" and ref["id"] in whole_highlights:
+                continue
             writes.revert(db, viewer_id, ref)
             if ref["kind"] == "entry":
                 libraries.add(UUID(ref["library_id"]))

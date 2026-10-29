@@ -272,8 +272,8 @@ def project(
                 detail.append(uri)
             if quote := _bounded(_text(args, "exact"), 160):
                 detail.append(f"quote: {quote}")
-            if note := _bounded(_text(args, "note"), 160):
-                detail.append(f"note: {note}")
+            if annotation := _bounded(_text(args, "annotation"), 160):
+                detail.append(f"annotation: {annotation}")
             if color := _text(args, "color"):
                 detail.append(f"color: {color}")
         case "nexus.edge.create":

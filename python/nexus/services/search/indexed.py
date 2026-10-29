@@ -144,7 +144,9 @@ def statement(
             FROM eligible WHERE native_search_id IS NULL)),
         paradedb.term_set(ARRAY(SELECT paradedb.term('doc_key',doc_key)
             FROM eligible WHERE native_search_id IS NOT NULL))],minimum_should_match=>1)"""
-    if families and not (GENERATED_FAMILIES | {"highlight"}).intersection(families):
+    if families and not (GENERATED_FAMILIES | {"highlight", "highlight_annotation"}).intersection(
+        families
+    ):
         native_filter = (
             "paradedb.term_set(ARRAY["
             + ",".join(f"paradedb.term('family','{family}')" for family in sorted(set(families)))
@@ -168,12 +170,18 @@ def statement(
                     paradedb.const_score(0,paradedb.term_set(ARRAY(
                         SELECT paradedb.term('doc_key',doc_key) FROM name_matches)))],
                 minimum_should_match=>1)),
-        facts AS MATERIALIZED (
+        raw_facts AS MATERIALIZED (
             SELECT h.search_id,e.doc_key,e.ref,e.owner_ref,e.family,
                 COALESCE(e.name_tier,0) AS name_tier,
                 h.score,''::text AS sort_label,e.reading_media_id
             FROM hits h JOIN eligible e ON h.admission_key=e.admission_key
-                AND (e.native_search_id IS NULL OR e.native_search_id=h.search_id))"""
+                AND (e.native_search_id IS NULL OR e.native_search_id=h.search_id)),
+        facts AS MATERIALIZED (
+            SELECT * FROM raw_facts WHERE family NOT IN ('highlight','highlight_annotation')
+            UNION ALL
+            (SELECT DISTINCT ON (ref) * FROM raw_facts
+                WHERE family IN ('highlight','highlight_annotation')
+                ORDER BY ref,score DESC,(family='highlight_annotation'),reading_media_id NULLS LAST))"""
     )
     if group_owners:
         sql += f""",
@@ -316,7 +324,15 @@ class IndexedRead:
                     [hit.ref.id for hit in self.hits if hit.family == "media"],
                 )
             )
-        return IndexedRead(sorted(hits, key=lambda hit: hit.order), self.doc_keys, children)
+        selected = []
+        highlights = set()
+        for hit in sorted(hits, key=lambda hit: hit.order):
+            if hit.family in {"highlight", "highlight_annotation"}:
+                if hit.ref in highlights:
+                    continue
+                highlights.add(hit.ref)
+            selected.append(hit)
+        return IndexedRead(selected, self.doc_keys, children)
 
     def rank(
         self,
@@ -482,6 +498,13 @@ def present(
         assert len(annotations) == len(rows) and annotations.keys() <= set(keys)
     by_context = {(hit.ref.uri, hit.reading_media_id): hit for hit in hits}
     presented: dict[tuple[str, UUID | None], tuple[ResourceItemOut, SearchMatchOut | None]] = {}
+    from nexus.services.highlights import read_highlight_annotations
+
+    annotation_bodies = read_highlight_annotations(
+        db,
+        viewer_id=viewer_id,
+        highlight_ids=[hit.ref.id for hit in hits if hit.family == "highlight_annotation"],
+    )
     for context, item in items.items():
         if item.missing:
             raise RuntimeError("visible discovery resource missing from canonical item projection")
@@ -492,5 +515,23 @@ def present(
             if row is not None and context in by_context
             else None
         )
+        hit = by_context.get(context)
+        if hit is not None and hit.family == "highlight_annotation":
+            annotation = annotation_bodies.get(hit.ref.id)
+            assert annotation is not None
+            if match is None:
+                match = _literal_match(annotation.body_text, anchor=0)
+            item = item.model_copy(
+                update={
+                    "activation": item.activation.model_copy(
+                        update={
+                            "resource_ref": hit.ref.uri,
+                            "field": "annotation",
+                            "kind": "route",
+                            "href": f"/highlights/{hit.ref.id}#annotation",
+                        }
+                    )
+                }
+            )
         presented[context] = item, match
     return presented

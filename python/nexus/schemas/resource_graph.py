@@ -19,7 +19,6 @@ EdgeOrigin = Literal[
     "citation",
     "system",
     "note_body",
-    "highlight_note",
     "discovery",
     "document_embed",
     "assistant",

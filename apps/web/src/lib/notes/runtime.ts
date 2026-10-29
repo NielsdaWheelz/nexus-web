@@ -26,7 +26,7 @@ export interface LocalCommit {
   before: { resources: { ref: string; touch_vv: Vector; delete_vv: Vector }[]; links: { link_id: string; add_vv: Vector; remove_vv: Vector }[] };
 }
 export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
-export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "edit_body" | "edit_title"}>;
+export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
 interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_refs: string[]; revision: number }
 interface FailedCommit {
@@ -265,7 +265,7 @@ export class WritingRuntime {
     if (!owner.faulted) owner.prepare_graph = async () => {
       // The reserved tail already orders every participant's pending local command.
       const graph = structuredClone(await args.prepare(created.map(document=>document.ref)));
-      for (const intent of graph) if (intent.kind === "batch" || intent.kind === "create_note" || intent.kind === "create_page" || intent.kind === "edit_body" || intent.kind === "edit_title") {
+      for (const intent of graph) if (intent.kind === "batch" || intent.kind === "create_note" || intent.kind === "create_page" || intent.kind === "create_highlight" || intent.kind === "edit_body" || intent.kind === "edit_title") {
         owner.faulted = true;
         owner.fault = new TypeError("Compound preparation may return graph intents only");
         throw owner.fault;
@@ -432,7 +432,7 @@ export class WritingRuntime {
     const text = (body: NoteBody) => rawBodyText(noteBodySchema.nodeFromJSON(body.body_pm_json));
     const creation = (intent: Intent): void => {
       if (intent.kind === "batch") intent.intents.forEach(creation);
-      else if (intent.kind === "create_note") {
+      else if (intent.kind === "create_note" || intent.kind === "create_highlight") {
         const doc = hydrateNote(intent.body_update);
         try { texts.set(intent.ref, text(readBody(doc))); }
         finally { doc.destroy(); }
@@ -454,7 +454,7 @@ export class WritingRuntime {
     return this.getOrOpenDocument(ref, () => this.loadDocument(ref, prelude));
   }
   /** Actual state from this account's atomic snapshot; an existing owner wins. */
-  async openDocumentFromState(resource: Exclude<ResourceState, {kind:"highlight"}>, loadedRevision: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
+  async openDocumentFromState(resource: ResourceState, loadedRevision: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
     return this.getOrOpenDocument(resource.ref, async () => this.hydrateDocument(resource, prelude, await this.store, loadedRevision));
   }
   private getOrOpenDocument(ref: string, load: () => Promise<CachedDocument>): Promise<CachedDocument> {
@@ -480,25 +480,25 @@ export class WritingRuntime {
     const existing = states.resources.find(r => r.ref === ref);
     const creation = prelude.find((intent): intent is Extract<Intent,{kind:"create_page"}> => intent.kind === "create_page" && intent.ref === ref);
     const resource = existing ?? (creation ? {kind:"page" as const,ref,touch_vv:{},delete_vv:{},local_date:creation.local_date,title_state:createTitle("")} : null);
-    if (!resource || resource.kind === "highlight") throw new Error("Writing document is unavailable");
+    if (!resource) throw new Error("Writing document is unavailable");
     return this.hydrateDocument(resource, prelude, store, existing ? replica.store_revision : null);
   }
-  private hydrateDocument(resource: Exclude<ResourceState, {kind:"highlight"}>, prelude: readonly Intent[], store: AuthoredStore, loadedRevision: string | null): CachedDocument {
-    const doc = resource.kind === "note" ? hydrateNote(resource.body_state) : new Y.Doc();
+  private hydrateDocument(resource: ResourceState, prelude: readonly Intent[], store: AuthoredStore, loadedRevision: string | null): CachedDocument {
+    const doc = resource.kind !== "page" ? hydrateNote(resource.body_state) : new Y.Doc();
     if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
     return this.cacheDocument(resource.ref, resource, doc, prelude, store, loadedRevision);
   }
-  private cacheDocument(ref: string, resource: Exclude<ResourceState, {kind:"highlight"}>, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null, loadedRevision: string | null): CachedDocument {
+  private cacheDocument(ref: string, resource: ResourceState, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null, loadedRevision: string | null): CachedDocument {
     let observed_touch = resource.touch_vv;
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
     const cached: CachedDocument = {
       ref, doc, pins: 0, pending: 0, prelude, bytes: Y.encodeStateAsUpdate(doc).byteLength, last_used: Date.now(), unsubscribe: () => {},
       receive: latest => {
-        if (this.retired || latest.kind === "highlight") return;
+        if (this.retired) return;
         if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) cached.prelude=[];
         observed_touch = mergeVector(observed_touch, latest.touch_vv);
-        Y.applyUpdate(doc, decodeBytes(latest.kind === "note" ? latest.body_state : latest.title_state), REMOTE);
+        Y.applyUpdate(doc, decodeBytes(latest.kind !== "page" ? latest.body_state : latest.title_state), REMOTE);
         cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
         void this.evict();
       },
@@ -546,7 +546,7 @@ export class WritingRuntime {
         if (error) throw error;
         return;
       }
-      const intent: Intent = kind === "note" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
+      const intent: Intent = kind !== "page" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
       const prepared: Intent = cached.prelude.length ? {kind:"batch",intents:[...cached.prelude,intent]} : intent;
       cached.prelude = [];
       const pending = this.run(prepared, { refs: [ref] }).catch(error => {
@@ -558,7 +558,7 @@ export class WritingRuntime {
     if (store) this.listenDocument(cached, store, loadedRevision === null ? null : { revision: loadedRevision, resource });
     return cached;
   }
-  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: Exclude<ResourceState, {kind:"highlight"}> } | null): void {
+  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: ResourceState } | null): void {
     const {ref} = cached;
     const selection = selectStates({ refs: [ref] });
     const refresh = (result: QueryResult) => {
@@ -568,7 +568,7 @@ export class WritingRuntime {
       const entry = this.documents.get(ref);
       if (this.retired || !entry || (entry.value && entry.value !== cached)) return;
       const latest = current.resources.find(r => r.ref === ref);
-      if (latest && latest.kind !== "highlight") cached.receive(latest);
+      if (latest) cached.receive(latest);
     }).catch(error => this.publish({ error, error_refs: [ref] })); };
     cached.unsubscribe = store.subscribe({ kind: "resource", ref }, refresh, reportError);
   }

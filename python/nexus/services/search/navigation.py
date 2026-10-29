@@ -97,6 +97,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
                 match=None,
                 match_method=None,
                 matching_passage=None,
+                matched_field=None,
             )
             for item in items
         ]
@@ -149,6 +150,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
                 match=_evidence(name.literal, r.terms),
                 match_method="lexical",
                 matching_passage=None,
+                matched_field=None,
             )
         )
     return out

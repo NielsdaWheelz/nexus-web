@@ -2,6 +2,7 @@
 
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
+import HighlightAnnotation from "./HighlightAnnotation";
 import {createPortal} from "react-dom";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
@@ -29,6 +30,7 @@ export interface OutlineRowChrome {
   open: boolean;
   terminal: boolean;
   selected: boolean;
+  workOwners(owners: readonly string[]): void;
   toggle(): void;
   select(): void;
   unlink(): void;
@@ -72,7 +74,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>
       </button> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,
         mount.content, `${row.row_id}:content`)] : [])];
   });
 }

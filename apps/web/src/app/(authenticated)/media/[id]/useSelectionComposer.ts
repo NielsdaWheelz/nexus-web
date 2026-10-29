@@ -2,15 +2,16 @@
 import { CommandTooLargeError } from "@nexus/authored/types";
 import { ExcerptCaptureError, excerptTextParts } from "@nexus/authored/excerpt";
 
-// One ephemeral rich composer for a passage. A new selection freezes its exact local
-// capture when the composer opens; saving commits the highlight, its new note and their
-// link in one local transaction. An existing highlight's notes are their own resources,
-// edited in place; this input only ever adds another independent note. Unsubmitted
-// input stays ephemeral and is never written anywhere.
-
+// A frozen selection owns one explicit annotation-or-question input. Existing
+// highlight bodies have their own bound editor; this draft then owns questions.
+// Unsubmitted writing survives source publication changes and remote deletion.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import * as Y from "yjs";
+import {hydrateNote, readBody} from "@nexus/authored/documents";
+import {applyDraftBody} from "@/lib/notes/editorBinding";
 import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
+import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -36,8 +37,8 @@ import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
-import { attachNote, captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
-import { LocalCommitError } from "@/lib/notes/runtime";
+import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
+import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { bodyHasContent, emptyBody } from "@nexus/authored/body";
@@ -88,6 +89,9 @@ export function useSelectionComposer(input: {
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? catalogRead.revalidate : catalogRead.refetch;
   const [store] = useState(createSelectionDrafts);
+  const workScope = usePaneVisitWorkScope();
+  const draftOwner = `selection-composer:${visitId}`;
+  usePaneVisitWorkOwner({id: draftOwner, scope: workScope, subscribe: store.subscribe, read: () => ({changed: store.getSnapshot().some(entry => bodyHasContent(entry.body) || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: store.getSnapshot().some(entry => entry.attachmentActive)}), readCopyText: () => store.getSnapshot().map(entry => entry.body.body_text).join("\n\n")});
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
   const [reselection, setReselection] = useState<Reselection | null>(null);
@@ -104,14 +108,14 @@ export function useSelectionComposer(input: {
   const show = useCallback((next: Opening | null) => {
     current.current = next; interaction.current = next?.id ?? null; setOpening(next);
   }, []);
-  useEffect(() => { if (!active) { show(null); setPickerDraftId(null); for (const entry of store.getSnapshot()) store.remove(entry.id); } }, [active, show, store]);
+  useEffect(() => { if (!active) setPickerDraftId(null); }, [active]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
   const previousPublication = useRef(publication);
   useEffect(() => {
     if (previousPublication.current === publication) return;
     previousPublication.current = publication;
-    show(null); setPickerDraftId(null);
-    for (const entry of store.getSnapshot()) store.remove(entry.id);
+    setPickerDraftId(null);
+    for (const entry of store.getSnapshot()) if (entry.highlightId === null) store.update(entry.id, value => ({...value, issue: {kind: "Source", message: SOURCE_CHANGED}}));
   }, [publication, show, store]);
   useEffect(() => {
     const retire = () => { if (document.visibilityState === "hidden") cancelReselection(); };
@@ -154,9 +158,10 @@ export function useSelectionComposer(input: {
   const copyQuote = draft?.highlightId ? copyResource?.capture_revision === copyAnnotation?.projection.capture_revision && copyResource?.excerpt?.kind === "content" ? fullCopyText : null : draft?.passage.quote ?? null;
   const copyUnavailable = draft?.highlightId && copyQuote === null ? copyRead.error ? "couldn’t load this passage" : copyRead.data ? "passage unavailable in this reading" : "loading passage…" : copyQuote?.trim() ? null : "this highlight has no text to copy";
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
+  const annotationOwners = useRef<readonly string[]>([]);
   const canAbandon = () => {
     const id = current.current?.draftId;
-    return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
+    return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, draftOwner, noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
   };
   const destination = draft?.destination ?? null;
   const defaultId = destination?.kind === "Resolving" ? draft!.id : null;
@@ -246,8 +251,7 @@ export function useSelectionComposer(input: {
       const id = entry.highlightId;
       if (!id || !seen.current.has(id) || annotations.annotation(id) || entry.operation) continue;
       seen.current.delete(id);
-      if (current.current?.draftId === entry.id) show(null);
-      store.remove(entry.id);
+      store.update(entry.id, value => ({...value, issue: {kind: "Source", message: "this highlight was deleted. your writing is kept."}}));
     }
   }, [annotationState, annotations, show, store]);
 
@@ -259,7 +263,7 @@ export function useSelectionComposer(input: {
         ? { kind: "text", unit: selected.anchor.unit, start: selected.anchor.start, end: selected.anchor.end }
         : { kind: "pdf", page: selected.anchor.page, quads: selected.anchor.quads },
     };
-    const existing = carried ? undefined : store.getSnapshot().find(entry => entry.id === current.current?.draftId &&
+    const existing = carried ? undefined : store.getSnapshot().find(entry =>
       (highlightId ? entry.highlightId === highlightId : entry.highlightId === null && samePassage(entry.passage, passage)));
     if (existing) {
       if (highlightId && !samePassage(existing.passage, passage)) {
@@ -281,7 +285,7 @@ export function useSelectionComposer(input: {
     const sourceRef = annotation?.sourceRef ?? capture?.sourceRef ?? `media:${mediaId}`;
     const entry: ComposerDraft = {
       id: createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
-      capture, highlightId,
+      capture, highlightId, bodyRole: carried?.bodyRole ?? (highlightId ? "question" : "annotation_or_question"), annotationBase: carried?.annotationBase ?? null,
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", message: refused ? "this passage contains text that can’t be captured faithfully yet." : "this passage can’t be annotated here." },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
@@ -302,9 +306,8 @@ export function useSelectionComposer(input: {
   };
 
   const highlightDeleted = useCallback((id: string) => {
-    if (store.getSnapshot().some((entry) => entry.id === current.current?.draftId && entry.highlightId === id)) show(null);
-    for (const entry of store.getSnapshot()) if (entry.highlightId === id) store.remove(entry.id);
-  }, [show, store]);
+    for (const entry of store.getSnapshot()) if (entry.highlightId === id) store.update(entry.id, value => ({...value, issue: {kind: "Source", message: "this highlight was deleted. your writing is kept."}}));
+  }, [store]);
 
   const close = (id: string | null) => {
     if (id !== null) store.remove(id);
@@ -316,7 +319,7 @@ export function useSelectionComposer(input: {
     const entry = opened && get(opened.draftId);
     // a failed frame is retried, never resubmitted under a new identity.
     if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive ||
-      (command.kind === "Save" && entry.highlightId !== null && !bodyHasContent(entry.body)) || entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
+      (command.kind === "Save" && entry.bodyRole === "question") || entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
     const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
@@ -332,8 +335,11 @@ export function useSelectionComposer(input: {
     const id = submitted.highlightId ?? crypto.randomUUID();
     let intent: { openingId: string; attention: number; layer: Layer | null; generation: number } | null = command.kind === "Save"
       ? { openingId: opened.id, attention: attention.current, layer: getInteractionOwner(), generation: getInteractionGeneration() } : null;
+    let createdBody: string | null = null;
     let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = null;
-    const finish = () => {
+    const finish = (receipt?: LocalCommit) => {
+      const created = receipt?.change.resources.find(resource => resource.ref === `highlight:${id}`);
+      if (submitted.highlightId === null && created?.kind === "highlight" && created.body_update !== null) createdBody = created.body_update;
       if (ctx.sessionSignal().aborted) return { id };
       const value = get(entry.id);
       if (!value) return { id };
@@ -341,7 +347,7 @@ export function useSelectionComposer(input: {
       const complete = command.kind === "Save" && unchanged && intent !== null && activeRef.current &&
         current.current?.id === intent.openingId && current.current.draftId === entry.id &&
         attention.current === intent.attention && getInteractionOwner() === intent.layer && getInteractionGeneration() === intent.generation;
-      store.update(entry.id, value => ({ ...value, highlightId: id, capture: null,
+      store.update(entry.id, value => ({ ...value, highlightId: id, capture: null, annotationBase: value.annotationBase ?? createdBody,
         operation: value.operation?.id === operationId ? null : value.operation,
         issue: failed !== null && value.issue === failed ? null : value.issue,
         ...(note && unchanged ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}) }));
@@ -354,9 +360,22 @@ export function useSelectionComposer(input: {
     try {
       if (annotation) {
         if (command.kind === "Highlight") await recolorHighlight(writing, annotation, command.color);
-        else if (note) await attachNote(writing, annotation, note);
-      } else await createHighlight(writing, { id, capture: submitted.capture!,
-          color: command.kind === "Highlight" ? command.color : "yellow", note, source: sourceLabel(submitted.capture!.sourceRef) });
+        else if (command.kind === "Save" && submitted.annotationBase !== null && note) {
+          const clone = hydrateNote(submitted.annotationBase);
+          const vector = Y.encodeStateVector(clone);
+          let delta: Uint8Array;
+          try {applyDraftBody(clone, readBody(clone), note); delta = Y.encodeStateAsUpdate(clone, vector);} finally {clone.destroy();}
+          const document = await writing.openDocument(annotation.ref), origin = Symbol("selection annotation save");
+          await writing.admitWriting({existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);}, prepare: async () => []}).result;
+        }
+
+      } else {
+        const receipt = await createHighlight(writing, { id, capture: submitted.capture!,
+          color: command.kind === "Highlight" ? command.color : "yellow", annotation: note, source: sourceLabel(submitted.capture!.sourceRef) });
+        const created = receipt.change.resources.find(resource => resource.ref === `highlight:${id}`);
+        if (created?.kind !== "highlight" || created.body_update === null) throw new Error("highlight creation receipt has no permanent body");
+        createdBody = created.body_update;
+      }
       return finish();
     } catch (error) {
       if (ctx.sessionSignal().aborted) return null;
@@ -661,6 +680,7 @@ export function useSelectionComposer(input: {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
   return {
+    protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
     draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
     reselection, cancelReselection,
@@ -744,11 +764,12 @@ export function useSelectionComposer(input: {
     },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
-      if (!canAbandon()) return;
+      if (!canAbandon()) return false;
       const returnFocus = current.current?.ownsFocus;
       const id = current.current?.draftId;
       close(id ?? null);
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
+      return true;
     },
     attachmentActive(attached: boolean) {
       if (draft) store.update(draft.id, entry => entry.attachmentActive === attached ? entry : { ...entry, attachmentActive: attached });

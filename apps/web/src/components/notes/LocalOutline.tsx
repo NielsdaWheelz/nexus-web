@@ -69,6 +69,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
  * own collectors. Canonical root metadata survives paging and refresh failure. */
 export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
+  const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
   const inherited = useContext(ResourceBranch);
   const branch = useMemo(() => inherited.ancestors.has(rootRef) ? inherited : {...inherited, ancestors: new Map(inherited.ancestors).set(rootRef, {kind: "root"} as const)}, [inherited, rootRef]);
@@ -100,13 +101,13 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   useLayoutEffect(() => {
     if (!runtime) return;
     const history = new OutlineHistory(runtime, setFailure);
-    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed);
+    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard);
     setMounted({id: crypto.randomUUID(), controller});
     if (apiRef) apiRef.current = controller;
     return () => {if (apiRef?.current === controller) apiRef.current = null; controller.close(); history.close();};
     // Presentation and latent-page props update the mounted session below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, input, rootRef, branch, notify, changed]);
+  }, [runtime, input, rootRef, branch, notify, changed, guard]);
   const presentation = useAuthoredPaneRoot(current?.controller ?? null, configuredField, setFailure);
   const wrap = (node: ReactNode) => <SharedOutline value={current?.controller ?? null}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
   const rootEditor = presentation.rootEditor;
@@ -163,7 +164,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
   const pendingCopyAvailable = error !== null && guard.readCopyText({scopes: [], ownerIds: [pending.owner]}) !== null;
   return <SharedOutline value={controller}>
     <div data-outline-session={pending.value.input.root_id} onFocusCapture={event => {
-      if (event.target instanceof Element && event.target.matches('.ProseMirror')) controller.setFocused(true);
+      if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
       if (!(next instanceof Element && (next.closest(`[data-outline-session="${pending.value.input.root_id}"]`) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
