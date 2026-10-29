@@ -26,7 +26,7 @@ interrupted/mixed-source receipts do not count.
 one `gpt-6-sol/medium` codex turn passed on the repaired web with an
 independent native/ledger read.
 
-anthropic's 20 nexus cells are blocked because the owner explicitly declined
+anthropic's 20 nexus cells were blocked because the owner then declined
 the required standard-retention acknowledgement. the four xai cells lack a key
 and carry an explicit owner waiver, not a pass. actual codex auth refresh is
 unproved. the older `a80087ffb` worker-crash replay receipt proves its own
@@ -42,8 +42,9 @@ background effect/list/undo are tracked separately.
 
 complete the remaining shell-plan denials and background roles,
 and observe actual auth refresh using an independent disposable credential.
-run anthropic's 20 cells only after the owner changes the retention decision.
-keep xai marked waived. use fresh proof code for unfinished journeys; the
+the owner reversed the anthropic refusal on 2026-10-28. current model-cell
+qualification belongs to [the catalog cutover](release-model-catalog.md);
+[xai omissions](model-catalog-xai-live-access.md) replace the older waiver. use fresh proof code for unfinished journeys; the
 tracked disposable files were removed before merge. retain nonsecret receipts
 until the complete contract is met; never relabel blocked or historical
 evidence as a final pass.

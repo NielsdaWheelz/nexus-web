@@ -62,7 +62,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "media": Capability(
         sharing="ResourceGrants",
         readable="media",
-        inspector=InspectorPolicy("MediaEvidence", None, ("Contents", "LinkedItems")),
+        inspector=InspectorPolicy("MediaEvidence", None, ("LinkedItems",)),
         citable_result_type="media",
         app_search_scope=True,
         prompt_render="label",

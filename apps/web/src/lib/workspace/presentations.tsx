@@ -2,6 +2,7 @@
 /** Authored titles come from the local graph, even online. Other resource labels
  * retain their server/catalog owner. Saved visit hints are display evidence only. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -20,7 +21,6 @@ import { recentValueForHref } from "@/lib/panes/paneRouteModel";
 import { normalizeVisitTitleHint, type PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
-import type { OutlineRootMetadata } from "@/components/notes/LocalOutline";
 type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
@@ -28,18 +28,8 @@ export interface PanePresentation { title: string; name:string|null; detail: str
 interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; holdRecent(entries: readonly RecentEntry[]): void; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
-const PublisherContext = createContext<PublishTitle | null>(null);
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
-  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? resource.selection?.quote_exact ?? "", local_date: resource.local_date} : null;
-}
-/** A successful root read supplies title evidence; unknown/error is never absence. */
-export function useNoteRootTitle(ref: string, rootRead: OutlineRootMetadata): void {
-  const publish = useContext(PublisherContext);
-  if (!publish) throw new Error("note root titles require their account provider");
-  useEffect(() => {
-    if (!rootRead.known || rootRead.ref !== ref || rootRead.store_revision === null) return;
-    publish(panePresentationLocatorKey({kind: "resource_ref", ref}), titleFacts(rootRead.resource), rootRead.store_revision);
-  }, [ref, rootRead, publish]);
+  return resource ? {ref: resource.ref, title: resource.title ?? resource.body_text?.split("\n")[0] ?? (resource.kind === "highlight" ? localResourceLabel(resource) : ""), local_date: resource.local_date} : null;
 }
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */
@@ -245,7 +235,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       if (presentation.status === "Ready") setVisitTitleHint({ paneId: pane.id, visitId: visit.id, titleKey: route.titleKey, title: presentation.title });
     }
   }, [state.panes, forVisit, setVisitTitleHint]);
-  return <PublisherContext value={publishLocal}><Context value={value}>
+  return <Context value={value}>
     {locators.map(locator => {
       if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref") return null;
       const key = panePresentationLocatorKey(locator);
@@ -254,6 +244,6 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
         value={locator.kind === "daily_date" ? locator.local_date : locator.ref} usedRevision={[...recent.snapshot?.entries ?? [], ...heldRecent].find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
     })}
     {children}
-  </Context></PublisherContext>;
+  </Context>;
 }
 export function useWorkspacePresentations(): Presentations { const value = useContext(Context); if (!value) throw new Error("workspace presentations require their account provider"); return value; }

@@ -30,7 +30,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "MediaEvidence",
       forks: null,
-      default_surface_order: ["Contents", "LinkedItems"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   library: {

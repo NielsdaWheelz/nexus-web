@@ -30,7 +30,7 @@ from nexus.auth.permissions import (
     highlight_visibility_sql,
     requested_media_ids_cte_sql,
 )
-from nexus.schemas.resource_evidence import CapturedPassageTarget, CapturedQuote
+from nexus.schemas.resource_evidence import CapturedPassageTarget, CapturedQuote, LocationQuote
 from nexus.schemas.retrieval import (
     EpubFragmentOffsetsLocator,
     PdfPageGeometryLocator,
@@ -47,6 +47,7 @@ from nexus.services.media_text_scope import (
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
+from nexus.services.reader_excerpts import contains_table, read_captures, scope_excerpts
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class CurrentPassage:
     where they land (``None`` when they land nowhere provable)."""
 
     owner: ResourceRef
-    quote: CapturedQuote
+    quote: LocationQuote
     locator: dict[str, Any] | None
 
 
@@ -111,8 +112,10 @@ def passage_owner_sql(
 @dataclass(frozen=True, slots=True)
 class ScopedMediaPassage:
     owner: ResourceRef
-    quote: CapturedQuote
+    quote: LocationQuote
     locator: dict[str, Any] | None
+    excerpt_scope: dict[str, Any] | None = None
+    incomplete_tables: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +126,8 @@ class _PassageScopeReads:
     priority: Mapping[UUID, int]
     apparatus: Mapping[UUID, frozenset[UUID]]
     sources: locator_resolver.PassageSourceReads
+    identities: Mapping[UUID, str]
+    partial_tables: Mapping[tuple[UUID, UUID], tuple[tuple[int, int], ...]]
 
     def readings(self, source: UUID, reading: UUID | None) -> list[UUID]:
         return [id for id in self.candidates.get(source, ()) if reading is None or id == reading]
@@ -149,6 +154,25 @@ def _scope_words(
     }
 
 
+def _partial_table_reads(
+    db: Session, readings: Sequence[UUID], fragments: Sequence[UUID]
+) -> dict[tuple[UUID, UUID], tuple[tuple[int, int], ...]]:
+    from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
+    from nexus.services.reader_text_slice import incomplete_table_intervals
+
+    result = {}
+    if not fragments:
+        return result
+    for reading in readings:
+        scope = read_media_text_scope(db, reading)
+        for interval in scope.fragment_intervals:
+            if interval.fragment_id in fragments:
+                result[(reading, interval.fragment_id)] = incomplete_table_intervals(
+                    read_scope_fragment(db, scope, interval)
+                )
+    return result
+
+
 def _scope_source_reads(
     db: Session,
     *,
@@ -164,7 +188,9 @@ def _scope_source_reads(
     """
     source_ids = list({source for source, _ in contexts})
     if not source_ids:
-        return _PassageScopeReads({}, {}, {}, {}, {}, locator_resolver.read_passage_sources(db, []))
+        return _PassageScopeReads(
+            {}, {}, {}, {}, {}, locator_resolver.read_passage_sources(db, []), {}, {}
+        )
     media = (
         {
             row.id: (row.kind, row.source_id, row.source_kind)
@@ -247,6 +273,7 @@ def _scope_source_reads(
         if canonical not in eligible:
             pieces.update(eligible)
     sources = locator_resolver.read_passage_sources(db, [("media", id) for id in pieces])
+    partial_tables = _partial_table_reads(db, list(pieces), fragment_ids)
     return _PassageScopeReads(
         media,
         {source: tuple(ids) for source, ids in candidates.items()},
@@ -254,6 +281,8 @@ def _scope_source_reads(
         priority,
         {owner: frozenset(ids) for owner, ids in apparatus.items()},
         sources,
+        source_identities(db, list(set(canonical_ids + owners))),
+        partial_tables,
     )
 
 
@@ -262,12 +291,13 @@ def scoped_media_passage(
     *,
     viewer_id: UUID,
     source_media_id: UUID,
-    quote: CapturedQuote,
+    quote: LocationQuote,
     locator: dict[str, Any] | None,
     reading_media_id: UUID | None = None,
     apparatus_item_id: UUID | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
     source_reads: _PassageScopeReads | None = None,
+    capture_generation: int | None = None,
 ) -> ScopedMediaPassage | None:
     """One passage uses the same snapshot inputs and resolver as a batched read.
 
@@ -293,6 +323,7 @@ def scoped_media_passage(
         reading_media_id=reading_media_id,
         apparatus_item_id=apparatus_item_id,
         admitted_reading_media_ids=admitted_reading_media_ids,
+        capture_generation=capture_generation,
     )
 
 
@@ -300,11 +331,12 @@ def _resolve_scoped_media_passage(
     reads: _PassageScopeReads,
     *,
     source_media_id: UUID,
-    quote: CapturedQuote,
+    quote: LocationQuote,
     locator: dict[str, Any] | None,
     reading_media_id: UUID | None,
     apparatus_item_id: UUID | None,
     admitted_reading_media_ids: Sequence[UUID] | None,
+    capture_generation: int | None,
 ) -> ScopedMediaPassage | None:
     """Resolve only from explicit snapshot proofs; no database reads or authority fallback."""
     metadata = reads.media.get(source_media_id)
@@ -364,8 +396,13 @@ def _resolve_scoped_media_passage(
         owner_id = source_media_id
     if owner_id is None:
         return None
+    excerpt_scope: dict[str, Any] = (
+        {"kind": "capture"} if owner_id == source_media_id else {"kind": "selection"}
+    )
+    incomplete_tables: tuple[tuple[int, int], ...] = ()
     if locator is not None and locator.get("type") in ("web_text_offsets", "epub_fragment_offsets"):
         fragment_id = UUID(str(locator["fragment_id"]))
+        incomplete_tables = reads.partial_tables.get((owner_id, fragment_id), ())
         start, end = locator["start_offset"], locator["end_offset"]
         if words is None:
             words = reads.words.get((source_media_id, fragment_id))
@@ -380,16 +417,64 @@ def _resolve_scoped_media_passage(
                 key=lambda interval: interval[1] - interval[0],
                 default=None,
             )
-        quote = quote.model_copy(
-            update={
-                "prefix": words[max(bounds[0], start - 64) : start]
-                if words is not None and bounds is not None
-                else None,
-                "suffix": words[end : min(bounds[1], end + 64)]
-                if words is not None and bounds is not None
-                else None,
-            }
+        extent = quote.excerpt.source_extent if isinstance(quote, CapturedQuote) else None
+        proved = (
+            extent is not None
+            and capture_generation is not None
+            and reads.identities.get(source_media_id) == f"g{capture_generation}"
+            and extent.reading_ref in (f"media:{source_media_id}", f"media:{owner_id}")
+            and extent.document_identity
+            == reads.identities.get(assert_resource_ref(extent.reading_ref).id)
+            and extent.fragment_id == str(fragment_id)
         )
+
+        if (
+            owner_id != source_media_id
+            and isinstance(quote, CapturedQuote)
+            and contains_table(quote.excerpt)
+            and not proved
+        ):
+            return None
+        if owner_id != source_media_id and proved and bounds is not None:
+            excerpt_scope = {"kind": "interval", "start_offset": bounds[0], "end_offset": bounds[1]}
+        prefix_limit = (
+            len(quote.prefix or "")
+            if owner_id == source_media_id
+            else max(0, start - bounds[0])
+            if proved and bounds is not None
+            else 0
+        )
+        suffix_limit = (
+            len(quote.suffix or "")
+            if owner_id == source_media_id
+            else max(0, bounds[1] - end)
+            if proved and bounds is not None
+            else 0
+        )
+        if isinstance(quote, CapturedQuote):
+            quote = quote.model_copy(
+                update={
+                    "prefix": quote.prefix[-prefix_limit:]
+                    if quote.prefix and prefix_limit
+                    else None,
+                    "suffix": quote.suffix[:suffix_limit]
+                    if quote.suffix and suffix_limit
+                    else None,
+                }
+            )
+        else:
+            # Current source matching evidence is not a historical capture. Its proved
+            # publication supplies canonical affixes inside this exact reading.
+            quote = quote.model_copy(
+                update={
+                    "prefix": words[max(bounds[0], start - 64) : start]
+                    if words is not None and bounds is not None
+                    else None,
+                    "suffix": words[end : min(bounds[1], end + 64)]
+                    if words is not None and bounds is not None
+                    else None,
+                }
+            )
         locator = {
             **locator,
             "media_id": str(source_media_id),
@@ -400,7 +485,9 @@ def _resolve_scoped_media_passage(
                 "suffix": quote.suffix or "",
             },
         }
-    return ScopedMediaPassage(ResourceRef("media", owner_id), quote, locator)
+    return ScopedMediaPassage(
+        ResourceRef("media", owner_id), quote, locator, excerpt_scope, incomplete_tables
+    )
 
 
 def media_passages(
@@ -411,6 +498,7 @@ def media_passages(
     reading_media_ids: Mapping[str, UUID] | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
     current_passage_reads: Mapping[str, CurrentPassage] | None = None,
+    include_excerpts: bool = True,
 ) -> dict[str, ScopedMediaPassage]:
     """Current canonical media refs, with one authorized bounded reading owner each.
 
@@ -440,6 +528,9 @@ def media_passages(
     }
     from nexus.services.x_source import readable_x_capture_ids_sql
 
+    capture_captures = read_captures(
+        db, [ref.uri for ref in refs if ref.scheme in ("highlight", "passage_anchor")]
+    )
     capture_rows = db.execute(
         text(f"""
             WITH readable AS ({readable_x_capture_ids_sql()}), capture_candidates AS (
@@ -489,6 +580,10 @@ def media_passages(
             SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
             JOIN fragments retained ON retained.id=capture_candidates.fragment_id
             WHERE lo>=0 AND lo<hi AND hi<=char_length(retained.canonical_text)
+              AND (CAST(:audience AS uuid[]) IS NULL OR EXISTS (
+                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:audience AS uuid[])) AS media_id")}) audience_occurrence
+                WHERE audience_occurrence.capture_id=capture_candidates.capture_id
+              ))
               AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=capture_candidates.exact
               AND (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text) IS NULL OR EXISTS (
                 SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text))::uuid AS media_id")}) occurrence
@@ -503,12 +598,30 @@ def media_passages(
             "chunks": ids["content_chunk"],
             "spans": ids["evidence_span"],
             "owners": json.dumps(reading_owners, default=str),
+            "audience": list(admitted_reading_media_ids)
+            if admitted_reading_media_ids is not None
+            else None,
         },
     ).mappings()
     for row in capture_rows:
-        quote = CapturedQuote(
-            exact=row["exact"], prefix=row["prefix"], suffix=row["suffix"], color=row["color"]
-        )
+        uri = f"{row['scheme']}:{row['id']}"
+        fields = {
+            "exact": row["exact"],
+            "prefix": row["prefix"],
+            "suffix": row["suffix"],
+            "color": row["color"],
+        }
+        if row["scheme"] in ("highlight", "passage_anchor"):
+            captured = capture_captures.get(uri)
+            if captured is None:
+                raise AssertionError(
+                    "Canonical authored capture is missing"
+                )  # justify-defect: authored x passages retain their immutable canonical capture.
+            quote = CapturedQuote.model_validate(
+                {**fields, "excerpt": captured["capture"]["value"]["excerpt"]}
+            )
+        else:
+            quote = LocationQuote.model_validate(fields)
         selector = {"exact": quote.exact, "prefix": quote.prefix, "suffix": quote.suffix}
         locator = {
             "type": "x_capture_offsets",
@@ -553,6 +666,16 @@ def media_passages(
     highlight_rows = locator_resolver.read_highlight_reader_sources(
         db, highlight_ids=list(highlights)
     )
+    captures = read_captures(
+        db,
+        [
+            f"highlight:{id}"
+            for id, row in highlight_rows.items()
+            if include_excerpts
+            or row.media_id not in highlights[id]
+            or reading_owners.get(f"highlight:{id}") not in (None, row.media_id)
+        ],
+    )
     highlight_scopes = _scope_source_reads(
         db,
         viewer_id=viewer_id,
@@ -568,8 +691,18 @@ def media_passages(
         ],
     )
     for id, row in highlight_rows.items():
-        quote = CapturedQuote(
-            exact=row.exact, prefix=row.prefix, suffix=row.suffix, color=row.color
+        fields = {
+            "exact": row.exact,
+            "prefix": row.prefix,
+            "suffix": row.suffix,
+            "color": row.color,
+        }
+        quote = (
+            CapturedQuote.model_validate(
+                {**fields, "excerpt": captures[f"highlight:{id}"]["capture"]["value"]["excerpt"]}
+            )
+            if f"highlight:{id}" in captures
+            else LocationQuote.model_validate(fields)
         )
         raw = row.target.model_dump(mode="json") if row.target is not None else None
         locator = None
@@ -611,6 +744,13 @@ def media_passages(
             reading_media_id=reading_owners.get(f"highlight:{id}"),
             admitted_reading_media_ids=highlights[id],
             source_reads=highlight_scopes,
+            capture_generation=(
+                captures.get(f"highlight:{id}", {})
+                .get("capture", {})
+                .get("value", {})
+                .get("publication")
+                or {}
+            ).get("generation"),
         )
         if scoped is not None:
             if scoped.owner.id == row.media_id:
@@ -624,7 +764,9 @@ def media_passages(
                             "suffix": quote.suffix or "",
                         },
                     }
-                scoped = ScopedMediaPassage(scoped.owner, quote, locator)
+                scoped = ScopedMediaPassage(
+                    scoped.owner, scoped.quote, locator, scoped.excerpt_scope
+                )
             out[f"highlight:{id}"] = scoped
     fragments = list(
         db.execute(
@@ -659,7 +801,7 @@ def media_passages(
         ],
     )
     for row in fragments:
-        quote = CapturedQuote(exact=row.canonical_text, prefix=None, suffix=None, color=None)
+        quote = LocationQuote(exact=row.canonical_text, prefix=None, suffix=None, color=None)
         locator = None
         if (
             row.kind in ("video", "podcast_episode")
@@ -698,7 +840,7 @@ def media_passages(
             db,
             viewer_id=viewer_id,
             source_media_id=row.media_id,
-            quote=CapturedQuote(
+            quote=LocationQuote(
                 exact=row.body_text or row.label or "", prefix=None, suffix=None, color=None
             ),
             locator=row.locator,
@@ -712,7 +854,7 @@ def media_passages(
     anchors = list(
         db.execute(
             text(
-                "SELECT id,owner_scheme,owner_id,selector FROM passage_anchors WHERE id=ANY(:ids) AND user_id=:viewer_id AND owner_scheme='media'"
+                "SELECT a.id,a.owner_scheme,a.owner_id,a.selector,p.state #>> '{capture,value,quote_exact}' AS quote_exact FROM passage_anchors a JOIN authored_passages p ON p.account_id=a.user_id AND p.anchor_id=a.id::text WHERE a.id=ANY(:ids) AND a.user_id=:viewer_id AND a.owner_scheme='media'"
             ),
             {"ids": ids["passage_anchor"], "viewer_id": viewer_id},
         )
@@ -725,6 +867,18 @@ def media_passages(
         ],
         admitted_reading_media_ids=admitted_reading_media_ids,
         fragment_ids=[],
+    )
+    captures.update(
+        read_captures(
+            db,
+            [
+                f"passage_anchor:{row.id}"
+                for row in anchors
+                if include_excerpts
+                or row.owner_id not in anchor_scopes.candidates.get(row.owner_id, ())
+                or reading_owners.get(f"passage_anchor:{row.id}") not in (None, row.owner_id)
+            ],
+        )
     )
     anchor_owners: dict[UUID, list[ResourceRef]] = {}
     for row in anchors:
@@ -746,13 +900,24 @@ def media_passages(
         list({(owner.scheme, owner.id) for owners in anchor_owners.values() for owner in owners}),
     )
     located_anchors: list[
-        tuple[Any, CapturedQuote, UUID | None, list[tuple[ResourceRef, dict[str, Any] | None]]]
+        tuple[Any, LocationQuote, UUID | None, list[tuple[ResourceRef, dict[str, Any] | None]]]
     ] = []
     needed_fragments: set[UUID] = set()
     for row in anchors:
         words = row.selector["quote"]
-        quote = CapturedQuote(
-            exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
+        fields = {
+            "exact": row.quote_exact,
+            "prefix": words.get("prefix"),
+            "suffix": words.get("suffix"),
+            "color": None,
+        }
+        quote = (
+            CapturedQuote(
+                excerpt=captures[f"passage_anchor:{row.id}"]["capture"]["value"]["excerpt"],
+                **fields,
+            )
+            if f"passage_anchor:{row.id}" in captures
+            else LocationQuote.model_validate(fields)
         )
         located = []
         for owner in anchor_owners[row.id]:
@@ -773,6 +938,9 @@ def media_passages(
         )
     anchor_scopes = replace(
         anchor_scopes,
+        partial_tables=_partial_table_reads(
+            db, list(anchor_scopes.sources.canonical_media), list(needed_fragments)
+        ),
         words=_scope_words(
             db,
             list({source for _, source, _ in anchor_scopes.media.values()}),
@@ -793,6 +961,13 @@ def media_passages(
                 else requested_reading,
                 admitted_reading_media_ids=admitted_reading_media_ids,
                 source_reads=anchor_scopes,
+                capture_generation=(
+                    captures.get(f"passage_anchor:{row.id}", {})
+                    .get("capture", {})
+                    .get("value", {})
+                    .get("publication")
+                    or {}
+                ).get("generation"),
             )
             if scoped is not None:
                 proved[scoped.owner.id] = scoped
@@ -813,6 +988,24 @@ def media_passages(
     for uri, passage in current.items():
         if passage.owner.scheme == "media":
             out[uri] = ScopedMediaPassage(passage.owner, passage.quote, passage.locator)
+    subjects = [uri for uri in out if isinstance(out[uri].quote, CapturedQuote)]
+    scoped_excerpts = scope_excerpts(
+        [
+            {
+                "excerpt": quote.excerpt.model_dump(mode="json"),
+                "scope": out[uri].excerpt_scope or {"kind": "capture"},
+            }
+            for uri in subjects
+            if isinstance((quote := out[uri].quote), CapturedQuote)
+        ],
+        incomplete_tables=[out[uri].incomplete_tables for uri in subjects],
+    )
+    for uri, frozen in zip(subjects, scoped_excerpts, strict=True):
+        if frozen is None:
+            del out[uri]
+        else:
+            passage = out[uri]
+            out[uri] = replace(passage, quote=passage.quote.model_copy(update={"excerpt": frozen}))
     return out
 
 
@@ -984,7 +1177,7 @@ def _with_words(raw: dict[str, Any], words: str) -> dict[str, Any]:
 
 
 def current_locator(
-    target: CapturedPassageTarget, quote: CapturedQuote | None, reads: LocationReads
+    target: CapturedPassageTarget, quote: LocationQuote | None, reads: LocationReads
 ) -> dict[str, Any] | None:
     """The target's locator if it still names the same normalized words now (I7): text
     offsets by their words (an X post by a unique requote); a note only by a unique
@@ -1170,7 +1363,7 @@ def current_locator(
 def resolve_quote(
     db: Session,
     owner: ResourceRef,
-    quote: CapturedQuote,
+    quote: LocationQuote,
     hint: dict[str, Any] | None,
     source_reads: locator_resolver.PassageSourceReads | None = None,
 ) -> dict[str, Any] | None:
@@ -1296,11 +1489,11 @@ def current_passages(
         else []
     )
     identities = source_identities(db, list({s.owner_id for s in spans if s.owner_kind == "media"}))
-    derived: list[tuple[UUID, ResourceRef, CapturedQuote, CapturedPassageTarget | None]] = []
+    derived: list[tuple[UUID, ResourceRef, LocationQuote, CapturedPassageTarget | None]] = []
     for span in spans:
         owner = assert_resource_ref(f"{span.owner_kind}:{span.owner_id}")
         context = span.selector.get("text_quote", {})
-        quote = CapturedQuote(
+        quote = LocationQuote(
             exact=span.span_text,
             prefix=context.get("prefix"),
             suffix=context.get("suffix"),
@@ -1340,7 +1533,7 @@ def current_passages(
         primary = span_passages.get(chunk.primary_evidence_span_id)
         chunk_passages[chunk.id] = CurrentPassage(
             assert_resource_ref(f"{chunk.owner_kind}:{chunk.owner_id}"),
-            CapturedQuote(exact=chunk.chunk_text, prefix=None, suffix=None, color=None),
+            LocationQuote(exact=chunk.chunk_text, prefix=None, suffix=None, color=None),
             primary.locator if primary and primary.quote.exact == chunk.chunk_text else None,
         )
     out = {
@@ -1360,7 +1553,7 @@ def current_passages(
     )
     for anchor in anchors:
         owner = ResourceRef("media", anchor.media_id)
-        quote = CapturedQuote(exact=anchor.quote, prefix=None, suffix=None, color=None)
+        quote = LocationQuote(exact=anchor.quote, prefix=None, suffix=None, color=None)
         # Resolved onto a span, else a chunk; a span pointer that dangles lands nowhere.
         current = (
             span_passages.get(anchor.span_id)
@@ -1403,3 +1596,11 @@ def current_passages(
         else:
             out[uri] = CurrentPassage(scoped.owner, scoped.quote, scoped.locator)
     return out
+
+
+def captured_quote(passage: CurrentPassage | ScopedMediaPassage) -> CapturedQuote:
+    if not isinstance(passage.quote, CapturedQuote):
+        raise AssertionError(
+            "Full passage capture was not requested"
+        )  # justify-defect: capture callers use the full media_passages read contract.
+    return passage.quote

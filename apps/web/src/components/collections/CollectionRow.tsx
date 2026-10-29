@@ -7,6 +7,8 @@ import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { paneForkLink } from "@/lib/panes/paneForkLink";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import IndexBibliography from "@/components/resources/IndexBibliography";
@@ -60,7 +62,9 @@ export default function CollectionRow({
   const typeLabel = parsed === null ? null : resourceTypeLabel(parsed.scheme).toLowerCase();
   const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
   const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
-  const paneId = usePaneRuntime()?.paneId;
+  const pane = usePaneRuntime();
+  const paneId = pane?.paneId;
+  const touch = useTouchCapable();
   const moreRef = useRef<HTMLButtonElement>(null);
   const primaryControlRef = useRef<HTMLSpanElement>(null);
   const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
@@ -100,7 +104,11 @@ export default function CollectionRow({
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
-    displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
+    navigation={attention !== null && row.kind === "podcast" ? null : {
+      key: `collection:${row.id}:${row.primary.kind === "link" ? row.primary.href : "unavailable"}`,
+      fork: touch && pane && row.primary.kind === "link" && row.primary.href !== null
+        ? paneForkLink({ runtime: pane, target: { href: row.primary.href, labelHint: row.primary.paneLabelHint }, disabledReason: null }) : null,
+    }}
     label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />

@@ -30,7 +30,7 @@ import { AuthoredProvider } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
-import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";

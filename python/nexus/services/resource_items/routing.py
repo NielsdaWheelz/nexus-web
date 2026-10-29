@@ -84,7 +84,11 @@ def resource_activations_for_refs(
         ref for ref in {ref.uri: ref for ref in refs}.values() if ref.uri not in missing_ref_uris
     ]
     scoped = media_passages(
-        db, viewer_id=viewer_id, refs=visible, reading_media_ids=reading_media_ids
+        db,
+        include_excerpts=False,
+        viewer_id=viewer_id,
+        refs=visible,
+        reading_media_ids=reading_media_ids,
     )
     return _activations_from_resolved_passages(
         db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing_ref_uris, scoped=scoped

@@ -479,6 +479,7 @@ class Retrieval:
     roles: tuple[str, ...] = ()
     embedding: Embedding | None = None
     highlight_notes_only: bool = False
+    exclude_viewer_authored: bool = False
 
 
 def _filters(family: str, r: Retrieval) -> str | None:
@@ -761,7 +762,17 @@ def _discovery_predicates(
         "ann_cos": [],
     }
     _, scope_params = _ctes(r)
-    return cell[0] + filters, params | scope_params
+    where = cell[0] + filters
+    if r.exclude_viewer_authored:
+        authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(family)
+        if authored is not None:
+            where += f""" AND NOT EXISTS(SELECT 1 FROM authored_resources authored
+                WHERE authored.account_id=:viewer_id
+                  AND authored.ref='{family}:' || {authored}.id::text)"""
+        elif family == "passage_anchor":
+            where += """ AND NOT EXISTS(SELECT 1 FROM authored_passages authored
+                WHERE authored.account_id=:viewer_id AND authored.anchor_id=pa.id::text)"""
+    return where, params | scope_params
 
 
 def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[UUID, float]]:

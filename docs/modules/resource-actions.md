@@ -29,6 +29,15 @@ selection scope while execution keeps the same catalog command ids.
 
 ## contract
 
+- contextual menus require `navigation: DisplayedNavigation | null`. null retains
+  resource-only behavior; an object identifies the exact displayed target and
+  supplies its optional fork link. the caller owns href/entry/occurrence identity,
+  touch policy and the real pane runtime. displayed navigation suppresses duplicate
+  remote open verbs; same-pane-subject suppression and authoritative device/server
+  precedence remain unchanged. immediate sections appear once, outside resource
+  preparation. refused link activation consumes the gesture and keeps the menu;
+  accepted activation transfers focus through the workspace. modified browser
+  gestures remain native.
 - `GET /resource-items/{ref}/actions` → `ResourceActionsOut {ref, label, activation, missing,
   actions}` (`services/resource_items/actions.py`). each action is `{kind, blocked, …facts}`;
   `blocked` is `PermissionDenied | Locked | Processing | TemporarilyUnavailable |
@@ -51,8 +60,11 @@ selection scope while execution keeps the same catalog command ids.
   schemes to `lib/resources/resourceCapabilities.ts`.
 - web: `useResourceActions(ref)` reads facts for a caller-owned abort signal and returns
   explicit loading, ready or failed state keyed by ref and signal. abort forgets the read;
-  ready projection uses current runtime availability. menu composers supply complete
-  `MenuContent` through `MenuSource`; `ActionMenu` owns preparation and publication.
+  ready projection uses current runtime availability. menu composers supply
+  `MenuContent` through `MenuSource`; prepared sources require an `initial` block
+  for already-known caller navigation/sections, independently of authoritative
+  resource preparation. empty initial preserves prepared-only menus.
+  `ActionMenu` owns preparation and publication.
   published geometry compares raw measurements to its frozen opening snapshot
   within 1/64 css pixel; it never rebases that snapshot. meaning and viewport
   remain exact. rounding buckets cannot define measurement equality.

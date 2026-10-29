@@ -17,7 +17,7 @@ release requirements:
   current wire revision 17 already contains the first break since released
   revision 16; this cut rides that bump. coordinate the backend/web refusal
   window with existing operator quiescence and reload steps.
-- migration 0326 follows 0325 and removes unused history/provenance columns
+- migration 0327 follows 0326 and removes unused history/provenance columns
   and indexes while preserving all query-ranking rows and values. keep the
   normal stopped-writer, backup, ancestry and exact-head release safeguards.
 - rollback cannot revert code alone after dropping columns. fix forward or use
@@ -27,7 +27,7 @@ release requirements:
   windows, same-account sign-out/sign-in, native notification playback with the
   webview suspended, and offline-shelf openings on the paired build.
 
-evidence: migration `0326_nexus_ranking.py` removes four columns and two indexes;
+evidence: migration `0327_nexus_ranking.py` removes four columns and two indexes;
 `services/nexus_ranking.py` retains selection statistics. `AppBridge.kt` adds
 four recent operations, and `NexusPlaybackService.kt` records native use.
 the authored shared worker and startup payload format do not change.
