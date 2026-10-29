@@ -1,7 +1,7 @@
 # mobile companion release prerequisites
 
-release is blocked by large-book connections rendering and downloaded-reader
-qualification. the rendering repair remains a separate change, as approved.
+release is blocked by large-book connections rendering.
+the rendering repair remains a separate change, as approved.
 fresh media now defaults to connections, making this existing cost visible on
 first inspector open.
 
@@ -20,15 +20,17 @@ qualify representative first-open, filtering, source reveal/return and dismissal
 under ordinary action deadlines. preserve row identity, disclosure, focus and
 visit memory. increasing deadlines or accepting a smaller corpus is not a fix.
 
-native core behavior passed on integrated `7b062d659`, lab
-`20261028-194515-525b0839ea68`, paired apk sha256
-`4523024858aab759c4f0ff4f421ce407c568bc8d1939a974ef7ba54378351b59`:
+native behavior passed on `26507b6e7`, lab
+`20261028-201503-b4d99d9ffe6a`, paired apk sha256
+`94c792dd0183ce5c939fbccb868880b5124c2706b4aa3b5e812d0848684e8247`:
 real keyboard-down entry, selected-tab focus, nested hardware back and contents
-destination focus. the owned android 15 emulator used official chromium webview
+destination focus, plus a real download, restart, offline open and ordinary
+touch navigation to the last of 24 contents entries. the owned android 15
+emulator used official chromium webview
 `159.0.8130.0`, snapshot `1729791`, above the documented viewport floor; this is
 not google stable-channel evidence. release must pair the deployed web source
 and rebuilt apk.
 
-[downloaded-reader parity](native-lab-downloaded-reader-unqualified.md) remains
-blocked before offline navigation: the actual download never reached ready.
-resolve that prerequisite and qualify the real downloaded copy before release.
+earlier download-readiness misses remain a
+[lab repeatability follow-up](native-lab-download-readiness.md); the final
+ordinary downloaded-reader journey passed without a debugger or forced input.

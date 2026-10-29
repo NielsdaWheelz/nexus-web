@@ -12,6 +12,8 @@ download independently of catalog coverage; account-menu navigation opens its
 `/media/{id}` and use the global native player. a reading-copy action guards the
 actual document exit, then opens the isolated shelf. its return control opens
 `/downloads`; the shelf has no management list.
+the shelf layout owns its bounded contents scrollport independently of the reading
+area; the shared contents component keeps its natural list height.
 
 saved episodes resolve their package before remote detail reads. a new online
 open can promote the complete saved presentation to the ordinary live pane;

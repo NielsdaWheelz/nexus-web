@@ -45,9 +45,10 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile companion against `18cff5029`: +407 net authored runtime lines
-(576 added, 169 deleted). workspace +117, reader web ui +84, evidence +163,
-visual primitives +37, overlays +5, media core +1; capability preference +0.
+mobile companion against `18cff5029`: +408 net authored runtime lines
+(577 added, 169 deleted). workspace +117, reader web ui +84, evidence +163,
+visual primitives +37, overlays +5, media core +1, offline shelf +1;
+capability preference +0.
 removes narrow-phone inspector displacement, the phone companion sheet branch
 and local-only source disclosure state; extracts one shared failure formatter.
 generated catalogs, docs and temporary cases are excluded; earlier area totals
@@ -650,7 +651,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 · browser recovery · x captures: native captures replace per-post child media | re-slice: x titles |
 | overlays | 2,956 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 · player redesign +62 · dropdown primitives -28 · native control cutover · mobile reader chrome · compact actions +91 · popup sizing +29 · resource menu parity · mobile reader selection +87 · compact passage composer +37 · feedback activity · contained works +2 · highlight popup -2 · reader view menu +98 · mobile companion +5 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,195 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 · collection loading +2 · notes re-slice (server) -45 · durable writing -54 · native control cutover · online-first writing · mobile editor · reader view menu +0 · menu actions +0 · frozen excerpts | keep; #631 with selection composer |
-| offline shelf | 2,635 | reauthored #502 | x threads +45 · reader python ingest -2 · durable writing +242 · shared shelf controls -29 · playback queue +6 · offline episodes +863 · contained works +4 · release lint +6 · pane controls -6 · x captures: capture identities and archived images in reading copies · frozen excerpts | android slice (late) |
+| offline shelf | 2,635 | reauthored #502 | x threads +45 · reader python ingest -2 · durable writing +242 · shared shelf controls -29 · playback queue +6 · offline episodes +863 · contained works +4 · release lint +6 · pane controls -6 · x captures: capture identities and archived images in reading copies · frozen excerpts · mobile companion +1 | android slice (late) |
 | note bodies and editor | 4,571 | reauthored #589 | #631 +121 · #646 +29 · #679 +22 · resource insertion +448 · empty-resource lifecycle +71 · reader connections +111 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 · collection loading +1 · notes re-slice (server) +33 · durable writing +249 · libraries retention +7 · dropdown primitives -20 · native control cutover · offline catalog +2 · online-first writing · mobile editor · highlight note completion +9 · frozen excerpts | keep; #631 with selection composer |
 | generation core | 2,278 | reauthored #547 | x threads +5 · resource-first search -1 · db substrate -1 · contained works +3 · generation controls +93 · selection memory +21 · current catalog +9 | keep (#643 #644 re-sliced by chat web) |
 | metadata research, media intelligence | 3,327 | reauthored #620 | x threads +62 · #670 +49 · native control cutover · compact actions +7 · author editing -10 · resource menu parity · contained works +932 · x captures: synthesis follows primary fragment indexes | keep |
