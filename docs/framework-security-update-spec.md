@@ -1,23 +1,23 @@
 # compatible framework security update
 
-investigated planning draft, 2026-10-28; pr 6 of the release repair scope.
-source inspected: `96a3b7bdf`. published for review at the owner's request. specification only;
-no dependency, lock, application or deployment change has been made.
+release scope 6 contract; investigated 2026-10-28 against `96a3b7bdf`, selected
+for implementation 2026-10-29. the remaining deployed-artifact qualification
+belongs to [release gates](issues/release-framework-security.md).
 
 ## outcome and known evidence
 
 ship a supported compatible framework/dependency cohort containing the applicable
 security fixes while preserving nexus's serving, auth and streaming contracts.
-`apps/web/package.json` pins next and eslint-config-next 15.5.22 and explicitly
-overrides sharp to 0.35.0; the lock resolves that override. updating next alone
-may therefore retain the vulnerable dependency.
+`apps/web/package.json` selects next and eslint-config-next 15.5.28 and explicitly
+overrides sharp to 0.35.5. the previous 0.35.0 override would retain an older
+native dependency even when next changed.
 
-registry metadata currently identifies 15.5.28 as the newest stable 15.5 next
-and eslint-config-next release; sharp's stable release is 0.35.5. the published
+registry metadata checked for implementation identifies the selected compatible
+cohort as next/eslint-config-next 15.5.28 and sharp 0.35.5. the published
 next 15.5.28 package permits sharp `^0.34.3 || ^0.35.5`. its commonjs and esm
 `send-response.js` still contain the singleton-header append behavior that
-nexus patches. source comparison establishes the patch remains needed; no
-install, patch application, build or runtime proof was performed.
+nexus patches. source comparison establishes the patch remains needed; package
+metadata alone does not establish build or runtime correctness.
 
 ## advisory applicability
 
@@ -30,8 +30,8 @@ advisories are linked below; no hostile request was sent to production.
 | avif optimizer execution, fixed 15.5.24 | optimizer permits only local `/oracle-plates/**`; all 36 current plate files are jpg | no identified attacker-supplied avif path; package fix still included |
 | dynamic metadata image parameters, fixed 15.5.27 | metadata images are root `opengraph-image.tsx` and `apple-icon.tsx`; no `generateStaticParams`/`dynamicParams` declarations found | no identified affected dynamic metadata restriction |
 | pages-router ssg/isr cache substitution, fixed 15.5.27 | app router only; production hosted on vercel | advisory's pages-router/self-hosted combination not identified |
-| root catch-all ssg/isr cache poisoning, fixed 15.5.27 | `(authenticated)/[[...path]]/page.tsx` exists; root viewport reads cookies; no explicit ssg/isr declarations found | catch-all premise exists; final build/cache applicability remains unproved, so do not waive it |
-| svg optimizer execution, fixed 15.5.28 | same local jpg allowlist; sharp override 0.35.0 | no identified untrusted svg optimization path; native dependency is nevertheless pinned below the advisory's stated workaround |
+| root catch-all ssg/isr cache poisoning, fixed 15.5.27 | `(authenticated)/[[...path]]/page.tsx` exists; root viewport reads cookies; no explicit ssg/isr declarations found | catch-all premise exists; qualify the release artifact's prerender surface rather than waiving it from source alone |
+| svg optimizer execution, fixed 15.5.28 | same local jpg allowlist; previous sharp override 0.35.0 | no identified untrusted svg optimization path; the selected native dependency includes the stated workaround |
 | server-action denial of service, fixed 15.5.28 | no `use server` declarations found; configuration alone does not create an action | source premise not identified; inspect generated action manifest when building |
 
 ## owners, scope and invariants
@@ -39,7 +39,7 @@ advisories are linked below; no hostile request was sent to production.
 - package/lock/override ownership: `apps/web/package.json`, `apps/web/bun.lock`.
   review `next.config.ts`, middleware/security owners and both production
   serving paths, including the standalone tls/http2 runtime.
-- the local `patches/next@15.5.22.patch` changes response header handling in both
+- the local `patches/next@15.5.28.patch` changes response header handling in both
   commonjs and esm outputs: singleton headers use `setHeader`; cookies and
   supported multi-value headers retain append behavior. do not drop or blindly
   transplant it during upgrade; determine whether upstream now owns the fix.
@@ -49,31 +49,18 @@ advisories are linked below; no hostile request was sent to production.
   review the explicit sharp override and actual platform dependency resolution,
   not only the version requested by next.
 
-## recommended change and remaining decisions
+## selected change and trade-off
 
-pin next and eslint-config-next to 15.5.28; move the existing sharp override to
-0.35.5 and regenerate the lock through the locked package manager. retain an
-explicit sharp floor here because the current override defeats transitive fixes
-and the target next range alone is wider than the inspected 0.35.5 fix. recheck
-official releases when implementation starts; a newer patch requires assessment,
-not an automatic major upgrade.
+next and eslint-config-next move together to 15.5.28; the sharp override moves
+to 0.35.5. retain the explicit sharp floor: next permits older sharp versions
+as well. the locked package manager owns dependency resolution. this is a
+compatible security update, with no major upgrade or broad dependency refresh.
 
-rebase the local patch onto `next@15.5.28`, retaining only its existing two-output
-header correction, then delete the superseded patch entry/file. preserve cookies
-and supported multi-value headers. strongest reason to reject this choice:
-patching framework internals carries maintenance and could conflict with changed
-serving code. address that with exact target-source review and focused serving
-proof; retiring the patch now would restore an observed defect.
-
-the smallest decisive experiment is a frozen install/build in a dedicated
-checkout, inspect resolved sharp/platform packages and generated prerender/action
-manifests, then exercise singleton/multiple headers and a compressed streaming
-response through the canonical tls/http2 runtime. that proves the risky boundary
-before replaying broader user journeys. no broad dependency refresh is needed.
-
-remaining unknowns: the exact generated static/action surface, native sharp
-packaging on deployed linux, and final patch/build/runtime behavior. package
-metadata and source comparison do not establish any of those passes.
+the local patch moves to `next@15.5.28` byte for byte and the superseded entry
+and filename are removed. patching framework internals carries maintenance cost
+and can conflict with changed serving code. exact target-source review and
+focused serving qualification justify retaining the narrow correction; retiring
+it while both upstream writers still append singleton headers restores the defect.
 
 ## acceptance, costs and dependencies
 
@@ -85,9 +72,9 @@ preserve source/version identity. follow [verification rules](local-rules/testin
 
 costs: dependency churn, possible patch maintenance and targeted regression work.
 this pr can proceed independently; qualification binds to the final integrated
-release. no framework patch is claimed applied or tested by this stub.
+release. proof and its limits belong in the pr body, rather than this contract.
 
-issue owner: [security assessment](issues/next-pinned-security-patches.md).
+issue owner: [release qualification](issues/release-framework-security.md).
 primary sources checked in the investigation:
 [next package](https://registry.npmjs.org/next/15.5.28),
 [sharp package](https://registry.npmjs.org/sharp/0.35.5),

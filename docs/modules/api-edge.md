@@ -157,9 +157,16 @@ server components: callFastAPI ────────────────�
   `telemetry/client-defects` (a beacon: malformed json is 400; the bff adds
   `release` and names its own wire).
 
-the pinned next route-writer patch backports [upstream #98044](https://github.com/vercel/next.js/pull/98044):
+next and eslint-config-next are pinned to 15.5.28; the explicit sharp override
+is 0.35.5. retain that floor when updating the framework: its permitted sharp
+range also admits older native dependencies.
+
+the pinned next route-writer patch, `patches/next@15.5.28.patch`, backports [upstream #98044](https://github.com/vercel/next.js/pull/98044):
 ordinary headers retain scalar values so existing compression can negotiate json.
 cookie splitting, declared multivalue headers and stream restrictions are unchanged.
+both published commonjs and esm writers still require the correction. keep the
+patch limited to those writers until upstream supplies the same behavior;
+framework upgrades must inspect both outputs before rebasing or removing it.
 
 ## python (`python/nexus`)
 
