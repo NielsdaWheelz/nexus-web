@@ -319,8 +319,8 @@ full search treats commands and refs as content.
 
 ordinary find shows optional best match, actions, resources, saved passages and
 inside sources. home caps are 4/4/2/2; promotion consumes its home slot and unused
-capacity is not reassigned. explicit intent wins promotion, then an exact canonical
-local label, then an exact resource name. aliases admit suggestions but do not
+capacity is not reassigned. explicit intent wins promotion, then an exact visible
+action label, then an exact resource name. aliases admit suggestions but do not
 beat resource names. local fuzzy matching and frecency stay within navigation.
 query actions sit outside these budgets and never become automatic defaults.
 
