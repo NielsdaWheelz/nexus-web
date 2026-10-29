@@ -1,7 +1,7 @@
 # release highlight excerpts
 
-implementation qualified before main integration; combined format-3 qualification
-in progress; paired release pending.
+implementation and combined format-3 migration/device qualification complete;
+paired production release pending.
 binding cutover for
 [highlight excerpts](../modules/highlight.md#frozen-excerpts); one user, all devices paired.
 no release or data mutation is authorized by creating this record.
