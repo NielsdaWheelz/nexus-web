@@ -132,12 +132,30 @@ prevent one group from erasing another. Quick Actions are Quick Note, Today,
 New Chat, New Page, New Library, and Import.
 the Open group always ends with Manage panes, including a one-pane workspace.
 
-Typing removes blank groups. The shared composer admits at most eight owned
-Results, then reuses the `QuickActions` section labelled **Do with query** for
-Ask Nexus, Add to Today, Browse, Create, and See All. Those actions remain
-outside the Results cap. Reserved verbs and slash aliases compile to explicit
-typed intent; incomplete or unknown command text remains retrieval. Selection
-is always required.
+ordinary search shows optional best match, actions, resources, saved passages and
+inside sources, with home caps 4/4/2/2. promotion consumes its home slot. query
+continuations remain outside those caps and are never automatic defaults.
+
+the command registry owns exact case-insensitive slash tokens followed by end of
+input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b` select note,
+page, chat, library, import and browse. commands show their prepared action and a
+deliberate literal-search escape. `/` and unknown heads show all six commands,
+without a default; selecting one starts it empty. unknown text is never attached
+to a guessed command or automatically sent to corpus search. unavailable preparation retains
+the input and reason. import draft validation and capacity belong to add.
+
+nonempty quick-note activation says `save note to today` and commits locally;
+empty quick note opens insertion. page/chat/library/import/browse open their
+existing draft or chooser and never submit it implicitly. natural-language
+recognition is unchanged: `import policy` searches; `/i policy` opens an import
+draft. literal search uses outer-trimmed input without interpreting filters.
+
+navigation action labels describe their outcome: `open libraries`, `search
+people`. the latter opens the existing empty people search and describes its
+scope as `authors and contributors`; it remains distinct from any resource named
+authors. match visible action labels and canonical names/keywords. resource
+labels and exact activations remain authoritative. generic place/command badges
+are omitted; meaningful hints and argument previews remain on both surfaces.
 
 A result has one required primary label. It may add only facts already carried
 by its projection, in this hierarchy:
@@ -157,39 +175,35 @@ query invokes a provider-spending bare All query. Browse candidates open owned
 content directly or a read-only Preview. They are never silently ingested.
 
 desktop uses a combobox with a one-column grid popup. each candidate cell
-contains its primary region and a native options or close control. the query
-automatically highlights the first eligible existing result, excluding create,
-import, ask and query actions. the focused input exposes the same candidate enter
-accepts in both modes; raw query/scope changes immediately invalidate old actions.
-reconciliation and scoped reveal use the shared collection owners; grid keyboard
-commands stay here. the query
-starts in editing mode; unmodified up/down with rows enters browsing using the
-existing clamped order. text, composition, caret/selection editing and query
-pointerdown restore editing without taking native keys. focus restoration and
-hover preserve mode. mac control+a/b/e/f/n/p retain native caret/selection
-movement and restore editing. enter always invokes the selected primary action; shift
-retains the same destination/write and requests a fresh adjacent pane.
+contains its primary region and a native options or close control. the controller
+owns initial selection: an available explicit intent first, otherwise an eligible
+existing result. command lookup has no default. preserve established selection
+and exact target; deliberate movement pins the visible prefix. raw query/scope
+changes invalidate preceding actions immediately.
 
-in browsing mode, plain space opens the selected resource's options on release.
-the press captures one mounted trigger and never retargets: another key, text,
-pointerdown, selection/trigger replacement, composition or page change cancels
-its target; repeats remain consumed until release, and blur clears ownership.
-release clears ownership before checking the original trigger, root, mode,
-selection, query focus and interaction owner. a close-only or absent secondary
-does nothing. there is no key relay or global keyup listener.
+both query inputs invoke the controller's submit capability. desktop accepts its
+admitted selected row; fresh absence submits parsed intent/full search. a retired
+same-context selection consumes enter and announces `selection no longer available`
+until navigation or query change. disabled targets explain their refusal without
+fallthrough. mobile input submits parsed intent/full search regardless of prior
+row selection; native row buttons activate their exact row. lookup without a
+selection only gives guidance. shift preserves the operation and requests its
+existing fresh-pane disposition. repeat and composition never activate.
 
-only the selected secondary is a result tab stop. secondary focus selects that
-row, and hover can select only while the query owns focus. direct close focuses
-the query before its row disappears; live removal repairs only lost focus and
-yields to surviving controls or overlays. native enter/space activates the
-secondary's named action. menus own their state and return-to-query behavior;
-opening/closing options preserves query, selected row and mode.
-`aria-activedescendant` names only the candidate while browsing with query focus.
-one contextual help line names available gestures, adding `space options` only
-for a selected resource menu. readable key descriptions accompany the query and
-secondary controls; soft selection, browsing and native focus remain distinct.
-mobile keeps sibling action buttons and 48 px targets. renderers never infer
-command, ranking, target or workflow meaning from copy or identifiers.
+plain up/down browses the clamped result order and reveals only its scrollport.
+space always edits the input; home/end and modified editing retain native meaning.
+there is no editing/browsing mode or space-release command. only the selected
+secondary is a result tab stop; tab followed by native enter/space operates it.
+secondary focus selects its row. hover selects only while the query owns focus.
+direct close focuses the query before removal; live removal repairs only lost
+focus and yields to surviving controls/overlays. menus retain query and selection.
+`aria-activedescendant` names the mounted candidate whenever the query has focus.
+
+lookup guidance is visible outside the grid/list and uses the existing polite
+status owner. command/lookup views omit the mobile use-text menu; literal search
+is an explicit row. mobile keeps sibling action buttons and 48 px targets.
+renderers project prepared content and forward gestures; they do not interpret
+commands, choose defaults or repair navigation.
 
 browse and create choices retain their initiating opening intent until landing;
 shifted confirmation upgrades it, and ordinary confirmation cannot downgrade it.

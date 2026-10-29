@@ -19,11 +19,11 @@ function searchOptionId(listId: string, key: string): string {
   return `${listId}-option-${encodeURIComponent(key)}`;
 }
 
-export function reconcileSearchActive({ context, admitted, options, firstExistingKey, active }: {
+export function reconcileSearchActive({ context, admitted, options, initialKey, active }: {
   readonly context: string;
   readonly admitted: boolean;
   readonly options: readonly SearchOption[];
-  readonly firstExistingKey: string | null;
+  readonly initialKey: string | null;
   readonly active: SearchActive;
 }): SearchActive {
   const current = active?.context === context ? active : null;
@@ -32,8 +32,8 @@ export function reconcileSearchActive({ context, admitted, options, firstExistin
     return current.key === null || options.some(option => option.key === current.key)
       ? current : { context, key: null };
   }
-  return firstExistingKey !== null && options.some(option => option.key === firstExistingKey && option.disabledReason === null)
-    ? { context, key: firstExistingKey } : null;
+  return initialKey !== null && options.some(option => option.key === initialKey && option.disabledReason === null)
+    ? { context, key: initialKey } : null;
 }
 
 export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
