@@ -544,9 +544,8 @@ export default function Companion(props: {
     focusAfterMove.current = null;
     if (previous?.isConnected && container.contains(previous) && !previous.closest("[hidden], [inert]"))
       return previous;
-    return container.querySelector<HTMLElement>(
-      '[role="tab"][aria-selected="true"], [data-companion-close="true"]',
-    );
+    return container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?? container.querySelector<HTMLElement>('[data-companion-close="true"]');
   };
   const returnFocusTo = () => {
     const target = chrome.returnFocus;
