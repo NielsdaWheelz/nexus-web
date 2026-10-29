@@ -97,9 +97,10 @@ not proof that every pool should be warmed simultaneously or that its values fit
 
 ordinary checkout currently waits up to 5 seconds, control checkout independently
 up to 250 milliseconds; readiness starts cancellation at its existing 1.9-second
-work deadline. frozen `4ceb03555` search checkout consumes its caller's original
-absolute allowance; [separating queue wait from admitted execution](issues/search-request-watchdog-coexistence.md)
-is an open implementation gap under the reliability contract.
+work deadline. browser search refuses occupied capacity before embedding;
+current client intent owns pending deferral and retry outside execution time.
+[deployed capacity and transport ceilings](issues/search-request-watchdog-coexistence.md)
+remain open release gates, separate from the repaired queue/execution ownership.
 these are operational watchdogs, not product latency acceptance or permission to exceed a
 caller/hosting ceiling.
 engine-owned native setup separately uses a two-second connect timeout per
