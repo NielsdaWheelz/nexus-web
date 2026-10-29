@@ -28,7 +28,7 @@ import { deleteResource } from "@/lib/resourceGraph/links";
 import type { HighlightColor } from "@/lib/documentReader/model";
 
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { LocalCommitError } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { normalizeQuote } from "@nexus/authored/identity";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useShareController } from "@/lib/sharing/controller";
@@ -111,7 +111,8 @@ export function useAnnotationVerbs(input: {
   const { reader, mediaId, sourceLabel, active, isMobile, store, marks, openEvidence } = input;
   const writing = useWritingRuntime();
   const [notice, setNotice] = useState<{content: FeedbackContent; actions?: FeedbackActions} | null>(null);
-  const showNotice = useCallback((content: FeedbackContent | null) => setNotice(content === null ? null : {content}), []);
+  const noticeOwner = useRef(0);
+  const showNotice = useCallback((content: FeedbackContent | null) => {noticeOwner.current++; setNotice(content === null ? null : {content});}, []);
   const { closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
@@ -176,18 +177,36 @@ export function useAnnotationVerbs(input: {
   useEffect(() => () => { clearQuiet(); candidate.current = null; activation.current = null; currentBounds.current = null; activeRef.current = false; }, [clearQuiet]);
 
   const fail = useCallback(
-    (error: unknown, title: string) => {
+    (error: unknown, title: string, retry?: () => Promise<unknown>): void => {
       if (error instanceof CommandTooLargeError) { showNotice({ tone: "Warning", title: "this selection is too large to save. select a shorter passage." }); return; }
       if (handleUnauthenticatedApiError(error)) return;
       // an uncommitted local frame is retried from the pane's writing error notice.
       if (error instanceof LocalCommitError) return;
+      if (isAuthoredStorageFailure(error)) {
+        const owner = ++noticeOwner.current;
+        const content: FeedbackContent = {tone: "Warning", title};
+        let retrying = false;
+        const attempt = () => {
+          if (!retry || retrying || noticeOwner.current !== owner) return;
+          retrying = true;
+          setNotice({content, actions: [{label: "retry", busy: true, onClick: attempt}]});
+          void retry().then(() => setNotice(current => current?.content === content ? null : current), failure => {
+            retrying = false;
+            if (failure instanceof LocalCommitError) {setNotice(current => current?.content === content ? null : current); return;}
+            if (isAuthoredStorageFailure(failure) && noticeOwner.current !== owner) return;
+            fail(failure, title, retry);
+          });
+        };
+        setNotice({content, actions: retry ? [{label: "retry", onClick: attempt}] : undefined});
+        return;
+      }
       if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
       showNotice({ tone: "Danger", title, requestId: error.requestId });
     },
     [showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail, onFailure: (content, actions) => setNotice({content, actions}) });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail, onFailure: (content, actions) => {noticeOwner.current++; setNotice({content, actions});} });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 
@@ -254,10 +273,19 @@ export function useAnnotationVerbs(input: {
     const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
     showBounds(submitted);
     const owns = () => activeRef.current && currentBounds.current?.id === submitted.id;
-    void resizeHighlight(writing, admitted.annotation, capture).then(
-      () => { if (owns()) showBounds(null); },
-      (error: unknown) => { if (owns()) showBounds(error instanceof CommandTooLargeError ? { ...session, phase: "Selecting", issue: "this selection is too large to save. select a shorter passage." } : null); fail(error, "highlight wasn’t changed"); },
-    );
+    showNotice(null);
+    const resize = () => {
+      if (owns()) showBounds(submitted);
+      return resizeHighlight(writing, admitted.annotation, capture).then(
+        () => {if (owns()) showBounds(null);},
+        (error: unknown) => {
+          if (owns()) showBounds(error instanceof CommandTooLargeError ? {...session, phase: "Selecting", issue: "this selection is too large to save. select a shorter passage."}
+            : isAuthoredStorageFailure(error) ? {...session, phase: "Selecting", issue: null} : null);
+          throw error;
+        },
+      );
+    };
+    void resize().catch(error => fail(error, "highlight wasn’t changed", resize));
   };
   const ensureSelection = async (subject: MobileSelection) => {
     const result = await composer.ensureCapture(subject.capture);
@@ -283,11 +311,10 @@ export function useAnnotationVerbs(input: {
   const remove = useCallback((id: string) => {
     const annotation = store.annotation(id);
     if (!annotation || !writing) return;
-    void deleteResource(writing, { ref: annotation.ref }).then(
-      () => { setFocused((current) => current === id ? null : current); highlightDeleted(id); },
-      (error: unknown) => fail(error, "highlight wasn’t deleted"),
-    );
-  }, [fail, highlightDeleted, store, writing]);
+    showNotice(null);
+    const remove = () => deleteResource(writing, {ref: annotation.ref}).then(() => {setFocused(current => current === id ? null : current); highlightDeleted(id);});
+    void remove().catch(error => fail(error, "highlight wasn’t deleted", remove));
+  }, [fail, highlightDeleted, store, writing, showNotice]);
 
   // Resource actions target this visit; no other mounted reader may consume them.
   const { delivery, claim } = usePaneEntryDelivery();

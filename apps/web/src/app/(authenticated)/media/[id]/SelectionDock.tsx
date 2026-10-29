@@ -422,6 +422,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           </PaneReturnVisitScope>
         </div>
 
+        {failed?.phase === "Preparation" ? <FeedbackFailure scope="Local" occurrence={failed} content={{tone: "Warning", title: failed.message}} announcement="Polite"
+          actions={hasNote ? [{label: "retry saving", busy: saving, onClick: failed.retry}, {label: "copy unsaved writing", onClick: () => copy(draft.body.body_text)}] : [{label: "retry saving", busy: saving, onClick: failed.retry}]} /> : null}
         {copying.notice}
         {canQuote ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
           {commandRecovery?.feedback ? <FeedbackFailure scope="Local" occurrence={commandRecovery.occurrence} announcementOccurrence={commandRecovery.feedback} content={commandRecovery.feedback} announcement="Polite"
@@ -452,6 +454,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
+    {composer.hiddenPreparationFailures.map(failure => <FeedbackFailure key={failure.id} scope="Local" occurrence={failure.issue}
+      content={{tone: "Warning", title: failure.issue.message}} announcement="Polite"
+      actions={failure.text !== null ? [{label: "retry saving", busy: failure.busy, onClick: failure.issue.retry}, {label: "copy unsaved writing", onClick: () => {if (failure.text !== null) copy(failure.text);}}]
+        : [{label: "retry saving", busy: failure.busy, onClick: failure.issue.retry}]} />)}
+    {draft === null ? copying.notice : null}
     {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} canQuote={canQuote} sharePiece={sharePiece} /> : null}
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}

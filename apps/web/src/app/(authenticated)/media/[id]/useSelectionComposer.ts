@@ -38,7 +38,7 @@ import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } fr
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
-import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure, type LocalCommit } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { bodyHasContent, emptyBody } from "@nexus/authored/body";
@@ -74,7 +74,7 @@ export function useSelectionComposer(input: {
   sourceLabel: (sourceRef: string) => SourceLabel | null;
   active: boolean;
   isMobile: boolean;
-  onError: (error: unknown, title: string) => void;
+  onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
   onFailure: (content: FeedbackContent, actions: FeedbackActions) => void;
 }) {
   const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError, onFailure } = input;
@@ -315,11 +315,11 @@ export function useSelectionComposer(input: {
   };
 
   /** One local command for the opened draft; the input stays until its commit is durable. */
-  const submit = async ({ command, opened }: { command: Command; opened: Opening | null }): Promise<{ id: string } | null> => {
+  const submit = async ({ command, opened, recovery = null }: { command: Command; opened: Opening | null; recovery?: Extract<ComposerDraft["issue"], {kind: "Failed"}> | null }): Promise<{ id: string } | null> => {
     const entry = opened && get(opened.draftId);
     // a failed frame is retried, never resubmitted under a new identity.
     if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive ||
-      (command.kind === "Save" && entry.bodyRole === "question") || entry.issue !== null || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
+      (command.kind === "Save" && entry.bodyRole === "question") || (entry.issue !== null && entry.issue !== recovery) || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
     const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
@@ -330,13 +330,13 @@ export function useSelectionComposer(input: {
     }
     const submitted = entry;
     const operationId = createRandomId();
-    store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind }, issue: null }));
+    store.update(entry.id, value => ({ ...value, operation: { id: operationId, kind: command.kind }, issue: recovery }));
     const note = command.kind === "Save" && bodyHasContent(submitted.body) ? submitted.body : null;
     const id = submitted.highlightId ?? crypto.randomUUID();
     let intent: { openingId: string; attention: number; layer: Layer | null; generation: number } | null = command.kind === "Save"
       ? { openingId: opened.id, attention: attention.current, layer: getInteractionOwner(), generation: getInteractionGeneration() } : null;
     let createdBody: string | null = null;
-    let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = null;
+    let failed: Extract<ComposerDraft["issue"], { kind: "Failed" }> | null = recovery;
     const finish = (receipt?: LocalCommit) => {
       const created = receipt?.change.resources.find(resource => resource.ref === `highlight:${id}`);
       if (submitted.highlightId === null && created?.kind === "highlight" && created.body_update !== null) createdBody = created.body_update;
@@ -385,7 +385,7 @@ export function useSelectionComposer(input: {
       }
       if (error instanceof LocalCommitError) {
         intent = null;
-        failed = { kind: "Failed", message: LOCAL_FAILURE, retry: () => {
+        failed = { kind: "Failed", phase: "Commit", message: LOCAL_FAILURE, retry: () => {
           const value = get(entry.id);
           if (!value || value.issue !== failed || value.operation) return;
           if (command.kind === "Save" && current.current?.id === opened.id && activeRef.current &&
@@ -402,7 +402,16 @@ export function useSelectionComposer(input: {
         void error.completion.then(finish, () => undefined);
         return null;
       }
-      // nothing committed: the input stays and the same gesture may run again.
+      if (isAuthoredStorageFailure(error)) {
+        failed = recovery?.phase === "Preparation" ? recovery : {kind: "Failed", phase: "Preparation", message: "couldn’t prepare this passage", retry: () => {
+          const value = get(entry.id);
+          if (!value || value.issue !== failed || value.operation) return;
+          void submit({command, opened, recovery: failed});
+        }};
+        store.update(entry.id, value => value.operation?.id === operationId ? {...value, operation: null, issue: failed} : value);
+        return null;
+      }
+      // Nothing committed; unexpected failures retain their defect boundary.
       store.update(entry.id, value => value.operation?.id === operationId ? { ...value, operation: null } : value);
       onError(error, "couldn’t save this passage");
       return null;
@@ -664,6 +673,8 @@ export function useSelectionComposer(input: {
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
     draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    hiddenPreparationFailures: drafts.flatMap(entry => entry.id !== draft?.id && entry.issue?.kind === "Failed" && entry.issue.phase === "Preparation"
+      ? [{id: entry.id, issue: entry.issue, busy: entry.operation !== null, text: bodyHasContent(entry.body) ? entry.body.body_text : null}] : []),
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
     reselection, cancelReselection,
     reselect() {
@@ -714,9 +725,12 @@ export function useSelectionComposer(input: {
           // a captured passage target materializes its own binding in the same command as the link.
           void submit({ command: { kind: "Ensure" }, opened: current.current }).then(async result => {
             if (!result) return;
-            const prepared = await prepareTarget(writing, target);
-            await createLink(writing, { source_ref: `highlight:${result.id}`, target_ref: prepared.ref, source_label: null,
-              target_label: target.kind === "resource" ? item.label : null, after: null, prelude: prepared.intents });
+            const link = async () => {
+              const prepared = await prepareTarget(writing, target);
+              await createLink(writing, {source_ref: `highlight:${result.id}`, target_ref: prepared.ref, source_label: null,
+                target_label: target.kind === "resource" ? item.label : null, after: null, prelude: prepared.intents});
+            };
+            await link().catch(error => onError(error, "couldn’t link this passage", link));
           })
             .catch((error: unknown) => {
               if (!(error instanceof LocalCommitError)) onError(error, "couldn’t link this passage");

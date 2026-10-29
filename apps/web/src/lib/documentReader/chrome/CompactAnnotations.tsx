@@ -81,7 +81,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     [doc, focused, state.marks]);
 
   /** Runs one local commit; the typed annotation clears only once its commit is durable. */
-  const commit = (run: () => Promise<unknown>, done: () => void) => {
+  const commit = (run: () => Promise<unknown>, done: () => void, recovery: typeof issue = issue): void => {
     const submitted = {open, revision: draft.read().revision};
     let failed = false;
     const finish = () => {
@@ -93,9 +93,12 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     setBusy(true);
     void run().then(finish, (error: unknown) => {
       failed = true;
-      if (error instanceof LocalCommitError) {void error.completion.then(finish, () => {}); return;}
+      if (error instanceof LocalCommitError) {setIssue(current => current === recovery ? null : current); void error.completion.then(finish, () => {}); return;}
       if (error instanceof CommandTooLargeError) {setIssue({title: "this selection is too large to save. select a shorter passage.", retry: null}); return;}
-      if (isAuthoredStorageFailure(error)) setIssue({title: "couldn’t save this annotation", retry: () => commit(run, done)}); else setDefect({error});
+      if (isAuthoredStorageFailure(error)) {
+        const failure = {title: "couldn’t save this annotation", retry: () => commit(run, done, failure)};
+        setIssue(failure);
+      } else setDefect({error});
     }).finally(() => {if (currentInput.current.mounted) setBusy(false);});
   };
   const sourceChanged = open?.kind === "selection" && (doc === null || open.identity !== doc.identity);
