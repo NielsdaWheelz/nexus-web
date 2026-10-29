@@ -70,7 +70,7 @@ export function useLinkTargets(
     current,
     querySettled: raw === settled,
     minimum: query.length < 2,
-    loading: admitted && (raw !== settled || local.data === null && local.error === null),
+    loading: admitted && (raw !== settled || local.data === null && local.error === null || list.running !== null),
     localError: local.error,
     localOccurrence: local.occurrence,
     localPending: local.pending,

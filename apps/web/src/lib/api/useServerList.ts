@@ -114,6 +114,8 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
+  /** Manual recovery leaves a rejected cursor for an explicit fresh search. */
+  readonly cursorRecovery?: "manual";
   /** Whole-walk budget; capacity mode counts successful page execution only. Null means to the end. */
   readonly prefixTimeoutMs?: (pages: number | null) => number;
   readonly catalog?: CatalogRead<ListPage<T, M>>;
@@ -182,7 +184,7 @@ function useList<T, M>(
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
-  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
+  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:cursor=${input.cursorRecovery ?? "fresh"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
     if (latest.current.key === null) return;
     waiters.current.push({ resolve() {}, reject() {} });
     run("Refetch");
@@ -266,7 +268,7 @@ function useList<T, M>(
           return await walk();
         } catch (error) {
           // Restart from the source, never from a cached first page.
-          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.retry !== undefined) throw error;
+          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.cursorRecovery === "manual") throw error;
           restarted = true;
           return walk();
         }
@@ -306,7 +308,7 @@ function useList<T, M>(
         }
         const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
           op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
-        const pages = toEnd ? null : op === "More" && latest.current.retry !== undefined ? 1
+        const pages = toEnd ? null : op === "More" && latest.current.cursorRecovery === "manual" ? 1
           : op === "More" ? wantPages + 1 : wantPages;
         const timeoutMs = latest.current.prefixTimeoutMs?.(pages) ?? latest.current.timeoutMs;
         remainingExecutionMs = timeoutMs;
@@ -440,7 +442,7 @@ function useList<T, M>(
     active,
     revalidate,
     retry: () => {
-      if (input.retry !== undefined && failure?.error.code === "E_INVALID_CURSOR") return;
+      if (input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
         run("More");
       } else if (failure !== null) {

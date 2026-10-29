@@ -124,7 +124,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     key: enabled ? lexicalGeneration.key : null,
     stale: visit.adopted?.key === lexicalGeneration.key ? selectedStamp("lexical") : lexicalGeneration.stamp,
     pageSize: 20, drain: false, retainPreviousKey: true, active: active && enabled, visit: LEXICAL_VISIT,
-    retry: "capacity", readPolicy: "search:lexical-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
+    retry: "capacity", cursorRecovery: "manual", readPolicy: "search:lexical-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
       const page = await fetchSearchResultPage(query, { phase: "lexical", limit, cursor, signal });
@@ -135,7 +135,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     key: hybridWanted ? hybridGeneration.key : null,
     stale: visit.adopted?.key === hybridGeneration.key ? selectedStamp("hybrid") : hybridGeneration.stamp,
     pageSize: 20, drain: false, retainPreviousKey: true, active: active && hybridWanted, visit: HYBRID_VISIT,
-    retry: "capacity", readPolicy: "search:hybrid-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
+    retry: "capacity", cursorRecovery: "manual", readPolicy: "search:hybrid-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
       const page = await fetchSearchResultPage(query, { phase: "hybrid", limit, cursor, signal });

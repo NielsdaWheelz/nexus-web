@@ -19,6 +19,7 @@ from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,10 @@ _RETIREMENT_CONFIRMATION_SECONDS = 10.0
 
 class SearchAdmissionBusy(Exception):
     """Request/background admission refused before computation without waiting."""
+
+
+class SearchExecutionFailed(Exception):
+    """An admitted HTTP search could not execute or confirm retirement."""
 
 
 class SearchBudgetExpired(TimeoutError):
@@ -213,6 +218,10 @@ async def search_session_async(
             except SearchBudgetExpired as exc:
                 outcome = "computation_budget"
                 raise SearchBudgetExpired(phase) from exc
+            except PoolTimeout as exc:
+                if purpose == "request" and phase == "read":
+                    raise SearchExecutionFailed() from exc
+                raise
             except TimeoutError as exc:
                 if budget.expired():
                     outcome = "computation_budget"
@@ -265,6 +274,12 @@ async def search_session_async(
                 except BaseException as error:
                     outcome = "retirement_unconfirmed"
                     if primary_error is None:
+                        if (
+                            purpose == "request"
+                            and phase == "read"
+                            and isinstance(error, PoolTimeout)
+                        ):
+                            raise SearchExecutionFailed() from error
                         raise
                     # justify-ignore-error: retain secondary cleanup failure; never mask the read.
                     primary_error.add_note(
