@@ -12,6 +12,7 @@ import {
   expectBoolean,
   expectCanonicalRfcUuid,
   expectExactRecord,
+  expectOrderRevision,
   expectInteger,
   expectOneOf,
   expectRecord,
@@ -25,25 +26,17 @@ export type UploadAnswer = ApiJson<"/extension/captures", "post">["data"];
 export type ExtensionSession = Schema<"ExtensionSessionOut">;
 export type CaptureTarget = Schema<"CaptureTargetOut">;
 
-function revision(raw: unknown): string {
-  const value = expectString(raw, "revision");
-  if (!/^[1-9][0-9]{0,18}$/.test(value) || BigInt(value) > BigInt("9223372036854775807")) {
-    throw new TypeError("revision must be an exact positive bigint decimal string");
-  }
-  return value;
-}
-
 /** This independently installed client accepts only the current guarded wire. */
 function destinations(raw: unknown): Schema<"LibraryDestinationsOut"> {
   const value = expectExactRecord(raw, ["removal_revision", "destinations"], "destinations");
   return {
-    removal_revision: revision(value.removal_revision),
+    removal_revision: expectOrderRevision(value.removal_revision),
     destinations: expectArray(value.destinations, raw => {
       const item = expectExactRecord(raw, ["id", "name", "order_revision"], "destination");
       return {
         id: expectCanonicalRfcUuid(item.id, "destination.id"),
         name: expectString(item.name, "destination.name"),
-        order_revision: revision(item.order_revision),
+        order_revision: expectOrderRevision(item.order_revision),
       };
     }, "destinations"),
   };
@@ -56,10 +49,10 @@ function published(raw: unknown): Schema<"Published"> {
     const snapshot = expectExactRecord(value.current_placements, ["removal_revision", "all_membership", "placements"], "current placements");
     const all = expectExactRecord(snapshot.all_membership, ["library_id", "order_revision", "included", "remove_blocked"], "all membership");
     current = {
-      removal_revision: revision(snapshot.removal_revision),
+      removal_revision: expectOrderRevision(snapshot.removal_revision),
       all_membership: {
         library_id: expectCanonicalRfcUuid(all.library_id, "all_membership.library_id"),
-        order_revision: revision(all.order_revision),
+        order_revision: expectOrderRevision(all.order_revision),
         included: expectBoolean(all.included, "all_membership.included"),
         remove_blocked: all.remove_blocked === null ? null : expectOneOf(all.remove_blocked, ["RequiresAdmin", "PodcastSubscription"], "all_membership.remove_blocked"),
       },
@@ -68,7 +61,7 @@ function published(raw: unknown): Schema<"Published"> {
         return {
           library_id: expectCanonicalRfcUuid(item.library_id, "placement.library_id"),
           name: expectString(item.name, "placement.name"),
-          order_revision: revision(item.order_revision),
+          order_revision: expectOrderRevision(item.order_revision),
           relation: expectOneOf(item.relation, ["Absent", "Direct"], "placement.relation"),
           blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged", "PodcastSubscription"], "placement.blocked"),
         };

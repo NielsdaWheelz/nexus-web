@@ -59,13 +59,17 @@ export async function openLabAndroid(input: {
   const close = async () => {
     const released = { serial: input.serial, package_name: input.package_name, package_stopped: ownsPackage, forward, reverses: [...reverses] };
     const errors: unknown[] = [];
+    if (ownsPackage) {
+      try { await adb("shell", "am", "force-stop", input.package_name); ownsPackage = false; }
+      catch (error) { errors.push(error); }
+    }
     const results = await Promise.allSettled([
       transport.close(),
-      ...(ownsPackage ? [adb("shell", "am", "force-stop", input.package_name).then(() => { ownsPackage = false; })] : []),
       ...(forward ? [adb("forward", "--remove", forward).then(() => { forward = null; })] : []),
-      ...[...reverses].map(port => adb("reverse", "--remove", port).then(() => { reverses.delete(port); })),
+      ...(!ownsPackage ? [...reverses].map(port => adb("reverse", "--remove", port).then(() => { reverses.delete(port); })) : []),
     ]);
     errors.push(...results.flatMap(result => result.status === "rejected" ? [result.reason] : []));
+    if (ownsPackage && reverses.size) errors.push(new Error(`android lab retained reverse mappings after package stop failed: ${[...reverses].join(", ")}`));
     try { await disconnectBrowser(); } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, "android lab owned cleanup failed");
     return released;
@@ -96,16 +100,7 @@ export async function openLabAndroid(input: {
       throw new Error("android lab could not clear its disposable package");
     await adb("shell", "am", "start", "-W", "-n", `${input.package_name}/app.nexus.android.MainActivity`);
     return { close, attachPage, setWebReachable: async reachable => {
-      if (reachable) {
-        if (!reverses.has(webPort)) {
-          if ((await adb("reverse", "--list")).split(/\s+/).includes(webPort)) throw new Error("android lab web reverse port is already owned");
-          await adb("reverse", webPort, `tcp:${transport.port}`); reverses.add(webPort);
-        }
-        transport.setReachable(true);
-      } else {
-        transport.setReachable(false);
-        if (reverses.has(webPort)) { await adb("reverse", "--remove", webPort); reverses.delete(webPort); }
-      }
+      transport.setReachable(reachable);
     }, restart: async pathname => {
       const target = new URL(pathname, input.web_origin);
       if (!pathname.startsWith("/") || target.origin !== input.web_origin) throw new Error("android lab restart requires an owned application path");

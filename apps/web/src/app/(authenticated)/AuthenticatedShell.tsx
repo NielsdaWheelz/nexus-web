@@ -24,6 +24,7 @@ import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
+import { RecentProvider } from "@/lib/recent/store";
 import { AuthoredProvider } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
@@ -61,6 +62,7 @@ import styles from "./layout.module.css";
 
 
 export default function AuthenticatedShell(props: {
+  browserLifetime?: string;
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
@@ -75,7 +77,8 @@ export default function AuthenticatedShell(props: {
         <MobileViewportProvider>
           <FeedbackProvider>
             <AuthoredProvider accountId={props.account.accountId}>
-              <UnauthenticatedApiBoundary>
+              <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
+                <UnauthenticatedApiBoundary>
                 <DeviceSettingsProvider>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
@@ -87,7 +90,8 @@ export default function AuthenticatedShell(props: {
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
-              </UnauthenticatedApiBoundary>
+                </UnauthenticatedApiBoundary>
+              </RecentProvider>
             </AuthoredProvider>
           </FeedbackProvider>
         </MobileViewportProvider>

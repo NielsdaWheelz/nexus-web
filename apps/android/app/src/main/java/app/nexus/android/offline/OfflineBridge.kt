@@ -44,17 +44,19 @@ internal class OfflineBridge(
     private val commands = Mutex()
     private var subscriber: JavaScriptReplyProxy? = null
     private var subscriberAccount: UUID? = null
+    private val leaseLifetimes = java.util.concurrent.ConcurrentHashMap<Pair<Long, UUID>, Long>()
+    private val acknowledged = java.util.concurrent.ConcurrentHashMap.newKeySet<Pair<Long, UUID>>()
     private val leases = java.util.concurrent.ConcurrentHashMap<Pair<Long, UUID>, AutoCloseable>()
     private val unsubscribe = store.addListener { webView.post {
         if (subscriberAccount != store.account || subscriberAccount != DeviceSession.current()?.accountId()) {
             subscriber = null; subscriberAccount = null
-            leases.clear()
+            leases.clear(); leaseLifetimes.clear(); acknowledged.clear()
         } else push()
     } }
     private val unsubscribeDevice = DeviceSession.get(context).subscribe {
         if (subscriberAccount != DeviceSession.current()?.accountId()) {
             subscriber = null; subscriberAccount = null
-            leases.clear()
+            leases.clear(); leaseLifetimes.clear(); acknowledged.clear()
         }
     }
 
@@ -63,6 +65,7 @@ internal class OfflineBridge(
     fun onPageStarted() {
         framing.onDocumentStarted()
         subscriber = null; subscriberAccount = null
+        acknowledged.clear(); leaseLifetimes.clear()
         val closed = leases.entries.toList()
         scope.launch { withContext(NonCancellable + Dispatchers.IO) { closed.forEach { closeRetiredLease(it.key, it.value) } } }
     }
@@ -86,7 +89,9 @@ internal class OfflineBridge(
             require(id is String || id is Number)
             val op = request.text("op")
             validateFrame(request, op)
-            val owner = DeviceSession.get(context).accountId()
+            val session = DeviceSession.get(context)
+            val lifetime = session.recentLifetime()
+            val owner = session.accountId()
             if (owner == null || op != "hello" && owner != store.account) {
                 message.replyProxy.postMessage(failure("NotConnected").put("id", id).toString())
                 return
@@ -94,12 +99,12 @@ internal class OfflineBridge(
             val requestId = id
             scope.launch {
                 commands.withLock {
-                    if (!current(message, owner, op == "hello" || op == "purge")) return@withLock
+                    if (!current(message, owner, lifetime, op == "hello" || op == "purge")) return@withLock
                     val result = try {
                         if (op == "hello") {
                             subscriber = message.replyProxy; subscriberAccount = owner
                         }
-                        withContext(Dispatchers.IO) { store.initialize(); dispatch(request, owner, message.documentGeneration) }
+                        withContext(Dispatchers.IO) { store.initialize(); dispatch(request, owner, message.documentGeneration, lifetime) }
                     } catch (error: LocalStateError) { failure(error.code) }
                     catch (_: IOException) {
                         // justify-ignore-error: failed durable mutation grants no success receipt.
@@ -111,9 +116,16 @@ internal class OfflineBridge(
                         // justify-ignore-error: malformed command fields are refused.
                         failure("Invalid")
                     }
-                    if (!current(message, owner, op == "hello" || op == "purge")) {
+                    if (!current(message, owner, lifetime, op == "hello" || op == "purge")) {
                         withContext(Dispatchers.IO) { retireLeases(message.documentGeneration) }
                         return@withLock
+                    }
+                    if (result.optBoolean("ok") && op == "opened") {
+                        val mediaId = mediaId(request)
+                        val key = message.documentGeneration to mediaId
+                        if (leases.containsKey(key) && acknowledged.add(key)) {
+                            runCatching { DeviceSession.get(context).recordRecentMedia(mediaId, current = { current(message, owner, lifetime, false) }) }
+                        }
                     }
                     if (result.optBoolean("ok")) when (op) {
                         "enqueue" -> host.requestNotificationPermission()
@@ -134,23 +146,24 @@ internal class OfflineBridge(
         }
     }
 
-    private fun current(message: OwnedWebMessage, owner: UUID, detached: Boolean): Boolean =
+    private fun current(message: OwnedWebMessage, owner: UUID, lifetime: Long, detached: Boolean): Boolean =
         message.documentGeneration == framing.currentDocumentGeneration() &&
-            (detached || owner == store.account) && owner == DeviceSession.current()?.accountId()
+            (detached || owner == store.account) && owner == DeviceSession.current()?.accountId() &&
+            lifetime == DeviceSession.current()?.recentLifetime()
 
     private fun retireLeases(generation: Long) {
         leases.entries.filter { it.key.first == generation }.forEach { closeRetiredLease(it.key, it.value) }
     }
 
     private fun closeRetiredLease(key: Pair<Long, UUID>, lease: AutoCloseable) {
-        try { lease.close(); leases.remove(key, lease) }
+        try { lease.close(); leases.remove(key, lease); leaseLifetimes.remove(key); acknowledged.remove(key) }
         catch (error: IOException) {
             // Keep the handle: the next document retirement can retry its durable close.
             android.util.Log.e("NexusDownloads", "reading-copy lease could not close", error)
         }
     }
 
-    private fun dispatch(request: JSONObject, owner: UUID, generation: Long): JSONObject {
+    private fun dispatch(request: JSONObject, owner: UUID, generation: Long, lifetime: Long): JSONObject {
         val op = request.text("op")
         if (op == "hello") {
             if (owner == store.account) OfflineJobs.scheduleSync(context, 0)
@@ -173,11 +186,19 @@ internal class OfflineBridge(
                 "open" -> {
                     val mediaId = mediaId(request)
                     val key = generation to mediaId
-                    if (!leases.containsKey(key)) leases[key] = store.openReadingCopy(mediaId) ?: return@command failure("NotFound")
+                    if (!leases.containsKey(key)) {
+                        leases[key] = store.openReadingCopy(mediaId) ?: return@command failure("NotFound")
+                        leaseLifetimes[key] = lifetime
+                    }
                 }
+                "opened" -> if (!leases.containsKey(generation to mediaId(request)) || leaseLifetimes[generation to mediaId(request)] != lifetime) return@command failure("NotFound")
                 "close" -> {
                     val key = generation to mediaId(request)
-                    leases[key]?.let { lease -> lease.close(); leases.remove(key, lease) }
+                    leases[key]?.let { lease ->
+                        lease.close()
+                        leases.remove(key, lease)
+                        acknowledged.remove(key); leaseLifetimes.remove(key)
+                    }
                 }
                 "save" -> {
                     val error = store.save(mediaId(request), request.getJSONObject("locator"), request.getLong("base_revision"),
@@ -207,7 +228,7 @@ internal class OfflineBridge(
         val fields = when (op) {
             "hello", "purge" -> emptySet()
             "enqueue" -> setOf("subject")
-            "cancel", "retry", "remove", "open_reader", "open", "close" -> setOf("media_id")
+            "cancel", "retry", "remove", "open_reader", "open", "opened", "close" -> setOf("media_id")
             "retry_extras" -> setOf("media_id", "package_id")
             "policy" -> setOf("value")
             "save" -> setOf("media_id", "locator", "base_revision", "expected_reader_generation", "adopt_unresolved")

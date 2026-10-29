@@ -1,5 +1,6 @@
 // The Nexus vocabulary: what a row is, where it leads, and which page the launcher shows.
 import type { ComponentType } from "react";
+import type { RecentEntry } from "@/lib/recent/model";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { LocalMatch } from "@/lib/search/localSearch";
 import type { Schema } from "@/lib/api/wire";
@@ -15,8 +16,6 @@ import type {
 export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import" | "Browse"}`;
 
-export type NexusHistorySource = Schema<"NexusSelectionRecordRequest">["source"];
-export type NexusRecent = Schema<"NexusHistoryRecentOut">;
 
 export interface AddSeed {
   readonly kind: "Content";
@@ -99,8 +98,9 @@ export interface NexusRow {
   readonly secondary?:
     | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "ClosePane"; readonly paneId: string };
-  /** Present iff an accepted selection of this row is remembered in Nexus history. */
-  readonly source?: NexusHistorySource;
+  /** Whether an accepted selection of this row contributes to server selection ranking. */
+  readonly learns_selection?: boolean;
+  readonly recentEntry?: RecentEntry;
   readonly rank: { readonly stream: "Navigation" | "Local" | "Resources" | "Saved" | "Passages"; readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
 }
 

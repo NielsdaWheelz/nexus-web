@@ -171,3 +171,12 @@ export function expectPositiveInteger(raw: unknown, name: string): number {
   if (value === 0) throw new TypeError(`${name} must be positive`);
   return value;
 }
+
+/** Canonical positive signed-int64 revision on a persisted or wire boundary. */
+export function expectOrderRevision(raw: unknown): string {
+  const value = expectString(raw, "revision");
+  if (!/^[1-9][0-9]{0,18}$/u.test(value) || BigInt(value) > 9223372036854775807n) {
+    throw new TypeError("revision must be an exact positive bigint decimal string");
+  }
+  return value;
+}

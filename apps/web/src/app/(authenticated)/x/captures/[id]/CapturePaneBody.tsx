@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { useRecent } from "@/lib/recent/store";
+import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -28,6 +30,7 @@ export default function CapturePaneBody() {
 }
 
 function CaptureReader({ id }: { readonly id: string }) {
+  const recent = useRecent();
   const runtime = requirePaneRuntime(usePaneRuntime(), "CaptureReader");
   const store = useAuthoredStore();
   const { profile } = useReaderContext();
@@ -89,6 +92,13 @@ function CaptureReader({ id }: { readonly id: string }) {
     return () => { controller.abort(); stop(); };
   }, [missing, reader, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
+  useEffect(() => {
+    if (!doc) return;
+    const entry = recent.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
+    const title = normalizeVisitTitleHint(doc.title);
+    if (!entry || entry.title_hint === title && entry.detail_hint === "post") return;
+    recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: title, detail_hint: "post" } });
+  }, [doc, id, recent]);
   const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true);
   const stamp = useChangeStamp("Notes", "NoteBodies", "Chats", "Entries");
   const map = usePaneFreeServerValue({ key: `capture-map:${id}`, stale: stamp, load: async signal =>

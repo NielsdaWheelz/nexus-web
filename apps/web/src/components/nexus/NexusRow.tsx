@@ -208,9 +208,9 @@ export function NexusNotices({ controller, returnFocus, id }: {
 }) {
   const admission = useRemoteAdmission();
   const { kind, text, action } = controller.searchProgress;
-  const recent = controller.recentRead;
+  const { blank, snapshot, readFailure, writeFailure, read } = controller.recentStatus;
   return <>
-    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending || recent.pending} />
+    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending} />
     {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}
     {[...controller.searchFailures].map(([source, failure]) => {
       const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
@@ -222,9 +222,6 @@ export function NexusNotices({ controller, returnFocus, id }: {
         actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
           onClick: () => { if (admission !== "Ready") void checkSession(); else controller.retry(source); }, busy: controller.retrying.has(source)}]} />;
     })}
-    {recent.error !== null ? <FeedbackFailure scope="Local" occurrence={recent.occurrence} announcementOccurrence={recent.error}
-      content={apiTransportFeedback(recent.error, "couldn’t load recent picks") ?? {tone: "Warning", title: "couldn’t load recent picks", requestId: recent.error.requestId}}
-      announcement="Polite" actions={isStaleBuild(recent.error) ? undefined : [{label: "retry", onClick: recent.retry, busy: recent.retrying}]} returnFocus={returnFocus} /> : null}
     <NexusTitleFailure returnFocus={returnFocus} />
     {controller.noticeText !== null ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
       {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
@@ -237,6 +234,12 @@ export function NexusNotices({ controller, returnFocus, id }: {
         }, busy: controller.retrying.size > 0}]} /> : null}
       {controller.resultsHeld ? <FeedbackNotice content={{tone: "Info", title: "search update ready"}} announcement="None"
         actions={[{label: SEARCH_ACTION_LABELS.refresh, onClick: () => { controller.refreshResults(); returnFocus()?.focus({preventScroll: true}); }}]} /> : null}
+      {blank ? <>
+        {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} returnFocus={returnFocus} />
+          : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
+          : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
+        {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} returnFocus={returnFocus} /> : null}
+      </> : null}
     </section> : null}
   </>;
 }

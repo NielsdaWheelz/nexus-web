@@ -19,7 +19,9 @@ from nexus.auth.permissions import (
 )
 from nexus.db.models import DailyPageBinding, MediaKind
 from nexus.schemas.workspace_presentations import (
+    WorkspaceCaptureLocator,
     WorkspaceContributorLocator,
+    WorkspaceDailyLocator,
     WorkspacePresentationItemOut,
     WorkspacePresentationOut,
     WorkspacePresentationsOut,
@@ -32,6 +34,7 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
 )
 from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.services.x_source import readable_x_capture_ids_sql
 from nexus.text import ECMASCRIPT_WHITESPACE
 
 
@@ -41,14 +44,17 @@ def read_presentations(
     ids: dict[str, set[UUID]] = defaultdict(set)
     handles: set[str] = set()
     dates: set[date] = set()
+    captures: set[UUID] = set()
     for locator in request.locators:
         if isinstance(locator, WorkspaceResourceLocator):
             ref = assert_resource_ref(locator.ref)
             ids[ref.scheme].add(ref.id)
         elif isinstance(locator, WorkspaceContributorLocator):
             handles.add(locator.handle)
-        else:
+        elif isinstance(locator, WorkspaceDailyLocator):
             dates.add(locator.local_date)
+        else:
+            captures.add(locator.capture_id)
 
     daily_bindings: dict[date, UUID] = {}
     if dates:
@@ -184,6 +190,18 @@ def read_presentations(
             author_refs[row.handle] = ref
             facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=row.display_name)
 
+    readable_captures: set[UUID] = set()
+    if captures:
+        readable_captures = set(
+            db.scalars(
+                text(f"""
+            SELECT id FROM x_post_captures
+            WHERE id = ANY(:ids) AND id IN ({readable_x_capture_ids_sql()})
+        """),
+                {"ids": list(captures), "viewer_id": viewer_id},
+            )
+        )
+
     items = []
     for locator in request.locators:
         if isinstance(locator, WorkspaceResourceLocator):
@@ -191,6 +209,12 @@ def read_presentations(
         elif isinstance(locator, WorkspaceContributorLocator):
             ref = author_refs.get(locator.handle)
             presentation = facts.get(ref) if ref is not None else None
+        elif isinstance(locator, WorkspaceCaptureLocator):
+            presentation = (
+                WorkspacePresentationOut(resource_ref=None, title="post")
+                if locator.capture_id in readable_captures
+                else None
+            )
         else:
             # an unbound or deleted day presents latently; opening it writes nothing.
             page_id = daily_bindings.get(locator.local_date)

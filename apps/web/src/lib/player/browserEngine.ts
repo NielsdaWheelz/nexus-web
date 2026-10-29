@@ -58,6 +58,7 @@ export interface BrowserEngineDeps {
   deviceClass(): ActivityObservation["deviceClass"];
   commands(): PlayerCommands | null;
   onFailure(error: unknown): void;
+  onExplicitPlayback(state: EngineState): void;
 }
 
 const WRITE_EVERY_MS = 15_000;
@@ -457,8 +458,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       bufferedMs: 0,
       rate,
     });
-    if (play) void audio.play().catch(() => sync());
-    return mine;
+    const playing = play ? audio.play().then(() => true, () => { sync(); return false; }) : null;
+    return { mine, admission, playing };
+  };
+
+  const capturePlayback = (playing: Promise<boolean>, subject: string, mine: number, admission: number) => {
+    void playing.then(accepted => {
+      if (accepted && mine === generation && admission === asked && state.playbackSubject === subject && !audio.paused) deps.onExplicitPlayback(state);
+    });
   };
 
   const engine: Engine = {
@@ -469,7 +476,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       return () => listeners.delete(listener);
     },
     queue: null,
-    async load(descriptor, play, requestedPositionMs) {
+    async load(descriptor, play, requestedPositionMs, explicit = false) {
       const outgoing = episode;
       if (outgoing?.descriptor.media_id === descriptor.media_id && outgoing.resetEpoch === descriptor.reset_epoch && news(outgoing)) {
         const local = listening(outgoing);
@@ -496,8 +503,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         fenced: false,
         active: false,
       };
-      const mine = await start(streamUrl, playbackRate, positionMs, next, play);
-      if (mine === null || mine !== generation) return;
+      const started = await start(streamUrl, playbackRate, positionMs, next, play);
+      if (started === null || started.mine !== generation) return;
       if (outgoing?.descriptor.media_id === mediaId && outgoing.resetEpoch === next.resetEpoch &&
           (outgoing.overrideRevision ?? 0) > (next.overrideRevision ?? 0)) next.overrideRevision = outgoing.overrideRevision;
       next.observer = registerActivityObserver(
@@ -505,13 +512,17 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         "Listening",
         observation(false),
       );
-      set({ source: { kind: "Episode", descriptor, packageId: null }, playbackSubject: crypto.randomUUID() });
+      const subject = crypto.randomUUID();
+      set({ source: { kind: "Episode", descriptor, packageId: null }, playbackSubject: subject });
+      if (explicit && started.playing) capturePlayback(started.playing, subject, started.mine, started.admission);
       showSession();
     },
     async preview(descriptor: PreviewAudioDescriptor) {
-      const mine = await start(descriptor.audioUrl, 1, 0, null, true);
-      if (mine === null || mine !== generation) return;
-      set({ source: { kind: "Preview", descriptor }, playbackSubject: crypto.randomUUID() });
+      const started = await start(descriptor.audioUrl, 1, 0, null, true);
+      if (started === null || started.mine !== generation) return;
+      const subject = crypto.randomUUID();
+      set({ source: { kind: "Preview", descriptor }, playbackSubject: subject });
+      if (started.playing) capturePlayback(started.playing, subject, started.mine, started.admission);
       showSession();
     },
     async play(given) {
@@ -539,12 +550,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         const best = fresh ?? (given && given.reset_epoch > current.resetEpoch ? given : null);
         if (best !== null && (audio.ended || best.reset_epoch !== current.resetEpoch ||
             best.position_ms !== ms(audio.currentTime))) {
-          await engine.load(best, true, null);
+          await engine.load(best, true, null, true);
           return;
         }
         if (best !== null) current.overrideRevision = best.consumption_override_revision;
       }
-      void audio.play().catch(() => sync());
+      const subject = state.playbackSubject!;
+      capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), subject, generation, mine);
     },
     async resumeLoaded(expectedSubject) {
       const current = episode;
@@ -558,9 +570,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           : "listening progress synchronized. press play to resume.");
       }
       if (state.error !== null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "retry playback in the player before resuming this episode.");
-      asked += 1;
+      const admission = ++asked;
       advanceAllowed = true;
-      void audio.play().catch(() => sync());
+      capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), expectedSubject, generation, admission);
     },
     async pause() {
       advanceAllowed = false;
@@ -576,13 +588,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
       if (state.error !== null)
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "playback failed. retry in the player, then choose this time again.");
-      asked += 1;
+      const admission = ++asked;
       advanceAllowed = true;
       current.active = true;
       metadataPositionMs = Math.min(positionMs, durationMs() || Infinity);
       if (audio.readyState === 0) seekOnceLoaded(metadataPositionMs);
       audio.currentTime = metadataPositionMs / 1000;
-      void audio.play().catch(() => sync());
+      capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), state.playbackSubject, generation, admission);
       sync();
     },
     seekTo({ positionMs, expectedSubject }) {

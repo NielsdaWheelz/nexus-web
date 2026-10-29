@@ -15,6 +15,8 @@
  * Only public explicit-play admission notifies presentation, before any awaits.
  */
 
+import { useRecent } from "@/lib/recent/store";
+import { recentValueForHref } from "@/lib/panes/paneRouteModel";
 import {
   createContext,
   useCallback,
@@ -119,7 +121,7 @@ export interface Engine {
   subscribe(listener: () => void): () => void;
   /** Explicit time overrides ordinary resume, including a newer outgoing sample.
    * Resolves after the outgoing session's last write (bounded at 2 s). */
-  load(descriptor: PlayerDescriptor, play: boolean, positionMs: number | null): Promise<void>;
+  load(descriptor: PlayerDescriptor, play: boolean, positionMs: number | null, explicit?: boolean): Promise<void>;
   preview(descriptor: PreviewAudioDescriptor): Promise<void>;
   /** A resume asks the server unless this device holds a newer sample; `given` (the page's
    * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
@@ -313,6 +315,14 @@ export function GlobalPlayerProvider({
   children: ReactNode;
 }) {
   const androidShell = useAndroidShell();
+  const { use: recordRecent } = useRecent();
+  const recordPlayback = useCallback((state: EngineState) => {
+    if (androidShell || state.playbackSubject === null || state.playbackFailed || state.source === null) return;
+    const source = state.source;
+    const href = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
+    const value = recentValueForHref(href, source.descriptor.title);
+    if (value) void recordRecent(value);
+  }, [androidShell, recordRecent]);
   const viewport = useViewportState();
   const mobileRef = useRef(viewport.isMobile);
   mobileRef.current = viewport.isMobile;
@@ -494,6 +504,7 @@ export function GlobalPlayerProvider({
           deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
           commands: () => navigation.current,
           onFailure: error => navigation.current?.failure(error),
+          onExplicitPlayback: state => { if (engineRef.current === created && ownership.current?.owner()) recordPlayback(state); },
         });
     engineRef.current = created;
     setEngine(created);
@@ -576,7 +587,7 @@ export function GlobalPlayerProvider({
       browser.current = null;
       created.close();
     };
-  }, [accountId, androidShell, fail, publishPreferences, publishBrowser, publishQueue]);
+  }, [accountId, androidShell, fail, publishPreferences, publishBrowser, publishQueue, recordPlayback]);
 
   const subscribe = useCallback(
     (listener: () => void) => engine?.subscribe(() => {
@@ -673,7 +684,7 @@ export function GlobalPlayerProvider({
     loads.current = result.then(() => {}, () => {});
     return result;
   }, [retirePending]);
-  const activate = useCallback(async (entry: QueueEntry, play: boolean, mine: number, known: PlayerDescriptor | null = null, positionMs: number | null = null) => {
+  const activate = useCallback(async (entry: QueueEntry, play: boolean, mine: number, known: PlayerDescriptor | null = null, positionMs: number | null = null, explicit = true) => {
     const target = engineRef.current;
     if (target === null || mine !== latest.current) return;
     failedOccurrence.current = null;
@@ -695,7 +706,7 @@ export function GlobalPlayerProvider({
     if (mine !== latest.current || target !== engineRef.current || (!androidShell && !ownership.current?.owner())) return;
     pendingLoad.current = mine;
     publishPreferences(null);
-    try { await target.load(descriptor, play, positionMs); }
+    try { await target.load(descriptor, play, positionMs, explicit); }
     finally { if (pendingLoad.current === mine) pendingLoad.current = null; syncPreferences(); }
     if (mine === latest.current && target === engineRef.current) {
       const header = queueViewRef.current.header;
@@ -1051,7 +1062,7 @@ export function GlobalPlayerProvider({
           if (entry !== null) {
             const source = target.state().source;
             const loaded = loadedOccurrence.current;
-            if (source?.kind === "Episode" && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) await target.play();
+            if (source?.kind === "Episode" && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) { await target.play(); }
             else await activate(entry, true, mine);
           }
           return;
@@ -1080,6 +1091,7 @@ export function GlobalPlayerProvider({
           const currentIndex = before.state.entries.findIndex(entry => entry.id === before.state.current_entry_id);
           if (operation.kind === "previous" && currentIndex >= 0 && (target.state().positionMs > RESTART_AFTER_MS || currentIndex === 0)) {
             target.seekTo({ positionMs: 0 });
+            if (target.state().phase === "Playing" || target.state().phase === "Buffering") recordPlayback(target.state());
             return;
           }
           if (operation.kind === "remove" && operation.entry_id === before.state.current_entry_id &&
@@ -1092,7 +1104,7 @@ export function GlobalPlayerProvider({
             if (loaded?.queueId === before.state.queue_id && loaded.entryId === previous.id && loaded.subject !== null &&
                 loaded.subject === observed.playbackSubject && observed.source?.kind === "Episode" &&
                 observed.source.descriptor.media_id === previous.media_id && !observed.playbackFailed && observed.phase !== "Ended") {
-              if (operation.play) await target.resumeLoaded(loaded.subject); else await target.pause();
+              if (operation.play) { await target.resumeLoaded(loaded.subject); } else await target.pause();
               return;
             }
           }
@@ -1128,7 +1140,7 @@ export function GlobalPlayerProvider({
       retirePending();
       await enqueue(work, playback);
     } else await enqueueQueueEdit(work, selection?.kind !== "restore" && changesPlayback);
-  }, [activate, enqueue, enqueueQueueEdit, requestPreferences, retainCurrent, retirePending]);
+  }, [activate, enqueue, enqueueQueueEdit, recordPlayback, requestPreferences, retainCurrent, retirePending]);
   executeRef.current = execute;
   const route = useCallback(async (command: BrowserPlayerCommand) => {
     try {
@@ -1236,7 +1248,7 @@ export function GlobalPlayerProvider({
               const target = live();
               if (target === null || !(await ownership.current?.acquire(true, null)) || mine !== latest.current) return;
               await target.preview(source.descriptor);
-            }, { kind: "Preview", target: source.descriptor.target }).catch(report);
+              }, { kind: "Preview", target: source.descriptor.target }).catch(report);
           } else {
             const header = queueViewRef.current.header;
             if (header?.current_entry_id != null) void queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
@@ -1304,7 +1316,7 @@ export function GlobalPlayerProvider({
       if (saved === null || saved === undefined) return;
       if (generation !== latest.current || !mayAdvance) { await restoreRetained(); return; }
       const next = currentQueueEntry(saved.state);
-      if (next !== null) await activate(next, true, generation);
+      if (next !== null) await activate(next, true, generation, null, null, false);
       else await target.dismiss();
       if (generation !== latest.current) await restoreRetained();
     }).finally(() => {

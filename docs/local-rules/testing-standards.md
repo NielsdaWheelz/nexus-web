@@ -152,9 +152,10 @@ mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retir
 the old process and devtools forward before disconnecting, and refuses relaunch
 after a retirement error.
 `setWebReachable` gates the owned web reverse through a loopback tcp transport.
-going offline closes its pooled connections and rejects new ones before removing
-the reverse; storage remains independently reachable. tls and http/2 pass through
-unchanged. reconnect refuses occupied ports. `restart` preserves app data and
+going offline closes pooled connections and rejects new ones while retaining the
+reverse; storage remains independently reachable. tls and http/2 pass through
+unchanged. reconnect restores the same transport. cleanup stops the package before
+removing reverses; if stopping fails, it reports and retains those mappings. `restart` preserves app data and
 replaces only its own process/cdp forward.
 no companion driver or device-wide settings change.
 

@@ -30,6 +30,9 @@ internal class AppBridge(
         subscriber?.postMessage(JSONObject().put("kind", "session_changed")
             .put("remote_admission", session.remoteAdmission).toString())
     }
+    private val unsubscribeRecent = session.subscribeRecent {
+        subscriber?.postMessage(JSONObject().put("kind", "recent_changed").toString())
+    }
     private val unsubscribeCatalog = session.catalog.subscribe { status ->
         subscriber?.postMessage(JSONObject().put("kind", "catalog_changed").put("catalog", status).toString())
     }
@@ -50,6 +53,7 @@ internal class AppBridge(
         onPageStarted()
         unsubscribe()
         unsubscribeCatalog()
+        unsubscribeRecent()
         framing.close()
         scope.cancel()
     }
@@ -70,6 +74,18 @@ internal class AppBridge(
                         onHello()
                         JSONObject().put("remote_admission", session.remoteAdmission)
                             .put("keyboard_visible", keyboardVisible)
+                    }
+                    "recent_open", "recent_read", "recent_use", "recent_reconcile" -> {
+                        val operation = op.removePrefix("recent_")
+                        val epoch = if (operation == "open") null else frame.getString("epoch")
+                        val input = when (operation) {
+                            "use" -> frame.getJSONObject("value")
+                            "reconcile" -> frame.getJSONObject("input")
+                            else -> null
+                        }
+                        JSONObject().put("observation", session.recentOperation(operation, epoch, input) {
+                            message.documentGeneration == framing.currentDocumentGeneration()
+                        }.await())
                     }
                     "workspace_begin" -> JSONObject().put("write_id", session.workspaceBegin(document,
                         frame.getString("expected_revision"), frame.getInt("byte_count")) { message.documentGeneration == framing.currentDocumentGeneration() })
@@ -95,6 +111,8 @@ internal class AppBridge(
             } catch (_: JSONException) {
                 failure("E_INVALID_REQUEST", "invalid app request", 400)
             } catch (_: IllegalArgumentException) {
+                failure("E_INVALID_REQUEST", "invalid app request", 400)
+            } catch (_: ArithmeticException) {
                 failure("E_INVALID_REQUEST", "invalid app request", 400)
             } catch (_: java.io.IOException) {
                 failure("E_UNAVAILABLE", "could not connect", 503)

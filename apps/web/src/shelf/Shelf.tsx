@@ -41,6 +41,19 @@ export default function Shelf() {
       void localCall("close", { media_id: availableId });
     };
   }, [availableId, attempt]);
+  useEffect(() => {
+    if (opened === null || opened.media_id !== mediaId) return;
+    let sent = false;
+    const acknowledge = () => {
+      // The hash can change before React sees it; the lease alone is not admission.
+      if (sent || document.visibilityState !== "visible" || window.location.hash !== `#open=${opened.media_id}`) return;
+      sent = true;
+      void localCall("opened", { media_id: opened.media_id }).catch(() => undefined);
+    };
+    acknowledge();
+    document.addEventListener("visibilitychange", acknowledge);
+    return () => document.removeEventListener("visibilitychange", acknowledge);
+  }, [opened, mediaId]);
   const back = () => { void localCall("open_hosted", { path: "/downloads" }).catch(() => setFailure({ kind: "Downloads", title: "couldn’t open downloads" })); };
   const item = opened === null || opened.media_id !== mediaId ? null : index?.items.find(row => row.media_id === opened.media_id) ?? opened;
   const remove = () => {
