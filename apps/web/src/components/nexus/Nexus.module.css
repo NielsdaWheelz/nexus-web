@@ -49,7 +49,7 @@
 
 .grid { padding: var(--space-2); }
 .group + .group { margin-top: var(--space-2); }
-.help { flex: 0 0 auto; padding: var(--space-2) var(--space-4); color: var(--ink-faint); font-size: var(--text-xs); }
+.help { flex: 0 0 auto; padding: var(--space-2) var(--space-4); color: var(--ink-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
 
 .headingRow h3 {
   margin: 0;
