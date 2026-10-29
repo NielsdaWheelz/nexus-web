@@ -139,7 +139,6 @@
 .heading p { color: var(--ink-muted); }
 .headerActions { display: flex; align-items: center; gap: var(--space-2); }
 
-.textButton,
 .iconButton {
   --control-min-size: 48px;
 }
@@ -388,7 +387,8 @@
 
 .mobile .heading { min-width: 0; flex: 1; }
 .mobile .headerActions { gap: 0; }
-.mobile .textButton { --control-min-size: 48px; }
+.mobile .searchPage > .header h2 { overflow-wrap: anywhere; }
+.mobile .searchPage > .header .headerActions { flex: 0 0 auto; }
 .mobile .iconButton { flex: 0 0 auto; }
 .mobile .header > .iconButton { margin-inline-start: calc(-1 * var(--space-2)); }
 .mobile .searchInput { padding-bottom: var(--space-2); }

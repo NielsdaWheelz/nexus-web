@@ -48,6 +48,38 @@ captures and bounded projections share one grammar and literal-text owner.
 format 3 composes immutable x captures with excerpts; explicit upload format
 fences retain device identity across the drained cutover.
 
+mobile nexus header icons against `492d01595`: +5 authored runtime lines
+(32 added, 27 deleted), all workspace/navigation web source. one account-owned
+mark replaces desktop-local icon/badge anatomy; mobile account and dismissal use
+existing named icon-only controls. obsolete text-button styles are removed.
+no behavior, state, wire or data ownership changes. docs and temporary cases are
+excluded; historical totals retain their stated bases.
+
+pane query overflow against `6d6a6799c`: -18 authored runtime lines (11 added,
+29 deleted). the shell retains only mobile find disclosure; the query contract
+and twelve publishers lose obsolete menu labels. workspace -9; authors, browse,
+chat, imports and lectern -1 each; libraries and podcasts -2 each; inline notes,
+page and search publications change no line count. docs and temporary cases are
+excluded. earlier totals retain their stated bases.
+
+menu action presentation against `6d6a6799c`: +25 authored runtime lines
+(198 added, 173 deleted), all web source. explicit descriptor icons and
+source-owned sentence case replace implicit empty slots, copied action glyphs,
+lectern shortcut overrides and the label-based failure branch. execution,
+authority and menu geometry retain their owners. docs and disposable cases are
+excluded; touched area rows record this cut.
+
+x quote captures against `fff2266c9` adds 2,951 authored
+runtime lines (5,271 added, 2,320 deleted): python +2,589, handwritten web +333,
+android +11 and shared `node/authored/src` +18. immutable capture fragments,
+selected occurrences and bounded admissions replace phantom x media, child-media
+quote/artifact states and media-owned x annotations. the existing index, queue,
+authored stores and public-grant owners retain their responsibilities. migration
+0324 adds 2,039 lines separately. counts use `git diff --no-renames`; generated
+wire/helper, docs, scripts, locks and disposable cases are excluded. historical
+area counts and totals retain their stated bases.
+
+
 index row actions against `daf605a8d`: +7 authored runtime lines (20 added,
 13 deleted). row-host presentation removes library shortcuts; the complete command
 projection retains ordinary and recovery meaning. the external menu label override,
@@ -567,7 +599,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
 | offline catalog | 1,174 | new: complete server export, native publication and web queries | offline episodes +163 · contained works +0 · podcast catalogue -1 | keep |
-| workspace, panes, nav, app shell | 13,589 | reauthored #542 #545 #557 #562, re-sliced with #617 #627 and #655's palette (cleanup/pane-chrome-reslice) | podcast row artwork +14 · podcast details +3 · pane headers +3 · collection loading +28 · media controls -202 · podcast collection +4 · durable writing +350 · dropdown primitives -16 · native control cutover · podcast libraries -12 · playback queue +26 · mobile reader chrome · compact actions -9 · reader navigation +0 · podcast action parity · offline catalog +94 · resource menu parity · offline episodes +36 · feedback activity · contained works +0 · imports under account +0 · fork gesture +2 · podcast catalogue +0 · mobile editor · reader view menu +1 · reader map +29 · pane controls -123 · x captures: exact capture source pane and route identity · menu actions +1 · pane query overflow -9 · selection memory +3 · frozen excerpts | keep |
+| workspace, panes, nav, app shell | 13,589 | reauthored #542 #545 #557 #562, re-sliced with #617 #627 and #655's palette (cleanup/pane-chrome-reslice) | podcast row artwork +14 · podcast details +3 · pane headers +3 · collection loading +28 · media controls -202 · podcast collection +4 · durable writing +350 · dropdown primitives -16 · native control cutover · podcast libraries -12 · playback queue +26 · mobile reader chrome · compact actions -9 · reader navigation +0 · podcast action parity · offline catalog +94 · resource menu parity · offline episodes +36 · feedback activity · contained works +0 · imports under account +0 · fork gesture +2 · podcast catalogue +0 · mobile editor · reader view menu +1 · reader map +29 · pane controls -123 · x captures: exact capture source pane and route identity · menu actions +1 · pane query overflow -9 · selection memory +3 · mobile nexus header icons +5 · frozen excerpts | keep |
 | chat | 9,933 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | #700 -50 · #702 +88 · chat citations -91 · selection continuation +144 · unsaved work +64 · pane headers +0 · collection loading +2 · notes re-slice (server) +0 · durable writing +0 · libraries retention +9 · dropdown primitives -21 · native control cutover · reader navigation +0 · offline catalog +27 · bounded indexes +8 · resource menu parity · compact passage composer -2 · feedback activity · contained works +75 · x captures: capture-owned quotation and citation evidence · menu actions +2 · pane query overflow -1 · generation controls -23 · selection memory +160 · frozen excerpts | re-slice |
 | reader web ui | 11,454 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · #672 +37 · #670 +143 · #679 +1 · shift-open +490 · resource insertion +36 · reader connections +76 · connection actions +3 · #700 +11 · #697 +67 · shared outline +15 · selection continuation +331 · unsaved work +5 · reader python ingest +0 · ingest follow-ups +8 · player redesign +1 · notes re-slice (server) +7 · media controls +11 · podcast collection +8 · durable writing +390 · libraries retention +5 · dropdown primitives +0 · native control cutover · podcast libraries +1  · playback queue +0 · mobile reader chrome · reader navigation +287 · offline catalog +47 · mobile reader selection +594 · compact passage composer -31 · offline episodes +332 · feedback activity · contained works +128 · pdf extent equality +17 · mobile selection icons +4 · highlight popup +35 · fork gesture -18 · reader view menu +16 · reader map +99 · contained bibliography: retained versioned piece drafts · highlight note completion +50 · browser recovery · pane controls +7 · x captures: one occurrence-aware capture reader, save and archive controls · menu actions +4 · selection memory +24 · frozen excerpts | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,714 | reauthored #563; #617 #627 re-sliced by pane chrome | #643 +353 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · #699 +31 · #700 +10 · #697 +1 · chat citations -33 · selection continuation +7 · unsaved work +167 · pane chrome -589 (the pane header relabelled out) · podcast row artwork +23 · collection loading -35 · media controls +126 · durable writing +27 · dropdown primitives +281 · native control cutover · playback queue +8 · mobile reader chrome · compact actions -6 · popup sizing +17 · reader navigation +21 · podcast action parity · bounded indexes -318 · resource menu parity · feedback activity · fork gesture +0 · podcast catalogue +0 · queue index +12 · reader view menu +162 · reader token scope +1 · reader map +2 · browser recovery · pane controls -138 · index row actions +6 · menu actions +2 | re-slice with chat web (#643 #644) |
