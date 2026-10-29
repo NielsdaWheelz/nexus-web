@@ -1,5 +1,9 @@
 # Workspace Module
 
+[recent resources](recent-history.md) consumes accepted resource navigation and
+the first visible foreground entry. layout, restoration of inactive panes and
+automatic successor focus do not establish use.
+
 ## Scope
 
 The workspace module owns authenticated pane composition. It decides which

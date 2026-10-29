@@ -1,5 +1,9 @@
 # installed android workspace
 
+[recent resources](recent-history.md) uses a separate atomic file admitted by
+the device account lifetime. it is purged with the account and never gates
+startup or changes the startup record's format.
+
 the apk owns ordinary interface delivery. `AppRouter` serves installed html,
 lazy chunks, fonts and static assets at the configured owned origin, regardless
 of connectivity. next owns hosted delivery and the same-origin bff. both builds

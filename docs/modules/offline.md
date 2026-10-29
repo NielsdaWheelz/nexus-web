@@ -1,5 +1,8 @@
 # offline (android)
 
+[recent resources](recent-history.md) records the isolated shelf's accepted
+current visible open once per held lease, independently of reader success.
+
 owner of: immutable episode packages and document reading copies on android
 14+, the ordinary private `/downloads` workspace pane, the isolated shelf reader
 for non-episode copies and reading-position delivery.
