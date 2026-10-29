@@ -195,7 +195,7 @@ export class OutlineController {
   private changed(reason: ProjectionReason = "projection"): void {this.rebuild(reason); this.notify();}
   refresh(): void {
     this.rebuild();
-    if (this.handle?.canArrange()) {this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.accept(id, window);}
+    if (this.handle?.canArrange()) {this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.resumeAdmission(id, window);}
   }
   configure(rootField: RootField | undefined): void {
     this.rootField = rootField;
@@ -298,7 +298,7 @@ export class OutlineController {
     if (relationship) this.pending.restoreRelationship(row.row_id, relationship);
     if (parent_id !== this.pending.root_id && !this.opened.has(parent_id)) this.toggle(parent_id, true);
     this.changed("semantic");
-    if (!this.documents.has(bookmark.ref)) {const owner = this.windows.has(parent_id) ? parent_id : this.pending.root_id; const window = this.windows.get(owner); if (window) this.accept(owner, window);}
+    if (!this.documents.has(bookmark.ref)) {const owner = this.windows.has(parent_id) ? parent_id : this.pending.root_id; const window = this.windows.get(owner); if (window) this.resumeAdmission(owner, window);}
     return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
   }
   private tailId(parent: string): string {
@@ -416,6 +416,7 @@ export class OutlineController {
   private navigationValid(parent: string): boolean {
     const request = this.requests.get(parent);
     if (!request?.navigation || request.navigation.lease()) return true;
+    if (this.admissionFailures.get(parent)?.request === request) return false;
     this.requests.set(parent, request.navigation.previous); this.versions.set(parent, (this.versions.get(parent) ?? 0) + 1); this.proposals.delete(parent); this.notify();
     return false;
   }
@@ -509,6 +510,12 @@ export class OutlineController {
       for (const [id, part] of selected) if (reachable.get(id) !== part) {selected.delete(id); expanded = true;}
     }
     return selected;
+  }
+  /** Background reconciliation resumes deferred admission, never a failed request. */
+  private resumeAdmission(parent_id: string, window: OutlineWindow): void {
+    const request = this.requests.get(parent_id);
+    if (!request || this.admissionFailures.get(parent_id)?.request === request) return;
+    this.accept(parent_id, window);
   }
   accept(parent_id: string, window: OutlineWindow): void {
     this.refreshChildren(parent_id, window);
@@ -629,13 +636,13 @@ export class OutlineController {
       if (this.active) this.notify();
       this.reservedWindows = null; this.reservedBytes = 0; this.settlingRefs.clear();
       const newer = this.proposals.get(parent_id);
-      if (installed && this.active) for (const [id, proposal] of this.proposals) this.accept(id, proposal);
-      else if (topologyChanged && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.accept(parent_id, window);
-      else if (newer && newer !== window && this.active && !failed) this.accept(parent_id, newer);
+      if (installed && this.active) for (const [id, proposal] of this.proposals) this.resumeAdmission(id, proposal);
+      else if (topologyChanged && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.resumeAdmission(parent_id, window);
+      else if (newer && newer !== window && this.active && !failed) this.resumeAdmission(parent_id, newer);
       else if (released && !failed && this.active && [...this.refs(this.windows)].some(ref => !this.documents.has(ref))) {
         const current = this.requests.get(parent_id);
-        if (newer === window && current === request && this.handle?.canArrange() && !this.hasPendingWriting()) this.accept(parent_id, window);
-        else if (!newer && current === request?.navigation?.previous) {const retained = this.windows.get(parent_id); if (retained) this.accept(parent_id, retained);}
+        if (newer === window && current === request && this.handle?.canArrange() && !this.hasPendingWriting()) this.resumeAdmission(parent_id, window);
+        else if (!newer && current === request?.navigation?.previous) {const retained = this.windows.get(parent_id); if (retained) this.resumeAdmission(parent_id, retained);}
       }
     });
   }

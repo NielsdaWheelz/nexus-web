@@ -181,12 +181,13 @@ function AccountFailure({ accountId, status, detail, signIn, signingIn, signInRe
     sync = { status, detail, occurrence: condition?.status === status ? condition.occurrence : {} };
     setCondition(sync);
   } else if (!remote && !["saving", "local_error", "preparing"].includes(status) && condition !== null) { sync = null; setCondition(null); }
-  const stoppedOccurrence = useFeedbackOccurrence(status === "local_error");
+  const storeStopped = status === "local_error" && !writing.saving;
+  const stoppedOccurrence = useFeedbackOccurrence(storeStopped);
   const syncStatus = sync?.status ?? status;
   const syncDetail = sync?.detail ?? detail;
   if (defect) throw defect.error;
   const stopped = writing.error !== null && writingStoreStopped(writing.error);
-  const incident = writing.error_occurrence ?? (status === "local_error" ? stoppedOccurrence : sync?.occurrence ?? null);
+  const incident = writing.error_occurrence ?? (storeStopped ? stoppedOccurrence : sync?.occurrence ?? null);
   const copied = useCopyFeedback(incident);
   const copyAvailable = writing.error !== null && runtime.hasUncommittedText();
   const copy = () => { void runtime.uncommittedText().then(async text => {
@@ -202,7 +203,7 @@ function AccountFailure({ accountId, status, detail, signIn, signingIn, signInRe
   const local = writing.error !== null;
   const content: FeedbackContent = local ? { tone: "Warning", title: stopped ? "local notes stopped" : "couldn’t confirm saving on this device",
     message: copyUnavailable === incident ? "copying isn’t available here. show the writing to copy it." : stopped ? copyAvailable ? "copy your writing before restarting nexus." : undefined : "keep nexus open. retry saving." }
-    : status === "local_error" ? { tone: "Warning", title: "local notes stopped" }
+    : storeStopped ? { tone: "Warning", title: "local notes stopped" }
     : signInResult !== null && syncStatus === "sign_in_required" ? signInResult.content
     : { tone: "Warning", title: syncStatus === "sign_in_required" ? "sign in to sync" : syncStatus === "update_required" ? "update nexus to sync" : "couldn’t sync",
       message: [!writing.saving && writing.error === null && !["saving", "preparing", "local_error"].includes(status) ? "changes are saved on this device." : null, syncDetail].filter(Boolean).join(" ") || undefined };
@@ -210,7 +211,7 @@ function AccountFailure({ accountId, status, detail, signIn, signingIn, signInRe
   const copyAction = copyUnavailable === incident ? { label: "show unsaved writing", onClick: showWriting } : { label: "copy unsaved writing", onClick: copy, copiedOccurrence: copied.occurrence ?? undefined };
   const primary = local ? { label: stopped ? "restart nexus" : "retry saving", onClick: stopped ? restart : retrySaving, busy: retrying }
     : syncStatus === "sign_in_required" ? { label: host === "workspace" ? "sign in" : "open workspace to sign in", onClick: signIn, busy: signingIn }
-    : status === "local_error" || syncStatus === "update_required" && host === "workspace" && !installedApp ? { label: "restart nexus", onClick: restart } : null;
+    : storeStopped || syncStatus === "update_required" && host === "workspace" && !installedApp ? { label: "restart nexus", onClick: restart } : null;
   const actions: FeedbackActions | undefined = primary ? copyAvailable ? stopped ? [copyAction, primary] : [primary, copyAction] : [primary] : undefined;
   return <>
     {incident ? <FeedbackFailure scope="Account" occurrence={incident}
