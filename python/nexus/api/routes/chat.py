@@ -19,6 +19,7 @@ from nexus.db.session import (
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
+from nexus.schemas.chat_selection import ChatSelectionOut
 from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.conversation import (
     ChatAdmissionReceipt,
@@ -35,7 +36,7 @@ from nexus.schemas.conversation import (
     ReaderSelectionKey,
     ReaderSelectionPreview,
 )
-from nexus.services.chat import admit, conversations, quotes, reads
+from nexus.services.chat import admit, conversations, quotes, reads, selection
 from nexus.services.generation.catalog import Catalog
 from nexus.services.tools.run import Toolbox
 
@@ -50,6 +51,14 @@ def _tools(request: Request) -> Toolbox:
 
 
 ToolsDep = Annotated[Toolbox, Depends(_tools)]
+
+
+@router.get("/me/chat-selection")
+def get_chat_selection(
+    response: Response, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ChatSelectionOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return Data(data=selection.read(db, user_id=viewer.user_id))
 
 
 @router.post("/chat-runs")

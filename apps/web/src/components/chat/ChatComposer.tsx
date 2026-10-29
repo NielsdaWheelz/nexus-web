@@ -7,7 +7,8 @@ import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import { recoveryOf, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
+import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
+import { useChatSelection } from "@/lib/chat/selectionMemory";
 import type { ChatView } from "@/lib/chat/tree";
 import type { Execution, RejectionCode } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
@@ -34,7 +35,6 @@ export default function ChatComposer(props: {
   view: ChatView;
   /** The pending leaf's live advisory, when its stream is tailed. */
   liveExecution: Execution | null;
-  historyReady: boolean;
   onClearBranch(): void;
   quote: QuoteState | null;
   onRemoveQuote(): void;
@@ -43,10 +43,11 @@ export default function ChatComposer(props: {
   focusKey: string | null;
   isPaneActive: boolean;
 }) {
-  const { target, branch, activeRun: run, inherited } = props.view;
-  const { quote, historyReady, focusKey, isPaneActive } = props;
+  const { target, branch, activeRun: run } = props.view;
+  const { quote, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
   const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
+  const { read: memoryRead, enter: enterMemory, fresh: freshMemory } = useChatSelection();
   const { delivery, claim } = usePaneEntryDelivery();
   const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
@@ -54,14 +55,27 @@ export default function ChatComposer(props: {
   // A new chat's unresolved first send holds its text and model; an existing chat's
   // command retries its frozen request, so the draft stays editable.
   const locked = own?.command.kind === "Send" && own.command.request.destination.kind === "New";
-  const [unresolved, setUnresolved] = useState<Extract<SelectionEditor, { kind: "DefaultUnavailable" }> | null>(null);
-  // An untouched draft follows the answer it replies to, else the catalog seed.
-  const followed = draft.selection ?? (props.scope === "new" || historyReady ? (inherited ?? catalog?.chat_seed.selection) : null) ?? null;
-  // the model controls show the request in flight (and a held new-chat send) as sent
-  const frozen = own?.command.kind === "Send" && (locked || own.kind === "Busy") ? own.command.request.selection : null;
-  const selection: SelectionEditor = frozen
-    ? { kind: "Selected", selection: frozen }
-    : (unresolved ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
+  const recalled = freshMemory(catalog);
+  const shownMemory: SelectionEditor | null = memoryRead.status === "ready" && memoryRead.data.last_used
+    ? { kind: "Selected", route: memoryRead.data.last_used.route, selection: memoryRead.data.last_used.selection } : null;
+  const frozen = own?.command.kind === "Send" && (locked || own.kind === "Busy")
+    ? { kind: "Selected" as const, selection: own.command.request.selection, route: own.command.selectionRoute } : null;
+  const recallRequired = draft.selection.kind === "Uninitialized" && !frozen;
+  const recallPending = memoryRead.status !== "ready" || !memoryRead.fresh || memoryRead.refreshing || memoryRead.error !== null;
+  const selection = frozen ?? (draft.selection.kind === "Uninitialized" ? recalled ?? shownMemory ?? draft.selection : draft.selection);
+  const catalogRef = useRef(catalogRead);
+  catalogRef.current = catalogRead;
+  useLayoutEffect(() => {
+    if (!isPaneActive) return;
+    enterMemory();
+    const current = catalogRef.current;
+    if (current.status === "ready" && !current.error) current.revalidate();
+    else if (current.status === "failed") void current.refetch();
+  }, [isPaneActive, enterMemory]);
+  useLayoutEffect(() => {
+    const fresh = freshMemory(catalog);
+    if (draft.text && draft.selection.kind === "Uninitialized" && fresh) setSelection(fresh);
+  }, [draft, catalog, freshMemory, setSelection]);
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [ready, setReady] = useState(false);
@@ -79,10 +93,10 @@ export default function ChatComposer(props: {
   useLayoutEffect(() => {
     if (!readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
     // no await: the exact visit's delivery and both draft fields transfer together.
-    setUnresolved(null);
+    enterMemory();
     setDraft({ text: readerEntry.entry.text, selection: readerEntry.entry.selection });
     claim(readerEntry);
-  }, [readerEntry, claim, setDraft]);
+  }, [readerEntry, claim, setDraft, enterMemory]);
   useEffect(() => {
     if (!inputReady || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive
@@ -92,7 +106,7 @@ export default function ChatComposer(props: {
   const reason = catalog ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
   const canSend = inputReady && command.kind === "Idle" && target.kind !== "Blocked" && !!catalog
-    && selection.kind === "Selected" && !reason && !!draft.text.trim() && (!quote || !!quoted);
+    && selection.kind === "Selected" && (draft.selection.kind !== "Uninitialized" || recalled !== null) && !reason && !!draft.text.trim() && (!quote || !!quoted);
 
   const submit = async (openIntent: OpenIntent = "default") => {
     if (!canSend || selection.kind !== "Selected") return;
@@ -110,7 +124,7 @@ export default function ChatComposer(props: {
       reader_selection: quoted ? { key: quoted.key, revision: quoted.revision } : null,
     };
     // the pane lands the accepted answer (Conversation)
-    present(await store.send(request, openIntent, () => spend(submitted)));
+    present(await store.send(request, selection.route, openIntent, () => { if (spend(submitted)) enterMemory(); }));
   };
   const present = (outcome: CommandOutcome) => {
     if (!mounted.current || outcome.kind !== "Failed") return;
@@ -170,7 +184,12 @@ export default function ChatComposer(props: {
           autoGrow={{ minRows: 1, maxRows: 6 }}
           className={styles.input}
           value={inputReady ? draft.text : ""}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            const text = event.target.value;
+            const fresh = freshMemory(catalog);
+            if (draft.selection.kind === "Uninitialized" && fresh) setDraft({ text, selection: fresh });
+            else setText(text);
+          }}
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
           onKeyDown={(event) => {
@@ -192,15 +211,7 @@ export default function ChatComposer(props: {
           <GenerationPicker
             catalogRead={catalogRead}
             value={selection}
-            onChange={(next) => {
-              if (next.kind === "Selected") {
-                setUnresolved(null);
-                setSelection(next.selection);
-              } else if (next.kind === "DefaultUnavailable") {
-                setUnresolved(next);
-                setSelection(null);
-              }
-            }}
+            onChange={setSelection}
             disabled={!inputReady || frozen !== null}
           />
           <Button
@@ -219,7 +230,21 @@ export default function ChatComposer(props: {
             aria-busy={sending}
             icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
         </div>
-        {reason && selection.kind !== "Uninitialized" ? (
+        {recallRequired && recallPending ? (
+          (memoryRead.status === "failed" || (memoryRead.status === "ready" && memoryRead.error && !shownMemory)) ? <>
+            <FeedbackStatus content={{ tone: "Warning", title: "couldn’t restore your last model" }} announcement="Polite" />
+            <span>choose a model or retry.</span>
+            <div className={styles.row}><Button onClick={() => { enterMemory(); textarea.current?.focus({ preventScroll: true }); }}>retry</Button></div>
+          </> : memoryRead.status === "ready" && memoryRead.error ? <>
+            <FeedbackStatus content={{ tone: "Warning", title: "couldn’t refresh your last model" }} announcement="Polite" />
+            <div className={styles.row}>
+              <Button onClick={() => { enterMemory(); textarea.current?.focus({ preventScroll: true }); }}>retry</Button>
+              {shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
+                ? <Button onClick={() => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); }}>use this model</Button> : null}
+            </div>
+          </> : <FeedbackStatus content={{ tone: "Neutral", title: "restoring last model…" }} announcement="Polite" />
+        ) : null}
+        {reason && selection.kind !== "Uninitialized" && (!recallRequired || !recallPending) ? (
           <FeedbackStatus
             content={{ tone: "Neutral", title: reason }}
             announcement="Polite"

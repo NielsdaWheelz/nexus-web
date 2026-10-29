@@ -1,4 +1,4 @@
-import type { BranchAnchor, Execution, Message, Selection } from "./wire";
+import type { BranchAnchor, Execution, Message } from "./wire";
 
 // Every view of the conversation is derived here from one server tree: the
 // messages (each once) and the active leaf. Nothing below is stored.
@@ -48,8 +48,6 @@ export type ChatView = Readonly<{
   target: SendTarget;
   /** The fork being composed; dropped once its parent leaves the path. */
   branch: BranchDraft | null;
-  /** The run selection of the answer the next send replies to. */
-  inherited: Selection | null;
 }>;
 
 export function indexChildren(messages: Iterable<Message>): Children {
@@ -167,7 +165,6 @@ export function chatView(
     activeRun,
     target,
     branch,
-    inherited: parent?.trust_trail?.run.run_selection.selection ?? null,
   };
 }
 

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 # the same identity (a client-minted id, a get-or-create key) and the rerun reads the winner.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
+        "uq_chat_selections_user",
         "uq_contributors_handle",
         "uq_contributor_aliases_owner_normalized",
         "uq_contributor_external_ids_authority_key",

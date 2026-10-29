@@ -2,7 +2,7 @@
 
 No tier, fallback or substitution: a background operation runs only its listed
 Codex selection; chat runs the user's selection and keeps its exact initial seed.
-Route preferences and effort exceptions affect editor choices, never eligibility.
+Route and effort defaults affect editor choices, never eligibility.
 Budgets that no route enforces are not recorded.
 """
 
@@ -36,20 +36,39 @@ CHAT_OUTPUT_BUDGET_TOKENS: Final = 32_000
 PROVIDER_MAX_TURNS: Final = 24
 MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 
+_CHAT_SEED_MODEL = GenerationModelDefault(model_key="gpt-6-sol", mode=None)
+_CHAT_SEED_EFFORT = "xhigh"
+
 _CHAT_MODEL_DEFAULTS: dict[GenerationApiProvider | None, GenerationModelDefault] = {
-    None: GenerationModelDefault(model_key="gpt-6-sol", mode=None),
+    None: _CHAT_SEED_MODEL,
     "openai": GenerationModelDefault(model_key="openai:gpt-6-sol", mode="standard"),
     "anthropic": GenerationModelDefault(model_key="anthropic:claude-sonnet-5", mode="adaptive"),
     "gemini": GenerationModelDefault(model_key="gemini:gemini-3.8-flash", mode=None),
     "deepseek": GenerationModelDefault(model_key="deepseek:deepseek-flash", mode=None),
     "xai": GenerationModelDefault(model_key="xai:grok-4.7", mode=None),
 }
-_CHAT_EFFORT_EXCEPTIONS: dict[tuple[str, str | None], str] = {
-    ("openai:gpt-6-astra", "standard"): "medium",
-    ("openai:gpt-6-astra", "pro"): "medium",
-    ("openai:gpt-6-sol", "pro"): "medium",
-    ("openai:gpt-6-luna", "pro"): "medium",
-    ("anthropic:claude-sonnet-5", "disabled"): "high",
+_CHAT_EFFORT_DEFAULTS: dict[tuple[GenerationApiProvider | None, str, str | None], str] = {
+    (None, "gpt-6-astra", None): "xhigh",
+    (None, "gpt-6.1-sol", None): "xhigh",
+    (None, _CHAT_SEED_MODEL.model_key, _CHAT_SEED_MODEL.mode): _CHAT_SEED_EFFORT,
+    (None, "gpt-6-luna", None): "xhigh",
+    (None, "gpt-5.6-sol", None): "xhigh",
+    (None, "gpt-5.6-terra", None): "xhigh",
+    (None, "gpt-5.6-luna", None): "xhigh",
+    (None, "gpt-5.5", None): "xhigh",
+    ("openai", "openai:gpt-6-astra", "standard"): "xhigh",
+    ("openai", "openai:gpt-6-astra", "pro"): "xhigh",
+    ("openai", "openai:gpt-6-sol", "standard"): "xhigh",
+    ("openai", "openai:gpt-6-sol", "pro"): "xhigh",
+    ("openai", "openai:gpt-6-luna", "standard"): "xhigh",
+    ("openai", "openai:gpt-6-luna", "pro"): "xhigh",
+    ("anthropic", "anthropic:claude-fable-5-1", "adaptive"): "xhigh",
+    ("anthropic", "anthropic:claude-opus-5-5", "adaptive"): "xhigh",
+    ("anthropic", "anthropic:claude-sonnet-5", "adaptive"): "xhigh",
+    ("anthropic", "anthropic:claude-sonnet-5", "disabled"): "xhigh",
+    ("gemini", "gemini:gemini-3.8-flash", None): "high",
+    ("deepseek", "deepseek:deepseek-flash", None): "high",
+    ("xai", "xai:grok-4.7", None): "high",
 }
 
 # operation, owner, model, reasoning, whole-generation timeout s, input KiB.
@@ -71,7 +90,7 @@ def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
 _TABLE: dict[Operation, OperationPolicy] = {
     "chat": OperationPolicy(
         owner_kind="chat_run",
-        selection=_codex("gpt-6-sol", "medium"),
+        selection=_codex(_CHAT_SEED_MODEL.model_key, _CHAT_SEED_EFFORT),
         output="Text",
         timeout_seconds=900,
         input_max_bytes=512 * 1024,
@@ -101,8 +120,10 @@ def chat_model_default(provider: GenerationApiProvider | None) -> GenerationMode
     return _CHAT_MODEL_DEFAULTS[provider]
 
 
-def chat_effort_exception(model_key: str, mode: str | None) -> str | None:
-    return _CHAT_EFFORT_EXCEPTIONS.get((model_key, mode))
+def chat_effort_default(
+    provider: GenerationApiProvider | None, model_key: str, mode: str | None
+) -> str | None:
+    return _CHAT_EFFORT_DEFAULTS.get((provider, model_key, mode))
 
 
 def chat_tool_plan(
