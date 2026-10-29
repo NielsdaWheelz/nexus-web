@@ -11,9 +11,11 @@ from datetime import timedelta
 
 from fastapi import Request
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.search.admission import SearchAdmissionBusy
 
 logger = get_logger(__name__)
 
@@ -87,6 +89,12 @@ async def run_search_operation[T](
             logger.info("search.cancel_join.end", mono_ns=time.monotonic_ns())
             if cancelled:
                 raise asyncio.CancelledError()
+    except SearchAdmissionBusy:
+        raise ApiError(
+            ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+        ) from None
+    except PoolTimeout:
+        raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed") from None
     except TimeoutError:
         if not budget.expired() and asyncio.get_running_loop().time() < deadline:
             raise

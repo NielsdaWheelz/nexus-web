@@ -39,6 +39,7 @@ export function useLinkTargets(
     // The endpoint fixes its page size; no limit parameter is supported.
     pageSize: 10,
     readPolicy: "search:target-picker-prefix",
+    retry: "capacity",
     prefixTimeoutMs: pages => SEARCH_READ_TIMEOUT_MS.hybrid * (pages ?? 101),
     active: active && raw === settled,
     id: targetKey,

@@ -116,11 +116,11 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "direct", signal }),
   });
   const lexical = usePaneFreeServerValue({
-    key: lexicalKey, stale: "", readPolicy: "search:lexical", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.lexical,
+    key: lexicalKey, stale: "", readPolicy: "search:lexical", retry: "capacity", timeoutMs: SEARCH_READ_TIMEOUT_MS.lexical,
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "lexical", signal }),
   });
   const hybrid = usePaneFreeServerValue({
-    key: hybridKey, stale: "", readPolicy: "search:hybrid", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.hybrid,
+    key: hybridKey, stale: "", readPolicy: "search:hybrid", retry: "capacity", timeoutMs: SEARCH_READ_TIMEOUT_MS.hybrid,
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "hybrid", signal }),
   });
   const directData = directKey !== null && direct.status === "ready" ? direct.data : null;

@@ -32,7 +32,7 @@ _RETIREMENT_CONFIRMATION_SECONDS = 10.0
 
 
 class SearchAdmissionBusy(Exception):
-    """Background admission refused without waiting behind another read."""
+    """Request/background admission refused before computation without waiting."""
 
 
 class SearchBudgetExpired(TimeoutError):
@@ -51,18 +51,20 @@ def remaining_milliseconds(deadline: float) -> int:
     return remaining
 
 
-def _admit(db: Session, deadline: float, purpose: Literal["foreground", "background"]) -> None:
+def _admit(
+    db: Session, deadline: float, purpose: Literal["foreground", "background", "request"]
+) -> None:
     db.execute(text("SET LOCAL lock_timeout = '0'"))
     db.execute(
         text("SELECT set_config('statement_timeout', :timeout, true)"),
         {"timeout": str(remaining_milliseconds(deadline))},
     )
-    function = "pg_try_advisory_lock" if purpose == "background" else "pg_advisory_lock"
+    function = "pg_advisory_lock" if purpose == "foreground" else "pg_try_advisory_lock"
     granted = db.scalar(
         text(f"SELECT {function}(hashtextextended(:key, 0))"),
         {"key": "nexus:expensive-search"},
     )
-    if purpose == "background" and not granted:
+    if purpose != "foreground" and not granted:
         raise SearchAdmissionBusy()
     db.rollback()  # the session lock survives; the admission snapshot does not
     remaining_milliseconds(deadline)
@@ -138,7 +140,7 @@ async def _join_retirement(task: asyncio.Task[None]) -> None:
 
 @asynccontextmanager
 async def search_session_async(
-    *, deadline: float, purpose: Literal["foreground", "background"]
+    *, deadline: float, purpose: Literal["foreground", "background", "request"]
 ) -> AsyncIterator[AsyncSession]:
     """One owned checkout/admission/read deadline; cleanup is joined outside it."""
     loop = asyncio.get_running_loop()

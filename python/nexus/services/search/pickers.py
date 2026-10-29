@@ -1,8 +1,8 @@
 """Link target search: strict passage admission and durable quote identity.
 
-Identity lookups use the caller's snapshot; text searches embed before acquiring
-their owned, database-wide admitted backend and materialize before retiring it.
-Unavailable semantics authorize the source before failing, without search admission.
+Identity lookups use the caller's snapshot; text searches acquire their owned,
+database-wide admitted backend before embedding and materialize before retiring it.
+Unavailable semantics still authorize the source in the snapshot before failing.
 """
 
 from __future__ import annotations
@@ -81,20 +81,20 @@ async def search_targets(
     q = request.q.strip()
     parsed = parse_resource_ref(q)
     exact = parsed if isinstance(parsed, ResourceRef) else None
-    embedding = None
-    embedding_failure = None
-    try:
-        if exact is None and len(q) >= MIN_QUERY_LENGTH:
-            embedding = await embed_text(q)
-    except ApiError as exc:
-        if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
-            raise
-        embedding_failure = exc
     async with (
         open_async_session()
-        if exact is not None or len(q) < MIN_QUERY_LENGTH or embedding_failure is not None
-        else search_session_async(deadline=deadline, purpose="foreground")
+        if exact is not None or len(q) < MIN_QUERY_LENGTH
+        else search_session_async(deadline=deadline, purpose="request")
     ) as database:
+        embedding = None
+        embedding_failure = None
+        try:
+            if exact is None and len(q) >= MIN_QUERY_LENGTH:
+                embedding = await embed_text(q)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
+                raise
+            embedding_failure = exc
         return await database.run_sync(
             lambda db: read_snapshot(
                 db,

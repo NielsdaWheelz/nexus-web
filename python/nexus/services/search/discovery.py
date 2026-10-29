@@ -1,7 +1,7 @@
 """Browser composition: reserved preview bands and paged resources or occurrences.
 
-Each explicit phase returns a complete ranking. Only eligible hybrid phases embed,
-before their one snapshot; expected provider failure waits for scope authorization.
+Each explicit phase returns a complete ranking. Eligible hybrid phases admit before
+embedding and their one snapshot; expected provider failure waits for scope authorization.
 Lexical phases never call the provider or neighbour query. Visible SQL facts determine
 admission and order; canonical items own activation, including unavailable locations.
 A full resource prefix omits chunk neighbours only when selected media have lexical
@@ -357,8 +357,6 @@ async def search(
     families = _families(
         query, passages=view == "passages", direct=len(query.text) < 2, preview=False
     )
-    embedding, failure = await _embedding(query, families, phase)
-    status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def page(more: bool) -> SearchPageInfo:
         return SearchPageInfo(
@@ -444,9 +442,11 @@ async def search(
 
     async with (
         open_async_session()
-        if len(query.text) < 2 or not query.requests_read or not families or failure is not None
-        else search_session_async(deadline=deadline, purpose="foreground")
+        if len(query.text) < 2 or not query.requests_read or not families
+        else search_session_async(deadline=deadline, purpose="request")
     ) as database:
+        embedding, failure = await _embedding(query, families, phase)
+        status: SemanticStatus = "used" if embedding is not None else "not_requested"
         return await database.run_sync(lambda db: _snapshot(db, deadline, read))
 
 
@@ -459,8 +459,6 @@ async def preview(
 ) -> SearchPreviewResponse:
     direct = phase == "direct" or len(query.text) < 2
     families = _families(query, passages=False, direct=direct, preview=True)
-    embedding, failure = await _embedding(query, families, phase)
-    status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def read(db: Session) -> SearchPreviewResponse:
         r = replace(
@@ -552,7 +550,9 @@ async def preview(
 
     async with (
         open_async_session()
-        if direct or not query.requests_read or not families or failure is not None
-        else search_session_async(deadline=deadline, purpose="foreground")
+        if direct or not query.requests_read or not families
+        else search_session_async(deadline=deadline, purpose="request")
     ) as database:
+        embedding, failure = await _embedding(query, families, phase)
+        status: SemanticStatus = "used" if embedding is not None else "not_requested"
         return await database.run_sync(lambda db: _snapshot(db, deadline, read))

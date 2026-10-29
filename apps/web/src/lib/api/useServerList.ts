@@ -114,7 +114,7 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
-  /** Whole-walk budget; a null page count means traversal to the end. */
+  /** Whole-walk budget; capacity mode counts successful page execution only. Null means to the end. */
   readonly prefixTimeoutMs?: (pages: number | null) => number;
   readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
@@ -190,6 +190,8 @@ function useList<T, M>(
   const run = useCallback(
     function run(requested: Op) {
       const { key, stale, pageSize, fetchPage, id, catalog, foldMetadata } = latest.current;
+      const capacity = latest.current.retry === "capacity";
+      let remainingExecutionMs: number | undefined;
       const fold = (earlier: M | null, later: M | null) =>
         earlier === null || later === null || foldMetadata === undefined ? later : foldMetadata(earlier, later);
       let base = shownRef.current?.key === key ? shownRef.current : null;
@@ -214,6 +216,20 @@ function useList<T, M>(
       let wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
       let toEnd = op !== "Load" && base !== null && base.cursor === null;
       const read = async (signal: AbortSignal) => {
+        const loadPage = async (cursor: string | null) => {
+          if (!capacity) return fetchPage(cursor, pageSize, signal);
+          if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0)
+            throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
+          const pageAllowance = latest.current.prefixTimeoutMs?.(1) ?? latest.current.timeoutMs;
+          const timeoutMs = remainingExecutionMs === undefined ? pageAllowance
+            : pageAllowance === undefined ? remainingExecutionMs : Math.min(remainingExecutionMs, pageAllowance);
+          return requestWithRetry(async pageSignal => {
+            const started = performance.now();
+            const page = await fetchPage(cursor, pageSize, pageSignal);
+            if (remainingExecutionMs !== undefined) remainingExecutionMs -= performance.now() - started;
+            return page;
+          }, signal, { retry: "capacity", timeoutMs });
+        };
         const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
           if (page.next_cursor !== null && cursors.includes(page.next_cursor)) {
             throw new ApiError(409, "E_INVALID_CURSOR", "list returned a repeated cursor");
@@ -226,7 +242,7 @@ function useList<T, M>(
           let orderRevision: string | null = null;
           let metadata: M | null = null;
           do {
-            const page = await fetchPage(cursor, pageSize, signal);
+            const page = await loadPage(cursor);
             cursors.push(cursor);
             validateCursor(page, cursors);
             metadata = cursors.length === 1 ? page.metadata ?? null : fold(metadata, page.metadata ?? null);
@@ -240,7 +256,7 @@ function useList<T, M>(
         };
         try {
           if (op === "More" && base !== null && base.source.kind === "live" && !restarted) {
-            const page = await fetchPage(base.cursor, pageSize, signal);
+            const page = await loadPage(base.cursor);
             const cursors = [...base.cursors, base.cursor];
             validateCursor(page, cursors);
             const orderRevision = page.order_revision ?? null;
@@ -250,7 +266,7 @@ function useList<T, M>(
           return await walk();
         } catch (error) {
           // Restart from the source, never from a cached first page.
-          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.retry === "manual") throw error;
+          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.retry !== undefined) throw error;
           restarted = true;
           return walk();
         }
@@ -290,10 +306,12 @@ function useList<T, M>(
         }
         const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
           op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
-        const pages = toEnd ? null : op === "More" && latest.current.retry === "manual" ? 1
+        const pages = toEnd ? null : op === "More" && latest.current.retry !== undefined ? 1
           : op === "More" ? wantPages + 1 : wantPages;
         const timeoutMs = latest.current.prefixTimeoutMs?.(pages) ?? latest.current.timeoutMs;
-        return owner.read(requestKey, signal => requestWithRetry(read, signal, { ...latest.current, timeoutMs }), controller.signal);
+        remainingExecutionMs = timeoutMs;
+        return owner.read(requestKey, signal => capacity ? read(signal)
+          : requestWithRetry(read, signal, { ...latest.current, timeoutMs }), controller.signal);
       })()
         .then(
           result => {
@@ -422,7 +440,7 @@ function useList<T, M>(
     active,
     revalidate,
     retry: () => {
-      if (input.retry === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
+      if (input.retry !== undefined && failure?.error.code === "E_INVALID_CURSOR") return;
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
         run("More");
       } else if (failure !== null) {
