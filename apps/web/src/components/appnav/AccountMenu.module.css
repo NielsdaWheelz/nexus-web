@@ -78,6 +78,8 @@
 
 .statusText {
   display: grid;
+  inline-size: 28ch;
+  max-inline-size: 100%;
   min-inline-size: 0;
   overflow-wrap: anywhere;
 }
@@ -88,6 +90,13 @@
 
 .statusDetail {
   font-size: var(--text-xs);
+}
+
+/* Live counts must not move the account menu's published action targets. */
+.statusDetail[data-progress] {
+  block-size: 4lh;
+  overflow: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (forced-colors: active) {
