@@ -4,6 +4,13 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+sync feedback against `dae72416f`: +57 net authored runtime lines
+(63 added, 6 deleted): account presentation +32, browser shell +25.
+the static busy icon becomes reduced-motion-aware animation; import-only account
+attention becomes additive import/update attention. the existing registration's
+waiting update is observed without a second registration, polling, forced
+activation or a new lifecycle registry. docs and private artifacts are excluded.
+
 playback migration preimage against `d81fd836a`: +32 net authored runtime lines
 (46 added, 14 deleted), all android playback. construction keeps the original
 envelope bytes until a private atomic preimage is synced and verified before

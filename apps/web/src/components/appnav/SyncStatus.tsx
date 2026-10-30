@@ -42,7 +42,7 @@ export function syncStatusOption(status: SyncStatus, cause: string | null, auth:
     id: "sync-status",
     label: "sync status",
     render: ({ closeMenu, presentation }) => <div className={styles.status} data-failed={Icon === CircleAlert || undefined}>
-      <Icon size={16} className={styles.statusIcon} aria-hidden="true" />
+      <Icon size={16} className={styles.statusIcon} data-busy={Icon === LoaderCircle || undefined} aria-hidden="true" />
       <span className={styles.statusText}>
         <span>{STATUS_COPY[status]}</span>
         {details(status, cause).map(line => <span key={line} className={styles.statusDetail}>{line}</span>)}

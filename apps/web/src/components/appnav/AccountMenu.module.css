@@ -60,6 +60,18 @@
   margin-block-start: 2px;
 }
 
+.statusIcon[data-busy] {
+  animation: status-spin var(--duration-deliberate) linear infinite;
+}
+
+@keyframes status-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusIcon[data-busy] { animation: none; }
+}
+
 .status[data-failed] .statusIcon {
   color: var(--warning);
 }

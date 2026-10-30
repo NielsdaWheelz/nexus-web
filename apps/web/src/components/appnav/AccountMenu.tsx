@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { CircleUser, Download, LogOut } from "lucide-react";
+import { CircleArrowUp, CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
@@ -13,6 +13,7 @@ import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useAuthoredSignIn, useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
 import { prepareAuthoredSignOut } from "@/lib/authored/signOut";
+import { observeShellUpdate } from "@/lib/authored/shell";
 import { importAttentionDescription } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
@@ -117,8 +118,8 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Account navigation, the one sync status and passive Imports attention, shared by the
- * rail and mobile Nexus. The trigger is described by the current status. Expired
+/** Account navigation, sync status and passive import/update attention, shared by the
+ * rail and mobile Nexus. The trigger describes current status and attention. Expired
  * credentials offer the existing sign-in flow without retiring local writing. */
 export default function AccountMenu(props: {
   activeId: DestinationId | null;
@@ -136,11 +137,18 @@ export default function AccountMenu(props: {
   const { summary } = useImports();
   const status = useAuthoredStatus();
   const cause = useAuthoredSyncDetail();
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    if (installedApp || !("serviceWorker" in navigator)) return;
+    return observeShellUpdate(setUpdateReady);
+  }, []);
   const descriptionId = useId();
   const count = summary.status === "ready" ? summary.data.needs_attention_count : null;
   const refresh_failed = summary.status === "ready" && summary.error !== null;
-  const description = count !== null && count > 0
-    ? importAttentionDescription(count, refresh_failed) : null;
+  const description = [
+    count !== null && count > 0 ? importAttentionDescription(count, refresh_failed) : null,
+    updateReady ? "app update ready" : null,
+  ].filter(value => value !== null).join("; ") || null;
   // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
   if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
 
@@ -206,6 +214,18 @@ export default function AccountMenu(props: {
       }),
     });
   }
+  if (updateReady) options.splice(1, 0, {
+    kind: "custom",
+    id: "app-update",
+    label: "app update",
+    render: () => <div className={accountStyles.status}>
+      <CircleArrowUp size={16} className={accountStyles.statusIcon} aria-hidden="true" />
+      <span className={accountStyles.statusText}>
+        <span>app update ready</span>
+        <span className={accountStyles.statusDetail}>finish writing, then close all nexus tabs and reopen.</span>
+      </span>
+    </div>,
+  });
 
   return (
     <>
