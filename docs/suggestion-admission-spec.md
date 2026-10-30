@@ -106,6 +106,10 @@ is confirmed absent. unconfirmed retirement fails that scope's search capacity
 closed and prevents publication. slow confirmed cleanup alone does not reject an
 otherwise live successful result; actual cancellation/expiry still wins. never
 unlock early or abandon cleanup to satisfy a stopwatch.
+transient control-connection loss during database recovery retries only that
+confirmation within its existing window. a disconnected read or known blocked
+search scope is a settled search failure, not contention or a workspace defect;
+it never automatically replays the query.
 
 only observed admission refusal returns the existing database-time `+5 seconds`
 same-job `RescheduleRequested` with an attempt refund. setup failures and admitted

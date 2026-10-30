@@ -55,6 +55,10 @@ class _AsyncDatabaseScope:
         self.search_failed = False
 
 
+class SearchRetirementUnconfirmed(Exception):
+    """Known backend retirement failed; this scope remains closed to search."""
+
+
 class SearchDatabaseLease:
     """One search capacity owner; only actual backend absence confirms retirement."""
 
@@ -87,7 +91,7 @@ async def search_database_capacity(*, wait: bool) -> AsyncIterator[SearchDatabas
     assert scope is not None
     count = _allowance("search_async")
     if scope.search_failed:
-        raise RuntimeError("search retirement unconfirmed; runtime repair required")
+        raise SearchRetirementUnconfirmed("search retirement unconfirmed; runtime repair required")
     if scope.search_capacity is None:
         scope.search_capacity = asyncio.BoundedSemaphore(count)
     if not wait and scope.search_capacity.locked():
@@ -97,7 +101,9 @@ async def search_database_capacity(*, wait: bool) -> AsyncIterator[SearchDatabas
     lease = SearchDatabaseLease()
     try:
         if scope.search_failed:
-            raise RuntimeError("search retirement unconfirmed; runtime repair required")
+            raise SearchRetirementUnconfirmed(
+                "search retirement unconfirmed; runtime repair required"
+            )
         yield lease
     finally:
         if lease._retirement_required and not lease._retired:
