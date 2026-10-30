@@ -42,7 +42,13 @@ export interface ScopeTextPage {
 /** Fixed storage statements are packaged for Android too; bridge callers send
  * values and operation names, never SQL. Revisions isolate incomplete inputs. */
 export const SCOPE_SQL = {
-  scope_state: `SELECT active_revision,staging_revision,metadata_cursor,metadata_complete FROM scope_state WHERE singleton=1`,
+  scope_state: `SELECT active_revision,staging_revision,metadata_cursor,metadata_complete,
+    (SELECT COUNT(*) FROM scope_facts WHERE revision=s.staging_revision)
+      +(SELECT COUNT(*) FROM scope_readings WHERE revision=s.staging_revision)
+      +(SELECT COUNT(*) FROM scope_intervals WHERE revision=s.staging_revision) AS metadata_records,
+    (SELECT COUNT(*) FROM scope_readings WHERE revision=s.staging_revision) AS readings_total,
+    (SELECT COUNT(*) FROM scope_text_complete WHERE revision=s.staging_revision) AS readings_complete
+    FROM scope_state s WHERE singleton=1`,
   // Published provenance is a relationship proof, independent of reading permission
   // and its blacklist. The destination reader must own its own authorized bounds.
   scope_source_alias: `SELECT target_ref AS canonical_source_ref FROM scope_facts
@@ -74,6 +80,44 @@ export const SCOPE_SQL = {
   scope_metadata_intervals: `INSERT OR IGNORE INTO scope_intervals(revision,interval_key,reading_ref,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut)
     SELECT ?,json_extract(value,'$.interval_key'),json_extract(value,'$.reading_ref'),json_extract(value,'$.fragment_id'),json_extract(value,'$.fragment_idx'),json_extract(value,'$.start_offset'),json_extract(value,'$.end_offset'),json_extract(value,'$.purpose'),json_extract(value,'$.start_cut'),json_extract(value,'$.end_cut') FROM json_each(?) WHERE json_extract(value,'$.kind')='interval'`,
   scope_metadata_cursor: `UPDATE scope_state SET metadata_cursor=?,metadata_complete=? WHERE staging_revision=?`,
+  // Fresh complete metadata owns admission. Only a complete, unrevoked active
+  // reading with identical publication, bounds and negative facts supplies text.
+  scope_reusable_reading: `WITH revisions AS (
+      SELECT active_revision AS old_revision,staging_revision AS new_revision FROM scope_state
+      WHERE singleton=1 AND staging_revision=?1 AND metadata_complete=1 AND active_revision<>?1
+    ), old_intervals AS (
+      SELECT interval_key,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut
+      FROM scope_intervals WHERE revision=(SELECT old_revision FROM revisions) AND reading_ref=?2
+    ), new_intervals AS (
+      SELECT interval_key,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut
+      FROM scope_intervals WHERE revision=?1 AND reading_ref=?2
+    ), old_negative AS (
+      SELECT target_ref,json_extract(state_json,'$.start_offset') AS start_offset,json_extract(state_json,'$.end_offset') AS end_offset
+      FROM scope_facts WHERE revision=(SELECT old_revision FROM revisions) AND kind='incomplete_table' AND owner_ref=?2
+    ), new_negative AS (
+      SELECT target_ref,json_extract(state_json,'$.start_offset') AS start_offset,json_extract(state_json,'$.end_offset') AS end_offset
+      FROM scope_facts WHERE revision=?1 AND kind='incomplete_table' AND owner_ref=?2
+    ) SELECT 1 AS reusable FROM revisions v
+    JOIN scope_readings a ON a.revision=v.old_revision AND a.reading_ref=?2
+    JOIN scope_readings b ON b.revision=v.new_revision AND b.reading_ref=a.reading_ref
+      AND b.source_ref=a.source_ref AND b.source_kind=a.source_kind
+      AND b.body_generation IS a.body_generation AND b.source_generation IS a.source_generation
+    WHERE NOT EXISTS(SELECT 1 FROM scope_revocations WHERE scope_ref=?2)
+      AND EXISTS(SELECT 1 FROM scope_text_complete WHERE revision=v.old_revision AND reading_ref=?2)
+      AND EXISTS(SELECT 1 FROM scope_text_progress WHERE revision=v.old_revision AND reading_ref=?2 AND raw_complete=1 AND cursor IS NULL)
+      AND NOT EXISTS(SELECT 1 FROM old_intervals i WHERE NOT EXISTS (
+        SELECT 1 FROM scope_normalized_complete n WHERE n.revision=v.old_revision AND n.reading_ref=?2 AND n.interval_key=i.interval_key))
+      AND NOT EXISTS(SELECT * FROM old_intervals EXCEPT SELECT * FROM new_intervals)
+      AND NOT EXISTS(SELECT * FROM new_intervals EXCEPT SELECT * FROM old_intervals)
+      AND NOT EXISTS(SELECT * FROM old_negative EXCEPT SELECT * FROM new_negative)
+      AND NOT EXISTS(SELECT * FROM new_negative EXCEPT SELECT * FROM old_negative)`,
+  scope_reuse_text: `INSERT INTO scope_text(revision,reading_ref,interval_key,start_offset,text)
+    SELECT ?1,reading_ref,interval_key,start_offset,text FROM scope_text WHERE revision=(SELECT active_revision FROM scope_state) AND reading_ref=?2`,
+  scope_reuse_normalized: `INSERT INTO scope_normalized(revision,reading_ref,interval_key,start_offset,normalized_text,edits_json)
+    SELECT ?1,reading_ref,interval_key,start_offset,normalized_text,edits_json FROM scope_normalized WHERE revision=(SELECT active_revision FROM scope_state) AND reading_ref=?2`,
+  scope_reuse_normalized_complete: `INSERT INTO scope_normalized_complete(revision,reading_ref,interval_key)
+    SELECT ?1,reading_ref,interval_key FROM scope_normalized_complete WHERE revision=(SELECT active_revision FROM scope_state) AND reading_ref=?2`,
+  scope_reuse_progress: `INSERT INTO scope_text_progress(revision,reading_ref,cursor,raw_complete) VALUES(?,?,NULL,1)`,
   scope_text_chunks: `INSERT OR REPLACE INTO scope_text(revision,reading_ref,interval_key,start_offset,text)
     SELECT ?,?,json_extract(value,'$.interval_key'),json_extract(value,'$.start_offset'),json_extract(value,'$.text') FROM json_each(?)`,
   scope_text_cursor: `INSERT INTO scope_text_progress(revision,reading_ref,cursor,raw_complete) VALUES(?,?,?,?) ON CONFLICT(revision,reading_ref) DO UPDATE SET cursor=excluded.cursor,raw_complete=excluded.raw_complete`,
@@ -114,6 +158,7 @@ export interface ScopeProgress {
   active_revision: string | null; staging_revision: string | null;
   metadata_cursor: string | null; metadata_complete: boolean;
   reading_ref: string | null; text_cursor: string | null; raw_complete: boolean;
+  metadata_records: number; readings_total: number; readings_complete: number;
 }
 export interface ScopeNormalizationInterval { interval_key: string; start_offset: number; end_offset: number }
 export interface ScopeRawChunk { start_offset: number; text: string }

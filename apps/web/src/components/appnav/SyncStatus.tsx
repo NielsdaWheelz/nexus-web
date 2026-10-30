@@ -20,10 +20,11 @@ const ICONS: Record<SyncStatus, typeof Check> = {
 };
 const REMOTE_FAILURES: ReadonlySet<SyncStatus> = new Set(["sign_in_required", "update_required", "sync_error"]);
 
-/** The supporting lines under a status: its local fact, then a failure's current cause. */
+/** The supporting lines under a status: its local fact, then current preparation
+ * progress or the failure's cause. Account-current still requires full scope. */
 function details(status: SyncStatus, cause: string | null): readonly string[] {
   const failed = status === "local_error" || REMOTE_FAILURES.has(status);
-  return [DETAIL[status], failed ? cause : null].filter(line => line !== null);
+  return [DETAIL[status], failed || status === "syncing" ? cause : null].filter(line => line !== null);
 }
 
 /** The status sentence an account trigger is described by. */

@@ -262,6 +262,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "scope_revoke" -> JSONObject().put("changed", store!!.scopeRevoke(request.getJSONArray("refs")))
             "scope_metadata" -> JSONObject().put("accepted", store!!.scopeMetadata(request.getJSONObject("page"), if (request.isNull("requested_cursor")) null else request.getString("requested_cursor")))
             "scope_text" -> JSONObject().put("accepted", store!!.scopeText(request.getJSONObject("page"), if (request.isNull("requested_cursor")) null else request.getString("requested_cursor")))
+            "scope_reuse" -> JSONObject().put("accepted", store!!.scopeReuse(request.getString("revision"), request.getString("reading_ref")))
             "scope_normalization_next" -> store!!.scopeNormalizationNext(request.getString("revision"), request.getString("reading_ref"))
             "scope_normalization_read" -> store!!.scopeNormalizationRead(request)
             "scope_normalization_observation" -> store!!.scopeNormalizationObservation(request)
