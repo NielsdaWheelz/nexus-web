@@ -98,7 +98,9 @@ def _ctes() -> str:
     """
     expanded = reading_media_ids_sql("SELECT root.media_id")
     library = reading_media_ids_sql(library_media_ids_cte_sql(library_param="library.id"))
-    intervals = text_scope_rows_sql("SELECT media_id FROM readings")
+    intervals = text_scope_rows_sql(
+        "SELECT media_id FROM readings WHERE text_ready AND source_kind IN ('epub','web_article')"
+    )
     apparatus = apparatus_scope_rows_sql("SELECT media_id FROM readings WHERE is_part")
     from nexus.services.x_source import readable_x_capture_ids_sql
 
@@ -152,10 +154,9 @@ def _ctes() -> str:
         body_intervals AS MATERIALIZED (
             SELECT bounded.reading_media_id,bounded.fragment_id,bounded.fragment_idx,
                 bounded.start_offset,bounded.end_offset,'body'::text AS purpose
-            FROM ({intervals}) bounded JOIN readings r ON r.media_id=bounded.reading_media_id
+            FROM ({intervals}) bounded
             JOIN fragments body_fragment ON body_fragment.id=bounded.fragment_id
             WHERE body_fragment.x_post_capture_id IS NULL
-                AND r.text_ready AND r.source_kind IN ('epub','web_article')
                 AND bounded.start_offset<bounded.end_offset
         ),
         note_intervals AS MATERIALIZED (
