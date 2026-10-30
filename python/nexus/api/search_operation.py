@@ -12,6 +12,7 @@ from datetime import timedelta
 from fastapi import Request
 from sqlalchemy.exc import DBAPIError
 
+from nexus.db.engine import SearchRetirementUnconfirmed
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.search.admission import SearchAdmissionBusy, SearchExecutionFailed
@@ -94,12 +95,23 @@ async def run_search_operation[T](
         ) from None
     except SearchExecutionFailed:
         raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed") from None
+    except SearchRetirementUnconfirmed:
+        logger.error("search.retirement_blocked", mono_ns=time.monotonic_ns())
+        raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed") from None
     except TimeoutError:
         if not budget.expired() and asyncio.get_running_loop().time() < deadline:
             raise
         logger.info("search.budget.expired", mono_ns=time.monotonic_ns())
         raise ApiError(ApiErrorCode.E_SEARCH_TIMEOUT, "Search timed out") from None
     except DBAPIError as exc:
+        if exc.connection_invalidated:
+            logger.error(
+                "search.database.disconnected",
+                sqlstate=getattr(exc.orig, "sqlstate", None),
+                mono_ns=time.monotonic_ns(),
+                exc_info=True,
+            )
+            raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed") from exc
         if getattr(exc.orig, "sqlstate", None) != "57014":
             raise
         diagnostic = getattr(exc.orig, "diag", None)

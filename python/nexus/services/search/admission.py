@@ -8,6 +8,8 @@ read ahead of server cleanup. A failed confirmation never returns a read result.
 A scope-owned search permit remains held through confirmation even if SQLAlchemy
 returns its pool slot early. Confirmed retirement has no elapsed-time failure;
 unconfirmed retirement withholds the permit. Cleanup preserves the primary failure.
+Transient control-connection failure retries only absence confirmation within its
+existing window; database recovery never implies that the captured PID is absent.
 """
 
 import asyncio
@@ -18,12 +20,17 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Literal
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 
-from nexus.db.engine import SearchDatabaseLease, get_search_async_engine, search_database_capacity
+from nexus.db.engine import (
+    SearchDatabaseLease,
+    SearchRetirementUnconfirmed,
+    get_search_async_engine,
+    search_database_capacity,
+)
 from nexus.db.session import open_control_async_session
 from nexus.logging import get_logger
 
@@ -96,15 +103,36 @@ async def _retire(
     try:
         while True:
             control = open_control_async_session()
+            connected = False
+            absent = False
+            confirmation = asyncio.timeout_at(deadline)
             try:
-                async with asyncio.timeout_at(deadline):
+                async with confirmation:
+                    await control.connection()
+                    connected = True
                     present = await control.scalar(
                         text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=:pid)"),
                         {"pid": pid},
                     )
+                    absent = present is False
+            except TimeoutError as error:
+                if not confirmation.expired():
+                    raise
+                raise SearchRetirementUnconfirmed(
+                    "Search backend retirement remains unconfirmed"
+                ) from error
+            except DBAPIError as error:
+                if not (
+                    (not connected and isinstance(error, OperationalError))
+                    or error.connection_invalidated
+                    or getattr(error.orig, "sqlstate", None) == "57P03"
+                ):
+                    raise
+                # justify-ignore-error: retry only this confirmation within its existing
+                # deadline; connection failure is never proof that the PID is absent.
             finally:
                 await control.close()  # each probe ends its activity snapshot
-            if not present:
+            if absent:
                 lease.confirm_retired()
                 logger.info(
                     "search.backend.retired",
@@ -113,10 +141,15 @@ async def _retire(
                 )
                 return
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("Search backend retirement remains unconfirmed")
+                raise SearchRetirementUnconfirmed("Search backend retirement remains unconfirmed")
             await asyncio.sleep(_RETIREMENT_POLL_SECONDS)
     except BaseException:
-        logger.error("search.retirement_unconfirmed", backend_pid=pid, mono_ns=time.monotonic_ns())
+        logger.error(
+            "search.retirement_unconfirmed",
+            backend_pid=pid,
+            mono_ns=time.monotonic_ns(),
+            exc_info=True,
+        )
         raise
 
 

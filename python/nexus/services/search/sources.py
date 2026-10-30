@@ -68,7 +68,8 @@ TSQ = "websearch_to_tsquery('english', :q)"
 LISTABLE = frozenset({"media", "podcast", "contributor"})  # works and people; passages need text
 _CTES = f"""WITH visible_media AS ({visible_media_ids_cte_sql()}),
     visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
-    visible_conversations AS ({visible_conversation_ids_cte_sql()})"""
+    visible_conversations AS ({visible_conversation_ids_cte_sql()}),
+    search_readable_captures AS MATERIALIZED ({readable_x_capture_ids_sql()})"""
 _BASE_CTES = _CTES
 _NO_EXACT_PASSAGES = """, frozen_passages AS (
     SELECT NULL::text AS scheme,NULL::uuid AS id WHERE FALSE),
@@ -238,7 +239,7 @@ _CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM media m
     WHERE cc.owner_kind='media' AND member.chunk_id=cc.id {{where}})
     OR EXISTS (SELECT 1 FROM ({x_capture_scope_rows_sql(_ADMITTED)}) occurrence
     JOIN media m ON m.id=occurrence.reading_media_id
-    JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=occurrence.capture_id
+    JOIN (SELECT capture_id FROM search_readable_captures) readable ON readable.capture_id=occurrence.capture_id
     WHERE cc.owner_kind='fragment' AND occurrence.fragment_id=cc.owner_id {{where}})
     OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
     JOIN media m ON m.id=member.reading_media_id
@@ -254,7 +255,7 @@ _HIGHLIGHT_OWNER = _requested_owner(
             OR (h.anchor_media_id IS NULL AND EXISTS (
                 SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT candidate.media_id")}) occurrence
                 JOIN highlight_fragment_anchors anchor ON anchor.fragment_id=occurrence.fragment_id AND anchor.highlight_id=h.id
-                JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=occurrence.capture_id))"""),
+                JOIN (SELECT capture_id FROM search_readable_captures) readable ON readable.capture_id=occurrence.capture_id))"""),
 )
 
 _APPARATUS_OWNER = _requested_owner(
@@ -348,7 +349,7 @@ SOURCES: dict[str, str] = {
             CASE WHEN m.id IS NULL OR m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.prefix,'') ELSE right(COALESCE(h.prefix,''),greatest(a.start_offset-bounds.lo,0)) END AS prefix,
             CASE WHEN m.id IS NULL OR m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
         WHERE {highlight_visibility_sql("h")}
-          AND (m.id IS NOT NULL OR (f.x_post_capture_id IS NOT NULL AND f.x_post_capture_id IN ({readable_x_capture_ids_sql()}))) {{where}}""",
+          AND (m.id IS NOT NULL OR (f.x_post_capture_id IS NOT NULL AND f.x_post_capture_id IN (SELECT capture_id FROM search_readable_captures))) {{where}}""",
     "highlight_annotation": f"""SELECT 'highlight' AS type,h.id,h.annotation_body_text AS label,
             to_tsvector('english',h.annotation_body_text) AS doc,ann.cosine,
             h.annotation_body_text AS text,h.annotation_body_text AS span_text,h.exact,
@@ -403,7 +404,7 @@ SOURCES: dict[str, str] = {
         WHERE f.canonical_text<>'' AND (
             (f.media_id=m.id AND CASE WHEN f.t_start_ms IS NOT NULL AND f.t_end_ms IS NOT NULL
                 THEN 0<=f.t_start_ms AND f.t_start_ms<f.t_end_ms ELSE m.kind<>'pdf' END)
-            OR (f.x_post_capture_id IN ({readable_x_capture_ids_sql()}) AND EXISTS (
+            OR (f.x_post_capture_id IN (SELECT capture_id FROM search_readable_captures) AND EXISTS (
                 SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT m.id AS media_id")}) occurrence
                 WHERE occurrence.fragment_id=f.id))) {{where}}""",
     "content_chunk": f"""SELECT 'content_chunk' AS type,cc.id,NULL AS label,
@@ -491,7 +492,7 @@ SOURCES: dict[str, str] = {
                 WHERE user_id = :viewer_id))
             OR (pa.owner_scheme='highlight' AND annotation_h.user_id=:viewer_id AND annotation_h.authored_visible AND annotation_h.annotation_body_pm_json IS NOT NULL)
             OR (pa.owner_scheme = 'fragment' AND EXISTS (
-                SELECT 1 FROM fragments f JOIN ({readable_x_capture_ids_sql()}) readable
+                SELECT 1 FROM fragments f JOIN (SELECT capture_id FROM search_readable_captures) readable
                   ON readable.capture_id=f.x_post_capture_id
                 WHERE f.id=pa.owner_id))) {{where}}""",
     "oracle_passage_anchor": f"""SELECT 'oracle_passage_anchor' AS type, a.id,
@@ -1078,7 +1079,7 @@ def discovery_eligible(
                     NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,
                     m.id AS reading_media_id,p.search_id AS native_search_id
                     FROM ({x_capture_scope_rows_sql(_ADMITTED)}) selected
-                    JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=selected.capture_id
+                    JOIN (SELECT capture_id FROM search_readable_captures) readable ON readable.capture_id=selected.capture_id
                     JOIN media m ON m.id=selected.reading_media_id
                     JOIN keyword_occurrences p ON p.doc_key='fragment:' || selected.fragment_id::text
                     WHERE TRUE {where}""")
