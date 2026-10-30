@@ -11,14 +11,36 @@ allowances are unchanged. the earlier child watchdog still covers the whole
 handler, so this grants neither 900 seconds of computation nor joined cleanup
 on forced kill. the session lock retains admission until backend retirement and
 publication requires a complete read. the retired independent 30-second guard
-failed the integrated named refresh with `SearchBudgetExpired`; see
-[the current failure](named-suggestion-refresh-failure.md). these operational
+failed the integrated named refresh with `SearchBudgetExpired`. on integrated
+`f96858c24`, that same retained job completed its normal second attempt and
+published with the failed history preserved; no reset or requeue was needed.
+that closes the named-refresh failure, while foreground completion below remains
+open. these operational
 safeguards do not promise latency or qualify useful work by themselves. one
 absolute request clock covers actual provider/setup/read/materialization work.
 browser admission refuses occupied capacity before embedding; the current client
 intent stays pending between attempts. capacity waiting neither spends nor resets
 its finite execution allowance.
 generic waiting copy suffices. retirement remains joined before capacity reuse.
+
+current integrated `f96858c24`, actual 2 gib remainder `c2c16973e10a`, still
+fails foreground completion: the unchanged `tolkien` hybrid intent received
+504/`E_SEARCH_TIMEOUT`; lexical returned 200/20, and the other intent completed
+both phases. request `63bd8392-4cec-4c5e-8dbf-2f4055223d5e` was admitted after
+28 ms, then its api 115-second timer fired (`search.timer_fired` followed by
+`search.budget.expired` in `api/search_operation.py:101`). indexed retrieval
+consumed 86.870 seconds; nearest-chunk work began at 88.830 seconds and was
+cancelled at the deadline. backend retirement and joined cleanup completed
+before the api response (115.186 seconds). the bff forwarded that upstream 504
+in 115.197 seconds with no abort cause. this is admitted execution expiry,
+not accumulated capacity waiting or a demonstrated bff/browser timeout. query
+cost attribution remains open; no timer or retry change is selected. the native
+named retry and distinct fresh global job both published normally in this run;
+that does not close foreground completion, final revision or backup acceptance.
+retained request/monitor evidence is private under the existing qualification
+owner. resolution requires useful exact hybrid completion through the responsible
+owner, preserving scope/attribution and truthful finite safeguards; a timeout is
+not a passing search. no production reproduction was performed.
 
 historical source evidence at `4ceb03555`: `python/nexus/api/search_operation.py:26-39`
 starts the absolute deadline before invoking the route read.

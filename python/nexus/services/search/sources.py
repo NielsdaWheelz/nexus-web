@@ -33,7 +33,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.services.content_indexing import reading_chunks_sql
+from nexus.services.content_indexing import fragment_reading_chunks_sql, reading_chunks_sql
 from nexus.services.contributor_credits import (
     contributor_credits_rollup_cte_sql,
     contributor_fts_text_sql,
@@ -1088,7 +1088,7 @@ def discovery_eligible(
                     p.admission_key,p.doc_key,p.ref,'media:' || m.id::text AS owner_ref,
                     NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,
                     m.id AS reading_media_id,p.search_id AS native_search_id
-                    FROM ({reading_chunks_sql(_ADMITTED)}) selected
+                    FROM ({fragment_reading_chunks_sql(_ADMITTED)}) selected
                     JOIN content_chunks cc ON cc.id=selected.chunk_id AND cc.owner_kind='fragment'
                     JOIN media m ON m.id=selected.reading_media_id
                     JOIN keyword_occurrences p ON p.doc_key='content_chunk:' || cc.id::text
@@ -1100,7 +1100,15 @@ def discovery_eligible(
                     JOIN media m ON m.id=reading.media_id
                     JOIN media_parts part ON part.media_id=m.id
                     JOIN keyword_occurrences p ON p.doc_key='content_chunk:' || cc.id::text"""
-                condition = "cc.owner_kind='media' AND cc.owner_id IN (SELECT part.source_media_id FROM admitted_media reading JOIN media_parts part ON part.media_id=reading.media_id)"
+                # An admitted root wins before family filters and cannot pass the
+                # piece join. Exclude its source before preferred-owner lookup.
+                condition = """cc.owner_kind='media' AND cc.owner_id = ANY(ARRAY(
+                    SELECT part.source_media_id FROM admitted_media reading
+                    JOIN media_parts part ON part.media_id=reading.media_id
+                    WHERE NOT EXISTS (SELECT 1 FROM admitted_media root
+                        WHERE root.media_id=part.source_media_id
+                          AND NOT EXISTS (SELECT 1 FROM media_parts root_part
+                              WHERE root_part.media_id=root.media_id))))"""
             else:
                 source = f"""reader_apparatus_items rai
                     JOIN reader_apparatus_states state ON state.id=rai.state_id
@@ -1108,7 +1116,15 @@ def discovery_eligible(
                     JOIN media m ON m.id=reading.media_id
                     JOIN media_parts part ON part.media_id=m.id
                     JOIN keyword_occurrences p ON p.doc_key='reader_apparatus_item:' || rai.id::text"""
-                condition = "state.status IN ('ready','partial') AND rai.media_id IN (SELECT part.source_media_id FROM admitted_media reading JOIN media_parts part ON part.media_id=reading.media_id)"
+                condition = """state.status IN ('ready','partial') AND rai.media_id = ANY(ARRAY(
+                    SELECT part.source_media_id FROM admitted_media reading
+                    JOIN media_parts part ON part.media_id=reading.media_id
+                    WHERE NOT EXISTS (SELECT 1 FROM admitted_media root
+                        JOIN media root_media ON root_media.id=root.media_id
+                            AND root_media.kind<>'text_part'
+                        WHERE root.media_id=part.source_media_id
+                          AND NOT EXISTS (SELECT 1 FROM media_parts root_part
+                              WHERE root_part.media_id=root.media_id))))"""
             branches.append(f"""SELECT '{family}'::text AS family,p.admission_key,p.doc_key,p.ref,
                 'media:' || m.id::text AS owner_ref,NULL::text AS name,NULL::text AS discovery_name,
                 0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id
