@@ -157,6 +157,14 @@ every eligible key into the native filter. requests including generated families
 retain native owner-key admission. narrow scopes can score more primary matches
 before the canonical join; the scoring grammar and selected evidence stay the same.
 
+fragment-chunk eligibility uses the content index's canonical capture-only
+reading relation, including readable captures, current fragment publication and
+distinct reading/chunk pairs. it does not enumerate whole or piece indexes.
+piece-only eligibility first excludes source identities with an already-admitted
+canonical root. root preference precedes later family filters; only the remaining
+sources need preferred-piece lookup. genuine piece-only and exact-reference reads
+retain the canonical extent/uuid order, bounds and apparatus dependencies.
+
 the occurrence index is derived, never an authority for visibility, identity,
 activation or source text. scalar fields preserve phrase boundaries; contributor
 documents are viewer-specific. canonical writers own transactions, permissions,

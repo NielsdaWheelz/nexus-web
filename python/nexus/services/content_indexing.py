@@ -521,8 +521,6 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
     never enters; exact partition currency is the reconcile protocol's invariant above.
     Embedding identity (provider/model) stays with vector consumers.
     """
-    from nexus.services.x_source import readable_x_capture_ids_sql
-
     return f"""
         SELECT chunk_reader.media_id AS reading_media_id, admitted_chunk.id AS chunk_id
         FROM ({reading_ids_sql}) chunk_reader
@@ -547,7 +545,16 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
                 <= bounded.end_offset
         WHERE bounded.reading_media_id <> bounded.source_media_id
         UNION
-        SELECT x.reading_media_id, admitted_chunk.id
+        {fragment_reading_chunks_sql(reading_ids_sql)}
+    """
+
+
+def fragment_reading_chunks_sql(reading_ids_sql: str) -> str:
+    """Current capture-owned chunk pairs, without traversing media or piece indexes."""
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    return f"""
+        SELECT DISTINCT x.reading_media_id, admitted_chunk.id AS chunk_id
         FROM ({x_capture_scope_rows_sql(reading_ids_sql)}) x
         JOIN content_chunks admitted_chunk ON admitted_chunk.owner_kind='fragment'
           AND admitted_chunk.owner_id=x.fragment_id
