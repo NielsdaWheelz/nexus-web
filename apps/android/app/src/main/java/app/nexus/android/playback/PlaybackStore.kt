@@ -21,24 +21,24 @@ import java.util.UUID
  */
 internal class PlaybackStore private constructor(context: Context, val accountId: UUID) {
     private val file = AtomicFile(File(context.filesDir, "player/accounts/$accountId.json"))
-    @Volatile var value: JSONObject = try {
-        JSONObject(String(file.readFully(), Charsets.UTF_8)).also {
-            require(it.getString("account_id") == accountId.toString())
+    @Volatile var value: JSONObject
+        private set
+    var onListeningChanged: (() -> Unit)? = null
+
+    init {
+        val original = try { file.readFully() } catch (error: FileNotFoundException) {
+            if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) throw error
+            // justify-ignore-error: a first account binding starts with an empty queue.
+            null
         }
-    } catch (error: FileNotFoundException) {
-        if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) throw error
-        // justify-ignore-error: a first account binding starts with an empty queue.
-        JSONObject().put("format_version", 2).put("account_id", accountId.toString())
+        value = if (original != null) JSONObject(String(original, Charsets.UTF_8)).also {
+            require(it.getString("account_id") == accountId.toString())
+        } else JSONObject().put("format_version", 2).put("account_id", accountId.toString())
             .put("queue", JSONObject().put("queue_id", UUID.randomUUID().toString())
                 .put("revision", 1L).put("entries", JSONArray())
                 .put("current_entry_id", JSONObject.NULL))
             .put("lane", JSONArray()).put("descriptors", JSONObject())
             .put("checkpoint", JSONObject.NULL).put("fact_sequence", 0L).put("listening", JSONObject())
-    }
-        private set
-    var onListeningChanged: (() -> Unit)? = null
-
-    init {
         ListeningPublication.nextRevision()
         // Only known v1 is converted; older formats need explicit preflight repair.
         require(value.get("format_version") is Int && value.getInt("format_version") in 1..2)
@@ -113,9 +113,41 @@ internal class PlaybackStore private constructor(context: Context, val accountId
             require(checkpoint.nullableLong("consumption_override_revision")?.let { it >= 0 } != false)
             require(checkpoint.get("shorten_pauses") is Boolean)
         }
-        if (value.getInt("format_version") == 1) update { envelope ->
-            envelope.put("queue", queue).put("format_version", 2)
+        if (value.getInt("format_version") == 1) {
+            preserveFormatOne(context, checkNotNull(original))
+            update { envelope -> envelope.put("queue", queue).put("format_version", 2) }
         }
+    }
+
+    /** One immutable preimage; a retry verifies it before the first format-changing write. */
+    private fun preserveFormatOne(context: Context, original: ByteArray) {
+        val directory = File(context.filesDir, "player/migration-format-1")
+        val preimage = AtomicFile(File(directory, "$accountId.json"))
+        val retained = try { preimage.readFully() } catch (error: FileNotFoundException) {
+            if (preimage.baseFile.exists() || File(preimage.baseFile.path + ".bak").exists()) throw error
+            // justify-ignore-error: this account has not published its migration preimage.
+            null
+        }
+        if (retained == null) {
+            var stream: java.io.FileOutputStream? = null
+            try {
+                stream = preimage.startWrite()
+                stream.write(original)
+                stream.fd.sync()
+                preimage.finishWrite(stream)
+            } catch (error: IOException) {
+                stream?.let(preimage::failWrite)
+                throw error
+            }
+        }
+        // AtomicFile can log a failed rename rather than throw; compare actual retained bytes.
+        if (!preimage.readFully().contentEquals(original)) throw IOException("playback migration preimage differs")
+        try {
+            for (path in listOf(directory, checkNotNull(directory.parentFile))) {
+                val descriptor = Os.open(path.path, OsConstants.O_RDONLY, 0)
+                try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
+            }
+        } catch (error: ErrnoException) { throw IOException("playback migration preimage was not synced", error) }
     }
 
     val queue: JSONObject get() = value.getJSONObject("queue")

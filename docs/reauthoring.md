@@ -4,6 +4,13 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+playback migration preimage against `d81fd836a`: +32 net authored runtime lines
+(46 added, 14 deleted), all android playback. construction keeps the original
+envelope bytes until a private atomic preimage is synced and verified before
+format conversion. direct conversion without a retained original is removed;
+queue/listening owners and the normal atomic writer are unchanged. docs and
+temporary qualification artifacts are excluded; earlier totals keep their bases.
+
 reading eligibility cost against `f96858c24`: +23 net authored runtime lines
 (30 added, 7 deleted): content index +7, search retriever +16. the canonical
 capture-only chunk arm is shared instead of expanding whole/piece indexes before
@@ -766,7 +773,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | notes pages and index | 4,662 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · #702 -1 · shared outline +4 · unsaved work +43 · db substrate -4 · collection loading -1 · notes re-slice (server) +13 · durable writing +2,690 · native control cutover · reader navigation +0 · offline catalog +25 · online-first writing · feedback activity · mobile editor · menu actions +2 · pane query overflow +0 · frozen excerpts · highlight annotations: consumed annotation-note identities retired · outline ranges: graph refusal on the existing authored runtime tail | keep |
 | reader python: html substrate, web article structure | 1,697 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +74 · contained works +74 · browser recovery · x captures: literal excerpts and capture-asset sanitizing · frozen excerpts | read-path functions with 13b |
 | lectern | 1,443 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 · media controls -42 · libraries retention +1 · playback queue +9 · offline catalog +27 · resource menu parity · quiet suggestions +8 · offline episodes +25 · feedback activity · podcast catalogue +0 · queue index -4 · pane query overflow -1 | keep |
-| android playback | 1,259 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 · player redesign +36 · playback queue +834 · offline episodes +116 · restore admission +2 · queue index +69 · recent: background media-session acceptance | android slice (late) |
+| android playback | 1,259 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 · player redesign +36 · playback queue +834 · offline episodes +116 · restore admission +2 · queue index +69 · recent: background media-session acceptance · playback migration preimage +32 | android slice (late) |
 | settings | 1,209 | reauthored #592 | resource insertion +1 · native control cutover · bounded indexes +2 · fork gesture +0 · mobile editor · reader view menu -48 · menu actions +3 | keep |
 | reader python: pdf | 904 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | — | read-path functions with 13b |
 | public share links (/s) | 1,799 | reauthored #409 #598 | x threads +209 · #670 +81 · contained works +435 · x captures: grant-specific selected capture and asset manifests | keep |
