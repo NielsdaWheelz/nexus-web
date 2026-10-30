@@ -30,7 +30,7 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.last_error ?? null }); }
+function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null }); }
 async function response(path: string, body: unknown | null, signal: AbortSignal) {
   let result: Response;
   const deadline = AbortSignal.timeout(path === "/api/authored/snapshot" ? 280_000 : 30_000);
@@ -75,7 +75,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
         hints = writingHints(account!, () => sync?.wake()); hints.start();
       }, 0);
     }
-    return { format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.last_error };
+    return { format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail };
   }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {

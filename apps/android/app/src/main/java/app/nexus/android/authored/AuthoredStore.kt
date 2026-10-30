@@ -18,7 +18,9 @@ import java.util.UUID
  * Its final output transaction proves exact contiguous coverage before marking
  * completion; a peer reset returns ordinary retry rather than a sync failure.
  * Pages compare their requested durable cursor; effective withdrawal discards
- * staging and the final read's store revision fences atomic publication. */
+ * staging and the final read's store revision fences atomic publication.
+ * Complete fresh metadata permits exact active-reading reuse, never reuse from
+ * unpublished first-setup staging. The shared SQL owns its equality proof. */
 internal class AuthoredStore(private val context: Context, val account: UUID) {
     private class Plan(val sql: String, var statement: SQLiteStatement? = null)
     private val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() }).let { source ->
@@ -205,6 +207,9 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("reading_ref", if (pending.length() > 0) pending.getJSONObject(0).getString("reading_ref") else JSONObject.NULL)
             .put("text_cursor", if (pending.length() > 0) pending.getJSONObject(0).opt("cursor") else JSONObject.NULL)
             .put("raw_complete", pending.length() > 0 && pending.getJSONObject(0).getInt("raw_complete") == 1)
+            .put("metadata_records", state.getLong("metadata_records"))
+            .put("readings_total", state.getLong("readings_total"))
+            .put("readings_complete", state.getLong("readings_complete"))
     }
     fun scopeRefs(after: String?): JSONObject {
         val records = rows(sql("scope_active_refs"), after, after)
@@ -249,6 +254,13 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || state.optString("reading_ref") != reading || state.getBoolean("raw_complete") || cursor != requestedCursor) return@transaction false
         run(sql("scope_text_chunks"), revision, reading, page.getJSONArray("chunks").toString())
         run(sql("scope_text_cursor"), revision, reading, page.opt("next_cursor"), page.isNull("next_cursor"))
+        true
+    }
+    fun scopeReuse(revision: String, reading: String): Boolean = transaction {
+        val state = scopeProgress()
+        if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || state.optString("reading_ref") != reading || state.getBoolean("raw_complete") || !state.isNull("text_cursor")) return@transaction false
+        if (rows(sql("scope_reusable_reading"), revision, reading).length() == 0) return@transaction false
+        for (name in listOf("scope_reuse_text", "scope_reuse_normalized", "scope_reuse_normalized_complete", "scope_reuse_progress", "scope_text_done")) run(sql(name), revision, reading)
         true
     }
     fun scopeNormalizationNext(revision: String, reading: String): JSONObject {

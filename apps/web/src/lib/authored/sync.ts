@@ -5,7 +5,7 @@
 import { mergeChanges } from "@nexus/authored/merge";
 import { FORMAT_REVISION, type FeedChange, type MergeResult } from "@nexus/authored/types";
 import { Persistence } from "./persistence";
-import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL, type SyncFacts } from "./status";
+import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL, syncDetail, type SyncFacts } from "./status";
 import { ScopeTextNormalizer, type ScopeInputsPage, type ScopeTextPage, type ScopeNormalizationInterval, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
 export interface Transport {
@@ -26,8 +26,9 @@ export class Sync {
   private scopeCheckedAt = 0;
   private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
   last_error: string | null = null;
-  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, scope_pending: true, cursor: "0", head: null };
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
+  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
+  get detail(): string | null { return syncDetail(this.facts, this.last_error); }
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
   wake() {
     if (this.retired || !this.foreground) return;
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
@@ -50,12 +51,17 @@ export class Sync {
       if (!state.provisioning_complete) await this.provision();
       const registration = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/replicas", { replica_id: state.replica_id, format_revision: FORMAT_REVISION }, this.abort.signal);
       if (this.retired) return;
+      this.facts.admission = "ready";
+      this.facts.online = true;
       this.facts.head = registration.data.head_cursor;
       await this.local(() => this.persistence.acknowledge(registration.data.accepted_command_seq));
       const outcomes = await Promise.allSettled([this.upload(), this.download(), this.scopeStep().catch(error => { this.normalization = null; throw error; })]);
-      for (const outcome of outcomes) if (outcome.status === "rejected") { failed = true; this.failure(outcome.reason); }
+      const progress = await this.local(() => this.persistence.scopeProgress());
+      this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
+      this.facts.scope_progress = progress.staging_revision === null ? null : progress;
+      for (const [index, outcome] of outcomes.entries()) if (outcome.status === "rejected") { failed = true; this.failure(outcome.reason, index === 2); break; }
       if (!failed) { this.facts.local_error = this.commitError; this.last_error = null; this.facts.sync_error = false; this.facts.admission = "ready"; this.facts.online = true; this.failures = 0; }
-    } catch (error) { failed = true; if (!this.retired) this.failure(error); }
+    } catch (error) { failed = true; if (!this.retired) this.failure(error, false); }
     finally {
       this.running = false;
       this.changed();
@@ -68,13 +74,14 @@ export class Sync {
       }
     }
   }
-  private failure(error: unknown) {
+  private failure(error: unknown, scope: boolean) {
     if (error && typeof error === "object" && "code" in error && error.code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
     const status = error && typeof error === "object" && "status" in error ? Number(error.status) : null;
     this.last_error = status === 401 || status === 403 ? SIGN_IN_SYNC_DETAIL
       : status === 426 ? UPDATE_SYNC_DETAIL
       : status === 0 ? this.facts.ready ? "changes are saved on this device." : "connect to finish preparing your notes."
-      : status === 503 ? this.facts.ready ? "nexus is busy. saved changes remain on this device; syncing will retry." : "nexus is busy. preparing your notes will retry."
+      : status === 503 ? scope ? "nexus is busy. reading search preparation will retry." : this.facts.ready ? "nexus is busy. saved changes remain on this device; syncing will retry." : "nexus is busy. preparing your notes will retry."
+      : scope ? "couldn’t finish preparing reading search; it will retry automatically."
       : "your notes could not finish syncing. retry; saved changes remain on this device.";
     if (status === 401 || status === 403) this.facts.admission = "auth";
     else if (status === 426) this.facts.admission = "format";
@@ -144,6 +151,7 @@ export class Sync {
       progress = await this.local(() => this.persistence.scopeProgress());
     }
     this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
+    this.facts.scope_progress = progress.staging_revision === null ? null : progress;
     if (progress.staging_revision === null || this.retired || !this.foreground) return;
     const revision = progress.staging_revision;
     if (!progress.metadata_complete) {
@@ -152,6 +160,7 @@ export class Sync {
       if (data.restart || data.revision !== revision) { this.normalization = null; await this.local(() => this.persistence.scopeReset(data.revision)); return; }
       if (!await this.local(() => this.persistence.scopeMetadata(data, progress.metadata_cursor))) { this.normalization = null; this.facts.scope_pending = true; return; }
     } else if (progress.reading_ref !== null && !progress.raw_complete) {
+      if (progress.text_cursor === null && await this.local(() => this.persistence.scopeReuse(revision, progress.reading_ref!))) { this.normalization = null; return; }
       const {data} = await this.transport.json<{data: ScopeTextPage}>("/api/authored/scope-text", {revision,reading_ref:progress.reading_ref,cursor:progress.text_cursor}, this.abort.signal);
       await revoke(data.revoked_refs);
       if (data.revision === revision && data.revoked_refs.includes(progress.reading_ref)) throw new Error("scope reading access changed before refresh completed");
@@ -209,6 +218,7 @@ export class Sync {
       if (data.restart || data.revision !== revision) { await this.local(() => this.persistence.scopeReset(data.revision)); return; }
       if (!await this.local(() => this.persistence.scopePublish(revision, expectedStoreRevision))) { this.normalization = null; this.facts.scope_pending = true; return; }
       this.facts.scope_pending = false;
+      this.facts.scope_progress = null;
       this.changed(true);
     }
   }

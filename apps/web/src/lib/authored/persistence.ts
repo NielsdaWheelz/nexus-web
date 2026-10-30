@@ -7,7 +7,9 @@
  * Completion requires contiguous positive chunks through the exact normalized
  * length in the final output transaction; a peer reset returns ordinary retry.
  * Pages advance only their requested durable cursor. Effective withdrawal discards
- * unfinished staging; publication seals the store revision preceding its final read. */
+ * unfinished staging; publication seals the store revision preceding its final read.
+ * Fresh complete metadata may reuse one exactly unchanged active reading's complete
+ * raw/normalized rows. Unpublished first-setup work is not a cross-revision donor. */
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
@@ -222,7 +224,8 @@ export class Persistence {
     const [reading] = state.metadata_complete === 1 ? await this.db.all(SCOPE_SQL.scope_pending_reading) : [];
     return {active_revision: state.active_revision === null ? null : String(state.active_revision), staging_revision: state.staging_revision === null ? null : String(state.staging_revision),
       metadata_cursor: state.metadata_cursor === null ? null : String(state.metadata_cursor), metadata_complete: state.metadata_complete === 1,
-      reading_ref: reading ? String(reading.reading_ref) : null, text_cursor: reading?.cursor == null ? null : String(reading.cursor), raw_complete: reading?.raw_complete === 1};
+      reading_ref: reading ? String(reading.reading_ref) : null, text_cursor: reading?.cursor == null ? null : String(reading.cursor), raw_complete: reading?.raw_complete === 1,
+      metadata_records: Number(state.metadata_records), readings_total: Number(state.readings_total), readings_complete: Number(state.readings_complete)};
   }
   async scopeRefs(after: string | null): Promise<string[]> { return (await this.db.all(SCOPE_SQL.scope_active_refs, [after, after])).map(row => String(row.scope_ref)); }
   async scopeRepairRefs(refs: string[]): Promise<string[]> { return (await this.db.all(SCOPE_SQL.scope_repair_refs, [JSON.stringify(refs)])).map(row => String(row.scope_ref)); }
@@ -263,6 +266,15 @@ export class Persistence {
       if (state.staging_revision !== page.revision || !state.metadata_complete || state.reading_ref !== page.reading_ref || state.raw_complete || state.text_cursor !== requestedCursor) return false;
       await this.db.run(SCOPE_SQL.scope_text_chunks, [page.revision, page.reading_ref, JSON.stringify(page.chunks)]);
       await this.db.run(SCOPE_SQL.scope_text_cursor, [page.revision, page.reading_ref, page.next_cursor, Number(page.next_cursor === null)]);
+      return true;
+    });
+  }
+  async scopeReuse(revision: string, readingRef: string): Promise<boolean> {
+    return this.db.transaction(async () => {
+      const state = await this.scopeProgress();
+      if (state.staging_revision !== revision || !state.metadata_complete || state.reading_ref !== readingRef || state.raw_complete || state.text_cursor !== null) return false;
+      if (!(await this.db.all(SCOPE_SQL.scope_reusable_reading, [revision, readingRef])).length) return false;
+      for (const key of ["scope_reuse_text", "scope_reuse_normalized", "scope_reuse_normalized_complete", "scope_reuse_progress", "scope_text_done"] as const) await this.db.run(SCOPE_SQL[key], [revision, readingRef]);
       return true;
     });
   }

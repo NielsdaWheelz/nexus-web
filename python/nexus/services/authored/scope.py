@@ -1,9 +1,9 @@
 """Bounded, resumable derived inputs for local authored search.
 
 Each request owns one read-only snapshot, never the authored head lock. The
-revision hashes authorization, composition and publication facts, not source
-bytes. A device stages pages durably and publishes only after a final revision
-fence. Status requests check every device-held scope/reading in bounded batches;
+revision hashes canonical authorization/composition facts and publication
+dependencies, not expanded text intervals or source bytes. A device stages pages
+durably and publishes only after a final revision fence. Status requests check every device-held scope/reading in bounded batches;
 an explicit denial withdraws that reading, never its independently admitted parts.
 
 Text follows exact reader body and required-note slices. Only ordinary text and
@@ -57,7 +57,7 @@ from nexus.services.search.scope import reading_media_ids_sql
 
 # Leave room for the closed response envelope and continuation token.
 PAGE_BYTES = 480 * 1024
-PAGE_RECORDS = 100
+TEXT_PAGE_CHUNKS = 100
 TEXT_CODEPOINTS = 32 * 1024
 _INPUT = TypeAdapter(ScopeInput)
 
@@ -98,10 +98,6 @@ def _ctes() -> str:
     """
     expanded = reading_media_ids_sql("SELECT root.media_id")
     library = reading_media_ids_sql(library_media_ids_cte_sql(library_param="library.id"))
-    intervals = text_scope_rows_sql(
-        "SELECT media_id FROM readings WHERE text_ready AND source_kind IN ('epub','web_article')"
-    )
-    apparatus = apparatus_scope_rows_sql("SELECT media_id FROM readings WHERE is_part")
     from nexus.services.x_source import readable_x_capture_ids_sql
 
     captures = readable_x_capture_ids_sql()
@@ -150,7 +146,19 @@ def _ctes() -> str:
             SELECT DISTINCT scoped.reading_media_id AS media_id,scoped.capture_id
             FROM ({x_capture_scope_rows_sql("SELECT media_id FROM readings")}) scoped
             JOIN capture_readings admitted ON admitted.fragment_id=scoped.fragment_id
-        ),
+        )"""
+
+
+def _text_ctes(*, selected_reading: bool = False) -> str:
+    # Text pages expand only their authorized reading. Metadata needs every
+    # reading's intervals; the revision uses their publication dependencies.
+    selection = " AND media_id=:reading" if selected_reading else ""
+    intervals = text_scope_rows_sql(
+        "SELECT media_id FROM readings WHERE text_ready AND source_kind IN ('epub','web_article')"
+        + selection
+    )
+    apparatus = apparatus_scope_rows_sql("SELECT media_id FROM readings WHERE is_part" + selection)
+    return f"""{_ctes()},
         body_intervals AS MATERIALIZED (
             SELECT bounded.reading_media_id,bounded.fragment_id,bounded.fragment_idx,
                 bounded.start_offset,bounded.end_offset,'body'::text AS purpose
@@ -201,9 +209,9 @@ def _incomplete_tables(db: Session, reading_id: UUID) -> list[tuple[str, dict[st
     return sorted(records.items())
 
 
-def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Stream canonical metadata; no source text enters the digest or page buffer."""
-    relation = f"""
+def _facts() -> str:
+    """Canonical nontext membership and publication facts shared by page and fence."""
+    return f"""
         SELECT 'scope:media:'||media_id::text AS key,
             jsonb_build_object('kind','scope','scope_ref','media:'||media_id::text) AS state FROM roots
         UNION ALL SELECT 'scope:library:'||id::text,
@@ -254,12 +262,21 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
                     WHERE retained.ref='highlight:'||h.id::text))
                 AND (r.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'
                     AND {highlight_in_reading_scope_sql("h.id", "r.media_id")}))
+    """
+
+
+def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Stream complete canonical metadata, including clipped structural facts."""
+    relation = (
+        _facts()
+        + """
         UNION ALL SELECT 'interval:'||interval_key,
             jsonb_build_object('kind','interval','interval_key',interval_key,'reading_ref','media:'||reading_media_id::text,'fragment_id',fragment_id,'fragment_idx',fragment_idx,'start_offset',start_offset,'end_offset',end_offset,'purpose',purpose,'start_cut',start_cut,'end_cut',end_cut) FROM intervals
     """
+    )
     rows = db.execute(
         text(
-            _ctes()
+            _text_ctes()
             + f''' SELECT key,state,EXISTS (
                 SELECT 1 FROM readings r WHERE 'reading:'||r.media_id::text=facts.key
                     AND r.is_part AND r.text_ready
@@ -282,10 +299,32 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
 
 
 def _revision(db: Session, viewer_id: UUID) -> str:
-    digest = hashlib.sha256(b"nexus-authored-scope:1\n")
-    for key, record in _records(db, viewer_id):
-        digest.update(_json([key, record]).encode())
-        digest.update(b"\n")
+    # Publication replacement owns body/apparatus bytes; a part's publication
+    # also advances for offset/DOM-cut changes. Capture fragments are immutable.
+    # Those identities determine intervals and incomplete-table facts without
+    # expanding them on every status/text page. Keep exact membership facts and
+    # effective readiness: a pinned part can lose its current-source match while
+    # its own publication stays unchanged. Bump this namespace if derivation changes.
+    relation = (
+        _facts()
+        + """
+        UNION ALL SELECT 'text-ready:'||media_id::text,
+            jsonb_build_object('reading_ref','media:'||media_id::text,'text_ready',text_ready IS TRUE)
+            FROM readings
+    """
+    )
+    digest = hashlib.sha256(b"nexus-authored-scope:2\n")
+    rows = db.execute(
+        text(_ctes() + f' SELECT key,state FROM ({relation}) facts ORDER BY key COLLATE "C"'),
+        {"viewer_id": viewer_id},
+        execution_options={"yield_per": 256},
+    )
+    try:
+        for key, record in rows:
+            digest.update(_json([key, record]).encode())
+            digest.update(b"\n")
+    finally:
+        rows.close()
     return digest.hexdigest()
 
 
@@ -338,7 +377,7 @@ def inputs(db: Session, viewer_id: UUID, request: ScopeInputsRequest) -> ScopeIn
             raise InvalidRequestError(
                 ApiErrorCode.E_CAPTURE_TOO_LARGE, "Search scope metadata record exceeds page limit"
             )
-        if records and (len(records) == PAGE_RECORDS or size + record_size > PAGE_BYTES):
+        if records and size + record_size > PAGE_BYTES:
             more = True
             break
         records.append(_INPUT.validate_python(state))
@@ -384,7 +423,7 @@ def source_text(db: Session, viewer_id: UUID, request: ScopeTextRequest) -> Scop
     next_cursor = None
     rows = db.execute(
         text(
-            _ctes()
+            _text_ctes(selected_reading=True)
             + """
             SELECT * FROM (
                 SELECT owned.interval_key,owned.fragment_id,owned.fragment_idx,owned.start_offset,owned.end_offset
@@ -425,7 +464,7 @@ def source_text(db: Session, viewer_id: UUID, request: ScopeTextRequest) -> Scop
             encoded = len(chunk.model_dump_json().encode())
             if encoded > PAGE_BYTES:
                 raise RuntimeError("bounded scope text chunk exceeds page limit")
-            if chunks and (len(chunks) == PAGE_RECORDS or size + encoded > PAGE_BYTES):
+            if chunks and (len(chunks) == TEXT_PAGE_CHUNKS or size + encoded > PAGE_BYTES):
                 next_cursor = _cursor([interval_key, start])
                 break
             chunks.append(chunk)

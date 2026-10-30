@@ -275,7 +275,16 @@ construction belongs to the shared query owner, including literal escaping.
 scoped search also retains current authorized reading intervals/text, library
 membership and automatic conversation facts as derived inputs. hydrate them in
 bounded resumable pages outside the authored snapshot; publish one complete
-revision atomically. existing local links supply pending offline membership.
+revision atomically. the revision hashes canonical authorization/composition
+facts and publication dependencies; publication identities represent immutable
+body, apparatus and exact part bounds. effective source readiness remains in
+the fence, and changes to these derivation rules advance its namespace.
+metadata pages fill the existing byte bound. text pages expand only their
+requested authorized reading. complete new metadata may reuse an unrevoked
+active reading only when its descriptor, complete interval set and negative
+structural facts match exactly; raw and normalized completion are copied in one
+local transaction. unpublished initial staging is not a cross-revision donor.
+existing local links supply pending offline membership.
 scope refresh never blocks local writing. a piece admits only its body and proved
 required-note slices; it confers no whole-source text access. explicit revocation
 withdraws affected inputs on reconnect. unhydrated scopes are unavailable rather

@@ -95,7 +95,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const annotations = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
-  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(corpusChanged); };
+  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail); for (const listener of queries) listener(corpusChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       const result = await call<QueryResult>("query", {query,...await nativeQueryPlan(query)});
@@ -149,6 +149,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     scopeRevoke: async (refs: string[]) => (await call<{changed: boolean}>("scope_revoke", {refs})).changed,
     scopeMetadata: async (page: ScopeInputsPage, requestedCursor: string | null) => (await call<{accepted: boolean}>("scope_metadata", {page,requested_cursor:requestedCursor})).accepted,
     scopeText: async (page: ScopeTextPage, requestedCursor: string | null) => (await call<{accepted: boolean}>("scope_text", {page,requested_cursor:requestedCursor})).accepted,
+    scopeReuse: async (revision: string, readingRef: string) => (await call<{accepted: boolean}>("scope_reuse", {revision,reading_ref:readingRef})).accepted,
     scopeNormalizationNext: async (revision: string, readingRef: string) => (await call<{interval: ScopeNormalizationInterval | null}>("scope_normalization_next", {revision,reading_ref:readingRef})).interval,
     scopeNormalizationRead: async (revision: string, readingRef: string, intervalKey: string, after: number | null) => (await call<{chunk: ScopeRawChunk | null}>("scope_normalization_read", {revision,reading_ref:readingRef,interval_key:intervalKey,after})).chunk,
     scopeNormalizationObservation: (revision: string, readingRef: string, intervalKey: string, after: number | null) => call<ScopeNormalizationObservation>("scope_normalization_observation", {revision,reading_ref:readingRef,interval_key:intervalKey,after}),
@@ -226,7 +227,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       return () => { live = false; queries.delete(read); };
     },
     annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
-    sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.last_error); return () => { statuses.delete(listener); }; },
+    sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail); return () => { statuses.delete(listener); }; },
     close: async () => {
       closed = true; sync.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
