@@ -111,7 +111,9 @@ async def run_search_operation[T](
                 mono_ns=time.monotonic_ns(),
                 exc_info=True,
             )
-            raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed") from exc
+            raise ApiError(
+                ApiErrorCode.E_APP_SEARCH_FAILED, "Search could not be completed"
+            ) from exc
         if getattr(exc.orig, "sqlstate", None) != "57014":
             raise
         diagnostic = getattr(exc.orig, "diag", None)
