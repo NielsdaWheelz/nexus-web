@@ -1102,13 +1102,13 @@ def discovery_eligible(
                     JOIN keyword_occurrences p ON p.doc_key='content_chunk:' || cc.id::text"""
                 # An admitted root wins before family filters and cannot pass the
                 # piece join. Exclude its source before preferred-owner lookup.
-                condition = """cc.owner_kind='media' AND cc.owner_id IN (
+                condition = """cc.owner_kind='media' AND cc.owner_id = ANY(ARRAY(
                     SELECT part.source_media_id FROM admitted_media reading
                     JOIN media_parts part ON part.media_id=reading.media_id
                     WHERE NOT EXISTS (SELECT 1 FROM admitted_media root
                         WHERE root.media_id=part.source_media_id
                           AND NOT EXISTS (SELECT 1 FROM media_parts root_part
-                              WHERE root_part.media_id=root.media_id)))"""
+                              WHERE root_part.media_id=root.media_id))))"""
             else:
                 source = f"""reader_apparatus_items rai
                     JOIN reader_apparatus_states state ON state.id=rai.state_id
@@ -1116,7 +1116,7 @@ def discovery_eligible(
                     JOIN media m ON m.id=reading.media_id
                     JOIN media_parts part ON part.media_id=m.id
                     JOIN keyword_occurrences p ON p.doc_key='reader_apparatus_item:' || rai.id::text"""
-                condition = """state.status IN ('ready','partial') AND rai.media_id IN (
+                condition = """state.status IN ('ready','partial') AND rai.media_id = ANY(ARRAY(
                     SELECT part.source_media_id FROM admitted_media reading
                     JOIN media_parts part ON part.media_id=reading.media_id
                     WHERE NOT EXISTS (SELECT 1 FROM admitted_media root
@@ -1124,7 +1124,7 @@ def discovery_eligible(
                             AND root_media.kind<>'text_part'
                         WHERE root.media_id=part.source_media_id
                           AND NOT EXISTS (SELECT 1 FROM media_parts root_part
-                              WHERE root_part.media_id=root.media_id)))"""
+                              WHERE root_part.media_id=root.media_id))))"""
             branches.append(f"""SELECT '{family}'::text AS family,p.admission_key,p.doc_key,p.ref,
                 'media:' || m.id::text AS owner_ref,NULL::text AS name,NULL::text AS discovery_name,
                 0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id

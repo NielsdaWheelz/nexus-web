@@ -160,8 +160,8 @@ before the canonical join; the scoring grammar and selected evidence stay the sa
 fragment-chunk eligibility uses the content index's canonical capture-only
 reading relation, including readable captures, current fragment publication and
 distinct reading/chunk pairs. it does not enumerate whole or piece indexes.
-piece-only eligibility first excludes source identities with an already-admitted
-canonical root. root preference precedes later family filters; only the remaining
+piece-only eligibility uses query-local source-set arrays to exclude identities
+with an already-admitted canonical root. root preference precedes later family filters; only the remaining
 sources need preferred-piece lookup. genuine piece-only and exact-reference reads
 retain the canonical extent/uuid order, bounds and apparatus dependencies.
 

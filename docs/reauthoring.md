@@ -7,7 +7,7 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 reading eligibility cost against `f96858c24`: +23 net authored runtime lines
 (30 added, 7 deleted): content index +7, search retriever +16. the canonical
 capture-only chunk arm is shared instead of expanding whole/piece indexes before
-discarding them; source-id admission removes root-dominated piece lookups.
+discarding them; query-local source arrays remove root-dominated piece lookups.
 the former inline capture arm and unfiltered piece source sets are deleted.
 ranking, scopes, readiness, clocks and resource limits retain their owners.
 docs and private diagnostics are excluded; earlier area totals keep their bases.
