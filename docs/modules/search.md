@@ -275,7 +275,7 @@ ceiling. the child's earlier whole-handler watchdog remains authoritative:
 startup, provider work and retirement still consume it. this gives neither 900
 seconds of computation nor guaranteed joined cleanup on forced child termination.
 the backend's session lock retains admission until actual retirement; a failed
-or incomplete read cannot publish. foreground 115/api 120/browser 125 remain.
+or incomplete read cannot publish. api115/bff120/browser125 remain.
 [request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
 native and hosting qualification.
 
