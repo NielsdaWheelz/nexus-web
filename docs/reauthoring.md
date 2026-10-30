@@ -4,6 +4,11 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+account progress layout against `9b2d8e0b1`: +9 net authored runtime lines
+(10 added, 1 deleted), all account presentation. a fixed live-detail viewport
+replaces intrinsic counter sizing; stable slots replace content-keyed remounts.
+menu geometry guards, sync contracts and reduced-motion behavior are unchanged.
+
 sync feedback against `dae72416f`: +57 net authored runtime lines
 (63 added, 6 deleted): account presentation +32, browser shell +25.
 the static busy icon becomes reduced-motion-aware animation; import-only account

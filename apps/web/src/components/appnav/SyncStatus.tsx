@@ -45,7 +45,7 @@ export function syncStatusOption(status: SyncStatus, cause: string | null, auth:
       <Icon size={16} className={styles.statusIcon} data-busy={Icon === LoaderCircle || undefined} aria-hidden="true" />
       <span className={styles.statusText}>
         <span>{STATUS_COPY[status]}</span>
-        {details(status, cause).map(line => <span key={line} className={styles.statusDetail}>{line}</span>)}
+        {details(status, cause).map((line, index) => <span key={index} className={styles.statusDetail} data-progress={status === "syncing" || undefined}>{line}</span>)}
         {status === "sign_in_required" ? <Button
           role={presentation === "menu" ? "menuitem" : undefined}
           tabIndex={presentation === "menu" ? -1 : 0}
