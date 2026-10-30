@@ -491,14 +491,15 @@ activity spans and acquired packages retain their separate owners. recreation
 restores paused; a controller reconnect does not reset the process clocks.
 
 before converting a validated format-1 playback envelope, `PlaybackStore` retains
-its exact original bytes in private `noBackupFilesDir/playback-format-1-<account>.json`.
+its exact original bytes in private `filesDir/player/migration-format-1/<account>.json`.
 atomic publication, file sync, exact readback and directory sync precede the
 format-changing write. retries reuse only an identical preimage; an existing
 different copy or any persistence failure refuses conversion without replacing
-either original. one preimage per account remains for explicit operator recovery;
-it is never a compatibility reader or an automatic fallback. ordinary format-2
-writes, account data and downloads keep their existing owners. this on-device copy
-does not survive app-data clearing or device loss and is not an external export.
+either original. one preimage per account remains until normal account purge or
+explicit operator recovery; it is never a compatibility reader or an automatic
+fallback. ordinary format-2 writes retain it. the existing player-directory purge
+owns its removal on sign-out; downloads keep their existing owner. this on-device
+copy does not survive app-data clearing or device loss and is not an external export.
 
 local activation first takes `OfflineStore.openEpisode`: one lease pins matching
 package audio, rendition, baseline and committed artwork. it installs immediately

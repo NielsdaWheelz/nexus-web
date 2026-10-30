@@ -121,8 +121,8 @@ internal class PlaybackStore private constructor(context: Context, val accountId
 
     /** One immutable preimage; a retry verifies it before the first format-changing write. */
     private fun preserveFormatOne(context: Context, original: ByteArray) {
-        val directory = context.noBackupFilesDir
-        val preimage = AtomicFile(File(directory, "playback-format-1-$accountId.json"))
+        val directory = File(context.filesDir, "player/migration-format-1")
+        val preimage = AtomicFile(File(directory, "$accountId.json"))
         val retained = try { preimage.readFully() } catch (error: FileNotFoundException) {
             if (preimage.baseFile.exists() || File(preimage.baseFile.path + ".bak").exists()) throw error
             // justify-ignore-error: this account has not published its migration preimage.

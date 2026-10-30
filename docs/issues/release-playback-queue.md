@@ -10,12 +10,13 @@ and pair api/web/apk delivery. no old/new bridge compatibility period.
 
 pause/stop the old service before paired installation. on first open, PlaybackStore
 validates the installed format-1 envelope and durably retains its exact bytes in
-private `noBackupFilesDir/playback-format-1-<account>.json` before conversion to
+private `filesDir/player/migration-format-1/<account>.json` before conversion to
 format 2. this is a recovery preimage before conversion, not an export before
 installation. an identical retained copy permits retry; different bytes or failed
 publication/readback/sync refuse without replacing the playback envelope or the
 existing preimage. earlier formats need explicit owner repair. retain the preimage
-for operator recovery; no automatic legacy read or app-data reset is authorized.
+until normal account purge or explicit operator recovery; the existing player
+cleanup owns sign-out deletion. no automatic legacy read or app-data reset is authorized.
 settle uncertain/submitted browser writes and stop
 writers before migrating. preserve account binding, queue ids,
 revision/order/cursor, pending listening/end writes, listening facts/sequences,
