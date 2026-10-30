@@ -253,10 +253,12 @@ async def _run(
 
 # The personal lane: visible media, their captures and own notes, excluding the oracle corpus.
 # Capture membership carries the visible reading, not just the immutable fragment.
-_PERSONAL_CAPTURE_CTES = f"""WITH personal_capture_chunks AS ({fragment_reading_chunks_sql(f'''
+_PERSONAL_CAPTURE_CTES = f"""WITH personal_capture_chunks AS ({
+    fragment_reading_chunks_sql(f'''
     SELECT media_id FROM ({visible_media_ids_cte_sql()}) visible
     WHERE media_id <> ALL(:excluded)
-''')})"""
+''')
+})"""
 _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:excluded) AND EXISTS (
     SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
     WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
@@ -324,9 +326,11 @@ def _retrieve(
                     reading.media_id AS reading_media_id, cc.chunk_text, cc.source_kind, cc.heading_path,
                     cc.primary_evidence_span_id, COALESCE(m.title, 'Note') AS title
                 FROM content_chunks cc
-                LEFT JOIN LATERAL (SELECT ({reading_owner_sql('''
+                LEFT JOIN LATERAL (SELECT ({
+                reading_owner_sql('''
                     SELECT reading_media_id FROM personal_capture_chunks WHERE chunk_id = cc.id
-                ''')}) AS media_id WHERE cc.owner_kind = 'fragment') reading ON TRUE
+                ''')
+            }) AS media_id WHERE cc.owner_kind = 'fragment') reading ON TRUE
                 LEFT JOIN media m ON m.id = COALESCE(reading.media_id,
                     CASE WHEN cc.owner_kind = 'media' THEN cc.owner_id END)
                 WHERE cc.id = ANY(:ids)"""),
