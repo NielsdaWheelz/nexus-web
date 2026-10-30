@@ -216,7 +216,11 @@ keep the current owners; change policy at those owners rather than adding layers
    backstop. provider work has its existing finite provider/job owner outside
    admission. `jobs/process_executor.py` retains the existing fresh-child wall
    watchdog, termination/join and supervisor heartbeat/claim ownership. its
-   general job limit is not the search allowance or a foreground service promise.
+   configured wall allowance (default/max 900 seconds) also supplies both
+   background read allowances, replacing the failed independent 30-second cap.
+   the earlier whole-handler watchdog still wins; this guarantees neither 900
+   seconds of computation nor joined cleanup on forced child kill. it is not a
+   foreground service promise, and no-wait admission/refund rules are unchanged.
 6. cancellation still joins driver work and closes/invalidate-checks the captured
    backend before capacity reuse or publication. retain the scope's fail-closed
    behavior for unconfirmed retirement. a cleanup warning alone must not reject
@@ -238,8 +242,11 @@ and retained earlier results do not substitute for useful completion.
 choose and record finite watchdog values and a finite qualification observation
 window before executing qualification, from measured complete-work costs and
 cleanup margin. they are operational safeguards, not new latency targets. do not
-silently inherit the old phase caps, borrow the general worker wall limit, restart
-clocks, or use infinite waits. if measured background cost cannot coexist with
+silently inherit old phase caps, add an independent shorter computation ceiling,
+restart clocks, or use infinite waits. the background allowance explicitly derives
+from its existing child owner after an integrated named refresh exhausted 30
+seconds; useful completion still needs affected native qualification. if measured
+background cost cannot coexist with
 successful foreground requests under the chosen serialization policy inside
 actual transport ceilings, this synchronous baseline fails: return the concrete
 conflict for a design decision before adding preemption, incremental snapshots,

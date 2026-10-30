@@ -5,8 +5,14 @@ server-side capacity waiting with current-intent deferral. the pr body owns its
 focused local proof; actual 2 gib qualification is a deployment gate,
 separate from merging that product correction.
 
-finite guards are background 30/api 115/bff 120/browser 125 seconds, with browser
-prefix allowances; the 900-second fresh-child wall is separate. these operational
+both background read allowances now derive from the configured fresh-child wall
+(default/max 900 seconds); api 115/bff 120/browser 125 and browser prefix
+allowances are unchanged. the earlier child watchdog still covers the whole
+handler, so this grants neither 900 seconds of computation nor joined cleanup
+on forced kill. the session lock retains admission until backend retirement and
+publication requires a complete read. the retired independent 30-second guard
+failed the integrated named refresh with `SearchBudgetExpired`; see
+[the current failure](named-suggestion-refresh-failure.md). these operational
 safeguards do not promise latency or qualify useful work by themselves. one
 absolute request clock covers actual provider/setup/read/materialization work.
 browser admission refuses occupied capacity before embedding; the current client
@@ -19,9 +25,10 @@ starts the absolute deadline before invoking the route read.
 `python/nexus/services/search/admission.py:139-148,166-206` wraps physical checkout,
 gate admission and the yielded read in that same deadline; `_admit` at lines
 54-68 applies its remaining time to the gate wait. foreground policy is 115s in
-`python/nexus/services/search/policy.py:7-8`; bff120/browser125 totals remain in
+the historical `python/nexus/services/search/policy.py:7-8`; bff120/browser125 totals remain in
 `apps/web/src/lib/search/policy.ts:4-6`, with bff enforcement in
-`apps/web/src/lib/api/proxy.ts:122-132`. no value changed in this documentation revision.
+`apps/web/src/lib/api/proxy.ts:122-132`. those foreground and transport values
+remain unchanged by the background repair.
 
 historical synthetic held-gate checks and real warm c6 global-refresh/foreground
 coexistence completed with useful lexical/hybrid results and physical retirement.

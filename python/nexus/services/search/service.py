@@ -38,7 +38,7 @@ from nexus.services.search.admission import (
     search_session_async,
 )
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
-from nexus.services.search.policy import BACKGROUND_COMPUTATION_SECONDS
+from nexus.services.search.policy import background_computation_deadline
 from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
     FORMAT_STORAGE,
@@ -162,7 +162,7 @@ async def search_scopes_async(
         else:
             if purpose == "background":
                 assert deadline is None
-                deadline = asyncio.get_running_loop().time() + BACKGROUND_COMPUTATION_SECONDS
+                deadline = background_computation_deadline()
             assert deadline is not None
             session_scope = search_session_async(deadline=deadline, purpose=purpose)
         async with session_scope as database:

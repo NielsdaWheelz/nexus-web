@@ -4,6 +4,12 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+background search allowance against `77e47d986`: +13 net authored runtime lines
+(19 added, 6 deleted). one policy function derives both background reads from the
+existing configured child wall instead of an independent 30-second cap. no child
+ceiling, foreground clock, retrieval, admission, connection or memory change;
+the old constant and its two imports are deleted. docs and private cases are excluded.
+
 reader connections admission against `352e30350`: +274 net authored runtime
 lines (336 added, 62 deleted): reader evidence +231, note editors/host/runtime
 +37, shared resource rows +6. sparse root admission replaces full-corpus mounts;
