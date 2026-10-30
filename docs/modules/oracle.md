@@ -47,10 +47,10 @@ before the model sees the passages, so the model can write to it.
 
 both retrieval lanes rank the full cosine-distance range (0–2), without a
 similarity cutoff.
-personal x-capture coverage remains a
-[known eligibility/attribution gap](../issues/oracle-personal-search-omits-x-captures.md);
-existing oracle qualification does not prove that lane. canonical reading
-membership and captured evidence must be composed together before expanding it.
+personal x-capture chunks enter through canonical readable capture membership in
+the viewer's visible, non-corpus readings. each chunk ranks once; its preferred
+authorized reading owns the title, four-owner dedupe and evidence capture context.
+the captured quotation and exact location retain their immutable fragment identity.
 
 ## Reading — `services/oracle/readings.py`, `synthesis.py`
 
