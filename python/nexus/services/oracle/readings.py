@@ -34,6 +34,7 @@ from nexus.schemas.oracle import (
 )
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services import libraries
+from nexus.services.content_indexing import fragment_reading_chunks_sql
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
@@ -46,6 +47,7 @@ from nexus.services.resource_graph.citations import (
     replace_citations_for_output,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items.locations import reading_owner_sql
 from nexus.services.search import projection
 from nexus.services.search.admission import search_session_async
 from nexus.services.search.policy import FOREGROUND_SEARCH_SECONDS
@@ -249,14 +251,22 @@ async def _run(
     return _publish(db, reading_id, context, synthesis.outcome(terminal))
 
 
-# The personal lane: the viewer's visible media and own notes, the oracle corpus excluded.
-# EXISTS over a union keeps media and note visibility in one semi-join.
+# The personal lane: visible media, their captures and own notes, excluding the oracle corpus.
+# Capture membership carries the visible reading, not just the immutable fragment.
+_PERSONAL_CAPTURE_CTES = f"""WITH personal_capture_chunks AS ({
+    fragment_reading_chunks_sql(f'''
+    SELECT media_id FROM ({visible_media_ids_cte_sql()}) visible
+    WHERE media_id <> ALL(:excluded)
+''')
+})"""
 _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:excluded) AND EXISTS (
     SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
     WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
     UNION ALL SELECT 1 FROM note_blocks nb
     WHERE cc.owner_kind = 'note_block' AND nb.id = cc.owner_id AND nb.user_id = :viewer_id
-      AND nb.authored_visible)"""
+      AND nb.authored_visible
+    UNION ALL SELECT 1 FROM personal_capture_chunks capture
+    WHERE cc.owner_kind = 'fragment' AND capture.chunk_id = cc.id)"""
 
 
 async def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:
@@ -305,18 +315,26 @@ def _retrieve(
         domains=(_PERSONAL_CHUNKS,),
         params=params,
         limit=200,
-        ctes="",
+        ctes=_PERSONAL_CAPTURE_CTES,
         maximum_distance=2,  # Full cosine range: oracle ranks without a similarity cutoff.
     )
     chunks = {
         row.id: row
         for row in db.execute(
-            text("""SELECT cc.id, cc.owner_id, cc.chunk_text, cc.source_kind, cc.heading_path,
+            text(f"""{_PERSONAL_CAPTURE_CTES}
+                SELECT cc.id, COALESCE(reading.media_id, cc.owner_id) AS owner_id,
+                    reading.media_id AS reading_media_id, cc.chunk_text, cc.source_kind, cc.heading_path,
                     cc.primary_evidence_span_id, COALESCE(m.title, 'Note') AS title
                 FROM content_chunks cc
-                LEFT JOIN media m ON cc.owner_kind = 'media' AND m.id = cc.owner_id
+                LEFT JOIN LATERAL (SELECT ({
+                reading_owner_sql('''
+                    SELECT reading_media_id FROM personal_capture_chunks WHERE chunk_id = cc.id
+                ''')
+            }) AS media_id WHERE cc.owner_kind = 'fragment') reading ON TRUE
+                LEFT JOIN media m ON m.id = COALESCE(reading.media_id,
+                    CASE WHEN cc.owner_kind = 'media' THEN cc.owner_id END)
                 WHERE cc.id = ANY(:ids)"""),
-            {"ids": [chunk_id for chunk_id, _ in near]},
+            {**params, "ids": [chunk_id for chunk_id, _ in near]},
         )
     }
     personal: list[Candidate] = []
@@ -335,6 +353,7 @@ def _retrieve(
             ref=ResourceRef("evidence_span", span)
             if span
             else ResourceRef("content_chunk", chunk.id),
+            reading_media_id=chunk.reading_media_id,
         )
         personal.append(
             Candidate(
