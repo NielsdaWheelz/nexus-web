@@ -10,6 +10,13 @@ counts: metadata records loaded, then completed/total readings. No metadata
 percentage or completion time is guessed; “up to date” still requires the whole
 account contract. Reading-preparation failures must not mask writing failures.
 
+After deploying dae, the installed Firefox shell initially still showed bare
+“syncing.” Closing all Nexus tabs and reopening exposed the new “your writing is
+synced; preparing reading search” detail without clearing storage. The shell now
+reports an installed waiting update through account attention; normal closure
+owns activation. Busy icons now animate with reduced-motion support. Actual
+installed progress and completion remain to be observed.
+
 Resolve after both actual installed clients show advancing preparation separately
 from writing acknowledgement, handle a preparation failure truthfully, and
 become current only after complete publication.

@@ -15,3 +15,28 @@ export async function prepareShell(): Promise<void> {
     worker.postMessage({ op: "ready" }, [channel.port2]);
   });
 }
+
+/** Report a completely installed update. Natural activation waits for every old
+ * tab to close, preserving its document and shared-worker asset closure. */
+export function observeShellUpdate(changed: (waiting: boolean) => void): () => void {
+  let live = true;
+  let registration: ServiceWorkerRegistration | null = null;
+  let workers: ServiceWorker[] = [];
+  const observe = () => {
+    for (const worker of workers) worker.removeEventListener("statechange", observe);
+    workers = registration ? [registration.installing, registration.waiting].filter(worker => worker !== null) : [];
+    for (const worker of workers) worker.addEventListener("statechange", observe);
+    changed(registration?.waiting?.state === "installed");
+  };
+  void navigator.serviceWorker.getRegistration("/").then(value => {
+    if (!live || !value) return;
+    registration = value;
+    registration.addEventListener("updatefound", observe);
+    observe();
+  }).catch(error => { if (live) reportError(error); });
+  return () => {
+    live = false;
+    registration?.removeEventListener("updatefound", observe);
+    for (const worker of workers) worker.removeEventListener("statechange", observe);
+  };
+}

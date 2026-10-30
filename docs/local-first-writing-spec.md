@@ -481,6 +481,13 @@ the storage worker, never broad `unsafe-eval`. activate a new shell only after
 local commits settle; incompatible format activation requires the coordinated
 release procedure, not automatic storage deletion.
 
+the browser account control observes its existing service-worker registration.
+a completely installed waiting update adds passive attention and instructions
+to finish writing, close all nexus tabs and reopen. natural activation preserves
+the old document/shared-worker closure until those clients close. this notice
+does not force activation, reload tabs or poll for deployments; native updates
+remain owned by apk installation.
+
 downloaded readers reuse reader source/progress ports and one extracted annotation
 controller. the new native authored bridge admits the owned workspace entry and
 the exact packaged `/shelf/index.html` document generation, never source-asset
@@ -512,7 +519,7 @@ feature. use existing feedback, button, menu, dialog and announcement primitives
 | editor and graph | preserve words/marks/refs; distinct `unlink`, `delete note`, `join notes`; no injected conflict prose; previews derive from canonical content |
 | reading | verbatim quote and truthful source label; `source isn’t available on this device` or `passage couldn’t be located in this version`; retained note stays editable |
 | discovery | canonical label, literal excerpt, exact target; local authored results remain available beside separately unavailable remote sections |
-| shell and sync | one status control in account chrome/menu, never pane headers; current state only, no counters/event list |
+| shell and sync | one status control in account chrome/menu, never pane headers; current state and durable preparation counts, no event history |
 
 status is a closed local model: `preparing`, `saving`, `offline`, `syncing`,
 `current`, `sign_in_required`, `update_required`, `local_error`, `sync_error`.
@@ -528,6 +535,8 @@ sync failure, offline, syncing, current. current requires no pending changes and
 `server_cursor` through the latest observed head. disconnection is not sync failure.
 no routine success toast or announcement; real failures announce once. color is
 never the sole signal. preserve keyboard focus and 200% text-zoom access.
+indeterminate preparation, saving and syncing icons animate unless reduced motion
+is requested; the text remains the authoritative state and progress.
 
 delete activity mounts, commands, undo offers and registry machinery. migrate
 each remaining non-writing condition to its actual owning surface; a discrete
