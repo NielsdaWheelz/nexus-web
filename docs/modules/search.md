@@ -269,6 +269,13 @@ arbitrary cancellation and database errors are not
 owned budget expiry. the import-light `search/policy.py` owns the foreground and
 background computation allowances. confirmed retirement does not fail an otherwise
 live result because cleanup was slow; original expiry/cancellation still wins.
+both background read allowances derive from the configured background-child wall
+allowance (default and maximum 900 seconds), replacing the independent 30-second
+ceiling. the child's earlier whole-handler watchdog remains authoritative:
+startup, provider work and retirement still consume it. this gives neither 900
+seconds of computation nor guaranteed joined cleanup on forced child termination.
+the backend's session lock retains admission until actual retirement; a failed
+or incomplete read cannot publish. api115/bff120/browser125 remain.
 [request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
 native and hosting qualification.
 
