@@ -1,21 +1,19 @@
-# a resolved blake oracle anchor has no captured location
+# blake citation has no proved captured location
 
-status: open; generation success did not establish navigable evidence.
+status: truthful unavailability accepted for release; no navigation defect proved.
+a real-model reading succeeded with three citations, but the saved blake target
+was unavailable from capture onward. the other two had exact epub offsets; no
+browser-click proof was performed.
 
-normal real-model run `20261028-084101-6e974167648c` completed a reading with three
-work citations. blake's resolved anchor already captured an unavailable target;
-the source remained readable, but the citation returned no route. the other two
-citations had exact epub offsets. no browser-click proof was performed.
+retained evidence confirms the quote/unavailable target survived publication.
+an earlier diagnostic of the same quote differs from its bound source by an
+interior space and case; canonical normalization finds no exact occurrence,
+although the looser catalog matcher accepts it. the later run did not retain its
+actual span, so this supports an edition mismatch without identifying that run's
+precise failed predicate. the separate [verse defect](oracle-verse-anchors-cross-content-chunks.md)
+is not established by this outcome.
 
-oracle matching and current source/span pointers do not prove that the full quote
-uniquely resolves under the capture/location owner. which location predicate
-failed was not retained. neither stale lazy refresh nor the separate
-[verse-boundary defect](oracle-verse-anchors-cross-content-chunks.md) is established
-by this reading. exact anchors/edges, source-owner paths and receipt hashes remain
-in the privately archived original under
-`.nexus-local/search-integration-docs-20261029.private/original-source/docs/issues/`.
-
-resolve by inspecting the unchanged quote against its actual bound span/source,
-then proving an exact valid captured location and usable canonical route through
-normal owners, or explicitly accepting this unavailable outcome. never fabricate
-a locator or relax source identity. the integrated source remains unqualified.
+retain unavailable navigation. any future catalog correction must use an exact,
+uniquely located source literal, preserve historical quotes and prove canonical
+activation. do not fabricate a locator or relax shared matching. full diagnostic
+history and original receipt hashes remain privately retained.

@@ -14,7 +14,8 @@ envelope, with the reserves defined by the reliability contract. zero oom alone
 is insufficient: retain cold/warmed measurements, useful completion and cleanup.
 normal services must fit while present, including idle workers and their retained
 connections. heavy search, suggestions, indexing and backup may queue and
-serialize at their existing owners; an enforced backup window is permitted.
+serialize at their existing owners. backup-window enforcement is not required for
+this prototype under the [owner's decision](search-reliability-spec.md#decision).
 finite queued work must resume and drain while reading, local writing and
 cancellation remain usable. simultaneous heavy peaks are not an acceptance gate.
 production enables at least 1 gib host swap; service leaves retain
@@ -33,11 +34,13 @@ open in [the incident](issues/production-search-postgres-oom.md).
 the current candidate implements finite role pools, zero overflow, separate short
 control transactions, loop-scoped async engines and one shared api listener.
 these are selected mechanisms for bounded ownership and control isolation, not
-requirements to build a pool matrix for its own sake. their quotas remain
-provisional. earlier native component publication/coexistence and later failed
+requirements to build a pool matrix for its own sake. their configured quotas
+now have the bounded actual 2 gib evidence in [release acceptance](issues/release-search.md).
+earlier native component publication/coexistence and later failed
 backup-overlap memory work retain their recorded source and verdicts under
 [the common evidence record](search-reliability-spec.md#evidence-and-uncertainty).
-neither qualifies the current integrated schema or actual 2 gib topology.
+those earlier components alone did not qualify integrated schema 0329 or actual
+2 gib fit; the later accepted evidence is distinct and retains its explicit limits.
 
 ## ownership and reachable topology
 
@@ -60,6 +63,9 @@ count the maximum reachable coexistence, not the sum of mutually exclusive peaks
 an exclusion counts only when the admission or operator owner enforces it; quiet
 workload choreography alone does not exclude reachable demand. idle workers and
 retained backends still count during serialized work and backup windows.
+the prototype accepts the measured backup scope without claiming enforced
+exclusion or proof of unrestricted overlap; this is a release-scope decision,
+not additional memory evidence.
 search serialization does not remove memory held by physical waiting backends.
 postgres utilities and raw connections outside application engines need explicit
 headroom. a container ceiling or `work_mem` sum does not prove resident headroom.
@@ -99,8 +105,9 @@ ordinary checkout currently waits up to 5 seconds, control checkout independentl
 up to 250 milliseconds; readiness starts cancellation at its existing 1.9-second
 work deadline. browser search refuses occupied capacity before embedding;
 current client intent owns pending deferral and retry outside execution time.
-[deployed capacity and transport ceilings](issues/search-request-watchdog-coexistence.md)
-remain open release gates, separate from the repaired queue/execution ownership.
+[deployed capacity limits](issues/production-database-connection-budgets-implicit.md)
+retain the accepted ordinary-use scope and unquantified combined headroom;
+functional release acceptance does not establish unrestricted overlap reserve.
 these are operational watchdogs, not product latency acceptance or permission to exceed a
 caller/hosting ceiling.
 engine-owned native setup separately uses a two-second connect timeout per
@@ -131,6 +138,12 @@ existing disposable/native owners; no pooler, larger machine or new capacity
 framework. compare query/private retained demand and physical connection census
 under cold then warmed native workload. distinguish emulation and larger-host
 components from the required actual topology.
+
+record fresh application-process startup/first use separately from warmed
+resident demand. neither establishes an empty operating-system or postgres
+cache: restore/analyze and prior reads can warm the retained corpus. the selected
+release carries those observed scopes and checks ordinary first use after
+activation; it makes no cache-cold guarantee and selects no cache-flushing run.
 
 qualify admitted readers/listeners, two clients, both worker lanes, writing,
 generation stop, import/discovery/publication, reachable physical maintenance and

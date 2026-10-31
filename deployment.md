@@ -35,8 +35,10 @@ api pools, both worker lanes and their children, asynchronous sessions, stream
 listeners and probes all count. per-process pool limits do not establish that
 budget. all normal services count while present, including idle workers and warmed
 retained backends. heavy search, suggestion ranking, indexing and backup may queue
-and serialize; an enforced backup window is permitted. count peaks that remain
-reachable under that policy and retain maintenance headroom. ordinary reading,
+and serialize. the owner does not require backup-window enforcement for this
+single-user prototype; ordinary nightly behavior stays unchanged. measured
+idle-worker backup success is not proof of unrestricted overlap. count reachable
+demand honestly and retain maintenance headroom. ordinary reading,
 local writing, cancellation and worker lease renewal must progress, useful search
 must complete, and finite queued work must drain.
 exact allocations remain in the deployment configuration and its declared inputs.

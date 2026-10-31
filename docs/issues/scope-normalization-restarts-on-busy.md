@@ -1,22 +1,20 @@
-# reading preparation restarts after a busy status read
+# installed busy-retry correction closeout
 
-on source `37d2e45de`, `Sync.run` clears its reading normalizer after any
-`scopeStep` failure. a status request can return ordinary capacity-busy before
-touching that normalizer. the next same-revision attempt resets the incomplete
-interval, deleting its normalized chunks and beginning again. repeated refusals
-can prevent a large interval from finishing; raw text, completed intervals and
-authored writing remain intact.
+on 37d, `Sync.run` cleared the normalizer after every `scopeStep` failure. a
+pre-work busy status read could consequently delete incomplete normalized chunks
+and restart a large interval. repeated refusals could prevent completion; raw
+text, completed intervals and authored writing remained intact. the personal
+clients' exact cursor history was not observed, so their busy status alone did
+not establish this loop.
 
-the installed clients alternate reading-preparation busy states. this source
-defect is confirmed, but their exact cursor history is unobserved; do not infer
-that either personal client is currently looping from that status alone.
+pr880 changes only the exception boundary in `apps/web/src/lib/authored/sync.ts`:
+retain valid state across failed observations, detach before mutation and restore
+only after corresponding writes commit. revision/revocation/structural changes
+and failed persistence still discard it. the actual Sync/sqlite case reproduced
+old failure and passed retained partial progress, failed-write recomputation and
+unchanged completion/fences on the repair. no format, timer or cap changed.
 
-repair the exception boundary in `apps/web/src/lib/authored/sync.ts`: retain
-valid state across failed observations, detach it before mutation and restore
-it only after every corresponding write commits. revision changes, effective
-revocations, failed persistence and structural invalidation must discard it.
-
-resolve with retained partial progress across a busy status read, safe restart
-after failed normalization persistence, unchanged revision/revocation fences,
-and useful continued preparation on the paired installed clients. no timer,
-storage-format, authorization or capacity change is selected.
+e505 is deployed and its matching 4a3469 apk is installed and byte-verified.
+close this defect after useful continued preparation is observed on the paired
+installed clients. [complete personal scope](authored-scope-hydration-repeats-revision-work.md)
+remains a separate final outcome; do not require a second component campaign.

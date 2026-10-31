@@ -131,8 +131,9 @@ before work begins. every due feed must publish the settled input within that
 window after competing work drains. pre-existing suspended failures are identified
 at the start; failures created by the workload are not exempt. there is no
 quiet-period latency target or promise of freshness during sustained activity.
-heavy work may queue behind other work or an enforced backup window, then must
-resume and drain; simultaneous peak execution is not required. idle normal
+heavy work may queue behind other work, then must resume and drain; simultaneous
+peak execution is not required. backup-window enforcement is not required by the
+current prototype acceptance. idle normal
 services and retained memory remain part of capacity accounting.
 backend retirement, useful publication and the resource envelope remain separate
 obligations under the [reliability spec](../search-reliability-spec.md).

@@ -1,28 +1,23 @@
 # codex final answer is not streamed
 
-status: open; separate provider capability
-origin: 2026-10-16 compact chat details qualification
-area: generation / codex / agent kernel
+open provider capability; no dependency change or streaming repair is selected.
+real final-only codex runs delivered answer text at terminal replacement;
+commentary runs proved intermediate events and replay, not progressive final text.
+on 37d the user likewise saw text appear all at once and reported luna, but the
+actual route is UNCONFIRMED. this is not an exact diagnosis of that request.
 
-three real final-only codex runs exposed tools but no `assistant_text_delta`;
-answer text arrived at terminal replacement. two subsequent real runs requested
-public progress commentary and produced genuine intermediate text events. the
-final repaired run proved cursor replay, inspection through progressive prose,
-manual release and terminal reconciliation. this does not establish per-token
-or progressive final-answer delivery.
+installed/locked kernel `bc087b60e73b61c2382402295aa439306ad97552`
+(`python/uv.lock:495–497`) forwards completed commentary through
+`NativeMessagePort.record` and discards `AgentText` (`native.py:496–518`,
+`native_contract.py:354–356`). provider-runtime `codex_sdk.py:1291–1295` emits
+those deltas; nexus `services/generation/codex.py:244–248` forwards commentary
+and returns final text after completion at lines 196–207.
 
-`python/uv.lock:495` pins llm-agent-kernel `f922193c718a48cfeecad3165cf6851b55f4e09c`.
-its `native.py:496-518` forwards completed commentary to `NativeMessagePort`
-and discards `AgentText`; `native_contract.py:354` explicitly defines completed
-public commentary. runtime `codex_sdk.py:1282` already exposes native text deltas.
-nexus `services/generation/codex.py:247` maps only that commentary callback to
-text events; final text returns authoritatively at line 198.
+repair belongs at the kernel's public observational-text boundary and nexus
+consumer, preserving order and avoiding duplicate commentary or native turn
+control. resolve with progressive final-only delivery, correct reconnect cursor
+and authoritative final text, preserving structured-output/commentary semantics.
 
-fix: expose an ordered observational text callback at the kernel's public
-boundary, then consume it in nexus without duplicating completed commentary.
-do not wrap or duplicate the native turn-control protocol inside nexus.
-
-acceptance: a real final-only run produces multiple visible preterminal text
-updates, reconnects at the correct cursor without duplication, and retains
-authoritative final text. qualify stop, structured output and commentary
-composition at their existing owners.
+ordinary same-model Stop BEFORE text passed on 37d: “ok that stopped normally”.
+that cancellation observation is complete and independent of final-text delivery;
+no additional cancellation case is selected. full earlier receipts remain private.

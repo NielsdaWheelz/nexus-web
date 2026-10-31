@@ -1,30 +1,25 @@
-# framework security release qualification
+# framework release disposition
 
-release scope 6 selects next/eslint-config-next 15.5.28 and sharp 0.35.5 in
-`apps/web/package.json` and `apps/web/bun.lock`. the existing two-output
-response-header patch remains necessary and is retained without byte changes.
-[advisory assessment and contract](../framework-security-update-spec.md) owns
-applicability; [api edge](../modules/api-edge.md) owns the serving invariant.
+next/eslint-config-next 15.5.28 and sharp 0.35.5 are deployed with the unchanged
+necessary two-output response-header patch. [the security spec](../framework-security-update-spec.md)
+owns applicability. next 15's recorded maintenance runway ends 2027-01-31;
+a major upgrade is separate work.
 
-[next 15 maintenance](https://nextjs.org/support-policy) runs through
-2027-01-31. the compatible patch choice accepts that limited maintenance
-runway; a major upgrade is outside this release scope.
+accepted packaging evidence combines the locked build, unchanged serving owners,
+exact staged version and a cache-miss allowed-image transform on vercel's managed
+runtime. it does not inspect final internal sharp/libvips versions or establish
+self-hosted linux packaging; generated manifests retain their prior-artifact
+scope. exact identities and proof remain in the implementation pr/private receipt.
 
-remaining release gates:
+the temporary public google caller FAILED before callback/landing at the provider
+boundary and cleaned up normally. no authorized catalog or writing-sse capture
+was obtained. the owner selected ordinary signed-in product use instead: personal
+login, useful search, bidirectional writing, linked-history opening, suggestions
+refresh/open/return and before-text chat Stop are observed. those successes are
+not low-level hosted gzip/header or initial writing-sse delivery/cancellation
+captures. progressive final-answer delivery remains a separate capability.
 
-- bind qualification to the final integrated source sha and its `/version`;
-  a prior branch artifact does not qualify a later release artifact.
-- on the normal linux/managed-hosted build, establish the installed sharp/native
-  package and libvips versions and a successful allowed local-plate optimizer
-  read. a darwin/arm64 package load does not establish linux packaging.
-- qualify the matching staged hosted edge: real password login, separate cookie
-  effects, canonical redirect and session renewal, gzip `/api/llm-catalog` json,
-  and `/api/stream/writing` delivery/cancellation. inspect that artifact's
-  generated action and prerender surfaces. a hosted static check alone proves
-  none of these runtime observations.
-
-use the normal pr preview if available; otherwise these remain explicit final
-integration gates. no new deployment path, ci runtime harness, production probe,
-account change or native qualification is implied. remove this issue when the
-selected release artifact supplies those observations. local proof belongs in
-the pr body and private receipts.
+cookie/session/renewal owners are unchanged from the previously qualified cohort;
+carry that proof without claiming a new natural production renewal observation.
+the low-level hosted capture and managed-packaging limits are accepted. no alternate
+browser, provider bypass, forced expiry or replacement harness is selected.
