@@ -1,13 +1,15 @@
 # search reliability: revised implementation and acceptance spec
 
-contract revised 2026-10-29; implementation status reconciled 2026-10-29.
+contract revised 2026-10-29; implementation status reconciled 2026-10-30.
 historical evidence retains its recorded source and migration identity. the isolated
-integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` has one canonical unreleased
-migration 0329/down 0328 and passed the sole static gate. that closes the source/head
+integration `ff83a5318` of search `7173b6a91` with main `96a3b7bdf` had one canonical
+migration 0329/down 0328 and passed the sole static gate. that closed the source/head
 collision. that frozen integration's disposable functional composition passed as
 scoped below. integration of main `e2192e593` preserves its historical x-data
 contracts; earlier static/manual receipts do not qualify this newer tree.
-integrated migration, full native runtime and release qualification remain open.
+integrated migration and bounded native backend/os qualification now have accepted
+evidence; [release acceptance](issues/release-search.md) records their scope and
+the remaining deployed/client gates.
 the previous spec is preserved at
 `.nexus-local/search-reliability-spec.before-2026-10-28.private.md`.
 
@@ -20,8 +22,13 @@ work finish. a safe timeout is a failure outcome, not a working search.
 the user's 2026-10-29 decision permits deliberate serialization of heavy search,
 suggestion ranking, indexing and backup. their simultaneous peaks need not fit.
 normal services must fit while present, including idle workers and retained
-connections. a backup may have an enforced window before queued heavy work
-resumes. useful search must eventually complete; ordinary reading, local writing
+connections. on 2026-10-30 the owner explicitly removed backup-window enforcement
+as a requirement for this single-user prototype. keep ordinary nightly backups;
+no new pause/admission mechanism or recurring server outage is required. measured
+idle-worker backup success does not prove unrestricted overlap, and historical
+overlap failures remain failed. this accepted limit does not change caps/reserves,
+verified backups or stopped-writer requirements for incompatible releases.
+useful search must eventually complete; ordinary reading, local writing
 and cancellation remain usable, and finite queued work must drain. serialization
 is a scheduling choice, not permission for starvation, lost work or hidden failure.
 capacity waiting must remain visibly and honestly pending; generic waiting copy
@@ -134,11 +141,12 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   database/volume/network/parent. the protected original database and shared daemon
   were unchanged. the original failed verdict is unchanged. these historical
   0321 components do not qualify integrated 0329 or the actual 2 gib topology.
-- **open:** useful progress and queue drain under the chosen serialization policy,
-  cold and actual 2 gib topology,
-  integrated migration/full native runtime and phone acceptance. brave
-  import/metadata remains [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
-  no search-repair production deployment has occurred.
+- **remaining:** [release acceptance](issues/release-search.md) owns final
+  personal full-scope completion, publication and explicit remaining limits.
+  extension/offline behavior, useful progress, queue drain, migration, bounded
+  capacity and ordinary production use are accepted at their recorded scopes
+  and are not repeated. brave import/metadata remains
+  [entitlement-blocked](issues/live-search-qualification-brave-payment-required.md).
 
 ## target behavior and invariants
 
@@ -290,9 +298,15 @@ bounded database memory: inspect the actual joins, sorts and maintenance demand.
   preserve proven query-shape repairs and remove duplicate work when doing so
   preserves the proper selection boundary.
 
-the selected exact baseline has completed the warm component described above.
-cold/full-topology feasibility remains unproved. slower queries hold snapshots
-and the gate longer; qualification must measure that cost.
+the selected exact baseline has completed the bounded native qualification in
+[release acceptance](issues/release-search.md). fresh application startup/first
+use and warmed resident demand are separate observed scopes; neither proves an
+empty operating-system/postgres cache. no cache-cold guarantee is claimed.
+ordinary deployed use and public reachability are accepted; concurrent search/
+scope use completed without a new oom. [combined query-time headroom](issues/production-database-connection-budgets-implicit.md)
+remains unquantified, so this is not an unrestricted-topology memory guarantee.
+no additional probe is selected. slower queries still retain snapshots and the
+gate longer; future scope changes must account for that cost.
 
 if exact retrieval fails capacity or foreground/background progress, assess the
 existing stock original-float access path before requiring normalized-half ivf.
@@ -313,8 +327,8 @@ to shrink anchors, families, thresholds or candidate windows.
 | keep | canonical readiness/scope/owner/projection query repairs, meaningful duplicate-work removal, atomic publication, provider failures, busy/write uncertainty and current main's authored/capture/annotation contracts |
 | delete | hard subsecond hold verdicts and computation-expiry refunds; these reject useful work or hide noncompletion |
 | removed from the selected exact path | count-proof routing, multi-domain ann cursor plumbing, half-key frontier/error proof and candidate-only norm `[0.5,2]` restriction. dimension/model and valid finite nonzero-vector checks remain |
-| selected package | pinned stock pgvector with exact original-float retrieval, without the normalized-half index or local cancellation patch. retained lifecycle proofs have their recorded source/package identities; integration still needs its own qualification |
-| migration owner | selected unreleased 0329 follows main 0328; the integrated source has one head and passed static verification. historical selected 0321-after-0320 receipts belong to a different lineage and remain historical. migration/value-preservation and full native runtime proof are still required for 0329 |
+| selected package | pinned stock pgvector with exact original-float retrieval, without the normalized-half index or local cancellation patch. retained lifecycle and integrated native proofs keep their recorded source/package identities and limits |
+| migration owner | deployed 0329 follows 0328. accepted original-owner preservation, bounded migrator fit and actual production cutover are recorded in release acceptance. historical 0321-after-0320 receipts remain a different lineage; no migration replay is required for documentation closeout |
 
 trade-offs are explicit: serialized work lowers throughput and can lengthen
 foreground waits; exact retrieval spends more scan/io time to preserve recall;
@@ -361,15 +375,18 @@ brave import/metadata remains blocked until entitlement permits real completion;
 no fake-provider pass or unrelated oracle success closes it. review the known
 blake locator and separate verse issue without silently dropping affected citation
 semantics; generation success does not prove navigable citations. personal
-x-capture eligibility/attribution is also
-[unqualified](issues/oracle-personal-search-omits-x-captures.md); a common exact
-vector reader does not establish that oracle lane's coverage. existing explicit
+x-capture eligibility/attribution has its own canonical-reading repair and focused
+admitted retrieval/activation proof in
+[pr872](https://github.com/NielsdaWheelz/nexus-web/pull/872); a common exact vector
+reader alone did not establish that oracle lane's coverage. existing explicit
 screen-reader/unrestricted-worker deferrals remain named in
 [release-search](issues/release-search.md), not broadened by this revision.
 
 release stays with the existing controller and a separate explicit release
-instruction. retain the accepted announced interruption of at most 30 minutes,
-including stopped writers, verified backup, migrations and paired restart; do not
+instruction. target an announced interruption of 30 minutes, including stopped
+writers, verified backup, migrations and paired restart. on 2026-10-30 the owner
+authorized safe forward completion if it takes longer; this is no migration-abort
+or rollback deadline. do not
 mix workers or restore the known-broken predecessor as a claimed repair. selected
 image/patch requirements and recovery steps must be reconciled in release-search
 before activation. preserve historical snapshots/outputs; delete temporary cases

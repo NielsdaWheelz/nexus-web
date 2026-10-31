@@ -166,6 +166,12 @@ this pr can proceed independently of database work; mounted query demand still
 belongs in the combined release workload. use the canonical headless lab and
 native ownership rules in [verification](local-rules/testing-standards.md).
 
-issue owners: [rendering](issues/large-reader-connections-blocks-ui.md),
-[release blocker](issues/release-mobile-companion.md).
+the rendering and installed-native release observations are complete at their
+recorded scopes. the representative book proves root scale with a small disclosed
+branch, not arbitrary nested/rich-body bounds; inspector browser-native find and
+cross-row selection remain mounted-only. article publication replacement used
+unchanged source bytes; epub replacement remains owner-refused and partial
+publication states are not promoted to runtime proof. exact evidence remains in
+the implementation pr/private receipts. [release closeout](issues/release-search.md)
+owns the separate remaining derived-preparation gate.
 code: [connections owner](../apps/web/src/app/(authenticated)/media/[id]/evidence/EvidencePane.tsx).

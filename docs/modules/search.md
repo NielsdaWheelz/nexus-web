@@ -37,9 +37,10 @@ without broadening the ranked work or copying full bodies into candidate sets.
 
 capacity waiting must remain honestly pending and must not spend the execution
 allowance, which starts at admitted execution. provider and transport work retain
-their finite owning guards. frozen `4ceb03555` instead shares one pre-admission
-clock; [clock separation](../issues/search-request-watchdog-coexistence.md) remains
-an implementation gap. cancellation stops subsequent local requests and retries and joins cleanup;
+their finite owning guards. browser requests refuse occupied capacity before
+embedding; the current client intent owns visible waiting and natural retry
+outside its execution allowance. admitted requests retain the api/provider/
+transport deadlines. cancellation stops subsequent requests and retries and joins cleanup;
 cleanup may finish after the response deadline. running synchronous provider work
 in a thread does not give it the awaiting task's cancellation lifetime. strict
 retrieval now awaits native async embedding inside its caller's deadline, with
@@ -284,8 +285,9 @@ startup, provider work and retirement still consume it. this gives neither 900
 seconds of computation nor guaranteed joined cleanup on forced child termination.
 the backend's session lock retains admission until actual retirement; a failed
 or incomplete read cannot publish. api115/bff120/browser125 remain.
-[request coexistence](../issues/search-request-watchdog-coexistence.md) tracks
-native and hosting qualification.
+[release acceptance](../issues/release-search.md) retains the scoped native and
+ordinary deployed proof; [capacity limits](../issues/production-database-connection-budgets-implicit.md)
+distinguish successful use from an aggregate-memory guarantee.
 
 browser provider work runs after admission, before its snapshot; no ordinary
 transaction is retained while waiting for a provider. direct lookups, primary-only

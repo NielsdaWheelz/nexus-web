@@ -9,8 +9,9 @@ there is one integrated repair, not a required database-pr/search-pr split.
 ## outcome and evidence
 
 background refresh and foreground search must complete useful work inside the
-fixed envelope. heavy work may queue and serialize, including an enforced backup
-window; ordinary reading, local writing and control work remain usable, and
+fixed envelope. heavy work may queue and serialize; backup-window enforcement is
+not required for this prototype under the [common decision](search-reliability-spec.md#decision).
+ordinary reading, local writing and control work remain usable, and
 finite queued work must drain. normal services count even when idle. the selected
 baseline is exact original-float retrieval. no approximate path is required merely because
 an earlier plan permitted it, and no faster graph-only result substitutes for a
@@ -23,8 +24,9 @@ and censored five-anchor timings remain diagnostic history in
 acceptance. later selected 0321 warm component publication/coexistence succeeded;
 later mixed backup-overlap memory work failed. the
 [common evidence record](search-reliability-spec.md#evidence-and-uncertainty)
-preserves each source, package, schema, limitation and failed verdict. integrated
-migration, cold/full-topology progress and release proof remain open.
+preserves each source, package, schema, limitation and failed verdict. accepted
+migration/native progress and remaining cold/full-topology/client release limits
+are recorded in [release acceptance](issues/release-search.md).
 
 ## exact domain and ranking
 
