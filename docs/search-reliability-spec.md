@@ -141,8 +141,9 @@ rankings or local corpus replica. no semantic feature is cut by this revision.
   database/volume/network/parent. the protected original database and shared daemon
   were unchanged. the original failed verdict is unchanged. these historical
   0321 components do not qualify integrated 0329 or the actual 2 gib topology.
-- **remaining:** [release acceptance](issues/release-search.md) owns final
-  personal full-scope completion, publication and explicit remaining limits.
+- **release disposition:** [release acceptance](issues/release-search.md) records
+  user-reported paired preparation completion, the published release and explicit
+  remaining limits; final client counters were not independently captured.
   extension/offline behavior, useful progress, queue drain, migration, bounded
   capacity and ordinary production use are accepted at their recorded scopes
   and are not repeated. brave import/metadata remains

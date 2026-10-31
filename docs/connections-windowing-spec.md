@@ -173,5 +173,5 @@ cross-row selection remain mounted-only. article publication replacement used
 unchanged source bytes; epub replacement remains owner-refused and partial
 publication states are not promoted to runtime proof. exact evidence remains in
 the implementation pr/private receipts. [release closeout](issues/release-search.md)
-owns the separate remaining derived-preparation gate.
+records user-reported paired completion and the separate remaining limits.
 code: [connections owner](../apps/web/src/app/(authenticated)/media/[id]/evidence/EvidencePane.tsx).

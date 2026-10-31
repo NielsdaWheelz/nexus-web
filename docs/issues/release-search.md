@@ -29,15 +29,22 @@ or a new mozilla submission. the user confirmed the phone's offline existing-not
 edit, ordinary reopen retention, downloaded-book opening and reconnect delivery
 to firefox. core installed functional checks are complete.
 
-remaining: BOTH clients finish [derived preparation and reach current](authored-scope-hydration-repeats-revision-work.md).
-writing synced and growing counts do not establish that state. pr880's
-[busy-retry repair](scope-normalization-restarts-on-busy.md) is now deployed and
-paired; its focused Sync/sqlite proof passed, while the first installed status/
-count observation is pending. prior qualitative busy/progress reports did not
-establish a personal retry loop or completion. accepted core functional checks
-carry without replay. publication remains draft until the preparation disposition;
-matching artifact publication and owned cleanup follow. [writing closeout](release-local-first-writing.md)
-retains the storage/cutover contract.
+on 2026-10-31, after reporting desktop done and phone 1,425/1,515 readings ready,
+the user reported “both synced now i think”. the coordinator accepts this as
+user-reported paired completion. final counters were not independently captured;
+this is neither universal liveness proof nor evidence that every possible retry
+input succeeds. pr880's busy-retry repair has focused Sync/sqlite proof and
+subsequent installed progress/completion; its release gate is closed. the separate
+[source-established silent coverage-rejection hazard](scope-normalization-rejection-retries-silently.md)
+has not been established as the cause of the earlier delay and remains an
+independent follow-up. accepted core checks carry without replay.
+
+[android-v0.3.9](https://github.com/NielsdaWheelz/nexus-web/releases/tag/android-v0.3.9)
+was published on 2026-10-31 at 20:51:47 utc, targeting the same e505 source;
+all 18 remote asset digests matched. publication reused the existing artifacts,
+not a new runtime build or deployment. [writing disposition](release-local-first-writing.md)
+retains the storage/cutover contract; no further user action is required for this
+release closeout.
 
 accepted limits: backup-window enforcement was waived; ordinary nightly behavior
 is unchanged and unrestricted overlap remains unproved. fresh process/use and
