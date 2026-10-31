@@ -691,10 +691,18 @@ def media_passages(
             row.id: row.reading_media_ids
             for row in db.execute(
                 text(f"""SELECT h.id,array_agg(reading.media_id) AS reading_media_ids
-                    FROM highlights h JOIN ({requested_media_ids_cte_sql()}) reading
-                      ON reading.media_id=h.anchor_media_id
-                        OR (h.anchor_kind='fragment_offsets'
-                            AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")})
+                    FROM highlights h
+                    LEFT JOIN media_parts anchor_part ON anchor_part.media_id=h.anchor_media_id
+                    JOIN (
+                        SELECT requested.media_id,
+                               COALESCE(reading_part.source_media_id,requested.media_id) AS source_media_id
+                        FROM ({requested_media_ids_cte_sql()}) requested
+                        LEFT JOIN media_parts reading_part ON reading_part.media_id=requested.media_id
+                    ) reading
+                      ON reading.source_media_id=COALESCE(anchor_part.source_media_id,h.anchor_media_id)
+                        AND (reading.media_id=h.anchor_media_id
+                          OR (h.anchor_kind='fragment_offsets'
+                              AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")}))
                     WHERE h.id=ANY(:ids) AND {highlight_visibility_sql("h")}
                       AND (CAST(:reading_owners AS jsonb)->>('highlight:' || h.id::text) IS NULL
                         OR reading.media_id=CAST(CAST(:reading_owners AS jsonb)->>('highlight:' || h.id::text) AS uuid))
