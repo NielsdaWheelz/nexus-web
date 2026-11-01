@@ -63,6 +63,7 @@ export interface BrowserEngineDeps {
 
 const WRITE_EVERY_MS = 15_000;
 const LAST_WRITE_BOUND_MS = 2_000;
+const PROGRESS_UNSAVED = "Progress couldn’t be saved. Retry to sync progress.";
 const ERRORS: Record<number, string> = {
   1: "Playback was interrupted.",
   2: "Network error. Check your connection.",
@@ -182,7 +183,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             // The attached episode retries on the tick or `online`.
             return;
           } else {
+            // Standing error keeps the sample for an explicit retry (`play`), which resumes it.
             current.stopped = true;
+            if (current === episode) set({ error: PROGRESS_UNSAVED });
             console.warn("listening_write_refused", { status });
             return;
           }
@@ -632,7 +635,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       await draining;
       if (current.queued !== null) {
         current.fenced = false;
-        if (current === episode) set({ error: "Progress couldn’t be saved. Retry to sync progress.", synced: false });
+        if (current === episode) set({ error: PROGRESS_UNSAVED, synced: false });
         throw new ProgressPreparationError();
       }
       current.active = false;
