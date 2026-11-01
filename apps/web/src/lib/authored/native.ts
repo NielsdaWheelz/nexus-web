@@ -200,7 +200,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
       const check = () => { void call<{ uploaded: boolean }>("uploaded", { command_seq: commandSeq }).then(result => {
         if (result.uploaded) { finish(null); return; }
-        const stall = uploadStall(syncStatus(sync.facts), sync.last_error, sync.facts.failure, Date.now());
+        const stall = uploadStall({ status: syncStatus(sync.facts), detail: sync.last_error, failure: sync.facts.failure }, Date.now());
         if (stall !== null) finish(stall);
       }, finish); };
       if (signal.aborted) { aborted(); return; }

@@ -39,7 +39,7 @@ async function response(path: string, body: unknown | null, signal: AbortSignal)
   const requestSignal = AbortSignal.any([signal, deadline]);
   try { result = await fetch(path, { signal: requestSignal, method: body === null ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: { "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Account": account!, ...(body === null ? {} : { "Content-Type": "application/json" }) }, body: body === null ? null : JSON.stringify(body) }); }
   catch (error) { throw Object.assign(new Error("authored network unavailable", { cause: error }), { status: deadline.aborted && !signal.aborted ? 504 : 0 }); }
-  if (!result.ok) await readResponse(result);
+  if (!result.ok) await readResponse(result); // throws the answer's status and code
   return result;
 }
 async function operation(port: MessagePort, op: string, input: Record<string, unknown>) {

@@ -45,6 +45,7 @@ export class Sync {
   stopped(): Promise<void> { return this.completion; }
   private local<T>(operation: () => Promise<T>): Promise<T> { return this.serialize(() => { if (this.retired) throw new DOMException("authored synchronization stopped", "AbortError"); return operation(); }); }
   close() { this.retired = true; this.abort.abort(); if (this.timer !== null) clearTimeout(this.timer); }
+  /** `facts.online` is the platform's word, reported by the page; a turn's outcome never sets it. */
   private async run() {
     this.running = true;
     this.rerun = false;
@@ -81,9 +82,10 @@ export class Sync {
       }
     }
   }
-  /** One writing turn failed. Sign-in and update wait on admission; anything else is a
-   * `SyncFailure`, Refused unless another attempt could answer differently. Scope hydration
-   * never reaches here: it retries on the same schedule and leaves writing status alone. */
+  /** One writing turn failed. Sign-in and update wait on admission, and disconnection is no
+   * failure; anything else is a `SyncFailure`, Refused unless another attempt could answer
+   * differently. Scope hydration never reaches here: it retries on the same schedule and
+   * leaves writing status alone. */
   private fail(error: unknown) {
     if (this.retired) return;
     const code = error && typeof error === "object" && "code" in error ? error.code : null;
@@ -91,7 +93,7 @@ export class Sync {
     if (status === 401 || code === "E_ACCOUNT_MISMATCH") { this.facts.admission = "auth"; this.facts.failure = null; this.last_error = SIGN_IN_SYNC_DETAIL; return; }
     if (status === 426) { this.facts.admission = "format"; this.facts.failure = null; this.last_error = UPDATE_SYNC_DETAIL; return; }
     const kind = status === null || status >= 400 && status < 500 && !TRANSIENT_4XX.has(status) ? "Refused" : "Retrying";
-    this.facts.failure = { kind, since: this.facts.failure?.kind === kind ? this.facts.failure.since : Date.now() };
+    this.facts.failure = status === 0 && !this.facts.online ? null : { kind, since: this.facts.failure?.kind === kind ? this.facts.failure.since : Date.now() };
     if (code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
     this.last_error = this.facts.ready ? null : status === 0 ? "connect to finish preparing your notes." : status === 503 ? "nexus is busy. preparing your notes will retry." : "your notes couldn’t finish preparing.";
   }

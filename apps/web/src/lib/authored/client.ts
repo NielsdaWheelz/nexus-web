@@ -140,7 +140,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
       const check = () => { void call<boolean>("uploaded", { command_seq: commandSeq }).then(uploaded => {
         if (uploaded) { finish(null); return; }
-        const stall = uploadStall(status, detail, failure, Date.now());
+        const stall = uploadStall({ status, detail, failure }, Date.now());
         if (stall !== null) finish(stall);
       }, finish); };
       if (signal.aborted) { aborted(); return; }

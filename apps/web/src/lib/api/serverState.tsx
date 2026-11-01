@@ -6,6 +6,7 @@
 // Strict refetch is awaitable and rejects on failure/retirement; ignored event
 // promises are observed here because failure already renders. Arrival records
 // transfer one prepared read to the first committed reader, never a cache.
+// A failed read rereads on a repair (lib/native/admission.ts); a healthy one never.
 // usePaneFreeServerValue is the same read for code no pane visit owns (the
 // shell above the panes, a dialog, a read that restores nothing). Lists live in
 // useServerList.

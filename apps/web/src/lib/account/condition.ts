@@ -61,7 +61,7 @@ export function useCondition(): Condition | null {
   const lagsAt = sync.failure?.kind === "Retrying" ? sync.failure.since + LAGGING_AFTER_MS : null;
   useEffect(() => {
     if (lagsAt === null) return;
-    const timer = setTimeout(() => setNow(Date.now()), lagsAt - Date.now());
+    const timer = setTimeout(() => setNow(lagsAt), lagsAt - Date.now());
     return () => clearTimeout(timer);
   }, [lagsAt]);
   return conditionOf({ admission, status: sync.status, failure: sync.failure, writing, online, updateWaiting }, now);

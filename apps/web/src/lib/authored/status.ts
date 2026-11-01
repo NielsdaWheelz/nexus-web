@@ -29,7 +29,7 @@ export function syncStatus(facts: SyncFacts): SyncStatus {
 }
 /** Why a command waiting on upload stops waiting, or null while a retry can still land it.
  * A failure one retry heals never reaches a waiter; lag does, because nothing else ends the wait. */
-export function uploadStall(status: SyncStatus, detail: string | null, failure: SyncFailure, now: number): ApiError | null {
+export function uploadStall({ status, detail, failure }: { status: SyncStatus; detail: string | null; failure: SyncFailure }, now: number): ApiError | null {
   const stalled = ["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && detail !== null
     || failure?.kind === "Retrying" && now - failure.since >= LAGGING_AFTER_MS;
   if (!stalled) return null;
