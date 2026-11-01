@@ -227,13 +227,14 @@ function retryAfterMs(value: string | null): number | undefined {
 export function admissionRefusal(): ApiError {
   const admission = remoteAdmission();
   if (installedApp && admission === "Unavailable") checkSession();
+  const message = "remote work is unavailable";
   switch (admission) {
-    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", "remote work needs sign-in");
-    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", "remote work needs the current build");
+    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", message);
+    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", message);
     case "Checking":
     case "Unavailable":
     case "Ready":
-      return new ApiError(0, "E_NETWORK", "remote work is unavailable");
+      return new ApiError(0, "E_NETWORK", message);
   }
 }
 
