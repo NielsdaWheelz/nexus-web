@@ -16,7 +16,7 @@ export interface Transport {
 }
 /** A later attempt can answer these differently. 409 is here because the api answers a busy
  * row lock with it, and no wire field separates that from a permanent conflict. */
-const TRANSIENT_4XX: ReadonlySet<number> = new Set([408, 409, 429]);
+const TRANSIENT_4XX: ReadonlySet<number> = new Set([409, 429]);
 export class Sync {
   private readonly abort = new AbortController();
   private completion: Promise<void> = Promise.resolve();
