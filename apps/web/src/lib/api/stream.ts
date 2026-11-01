@@ -6,6 +6,7 @@
 import { installedApp, remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  admissionRefusal,
   ApiError,
   captureApiAccount,
   isCurrentApiAccount,
@@ -101,9 +102,7 @@ export function openStream<E, P = unknown>(
       const admission = remoteAdmission();
       if (admission === "Checking" || admission === "Ready") return;
       if (suspended === null) {
-        suspended = new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0,
-          admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK",
-          "live updates need a connection");
+        suspended = admissionRefusal();
         options.onSuspended(suspended);
       }
     };

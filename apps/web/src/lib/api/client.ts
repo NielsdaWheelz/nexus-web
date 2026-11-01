@@ -150,10 +150,11 @@ export function apiTransportFeedback(
   const { requestId } = error;
   switch (error.code) {
     case "E_UNAUTHENTICATED":
+    case "E_ACCOUNT_MISMATCH":
       return {
         tone: "Warning",
         title,
-        message: "sign in to reconnect, then retry this request.",
+        message: "sign in to reconnect.",
         requestId,
       };
     case "E_NETWORK":
@@ -218,6 +219,24 @@ function retryAfterMs(value: string | null): number | undefined {
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
+/**
+ * The failure of a request admission refuses unsent: it names what admission waits on,
+ * so a caller's verb can be true. Demand on an installed client asks native authority
+ * to recheck reachability.
+ */
+export function admissionRefusal(): ApiError {
+  const admission = remoteAdmission();
+  if (installedApp && admission === "Unavailable") checkSession();
+  switch (admission) {
+    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", "remote work needs sign-in");
+    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", "remote work needs the current build");
+    case "Checking":
+    case "Unavailable":
+    case "Ready":
+      return new ApiError(0, "E_NETWORK", "remote work is unavailable");
+  }
+}
+
 /** Decode an answer. Its request owner publishes admission failures. */
 export async function readResponse<T>(response: Response): Promise<T> {
   const { ok, status } = response;
@@ -276,28 +295,23 @@ export async function apiFetch<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const binding = captureApiAccount();
-  const admission = remoteAdmission();
   // Unavailable pauses background owners; an explicit browser attempt may prove
   // reachability. Native session admission remains owned by the installed host.
-  if (!remoteAttemptAllowed()) {
-    // Demand asks native authority to recheck reachability; this request stays unsent.
-    if (installedApp && admission === "Unavailable") checkSession();
-    throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
-  }
+  if (!remoteAttemptAllowed()) throw admissionRefusal();
   const headers = new Headers(init.headers);
   const sealed = headers.get(WIRE_HEADER);
   if (sealed !== null && sealed !== String(WIRE_REVISION))
     throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
   if (binding) headers.set("X-Nexus-Account", binding.accountId);
-  if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", createRandomId());
+  const requestId = headers.get("X-Request-ID") ?? createRandomId();
+  headers.set("X-Request-ID", requestId);
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
   }
   const url = new URL(path, "http://localhost");
   const trace = url.pathname === "/api/search" && url.searchParams.get("phase") === "hybrid";
   const started = performance.now();
-  const requestId = headers.get("X-Request-ID");
   const mark = (stage: string, facts: Record<string, unknown> = {}) => {
     if (trace) console.info(JSON.stringify({
       event: "search_transport", owner: "browser", stage, request_id: requestId,
@@ -328,7 +342,8 @@ export async function apiFetch<T>(
       error_code: error instanceof ApiError ? error.code : null,
     });
     if (isAbortError(error)) throw error;
-    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed") : error;
+    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed", requestId) : error;
+    if (failure instanceof ApiError) console.warn(JSON.stringify({ event: "api_request_failed", request_id: requestId, path: url.pathname, status: failure.status, code: failure.code }));
     observeApiFailure(failure, binding);
     throw failure;
   }
