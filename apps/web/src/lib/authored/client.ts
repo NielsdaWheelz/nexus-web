@@ -4,9 +4,11 @@
  * holds the account WebLock through preparation, uncertain commit and exact retry;
  * the worker independently fences its clientId and ephemeral lease. Closing a tab
  * never retires the account or discards committed pending changes. */
+import { observeRemoteFailure } from "@/lib/native/admission";
 import { prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
-import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncStatus } from "@nexus/authored/types";
+import { uploadStall } from "./status";
+import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 
 /** Existing host admission refusals are recoverable setup conditions. */
 export class AuthoredSetupError extends Error {
@@ -24,7 +26,7 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
   let owner = accounts.get(accountId);
   if (owner?.closing) { await owner.closing; return openAuthoredStore(accountId); }
   if (!owner) {
-    owner = { promise: openStore(accountId), users: 0, closing: null };
+    owner = { promise: openStore(accountId).then(store => { store.sync_status(observeSyncUpdate); return store; }), users: 0, closing: null };
     accounts.set(accountId, owner);
     const current = owner;
     void owner.promise.catch(() => { if (accounts.get(accountId) === current) accounts.delete(accountId); });
@@ -44,6 +46,9 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
     }
   } };
 }
+/** A 426 the sync transport met is this document's update state too. It never reloads:
+ * a reload cannot replace a shared worker another tab holds. */
+function observeSyncUpdate(status: SyncStatus) { if (status === "update_required") observeRemoteFailure(426); }
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
   if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new AuthoredSetupError("Persistence");
@@ -59,15 +64,16 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let commandLease: string | null = null;
   let detail: string | null = null;
   let status: SyncStatus = "preparing";
+  let failure: SyncFailure = null;
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   const queries = new Set<(corpusChanged?: boolean) => void>();
   const annotations = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
-  const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
+  const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
   function failPort(message: string) {
     terminalFailure = Object.assign(new Error(message), { code: "E_AUTHORED_WORKER_STOPPED" });
     detail = terminalFailure.message; status = "local_error";
-    for (const listener of statuses) listener(status, detail);
+    for (const listener of statuses) listener(status, detail, failure);
     for (const pending of waiting.values()) pending.reject(terminalFailure);
     waiting.clear();
   }
@@ -88,8 +94,8 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   port.onmessage = ({ data }) => {
     if (data.kind === "changed") {
       if (terminalFailure !== null) return;
-      status = data.status; detail = data.detail ?? null;
-      for (const listener of statuses) listener(status, detail);
+      status = data.status; detail = data.detail ?? null; failure = data.failure;
+      for (const listener of statuses) listener(status, detail, failure);
       for (const query of queries) query(data.corpus_changed === true);
     } else if (data.kind === "annotations_changed") {
       if (terminalFailure === null) for (const listener of annotations) listener();
@@ -110,8 +116,8 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   };
   worker.onerror = () => failPort("the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus.");
   port.start();
-  const hello = await call<{ status: SyncStatus; detail: string | null }>("hello", { account_id: accountId, format_revision: FORMAT_REVISION });
-  status = hello.status; detail = hello.detail;
+  const hello = await call<{ status: SyncStatus; detail: string | null; failure: SyncFailure }>("hello", { account_id: accountId, format_revision: FORMAT_REVISION });
+  status = hello.status; detail = hello.detail; failure = hello.failure;
   function wake() { void call("wake", { online: navigator.onLine }).catch(reportError); }
   function foreground() { if (document.visibilityState === "visible") wake(); }
   window.addEventListener("online", wake);
@@ -133,8 +139,9 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); closedWaiters.delete(aborted); if (error !== null) reject(error); else resolve(); };
       const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
       const check = () => { void call<boolean>("uploaded", { command_seq: commandSeq }).then(uploaded => {
-        if (uploaded) finish(null);
-        else if (["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && detail !== null) finish(new Error(detail ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced. retry syncing before continuing.")));
+        if (uploaded) { finish(null); return; }
+        const stall = uploadStall(status, detail, failure, Date.now());
+        if (stall !== null) finish(stall);
       }, finish); };
       if (signal.aborted) { aborted(); return; }
       queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
@@ -152,7 +159,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       return () => { active = false; queries.delete(read); };
     },
     annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
-    sync_status: listener => { statuses.add(listener); listener(status, detail); return () => { statuses.delete(listener); }; },
+    sync_status: listener => { statuses.add(listener); listener(status, detail, failure); return () => { statuses.delete(listener); }; },
     close: async () => {
       if (closed) return;
       window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);

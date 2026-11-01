@@ -7,7 +7,9 @@
  * This needs no cross-port ordering assumption or durable mutation ledger. */
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
 import { writingHints } from "./hints";
+import { ApiError, readResponse } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import { isAbortError } from "@/lib/errors";
 import { openDatabase } from "./sqlite";
 import { Persistence } from "./persistence";
 import { Sync } from "./sync";
@@ -30,14 +32,14 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null }); }
+function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null }); }
 async function response(path: string, body: unknown | null, signal: AbortSignal) {
   let result: Response;
   const deadline = AbortSignal.timeout(path === "/api/authored/snapshot" ? 280_000 : 30_000);
   const requestSignal = AbortSignal.any([signal, deadline]);
   try { result = await fetch(path, { signal: requestSignal, method: body === null ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: { "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Account": account!, ...(body === null ? {} : { "Content-Type": "application/json" }) }, body: body === null ? null : JSON.stringify(body) }); }
   catch (error) { throw Object.assign(new Error("authored network unavailable", { cause: error }), { status: deadline.aborted && !signal.aborted ? 504 : 0 }); }
-  if (!result.ok) throw Object.assign(new Error(`authored request failed (${result.status})`), { status: result.status });
+  if (!result.ok) await readResponse(result);
   return result;
 }
 async function operation(port: MessagePort, op: string, input: Record<string, unknown>) {
@@ -60,8 +62,21 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       catch (error) { await opened.db.close(); throw error; }
       persistence = opened;
       sync = new Sync(persistence, {
-        json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => (await response(path, body, signal)).json() as Promise<T>,
-        snapshot: async signal => { const result = await response("/api/authored/snapshot", null, signal); if (!result.body) throw new Error("authored snapshot stream missing"); return result.body; },
+        json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => readResponse<T>(await response(path, body, signal)),
+        snapshot: async signal => {
+          const result = await response("/api/authored/snapshot", null, signal);
+          if (!result.body) throw new Error("authored snapshot stream missing");
+          const body = result.body.getReader();
+          return new ReadableStream<Uint8Array>({
+            pull: async controller => {
+              try {
+                const { value, done } = await body.read();
+                if (done) controller.close(); else controller.enqueue(value);
+              } catch (error) { throw isAbortError(error) ? error : new ApiError(0, "E_NETWORK", "authored snapshot interrupted"); }
+            },
+            cancel: reason => body.cancel(reason),
+          });
+        },
       }, serialize, changed, () => {
         for (const port of ports) port.postMessage({ kind: "annotations_changed" });
       });
@@ -75,7 +90,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
         hints = writingHints(account!, () => sync?.wake()); hints.start();
       }, 0);
     }
-    return { format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail };
+    return { format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {
