@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { isStaleBuild } from "@/lib/api/client";
 import { useNavigationIdentity } from "@/lib/host/policy";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
@@ -265,18 +266,22 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   closeRef.current = close;
   session.close.current = close;
   /** `error` is null when the budget ran out. With no initial controls nothing opens, and the
-   * host reports it; otherwise the published rows stay and `more actions` ends them. */
+   * host reports it; otherwise the published rows stay and `more actions` ends them. A stale
+   * build offers reload alone: `more actions` would only fail again, so the host reports it
+   * instead, and a menu not yet shown does not open. */
   const fail = (attempt: Attempt, error: unknown) => {
     const active = current.current;
     if (!active || active.attempt !== attempt) return;
     if (attempt.timer) clearTimeout(attempt.timer);
     attempt.timer = null;
-    if (!hasInitial) {
+    const stale = isStaleBuild(error);
+    if (!hasInitial || stale && !active.visible) {
       close(false);
       session.failed(error);
       return;
     }
-    change({ ...active, attempt: null, failed: true, preparedMeaning: null, preparedGeometry: null });
+    if (stale) session.failed(error);
+    change({ ...active, attempt: null, failed: !stale, preparedMeaning: null, preparedGeometry: null });
     attempt.controller.abort();
   };
   const begin = (edge: "first" | "last" | null) => {
