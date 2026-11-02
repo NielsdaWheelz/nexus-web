@@ -6,8 +6,9 @@
  * Invariants: appearance never takes focus. A clock runs only while its row is displayed, unheld,
  * not typing and the document visible. Only Plain rows expire; a Held row tucks itself; Held and
  * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work.
- * Rows that have stood keep their places: only a row's first showing replaces, and only the plain
- * row directly beneath it, once that row has stood there. Rows that land together stack. A line
+ * Rows that have stood keep their places: a frame reads in landing order, not raise order, so a
+ * late row lifts nothing. Only a row's first showing replaces, and only the plain row directly
+ * beneath it, once that row has stood there. Rows that land together stack. A line
  * is heard once: a region keeps what it carried, and the next room takes only what none has. */
 import { createContext, useContext, useLayoutEffect } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
@@ -147,6 +148,10 @@ export function createStage() {
     const remaining = lifetime(slip.row);
     slip.clock = remaining === null ? null : { remaining, running: null };
   };
+  /** Into a frame from outside it: on top of whatever stands, whenever it was raised. */
+  const land = (slip: Slip) => {
+    slips = [...slips.filter(other => other !== slip), slip];
+  };
   const remove = (slip: Slip) => {
     stopClock(slip.clock);
     slips = slips.filter(other => other !== slip);
@@ -177,9 +182,10 @@ export function createStage() {
       slip.room = next;
       slip.shown ||= next !== null;
     }
+    for (const slip of arrived) land(slip);
     // An exit needs a frame to play in; without one it ends here, or the row would outlive it.
     for (const slip of slips.filter(slip => slip.leaving !== null && slip.room === null)) conclude(slip);
-    // Raise order, so `under` is the row directly beneath in its frame. A tucked row is in no frame.
+    // Landing order, so `under` is the row directly beneath in its frame. A tucked row is in no frame.
     const beneath = new Map<Room, Slip>();
     for (const slip of slips) {
       if (slip.room === null || slip.row.tucked) continue;
@@ -287,6 +293,7 @@ export function createStage() {
       const slip = slipOf(key) ?? raise({ key, address, modal: frame ?? topModal(), weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
       const atRisk = risk && slip.row.weight !== "Risk";
+      if (atRisk && slip.row.tucked) land(slip);
       slip.row = { ...slip.row, address, weight, line, verbs, attempt, tucked: slip.row.tucked && !atRisk };
       if (renewed) renewClock(slip);
       if (atRisk) slip.spoken = null;
@@ -313,6 +320,7 @@ export function createStage() {
         if (slip.room?.id !== room || !slip.row.tucked) continue;
         slip.row = { ...slip.row, tucked: false };
         renewClock(slip);
+        land(slip);
       }
       settle();
     },
