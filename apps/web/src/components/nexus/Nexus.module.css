@@ -114,7 +114,9 @@
 }
 
 @keyframes railIn { from { opacity: 0; translate: 4px -50%; } }
-.rail .verb { gap: var(--space-2); min-block-size: 32px; font-size: var(--text-sm); white-space: nowrap; transition: none; }
+/* A verb never shrinks: `.target`'s explicit min size would let it squeeze under its label, so a
+   crowded rail scrolls instead. */
+.rail .verb { flex: none; gap: var(--space-2); min-block-size: 32px; font-size: var(--text-sm); white-space: nowrap; transition: none; }
 .rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
 .railBusy { flex: 0 0 28px; align-self: stretch; }
 
