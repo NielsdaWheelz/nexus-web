@@ -44,10 +44,11 @@ export interface MediaContinuation {
 type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
 const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "Lectern" : destination.kind === "All" ? "All" : destination.library.name;
 
-/** The one recovery a failed continuation offers, wherever it is shown. */
-export function continuationRecoveryLabel(operation: MediaContinuation, failure: NonNullable<MediaContinuation["failure"]>): string {
-  return failure.review ? "Review choices" : failure.unknown ? "Check change"
-    : operation.accepted === null ? "Retry import" : `Retry adding to ${destinationLabel(operation.destination)}`;
+/** The one recovery a failed continuation offers, wherever it is shown. A retry sends the failed request again. */
+export function continuationRecovery(operation: MediaContinuation, failure: NonNullable<MediaContinuation["failure"]>): { readonly label: string; readonly retry: boolean } {
+  if (failure.review) return { label: "Review choices", retry: false };
+  if (failure.unknown) return { label: "Check change", retry: false };
+  return { label: operation.accepted === null ? "Retry import" : `Retry adding to ${destinationLabel(operation.destination)}`, retry: true };
 }
 
 export function useMediaContinuationOwner(ctx: Context) {
@@ -320,7 +321,7 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
   const failure = operation.failure;
   useEffect(() => {
     if (failure === null) return;
-    return feedback.receipt(failure.content, { label: continuationRecoveryLabel(operation, failure), onClick: () => owner.recover(operation.intentId) });
+    return feedback.receipt(failure.content, { label: continuationRecovery(operation, failure).label, onClick: () => owner.recover(operation.intentId) });
     // One report per failure the owner records, retracted once it resolves or retries.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the failure identity alone
   }, [failure]);

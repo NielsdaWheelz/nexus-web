@@ -3,22 +3,7 @@
  * module splits a ref) and each scheme's icon and type label. The scheme vocabulary is
  * the server's, through the generated wire.
  */
-import {
-  Disc3,
-  File,
-  FileText,
-  Globe,
-  Highlighter,
-  Library,
-  MessageSquare,
-  MessagesSquare,
-  NotebookTabs,
-  Sparkles,
-  StickyNote,
-  TextQuote,
-  User,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { Schema } from "@/lib/api/wire";
 import { isCanonicalUuid } from "@/lib/validation";
 
@@ -30,24 +15,24 @@ export interface ResourceRef {
 }
 
 // The runtime scheme set: every scheme, its icon and its type label.
-const SCHEMES: Record<ResourceScheme, [LucideIcon, string]> = {
-  media: [FileText, "Media"],
-  library: [Library, "Library"],
-  evidence_span: [TextQuote, "Passage"],
-  content_chunk: [TextQuote, "Passage"],
-  highlight: [Highlighter, "Highlight"],
-  page: [File, "Page"],
-  note_block: [StickyNote, "Note"],
-  fragment: [TextQuote, "Passage"],
-  conversation: [MessagesSquare, "Chat"],
-  message: [MessageSquare, "Chat message"],
-  oracle_reading: [Sparkles, "Oracle reading"],
-  oracle_passage_anchor: [TextQuote, "Oracle passage"],
-  external_snapshot: [Globe, "Saved web page"],
-  contributor: [User, "Author"],
-  podcast: [Disc3, "Podcast"],
-  reader_apparatus_item: [NotebookTabs, "Source reference"],
-  passage_anchor: [TextQuote, "Passage"],
+const SCHEMES: Record<ResourceScheme, [Icon.Glyph, string]> = {
+  media: [Icon.Page, "Media"],
+  library: [Icon.Library, "Library"],
+  evidence_span: [Icon.Passage, "Passage"],
+  content_chunk: [Icon.Passage, "Passage"],
+  highlight: [Icon.Highlight, "Highlight"],
+  page: [Icon.Page, "Page"],
+  note_block: [Icon.Note, "Note"],
+  fragment: [Icon.Passage, "Passage"],
+  conversation: [Icon.Chat, "Chat"],
+  message: [Icon.Chat, "Chat message"],
+  oracle_reading: [Icon.Oracle, "Oracle reading"],
+  oracle_passage_anchor: [Icon.Passage, "Oracle passage"],
+  external_snapshot: [Icon.Web, "Saved web page"],
+  contributor: [Icon.Author, "Author"],
+  podcast: [Icon.Podcast, "Podcast"],
+  reader_apparatus_item: [Icon.SourceReference, "Source reference"],
+  passage_anchor: [Icon.Passage, "Passage"],
 };
 
 function isScheme(scheme: string): scheme is ResourceScheme {
@@ -68,7 +53,7 @@ export function formatResourceRef(ref: ResourceRef): string {
   return `${ref.scheme}:${ref.id}`;
 }
 
-export function resourceIconForScheme(scheme: ResourceScheme): LucideIcon {
+export function resourceIconForScheme(scheme: ResourceScheme): Icon.Glyph {
   return SCHEMES[scheme][0];
 }
 
