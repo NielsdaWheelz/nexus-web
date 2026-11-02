@@ -11,11 +11,11 @@ import "@/app/packagedFonts.css";
 
 import { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { FeedbackProvider, Hold, useFeedbackOccurrence, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackProvider, Hold, useFeedbackOccurrence, useOutcome } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
-import type { CommandVerb, Shell } from "@/components/feedback/stage";
+import { sentence, type CommandVerb, type Line, type Shell, type Verbs } from "@/components/feedback/stage";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
@@ -62,10 +62,12 @@ const SHELL: Shell = { signIn: SIGN_IN };
 /** Refusals that a sign-in answers carry it. */
 const SIGN_IN_CODES = new Set(["E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
 
-/** What a failed save's recovery means: its line and the verbs that act on it. */
+/** Why a save asks for a new capture, by the code that asked. A superseded upload has no truer fact
+ * than the save's own. */
 const RECAPTURE: Partial<Record<string, string>> = {
   E_CAPTURE_TARGET_CHANGED: "this import changed since capture.",
   E_UPLOAD_CAPABILITY_EXPIRED: "this upload expired.",
+  E_STORAGE_MISSING: "nexus didn’t receive this upload.",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */
@@ -175,10 +177,10 @@ function Popup() {
   };
 
   useLayoutEffect(() => { signIn.current = () => sendWithOrigins({ kind: "login" }); });
-  // Each failure onset counts: a failed retry of an unknown outcome speaks again.
+  // Each failure onset counts, a failed retry's too: it speaks again while its fact and verbs stand.
   const failedNow = state?.draft?.phase.kind === "failed";
-  const [failures, setFailures] = useState({ failed: false, attempt: 0 });
-  if (failedNow !== failures.failed) setFailures({ failed: failedNow, attempt: failedNow ? failures.attempt + 1 : failures.attempt });
+  const [failures, setFailures] = useState({ failed: false, attempt: 0, occurrence: {} });
+  if (failedNow !== failures.failed) setFailures(failedNow ? { failed: true, attempt: failures.attempt + 1, occurrence: {} } : { ...failures, failed: false });
 
   const disconnection = disconnected ? <Hold id="capture-disconnected" line={{ fact: "capture disconnected.", reason: "reopen this popup to continue." }} /> : null;
   if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<div className={styles.body}><Ruling /></div></main>;
@@ -274,7 +276,7 @@ function Popup() {
         <p>{recovery.candidate.summary.source_label} · {new Date(recovery.candidate.summary.accepted_at).toLocaleDateString()}</p>
         {recovery.candidate.binding.source_relation === "AlternativeCopy" ? <p>this page has a different address. use its captured text to finish “{recovery.candidate.summary.title}”.</p> : null}
       </section> : null}
-      {captureFailure ? <CaptureFailureFact failure={captureFailure} attempt={failures.attempt} account={account !== null} recapture={recaptureFailure} retrying={retrying}
+      {captureFailure ? <CaptureFailureFact failure={captureFailure} onset={failures} account={account !== null} recapture={recaptureFailure} retrying={retrying}
         send={send} sendWithOrigins={sendWithOrigins} /> : null}
 
       {draft === null ||
@@ -479,24 +481,30 @@ function Destinations({
 }
 
 /** A failed save, by what can recover it. An unknown outcome holds; `retry` resends, `forget` drops
- * the local draft. A recapture or review names why; the others say the transport's reason. */
-function CaptureFailureFact({ failure, attempt, account, recapture, retrying, send, sendWithOrigins }: {
-  failure: Extract<CapturePhase, { kind: "failed" }>; attempt: number; account: boolean; recapture: boolean; retrying: boolean;
+ * the local draft. A recapture or review names why; the others say the transport's reason. A failed
+ * retry speaks its onset again, while its fact and the verb under the hand stand where they were. */
+function CaptureFailureFact({ failure, onset, account, recapture, retrying, send, sendWithOrigins }: {
+  failure: Extract<CapturePhase, { kind: "failed" }>; onset: { attempt: number; occurrence: object }; account: boolean; recapture: boolean; retrying: boolean;
   send(command: Command): void; sendWithOrigins(command: Command): void;
 }) {
   const verb = (label: string, run: () => void, busy = false): CommandVerb => ({ label, commandKey: `Capture.${label}`, run, busy });
   const discard = verb("discard", () => send({ kind: "discard" }));
   if (failure.recovery === "Check") {
     const forget = verb("forget", () => send({ kind: "stop_checking" }));
-    return <Hold id="capture-unconfirmed" attempt={attempt} line={{ fact: "not sure that saved. it may have gone through." }}
+    return <Hold id="capture-unconfirmed" attempt={onset.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
       verbs={account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), forget] : [forget]} />;
   }
-  if (recapture && account) return <Fact speak line={{ fact: RECAPTURE[failure.failure.code] ?? "this capture changed.", reason: "capture the page again." }}
-    verbs={[verb("capture again", () => send({ kind: "capture_again" })), discard]} />;
-  if (failure.recovery === "Review" && account) return <Fact speak line={{ fact: "couldn’t save.", reason: "libraries changed since you chose them." }}
-    verbs={[verb("review", () => sendWithOrigins({ kind: "review" }), retrying), discard]} />;
-  const line = { fact: "couldn’t save this capture.", reason: failure.failure.message };
-  return <Fact speak line={line} verbs={failure.recovery === "Retry" && account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), discard] : [discard]} />;
+  const said = (line: Line, verbs: Verbs) => <>
+    <Fact line={line} verbs={verbs} />
+    <Announcement text={sentence(line)} level="Polite" occurrence={onset.occurrence} />
+  </>;
+  // `needsRecapture` without a recapture code is the account's change.
+  if (recapture && account) return said({ fact: failure.recovery === "Recapture" ? RECAPTURE[failure.failure.code] ?? "couldn’t save this capture." : "the account changed since this capture.",
+    reason: "capture the page again." }, [verb("capture again", () => send({ kind: "capture_again" })), discard]);
+  if (failure.recovery === "Review" && account) return said({ fact: "couldn’t save.", reason: "libraries changed since you chose them." },
+    [verb("review", () => sendWithOrigins({ kind: "review" }), retrying), discard]);
+  return said({ fact: "couldn’t save this capture.", reason: failure.failure.message },
+    failure.recovery === "Retry" && account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), discard] : [discard]);
 }
 
 createRoot(document.getElementById("root")!).render(

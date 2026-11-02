@@ -8,11 +8,11 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackProvider } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
-import { transportVerbs, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
+import { sentence, transportVerbs, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
@@ -125,7 +125,6 @@ function ShareCaptureContent({
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
-  const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const [destinationCreation] = useState(createDestinationCreation);
   const creation = useDestinationCreation(trimmed, destinationCreation);
@@ -315,105 +314,81 @@ function ShareCaptureContent({
     </>;
   }
 
-  if (urls.length > 0 && (results === null || reviewUrls !== null || results.some(result => !result.ok))) {
-    return (
-      <>
-        <h1 className={styles.heading}>Save to Nexus</h1>
-        <div className={styles.results}>
-          {urls.map((url) => (
-            <div key={url} className={styles.resultItem}>
-              <span className={styles.resultLabel} title={url}>
-                {url}
-              </span>
-            </div>
-          ))}
-        </div>
-        <DestinationField
-          context={trimmed}
-          label="Library destinations"
-          emptyLabel="No additional libraries"
-          chosen={destinations}
-          onSet={change => {
-            if (saving) return false;
-            setDestinations(current => setDestination(current, change));
-            return true;
-          }}
-          disabled={saving}
-          create={{ available: !saving, pendingNames: creation.pendingNames,
-            onCreate: name => creation.admit({ name, scope: trimmed,
-              onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
-            }) }}
-          error={creation.error}
-        />
-        {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
-        <div className={styles.actions}>
-          <Button
-            className={styles.actionPrimary}
-            aria-busy={saving || undefined}
-            disabled={creating || saving}
-            onClick={() => void save(reviewUrls ?? urls)}
-          >
-            Save
-          </Button>
-          <a
-            className={styles.action}
-            href={
-              isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF
-            }
-          >
-            Cancel
-          </a>
-        </div>
-      </>
-    );
+  // Every link saved: each row says what became of it.
+  if (results !== null && reviewUrls === null && results.every((result): result is Extract<Result, { ok: true }> => result.ok)) {
+    const anySaved = results.some(result => result.available);
+    return <>
+      <h1 className={styles.heading}>{anySaved ? "saved to nexus" : "saved, then removed"}</h1>
+      <div className={styles.results}>
+        {results.map(result => <div key={result.label} className={styles.resultItem}>
+          <span className={styles.resultLabel} title={result.label}>{result.label}</span>
+          <Fact line={{ fact: result.status }} speak verbs={result.available ? [{ label: "open", href: open(result.path) }] : undefined} />
+        </div>)}
+      </div>
+      <div className={styles.actions}>
+        <a className={anySaved ? styles.actionPrimary : styles.action} href={done}>Done</a>
+      </div>
+    </>;
   }
 
-  const shown =
-    results;
-  if (shown === null) {
-    return <Ruling />;
-  }
-
-  const anySaved = shown.some((result) => result.ok && result.available);
-  const signedOut = shown.some((result) => !result.ok && result.transport === "SignIn");
   return (
     <>
-      <h1 className={styles.heading}>
-        {anySaved
-          ? "saved to nexus"
-          : shown.some(result => result.ok) ? "saved, then removed"
-          : signedOut
-            ? "sign in to save this"
-            : "couldn’t save"}
-      </h1>
-      <div className={styles.results} ref={resultArea} tabIndex={-1}>
-        {shown.map((result) => (
-          <div key={result.label} className={styles.resultItem}>
-            <span className={styles.resultLabel} title={result.label}>
-              {result.label}
+      <h1 className={styles.heading}>Save to Nexus</h1>
+      <div className={styles.results}>
+        {urls.map((url) => (
+          <div key={url} className={styles.resultItem}>
+            <span className={styles.resultLabel} title={url}>
+              {url}
             </span>
-            {result.ok ? (
-              <Fact line={{ fact: result.status }} speak verbs={result.available ? [{ label: "open", href: open(result.path) }] : undefined} />
-            ) : (
-              <CaptureFailure result={result} saving={saving} retry={() => retry(result)} />
-            )}
           </div>
         ))}
       </div>
+      <DestinationField
+        context={trimmed}
+        label="Library destinations"
+        emptyLabel="No additional libraries"
+        chosen={destinations}
+        onSet={change => {
+          if (saving) return false;
+          setDestinations(current => setDestination(current, change));
+          return true;
+        }}
+        disabled={saving}
+        create={{ available: !saving, pendingNames: creation.pendingNames,
+          onCreate: name => creation.admit({ name, scope: trimmed,
+            onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
+          }) }}
+        error={creation.error}
+      />
+      {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
       <div className={styles.actions}>
-        <a
-          className={anySaved ? styles.actionPrimary : styles.action}
-          href={done}
+        <Button
+          className={styles.actionPrimary}
+          aria-busy={saving || undefined}
+          disabled={creating || saving}
+          onClick={() => void save(reviewUrls ?? urls)}
         >
-          Done
+          Save
+        </Button>
+        <a
+          className={styles.action}
+          href={
+            isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF
+          }
+        >
+          Cancel
         </a>
       </div>
     </>
   );
 }
 
-/** A failed result on its row. `review libraries` opens review; `retry` sends. */
+/** A failed result on its row. `review libraries` opens review; `retry` sends. Every settle makes a
+ * new result, so a failed retry speaks again while the row and the verb under the hand stand. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
   const verb: CommandVerb = { label: result.review ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving };
-  return <Fact line={result.line} speak verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb, signIn: SHELL.signIn })) ?? undefined} />;
+  return <>
+    <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb, signIn: SHELL.signIn })) ?? undefined} />
+    <Announcement text={sentence(result.line)} level="Polite" occurrence={result} />
+  </>;
 }
