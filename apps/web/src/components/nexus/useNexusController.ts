@@ -148,6 +148,9 @@ export function useNexusController() {
   const [paneFocus, setPaneFocus] = useState<{ key: string | null; revision: number }>({ key: null, revision: 0 });
   const latestRequestExit = useRef(requestExit);
   latestRequestExit.current = requestExit;
+  /** The enter wait fires through the latest render: the row it names may have arrived after submit. */
+  const latestFire = useRef(fire);
+  latestFire.current = fire;
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
@@ -721,8 +724,10 @@ export function useNexusController() {
     pendingFire.current = setTimeout(() => {
       pendingFire.current = null;
       if (!visible.current) return;
-      const later = fireTarget(latestList.current, performance.now());
-      fire(later.kind === "Fire" ? later.key : retired.current ? null : fallbackKey, activation);
+      // The window has closed: the armed row once, whatever its age; nothing armed lands on the fallback.
+      const list = latestList.current;
+      const later = fireTarget(list, performance.now());
+      latestFire.current(later.kind === "Fire" ? later.key : list.armed ?? (retired.current ? null : fallbackKey), activation);
     }, Math.max(0, target.until - now));
   }
 
