@@ -310,9 +310,10 @@ export function createStage() {
       holds.clear();
       settle();
     },
-    anchor(anchor: Anchor, element: HTMLElement): () => void {
+    /** The last of an anchor's rooms wins, so a pane's floor goes first whichever effect ran first. */
+    anchor(anchor: Anchor, element: HTMLElement, floor: boolean): () => void {
       const room: Room = { id: ++nextRoom, anchor, element, holds: new Set() };
-      rooms.push(room);
+      if (floor) rooms.unshift(room); else rooms.push(room);
       settle();
       return () => {
         rooms.splice(rooms.indexOf(room), 1);

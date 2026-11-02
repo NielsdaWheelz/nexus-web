@@ -85,11 +85,11 @@ const NO_HINT = { text: "" };
 /** Every row carries a control, so a frame is reached through its first one. */
 const firstControl = (room: HTMLElement | null) => room?.querySelector<HTMLElement>("button, a") ?? null;
 
-function useRoom(anchor: Anchor) {
+function useRoom(anchor: Anchor, floor = false) {
   const stage = useStage();
   const element = useRef<HTMLDivElement>(null);
   // justify-type-assertion: the anchor's own element, committed before this layout effect.
-  useLayoutEffect(() => stage.anchor(anchor, element.current!), [stage, anchor]);
+  useLayoutEffect(() => stage.anchor(anchor, element.current!, floor), [stage, anchor, floor]);
   return element;
 }
 
@@ -98,8 +98,8 @@ function RootAnchor() {
 }
 
 /** Its floor can stand above the viewport's, so what covers it is projected onto it. */
-function PaneAnchor({ paneId }: { paneId: string }) {
-  const element = useRoom(useMemo(() => ({ kind: "Pane", paneId }), [paneId]));
+function PaneAnchor({ paneId, floor }: { paneId: string; floor?: true }) {
+  const element = useRoom(useMemo(() => ({ kind: "Pane", paneId }), [paneId]), floor);
   const viewport = useMobileViewport();
   // justify-type-assertion: the anchor's own element, committed before this layout effect.
   useLayoutEffect(() => viewport.registerStageAnchor(element.current!), [viewport, element]);
@@ -113,12 +113,13 @@ function ModalAnchor() {
   return <div ref={element} className={`${styles.anchor} ${styles.modalAnchor}`} />;
 }
 
-/** Where slips land. Root is the host's root element, Pane sits above its content (a pane's
- * latest wins, so a composer takes over while it stands), Modal sits in its panel. */
-export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string } | { kind: "Modal" }) {
+/** Where slips land. Root is the host's root element, Modal sits in its panel. Pane sits above its
+ * content: `floor` is the shell's own, and any composer's stands over it while it stands, the
+ * latest of them winning. A composer's is a zero-height box at its top edge, outside any clip. */
+export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal" }) {
   switch (props.kind) {
     case "Root": return <RootAnchor />;
-    case "Pane": return <PaneAnchor paneId={props.paneId} />;
+    case "Pane": return <PaneAnchor paneId={props.paneId} floor={props.floor} />;
     case "Modal": return <ModalAnchor />;
   }
 }
@@ -188,7 +189,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     const third = element?.children[2];
     if (!element) return;
     element.style.maxBlockSize = element.children.length > 3 && third instanceof HTMLElement
-      ? `min(${third.offsetTop + third.offsetHeight + 2 * element.clientTop}px, 100% - 24px)` : "";
+      ? `min(${third.offsetTop + third.offsetHeight + 2 * element.clientTop}px, var(--stage-ceiling) - 24px)` : "";
   }, [frame, room.slips]);
   useEffect(() => {
     standing.current = true;

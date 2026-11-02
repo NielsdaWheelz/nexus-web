@@ -610,7 +610,7 @@ function PaneView({
             {refresh.indicator}
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
-          <StageAnchor kind="Pane" paneId={paneId} />
+          <StageAnchor kind="Pane" paneId={paneId} floor />
         </div>
         {outlineCommands ? <div className={styles.outlineAccessory} data-pane-outline-accessory="true" style={{marginBottom: commandsBottom}}>
           <OutlineCommands publication={outlineCommands} current={() => {

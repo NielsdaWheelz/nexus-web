@@ -3,22 +3,27 @@
   inset: 0;
   z-index: calc(var(--z-popover) - 1);
   pointer-events: none;
+  /* A composer's anchor is a zero-height line, so only the viewport bounds its frame. */
+  --stage-ceiling: 100dvb;
 }
 
-/* A modal anchor uses its floor alone. */
+/* A modal anchor uses its floor alone, and its panel clips. */
 .modalAnchor {
   --stage-bottom-clearance: 0px;
   --reader-feedback-occlusion-bottom: 0px;
+  --stage-ceiling: 100%;
 }
 
+/* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
   position: absolute;
+  z-index: 1;
   inset-inline: 12px;
   inset-block-end: calc(12px + var(--stage-bottom-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
   box-sizing: border-box;
   inline-size: fit-content;
   max-inline-size: min(22rem, 100% - 24px);
-  max-block-size: calc(100% - 24px);
+  max-block-size: calc(var(--stage-ceiling) - 24px);
   margin-inline: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
