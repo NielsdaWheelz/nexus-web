@@ -100,7 +100,7 @@ export function useReaderChrome(input: {
         kind: "link",
         id: "ViewAction.Reader.Settings",
         label: "Reader settings",
-        icon: <ReaderSettingsIcon size={16} aria-hidden="true" />,
+        icon: <ReaderSettingsIcon />,
         href: "/settings/reader",
       },
     ];
