@@ -14,7 +14,7 @@ import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import { transportVerbs, type Verb, type Verbs } from "@/components/feedback/stage";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
+import { admissionRefusal, apiFetch, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { transportOf, type Transport } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
@@ -26,7 +26,7 @@ import { acceptUrl, createUploadAttempt, fetchAcceptedSource, getFileUploadKind,
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { batchSlip, linePhase, pointer, type SlipVerb } from "@/lib/imports/lineView";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
-import { remoteAdmission, remoteAttemptAllowed } from "@/lib/native/admission";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -37,7 +37,8 @@ export const ADMIT_LIMIT = 100;
 
 export type IntakeSource =
   | { readonly kind: "Link"; readonly url: string }
-  /** `file` is null once unreadable: a share the device could not stream. */
+  /** `file` is null once accepted, since nothing sends it again, or when a share could
+   * not stream it. */
   | { readonly kind: "File"; readonly name: string; readonly sizeBytes: number; readonly file: File | null };
 
 /** What the server says of an accepted line. Readable, Failed and Removed are settled. */
@@ -63,15 +64,16 @@ export type LineRefusal =
   | { readonly kind: "FileChanged" }
   /** A refusal nexus never declared for this call; nothing landed. */
   | { readonly kind: "Undeclared" }
-  /** Answered before any route ran. */
+  /** A sent line answered before any route ran. */
   | { readonly kind: "Handoff"; readonly transport: "SignIn" | "Update" }
   /** Not sent. */
   | { readonly kind: "Offline" }
-  /** The destinations read at enter failed, so nothing was sent. */
+  /** Not sent: enter's destinations read failed, or admission held the send. */
   | { readonly kind: "NoStart"; readonly transport: Exclude<Transport, "Offline"> }
   | { readonly kind: "WrongType" }
   | { readonly kind: "TooBig"; readonly fileKind: UploadFileKind }
   | { readonly kind: "Empty" }
+  | { readonly kind: "Nameless" }
   | { readonly kind: "NameTooLong" }
   /** The bytes never all arrived, so nothing imported. */
   | { readonly kind: "BytesLost" }
@@ -109,7 +111,7 @@ export interface Admission {
   readonly files: readonly File[];
   /** Shared files the device named but could not stream. */
   readonly unreadable?: readonly { readonly name: string; readonly sizeBytes: number }[];
-  /** Default: the intake's `into` when the admission runs. */
+  /** Default: the intake's `into`, with any library being created for it. */
   readonly into?: readonly LibraryDestination[];
   /** Opens the first line once it is accepted. */
   readonly open?: "Follow" | "Fork";
@@ -125,7 +127,14 @@ type Entry = IntakeLine & {
   /** Whether a confirm of this line's session went unanswered: a later storage failure at
    * confirm may then follow a publication, so it reads unknown, not refused. */
   readonly confirmUnanswered: boolean;
+  /** Waiting to replay a send whose answer was lost, which may have landed: its id, guard
+   * and confirmation go out unchanged, so no batch reread re-freezes it. */
+  readonly replay: boolean;
 };
+
+/** An admission waiting on a library create, holding its visit's `into` from when it was
+ * entered; a library created during that visit joins it. */
+type Deferral = { readonly input: Admission & { readonly into: readonly LibraryDestination[] }; readonly visit: object };
 
 type State = {
   readonly lines: readonly IntakeLine[];
@@ -163,7 +172,10 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   let field = "";
   let into: readonly LibraryDestination[] = [];
   let defect: State["defect"] = null;
-  let deferred: readonly Admission[] = [];
+  let deferred: readonly Deferral[] = [];
+  /** The open visit: `endVisit` replaces it, so a create that outlives its visit never
+   * writes the next one's `into`. */
+  let visit = {};
   let viewers = 0;
   let lifetime: AbortController | null = null;
   let host: Host | null = null;
@@ -241,15 +253,15 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     return turn;
   }
 
-  /** Why a send must not go out now; then it never left this document. */
+  /** A line that never left, read as `transportOf` reads the failure that held it. */
+  function notSent(failure: ApiError): LineRefusal {
+    const transport = transportOf(failure);
+    return transport === "Offline" ? { kind: "Offline" } : { kind: "NoStart", transport };
+  }
+  /** Why a send must not go out now: offline, or the refusal `apiFetch` would throw unsent. */
   function unsent(): LineRefusal | null {
     if (navigator.onLine === false) return { kind: "Offline" };
-    if (remoteAttemptAllowed()) return null;
-    switch (remoteAdmission()) {
-      case "SignInRequired": return { kind: "Handoff", transport: "SignIn" };
-      case "UpdateRequired": return { kind: "Handoff", transport: "Update" };
-      case "Checking": case "Unavailable": case "Ready": return { kind: "Offline" };
-    }
+    return remoteAttemptAllowed() ? null : notSent(admissionRefusal());
   }
 
   function pump() {
@@ -279,8 +291,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       if (!alive(scope)) return;
       const failure = modeled(error);
       if (failure === null) return;
-      const transport = transportOf(failure);
-      for (const id of ids) if (get(id)?.stage.kind === "Waiting") refuse(id, transport === "Offline" ? { kind: "Offline" } : { kind: "NoStart", transport });
+      for (const id of ids) if (get(id)?.stage.kind === "Waiting") refuse(id, notSent(failure));
     } finally {
       if (alive(scope)) { freezing = false; pump(); }
     }
@@ -349,6 +360,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     accepting.add(line.batch);
     // a batch's first acceptance starts the Imports clock; its drain, in publish, wakes it again
     update(id, current => ({ ...current, sourceAttemptId: answer.sourceAttemptId, openOnAccept: null,
+      source: current.source.kind === "File" ? { ...current.source, file: null } : current.source,
       stage: { kind: "Accepted", mediaId: answer.mediaId, importRef: answer.importRef, href, created: answer.created,
         truth: answer.removed ? { kind: "Removed" } : { kind: "Sent" } } }));
     if (first && accepting.has(line.batch)) {
@@ -459,10 +471,13 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       ? { ...line, stage: change(line.stage) } : line);
   }
 
+  /** Every read answers within ANSWER_MS, so a stalled one fails the pass and the next
+   * clock advance runs another. */
   async function truthPass(signal: AbortSignal) {
     const open = () => entries.flatMap(line => line.stage.kind === "Accepted" && linePhase(line.stage) === "Accepted" ? [{ line, stage: line.stage }] : []);
     const links = open().flatMap(({ line, stage }) => line.sourceAttemptId === null ? [] : [{ id: line.id, attempt: line.sourceAttemptId, mediaId: stage.mediaId }]);
-    const sources = await runBoundedTasks({ items: links, concurrency: 2, run: link => fetchAcceptedSource(link.attempt, signal) });
+    const sources = await runBoundedTasks({ items: links, concurrency: 2,
+      run: link => requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchAcceptedSource(link.attempt, signal) }) });
     sources.forEach((source, index) => {
       const { id, attempt, mediaId } = links[index]!;
       if (source.kind === "Fulfilled")
@@ -473,9 +488,10 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     });
     const ids = [...new Set(open().map(({ stage }) => stage.mediaId))];
     for (let start = 0; start < ids.length; start += 100) {
-      const { data } = await apiFetch<ApiJson<"/media/summaries/resolve", "post">>("/api/media/summaries/resolve", {
-        method: "POST", body: JSON.stringify({ media_ids: ids.slice(start, start + 100) }), signal,
-      });
+      const { data } = await requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal =>
+        apiFetch<ApiJson<"/media/summaries/resolve", "post">>("/api/media/summaries/resolve", {
+          method: "POST", body: JSON.stringify({ media_ids: ids.slice(start, start + 100) }), signal,
+        }) });
       for (const { media_id, summary } of data.items) {
         for (const { line, stage } of open().filter(({ stage }) => stage.mediaId === media_id)) {
           const truth: Truth = summary === null ? { kind: "Removed" }
@@ -492,7 +508,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   /** A failed or dead run: readable still if a copy can be read or played, else its reason. */
   async function failedTruth(importRef: string, summary: Schema<"MediaSummaryOut">, signal: AbortSignal): Promise<Truth> {
     try {
-      const { item } = await fetchImportDetail(importRef, signal);
+      const { item } = await requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchImportDetail(importRef, signal) });
       if (item.can_read || item.can_play) return { kind: "Readable", summary };
       const code = item.obligations.source?.failure_code ?? null;
       return code === "E_MEDIA_NOT_FOUND" ? { kind: "Removed" } : { kind: "Failed", code, reason: reasonLine(item) };
@@ -505,15 +521,18 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   function admit(input: Admission) {
     const scope = lifetime;
     if (scope === null || !alive(scope)) return;
-    // a library being created joins the admission's libraries once it exists
-    if (creation.getSnapshot().pending.some(attempt => attempt.sending)) { deferred = [...deferred, input]; return; }
+    // an admission into the visit's libraries waits while one is being created, to join it
+    if (input.into === undefined && creation.getSnapshot().pending.some(attempt => attempt.sending)) {
+      deferred = [...deferred, { input: { ...input, into }, visit }];
+      return;
+    }
     const batch = crypto.randomUUID();
     const libraries = input.into ?? into;
     // a link already listed, fragment and all, adds no line; `#one` and `#two` are two
     const listed = new Set(entries.flatMap(line => line.source.kind === "Link" ? [line.source.url] : []));
     const line = (source: IntakeSource, stage: LineStage): Entry => ({
       id: crypto.randomUUID(), source, into: libraries, batch, openOnAccept: null, stage,
-      attemptId: crypto.randomUUID(), guard: null, sourceAttemptId: null, confirmUnanswered: false,
+      attemptId: crypto.randomUUID(), guard: null, sourceAttemptId: null, confirmUnanswered: false, replay: false,
       upload: source.kind === "File" && source.file !== null ? createUploadAttempt() : null,
     });
     const added: Entry[] = [];
@@ -543,7 +562,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (creation.getSnapshot().pending.some(attempt => attempt.sending)) return;
     const waiting = deferred;
     deferred = [];
-    for (const input of waiting) admit(input);
+    for (const { input } of waiting) admit(input);
   }
 
   function enqueue(lines: readonly Entry[]) {
@@ -554,12 +573,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     pump();
   }
   /** The same id, guard and session again. */
-  const resend = (line: Entry) => enqueue([{ ...line, stage: { kind: "Waiting" } }]);
+  const resend = (line: Entry) => enqueue([{ ...line, stage: { kind: "Waiting" }, replay: line.stage.kind === "Unknown" }]);
   /** A fresh guard at the next freeze: a link takes a fresh id, an upload keeps its session
    * and generation once a refusal opened it to review. */
   const refreeze = (lines: readonly Entry[]) => enqueue(lines.map(line => {
     if (line.upload !== null) reviewUploadAttempt(line.upload);
-    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID() };
+    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false };
   }));
   const refusalOf = (line: Entry) => line.stage.kind === "Refused" ? line.stage.refusal.kind : null;
 
@@ -582,8 +601,9 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   function removeSession(sessionId: string, name: string) {
     removeUploadSession(sessionId).catch(error => {
       if (modeled(error) === null) return;
+      // the bytes stopped and the line left; the upload stays in imports
       const retry: Verb = { label: "retry", commandKey: `import-stop:${sessionId}`, run: () => removeSession(sessionId, name) };
-      outcome?.fail(error, `couldn’t stop “${name}”.`, retry);
+      outcome?.fail(error, `couldn’t remove “${name}” from imports.`, retry);
     });
   }
 
@@ -594,6 +614,17 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     },
     snapshot: () => state,
     creation,
+    /** The `onCreated` of a library create starting now: the library joins `into` while
+     * this visit lasts, and this visit's waiting admissions either way. */
+    created() {
+      const during = visit;
+      return (destination: LibraryDestination) => {
+        const join = (libraries: readonly LibraryDestination[]) => libraries.some(library => library.id === destination.id) ? libraries : [...libraries, destination];
+        if (during === visit) into = join(into);
+        deferred = deferred.map(waiting => waiting.visit === during ? { ...waiting, input: { ...waiting.input, into: join(waiting.input.into) } } : waiting);
+        publish();
+      };
+    },
     setOutcome(next: Outcome) { outcome = next; },
     start() {
       const scope = new AbortController();
@@ -611,8 +642,8 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
           stopsBrowserWork: state.running > 0,
         }),
       });
-      // onCreated adds the library after the creation publishes, so the deferred admission
-      // reads `into` a microtask later
+      // the creation publishes, then calls onCreated, which joins the library to the waiting
+      // admissions, so they run a microtask later
       const unsubscribe = creation.subscribe(() => queueMicrotask(admitDeferred));
       return () => {
         scope.abort();
@@ -651,7 +682,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const batch = entries.filter(other => other.batch === line.batch);
       switch (line.stage.refusal.kind) {
         // one reread re-freezes the batch: a removal must not cost a press per line
-        case "Changed": return refreeze(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting"));
+        case "Changed": return refreeze(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting" && !other.replay));
         case "NoStart": return refreeze(batch.filter(other => refusalOf(other) === "NoStart"));
         case "LibraryGone": return refreeze([line]);
         case "Offline": return line.guard === null ? refreeze([line]) : resend(line);
@@ -661,7 +692,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
           return file === null ? undefined : reselect(id, file);
         }
         case "Ambiguous": case "Deleting": case "Declared": case "Verification": case "FileChanged": case "Handoff":
-        case "WrongType": case "TooBig": case "Empty": case "NameTooLong": case "Superseded": case "Unreadable":
+        case "WrongType": case "TooBig": case "Empty": case "Nameless": case "NameTooLong": case "Superseded": case "Unreadable":
           return;
       }
     },
@@ -701,6 +732,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     endVisit() {
       field = "";
       into = [];
+      visit = {};
       entries = entries.filter(line => !(line.stage.kind === "Accepted" && (line.stage.truth.kind === "Readable" || line.stage.truth.kind === "Removed")
         || refusalOf(line) === "Superseded"));
       queue = queue.filter(id => get(id) !== null);
@@ -711,7 +743,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
 
 type Intake = ReturnType<typeof createIntake>;
 const IntakeContext = createContext<Intake | null>(null);
-const CreationContext = createContext<ReturnType<typeof useDestinationCreation> | null>(null);
+/** The `into` chooser's creation. A created library joins `into` through the intake, so
+ * `admit` takes no `onCreated`. */
+type ImportCreation = Omit<ReturnType<typeof useDestinationCreation>, "admit"> & {
+  admit(input: { name: string; scope: string }): boolean;
+};
+const CreationContext = createContext<ImportCreation | null>(null);
 
 /** Above the workspace's boundary, keyed on the account: share mounts it alone. */
 export function ImportIntakeProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
@@ -747,7 +784,7 @@ export function useImportLinesShown(): void {
 }
 
 /** The `into` chooser's one library creation; the host's. */
-export function useImportCreation(): ReturnType<typeof useDestinationCreation> {
+export function useImportCreation(): ImportCreation {
   const creation = useContext(CreationContext);
   if (creation === null) throw new Error("ImportIntakeHost is missing");
   return creation;
@@ -758,7 +795,8 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
   const intake = useIntake();
   const state = useSyncExternalStore(intake.subscribe, intake.snapshot, intake.snapshot);
   if (state.defect !== null) throw state.defect.error;
-  const creation = useDestinationCreation("import-intake", intake.creation);
+  const destinations = useDestinationCreation("import-intake", intake.creation);
+  const creation: ImportCreation = { ...destinations, admit: ({ name, scope }) => destinations.admit({ name, scope, onCreated: intake.created() }) };
   const { observation, retainObserver } = useImports();
   const outcome = useOutcome();
   const workspace = useLatestWorkspace();

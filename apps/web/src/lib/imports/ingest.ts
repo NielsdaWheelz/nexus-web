@@ -5,7 +5,7 @@
  * exact command; receipts are read for current availability. A live upload owner
  * retains its generation, bytes and confirmation; only a known refusal permits
  * reviewed choices with those same bytes. No request identity is persisted.
- * Every api call here answers within 30 s; the put, within the upload window. */
+ * An upload's create and confirm answer within 30 s, its put within the upload window. */
 
 import { publishChange } from "@/lib/api/changes";
 import { ApiError, apiFetch, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
@@ -25,18 +25,17 @@ export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
 /** apiFetch has no deadline of its own. */
 const ANSWER_MS = 30_000;
 
-/** Every accepted acquisition, tagged by its lane. `created` is false when the
- * acquisition joined media that already existed. */
+/** Every accepted acquisition, tagged by its lane. An upload's `created` is false when
+ * its bytes published to media that already existed. */
 export type AcceptedIngest = {
   readonly available: boolean;
-  readonly created: boolean;
   readonly mediaId: string;
   readonly importRef: string;
   readonly href: string;
 } & (
   | { readonly kind: "Url"; readonly sourceAttemptId: string;
       readonly processing: "processing" | "ready" | "failed" }
-  | { readonly kind: "Upload"; readonly sourceAttemptId: null; readonly processing: null }
+  | { readonly kind: "Upload"; readonly created: boolean; readonly sourceAttemptId: null; readonly processing: null }
 );
 
 /** A discovery episode acknowledges canonical media, not an upload/import session. */
@@ -129,16 +128,17 @@ export function getFileUploadError(file: File): string | null {
 
 const MIB = 1024 * 1024;
 /** `max_pdf_bytes` and `max_epub_bytes` in python/nexus/config.py. */
-export const UPLOAD_LIMIT_BYTES: Readonly<Record<UploadFileKind, number>> = { Pdf: 100 * MIB, Epub: 50 * MIB };
+const UPLOAD_LIMIT_BYTES: Readonly<Record<UploadFileKind, number>> = { Pdf: 100 * MIB, Epub: 50 * MIB };
 
 /** Why create would refuse this file, read before any request: create's own name rule
- * (trimmed, last path segment, trimmed, at most 255 code points) and the limits above. */
-export function uploadFileRefusal(file: File): "WrongType" | "Empty" | "TooBig" | "NameTooLong" | null {
+ * (trimmed, last path segment, trimmed, then 1 to 255 code points) and the limits above. */
+export function uploadFileRefusal(file: File): "WrongType" | "Empty" | "TooBig" | "Nameless" | "NameTooLong" | null {
   const kind = getFileUploadKind(file);
   if (kind === null) return "WrongType";
   if (file.size === 0) return "Empty";
   if (file.size > UPLOAD_LIMIT_BYTES[kind]) return "TooBig";
   const name = file.name.trim().replaceAll("\\", "/").split("/").pop()!.trim();
+  if (name === "") return "Nameless";
   return [...name].length > 255 ? "NameTooLong" : null;
 }
 
@@ -181,7 +181,7 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
   /** Bytes the put has sent so far. */
   onProgress?: (sentBytes: number) => void;
   onImportRef?: (ref: string) => void;
-}): Promise<AcceptedIngest> {
+}): Promise<Extract<AcceptedIngest, { kind: "Upload" }>> {
   const kind = getFileUploadKind(file);
   if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
   if (attempt.expired) throw outcome({ kind: "Expired" });
@@ -323,7 +323,7 @@ export async function addMediaFromUrl({
   publishImportsInvalidation();
   const status = data.processing_status;
   const receipt: Extract<MediaAcceptance, { kind: "Url" }> = {
-    kind: "Url", created: data.created, mediaId: data.media_id, importRef: data.import_ref,
+    kind: "Url", mediaId: data.media_id, importRef: data.import_ref,
     href: `/media/${data.media_id}?source_attempt_id=${encodeURIComponent(data.source_attempt_id)}`,
     sourceAttemptId: data.source_attempt_id,
     processing: status === "failed" ? "failed" : status === "ready_for_reading" ? "ready" : "processing",

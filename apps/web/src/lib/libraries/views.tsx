@@ -1,11 +1,24 @@
 // The libraries panes' url-owned view choices, spelled as the server reads them,
-// and the one name rule. The server validates every value and every combination
-// composes; these are only the options offered.
+// the one name rule, and how library names order and summarize. The server
+// validates every value and every combination composes; these are only the
+// options offered.
 
 import type { FeedbackProps } from "@/components/feedback/Feedback";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
+
+export function compareLibraryNames(a: { id: string; name: string }, b: { id: string; name: string }) {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id.localeCompare(b.id));
+}
+
+/** Libraries named in one short phrase, by name: one or two in full, else the first two
+ * and how many more. Empty for none: the caller names what none means. */
+export function libraryNames(libraries: readonly { id: string; name: string }[]): string {
+  const names = libraries.toSorted(compareLibraryNames).map(library => library.name);
+  return names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
 
 /** The server's name rule (1–100 characters once trimmed, never All), as copy. */
 export function libraryNameError(text: string): string | null {

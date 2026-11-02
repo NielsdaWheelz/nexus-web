@@ -1149,11 +1149,6 @@ export const CAPTURE_REFUSAL = {
   E_X_ARTICLE_POST_LINK_REQUIRED: "x articles import through their post’s link.",
   E_X_IDENTITY_CONFLICT: "this post is in more than one imported thread.",
 } as const;
-export type CaptureRefusalCode = keyof typeof CAPTURE_REFUSAL;
-
-export function isCaptureRefusalCode(code: string): code is CaptureRefusalCode {
-  return Object.hasOwn(CAPTURE_REFUSAL, code);
-}
 
 /**
  * A failed capture or attachment. Anything this does not model, a programming
@@ -1173,12 +1168,12 @@ export function captureErrorFeedback(
     };
   }
   const { code, requestId } = modeled(error);
-  if (!isCaptureRefusalCode(code)) {
+  if (!Object.hasOwn(CAPTURE_REFUSAL, code)) {
     const transport = apiTransportFeedback(modeled(error), title);
     if (transport !== null) return transport;
     throw error;
   }
-  return { tone: "Danger", title, message: CAPTURE_REFUSAL[code], requestId };
+  return { tone: "Danger", title, message: CAPTURE_REFUSAL[code as keyof typeof CAPTURE_REFUSAL], requestId };
 }
 
 /** Acceptance records a saved source, independently of processing success. */

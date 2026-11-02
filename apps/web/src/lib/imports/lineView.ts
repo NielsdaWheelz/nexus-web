@@ -11,7 +11,7 @@ import { updateRemedy } from "@/lib/native/admission";
 import { CAPTURE_REFUSAL, FAILURE_COPY } from "@/lib/imports/copy";
 import type { IntakeLine, LineRefusal, LineStage, Truth } from "@/lib/imports/intake";
 import { encodeImportsUrl } from "@/lib/imports/query";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import { libraryNames } from "@/lib/libraries/views";
 import { mediaKindLabel } from "@/lib/media/kind";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 
@@ -58,12 +58,6 @@ export function pointer(line: IntakeLine): string {
 const RETRY = { kind: "Retry", label: "retry" } as const;
 const ALL_IMPORTS = { kind: "AllImports", label: "all imports", target: { href: "/imports" } } as const;
 
-/** One or two names, else the first two and how many more. */
-function names(libraries: readonly LibraryDestination[]): string {
-  return libraries.length <= 2 ? libraries.map(library => library.name).join(", ")
-    : `${libraries[0]!.name}, ${libraries[1]!.name} +${libraries.length - 2}`;
-}
-
 /** A transport's line after a command's fact: `couldn’t start. nexus is busy.` */
 function transportLine(transport: Transport, fact: string): string {
   const line = TRANSPORT_LINES[transport].command(fact);
@@ -87,12 +81,12 @@ function refusalView(line: IntakeLine, refusal: LineRefusal): Said {
     case "Changed": return { two: CAPTURE_REFUSAL.E_RESOURCE_CONFLICT, tone: "Warning", verb: RETRY };
     case "Active": return {
       two: refusal.unfiled.length === 0 ? CAPTURE_REFUSAL.E_SOURCE_IMPORT_ACTIVE
-        : `${CAPTURE_REFUSAL.E_SOURCE_IMPORT_ACTIVE} · not filed to ${names(refusal.unfiled)}`,
+        : `${CAPTURE_REFUSAL.E_SOURCE_IMPORT_ACTIVE} · not filed to ${libraryNames(refusal.unfiled)}`,
       tone: "Warning", verb: RETRY,
     };
     case "LibraryGone": return refusal.missing.length === 0
-      ? { two: `couldn’t file to one of ${names(line.into)}`, tone: "Warning", verb: RETRY }
-      : { two: `can’t file to ${names(refusal.missing)}`, tone: "Warning",
+      ? { two: `couldn’t file to one of ${libraryNames(line.into)}`, tone: "Warning", verb: RETRY }
+      : { two: `can’t file to ${libraryNames(refusal.missing)}`, tone: "Warning",
         verb: { kind: "RetryWithout", label: refusal.missing.length === 1 ? "retry without it" : "retry without them" } };
     case "Ambiguous": return { two: CAPTURE_REFUSAL.E_SOURCE_TARGET_AMBIGUOUS, tone: "Danger", verb: ALL_IMPORTS };
     case "Deleting": return { two: CAPTURE_REFUSAL.E_MEDIA_DELETING, tone: "Neutral", verb: null };
@@ -106,6 +100,7 @@ function refusalView(line: IntakeLine, refusal: LineRefusal): Said {
     case "WrongType": return { two: "pdf or epub only", tone: "Danger", verb: null };
     case "TooBig": return { two: refusal.fileKind === "Pdf" ? "too big · pdfs up to 100 mb" : "too big · epubs up to 50 mb", tone: "Danger", verb: null };
     case "Empty": return { two: "this file is empty", tone: "Danger", verb: null };
+    case "Nameless": return { two: "this file has no name", tone: "Danger", verb: null };
     case "NameTooLong": return { two: "this file’s name is too long", tone: "Danger", verb: null };
     case "BytesLost": return { two: "upload stopped", tone: "Warning", verb: RETRY };
     case "NotPrepared": return { two: "couldn’t start the upload", tone: "Warning", verb: RETRY };
@@ -238,8 +233,10 @@ export function batchSlip(lines: readonly IntakeLine[]): BatchSlip | null {
   if (stage.kind === "Unknown") return { weight: "Held", line: { fact: `not sure ${name} imported.`, reason: "it may have gone through." }, verb: RETRY };
   if (outcomeOf === "Imported" || outcomeOf === "AlreadyHere")
     return { weight: "Plain", line: { fact: `“${view.one.text}” is ${outcomeOf === "Imported" ? "ready" : "already here"}.` }, verb };
+  // the fence and an exhausted database retry answer alike, and either may follow a join
+  // that filed, so it claims neither a removal nor that nothing imported
   if (stage.kind === "Refused" && stage.refusal.kind === "Changed")
-    return { weight: "Plain", line: { fact: `something was removed before ${name} arrived.` }, verb: RETRY };
+    return { weight: "Plain", line: { fact: `something changed while ${name} was sending.` }, verb: RETRY };
   // the line's own sentence, less a fact the slip's own fact already says
   const reason = view.two.replace(/^couldn’t (?:import this\.|start\.|read this(?: · |$))\s*/, "");
   return { weight: "Plain", line: reason === "" ? { fact: `couldn’t import ${name}.` }

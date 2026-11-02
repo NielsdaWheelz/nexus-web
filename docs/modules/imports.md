@@ -124,12 +124,15 @@ for every surface and for the intake's slips. nothing survives a reload.
 - **admit** never throws: every outcome is a line, or its caller's `Field` (the caller
   parses with `extractLinks` and holds `ADMIT_LIMIT`). a link already listed adds none.
   type, emptiness, the size limits and create's name rule refuse a file before any request.
-  while a library create is sending the admission waits, then reads `into`.
+  an admission into the visit's `into` waits while a library create is sending, keeping that
+  `into`. a created library joins `into` while its visit lasts, and its visit's waiting
+  admissions either way, so a create that outlives the visit never sets the next one's.
 - **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
-  revision and its libraries. a failed read is `no start`, or `offline`. links go one at a
-  time and file puts two at a time; a link's accept and an upload's confirm, both
-  serializable under the viewer lock, take one slot between them. every api call answers
-  within 30 s, the put within its upload window.
+  revision and its libraries. a failed read is `no start`, or `offline`, and so is a send
+  the shell's admission holds, since nothing left. links go one at a time and file puts two
+  at a time; a link's accept and an upload's confirm, both serializable under the viewer
+  lock, take one slot between them. every send answers within 30 s, the put within its
+  upload window. acceptance drops a file's `File`: nothing sends it again.
 - **answers.** a line is unknown only where an answer was lost after the server could act:
   a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
   stopped`. 401 and 426 answer before any route: handoff. a storage failure at a first
@@ -137,15 +140,17 @@ for every surface and for the intake's slips. nothing survives a reload.
   unknown. a refused create forgets the attempt's guard; a fence or library refusal at
   confirm opens it to review. an undeclared refusal reads `couldn’t import this.` and warns
   its request id.
-- **replay.** `retry` sends the same id, guard and session again; for `changed` and `no
-  start` one reread re-freezes the batch's waiting and like lines, a link under a fresh id.
-  `retryWithout` drops every library the refusal's reread found missing. `reselect` starts
-  a fresh session; the expired one stays in imports.
+- **replay.** `retry` sends the same id, guard and session again. `changed` takes one reread
+  for the batch's changed lines and its waiting lines that replay no unknown; `no start` for
+  the batch's no-start lines, and `library gone` for its own line, whatever the line's verb.
+  a reread gives a link a fresh id. `retryWithout` drops every library the refusal's reread found
+  missing. `reselect` starts a fresh session; the expired one stays in imports.
 - **truth.** for accepted, unsettled lines, on acceptance and each clock advance, one pass
   at a time: `GET /media/source-attempts/{id}` per link, two at a time, following
   supersession; `POST /media/summaries/resolve` over the media ids, 100 a request; and for
   a failed or dead run one `GET /imports/{ref}`, which decides readable, the reason or
-  removed. the host retains the observer while any accepted line is unsettled.
+  removed. each read answers within 30 s; a failed pass waits for the next advance. the
+  host retains the observer while any accepted line is unsettled.
 - **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
   raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
   `retry` replays that batch's unknown lines.
