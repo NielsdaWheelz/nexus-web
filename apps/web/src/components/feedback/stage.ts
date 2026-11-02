@@ -148,6 +148,11 @@ export function createStage() {
     const remaining = lifetime(slip.row);
     slip.clock = remaining === null ? null : { remaining, running: null };
   };
+  /** Past an exit that has not ended: the row stands again with its whole life. */
+  const revive = (slip: Slip) => {
+    slip.leaving = null;
+    renewClock(slip);
+  };
   /** Into a frame from outside it: on top of whatever stands, whenever it was raised. */
   const land = (slip: Slip) => {
     slips = [...slips.filter(other => other !== slip), slip];
@@ -277,8 +282,7 @@ export function createStage() {
       const slip = repeat ?? raise({ key: {}, address, modal: raisedIn, weight: "Plain", line, verbs, attempt: 0 });
       if (repeat) {
         repeat.row = { ...repeat.row, verbs, attempt: repeat.row.attempt + 1 };
-        repeat.leaving = null;
-        renewClock(repeat);
+        revive(repeat);
       }
       const { attempt } = slip.row;
       settle();
@@ -335,6 +339,8 @@ export function createStage() {
       const holds = rooms.find(({ id }) => id === room)?.holds;
       if (!holds || holds.has(hold) === held) return;
       if (held) holds.add(hold); else holds.delete(hold);
+      // A hand that reaches a row in its fade holds it.
+      if (held) for (const slip of slips) if (slip.room?.id === room && slip.leaving === "Expired") revive(slip);
       settle();
     },
     releaseRoom(room: number): void {
