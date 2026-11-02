@@ -45,7 +45,9 @@ eligible page transient. a transient of a covered modal never outranks a newer
 modal, and a page transient never outranks a modal. `eligible()` is read at
 dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
-same rule; a sheet's scope is its `panelId`. tooltips never become this owner.
+same rule; a sheet's scope is its `panelId`. `interactionOwnedElsewhere(element)`
+reads it too, ignoring an owner whose element or boxes contain `element`; a null
+element counts any owner. tooltips never become this owner.
 `useOverlay` subscribes to its layer's registration, coverage and depth. for a
 tooltip, `topmost` additionally requires a live trigger inside the current
 owner's boxes or modal panel, or on the page when no owner is open. hidden,
