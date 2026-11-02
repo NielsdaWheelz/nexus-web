@@ -3,17 +3,16 @@
 // The atlas pane: the viewer's sky (/atlas), the oracle's folios as a second
 // layer (?layer=readings opens it), and what a pick means: a work opens in the
 // pane; a folio's first pick traces its concordance, the second enters it.
-import { useMemo, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useMemo, useState } from "react";
+import { Failed } from "@/components/feedback/Fact";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import {
   usePaneFreeServerValue,
   useServerValue,
-  type ServerValue,
   type Visit,
 } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
-import { failureCopy, type OracleReadingSummary } from "@/lib/oracle/oracle";
+import type { OracleReadingSummary } from "@/lib/oracle/oracle";
 import {
   requirePaneRuntime,
   usePaneRuntime,
@@ -44,7 +43,6 @@ export default function GrandAtlasPaneBody() {
   const [layers, setLayers] = useState({ corpus: true, readings: fromLanding });
   const [hovered, setHovered] = useState<Star | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const headline = useRef<HTMLDivElement>(null);
 
   const atlas = useServerValue({
     key: "/atlas",
@@ -104,39 +102,27 @@ export default function GrandAtlasPaneBody() {
       activateTargetLink({ event, runtime, target: { href: star.layer === "corpus" ? `/media/${star.id}` : `/oracle/${star.id}` } });
     } else setSelected(star?.id ?? null);
   };
-  const atlasOccurrence = useFeedbackOccurrence(atlas.status !== "loading" && atlas.error !== null);
-  const readingsOccurrence = useFeedbackOccurrence(readings.status !== "loading" && readings.error !== null);
-  const failure = (value: ServerValue<unknown>, title: string) =>
-    value.status !== "loading" && value.error !== null && (
-      <FeedbackFailure scope="Local" occurrence={value === atlas ? atlasOccurrence : readingsOccurrence}
-        key={title}
-        content={failureCopy(value.error, title)}
-        announcement="Assertive"
-        actions={[{ label: "retry", onClick: value.refetch, busy: value.status === "failed" ? value.retrying : value.refreshing }]}
-        returnFocus={() => headline.current}
-      />
-    );
   const count = corpus.length;
 
   return (
     <OracleTheme>
       <div className={styles.surface}>
-        <div className={styles.headline} ref={headline} tabIndex={-1}>
+        <div className={styles.headline}>
           <span className={styles.title}>The Atlas</span>
-          <span className={styles.gold}>·</span>
-          <span className={styles.subtitle}>
-            {atlas.status === "loading"
-              ? "charting the corpus…"
-              : `${count} ${count === 1 ? "star" : "stars"}`}
-          </span>
+          {sky === null ? null : <>
+            <span className={styles.gold}>·</span>
+            <span className={styles.subtitle}>{`${count} ${count === 1 ? "star" : "stars"}`}</span>
+          </>}
         </div>
-        {failure(atlas, "The Atlas couldn’t be loaded")}
-        {failure(readings, "The readings layer couldn’t be loaded")}
 
         <div className={styles.frame}>
           <SkyCanvas scene={scene} onHover={setHovered} onPick={pick} />
+          {atlas.status === "failed" || readings.status === "failed" ? <div className={styles.failures}>
+            {atlas.status === "failed" ? <Failed error={atlas.error} noun="stars" retry={{ run: () => { void atlas.refetch().catch(() => {}); }, busy: atlas.retrying }} /> : null}
+            {readings.status === "failed" ? <Failed error={readings.error} noun="readings" retry={{ run: () => { void readings.refetch().catch(() => {}); }, busy: readings.retrying }} /> : null}
+          </div> : null}
           {label && (
-            <div className={styles.label} aria-live="polite">
+            <div className={styles.label}>
               {label.layer === "corpus" ? (
                 <>
                   <span className={styles.labelTitle}>{label.work.title}</span>

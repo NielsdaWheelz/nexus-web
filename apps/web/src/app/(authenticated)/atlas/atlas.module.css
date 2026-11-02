@@ -53,6 +53,13 @@
   );
 }
 
+/* A failed read stands where the sky would. */
+.failures {
+  position: absolute;
+  inset-block-start: 1rem;
+  inset-inline: 1rem;
+}
+
 .canvas {
   display: block;
   width: 100%;

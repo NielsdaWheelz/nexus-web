@@ -6,11 +6,10 @@
  * `SafeFailureCode`, so a new server code is a type error until it is worded.
  */
 
-import type {
-  FeedbackContent,
-  FeedbackTone,
-} from "@/components/feedback/Feedback";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -408,8 +407,8 @@ export const STATE_KIND_LABEL: Readonly<Record<Classification, string>> = {
 };
 
 /** The bytes arrived and verification refused them (stage Validate). */
-const UPLOAD_REJECTED_LABEL = "upload rejected";
-export const UNAVAILABLE_LINE = "This import is no longer available";
+export const UPLOAD_REJECTED_LABEL = "upload rejected";
+export const UNAVAILABLE_LINE = "this import isn’t available.";
 /** The mark on the one recorded event a History filter matched. */
 export const MATCHED_LABEL = "Matched";
 /** The same mark read inside the event's sentence. */
@@ -909,11 +908,10 @@ export function attentionPhrase(count: number): string {
   return count === 1 ? "1 needs attention" : `${count} need attention`;
 }
 
-/** The complete description of a positive Imports attention observation. */
-export function importAttentionDescription(count: number, refresh_failed: boolean): string {
-  return refresh_failed
-    ? `couldn’t refresh imports; last update: ${attentionPhrase(count)}`
-    : `imports: ${attentionPhrase(count)}`;
+/** The complete description of a positive Imports attention observation. `_refreshFailed`
+ * stays until the account menu stops passing it (L7): a failed refresh says nothing. */
+export function importAttentionDescription(count: number, _refreshFailed?: boolean): string {
+  return `imports: ${attentionPhrase(count)}`;
 }
 
 /** A count as the badge and mode navigation print it; the exact count is spoken. */
@@ -921,273 +919,141 @@ export function countText(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-export const STALE_NOTICE: FeedbackContent = {
-  tone: "Warning",
-  title: "Couldn’t refresh imports",
-  message: "Showing the last update",
-};
+/** Why a command on an import was refused: its work moved on since it was shown
+ * (services/content_indexing.py, media_source_ingest.py). The command's owner states the fact. */
+export const CONFLICT_REASON = "this import changed since it was shown.";
+/** Until L7: the action catalog still reads this shape. */
+export const CONFLICT_NOTICE: FeedbackContent = { tone: "Warning", title: CONFLICT_REASON };
 
-export const CONFLICT_NOTICE: FeedbackContent = {
-  tone: "Warning",
-  title: "This import changed",
-  message: "Review its current status",
-};
-
-export function emptyCopy(
-  view: ImportsView,
-  hasSearch: boolean,
-  hasFilters: boolean,
-): { readonly title: string; readonly body: string } {
-  if (hasSearch && hasFilters) {
-    return {
-      title: "No imports match this search and filters",
-      body: "Change the search or clear filters to broaden the results.",
-    };
-  }
-  if (hasSearch) {
-    return {
-      title: "No imports match this search",
-      body: "Try another search or clear it.",
-    };
-  }
-  if (hasFilters) {
-    return {
-      title: "No imports match these filters",
-      body: "Change or clear filters to broaden the results.",
-    };
-  }
+/** An empty view, stated, never advised. */
+export function emptyLine(view: ImportsView, hasSearch: boolean, hasFilters: boolean): string {
+  if (hasSearch && hasFilters) return "no imports match this search and these filters.";
+  if (hasSearch) return "no imports match this search.";
+  if (hasFilters) return "no imports match these filters.";
   switch (view) {
-    case "NeedsAttention":
-      return {
-        title: "No imports need attention",
-        body: "Failed work and unreviewed metadata results appear here.",
-      };
-    case "InProgress":
-      return {
-        title: "No imports are in progress",
-        body: "Uploads, source processing, search indexing, and metadata operations appear here.",
-      };
-    case "History":
-      return {
-        title: "No imports have recorded history",
-        body: "History shows every import with recorded evidence, including the ones that finished.",
-      };
-    default:
-      return assertNever(view, "Unreachable imports view");
+    case "NeedsAttention": return "no imports need attention.";
+    case "InProgress": return "no imports in progress.";
+    case "History": return "no imports recorded.";
+    default: return assertNever(view, "Unreachable imports view");
   }
 }
 
 /** A modeled ApiError, or the defect rethrown for the screen boundary. */
-function modeled(error: unknown) {
+function modeled(error: unknown): ApiError {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   return error;
 }
 
-/** A failed accepted-source read; undeclared codes and defects are rethrown. */
+/** Until L7: consumers outside lib/imports still read FeedbackContent. */
+const content = ({ fact, reason }: Line): FeedbackContent => ({ tone: "Warning", title: fact, message: reason });
+
+/** A failed saved-source read: the server has no saved source by that id (services/imports.py),
+ * or the transport speaks for the noun `source details`. Until L7, for consumers outside
+ * lib/imports; defects rethrow. */
 export function savedSourceReadFailure(error: unknown): FeedbackContent {
   const failure = modeled(error);
-  const title = "couldn’t check this saved source";
-  const transport = apiTransportFeedback(failure, title);
-  if (transport !== null) return transport;
-  if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
-    return { tone: "Warning", title, message: "this save link is invalid or no longer available." };
-  throw error;
+  return content(failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST"
+    ? { fact: "this saved source isn’t available." }
+    : TRANSPORT_LINES[transportOf(failure)].read("source details"));
 }
 
-/** A failed Imports read; undeclared codes and defects are rethrown. */
-export function loadFailure(error: unknown): FeedbackContent {
-  const { code, requestId } = modeled(error);
-  const failed = (
-    tone: FeedbackTone,
-    message: string,
-    title = "Imports couldn’t be loaded",
-  ): FeedbackContent => ({ tone, title, message, requestId });
-  switch (code) {
-    case "E_NETWORK":
-      return failed("Danger", "Check your connection and refresh.");
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return failed(
-        "Danger",
-        "Nexus couldn’t complete the request. Wait a moment, then refresh.",
-      );
-    case "E_RATE_LIMITED":
-      return failed("Warning", "Wait a moment, then refresh.");
-    case "E_INVALID_CURSOR":
-      return failed(
-        "Danger",
-        "Refresh this view to start loading again.",
-        "More imports couldn’t be loaded",
-      );
-    default: {
-      const transport = apiTransportFeedback(modeled(error), "Imports couldn’t be loaded");
-      if (transport !== null) return transport;
-      throw error;
-    }
-  }
-}
+/** What verification said about the stored bytes, as a reason. */
+const verificationReason = (outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>) =>
+  `${FAILURE_COPY[outcome.code].reason}.`;
 
-/** The one reason a terminal upload verification gives, on every surface. */
-function verificationSentence(
-  outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>,
-): string {
-  const copy = FAILURE_COPY[outcome.code];
-  return `${copy.title} ${copy.explanation}`;
-}
+/** One reason per upload-session outcome, on every surface (lib/imports/ingest.ts OUTCOMES). */
+const OUTCOME_REASON: Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string>> = {
+  BytesMissing: "nexus never received it.",
+  Expired: "the upload expired.",
+  Unresolved: "file storage isn’t answering.",
+  UnsupportedFileType: "only pdf and epub files can be added.",
+  FileTooLarge: "it’s over the size limit.",
+  LibraryForbidden: "you no longer have access to one of its libraries.",
+  FileMismatch: "that file doesn’t match this upload.",
+};
 
-type PlainOutcome = Exclude<
-  UploadSessionOutcome["kind"],
-  "VerificationRejected" | "IntentMalformed"
->;
+export type UploadCommand = "RetryUpload" | "RemoveUpload";
+export const UPLOAD_COMMAND_FACT: Readonly<Record<UploadCommand, string>> = {
+  RetryUpload: "couldn’t retry the upload.",
+  RemoveUpload: "couldn’t remove this import.",
+};
 
-/**
- * A surface's sentence for an upload-session outcome: its table, or
- * verification's one reason. A malformed intent, or an outcome the surface
- * settles itself (Imports' commands treat Superseded as done), is rethrown as
- * the defect it is here.
- */
-function outcomeSentence(
-  error: UploadSessionError,
-  table: Readonly<Partial<Record<PlainOutcome, string>>>,
-): string {
+/** Imports' Retry upload, refused by its session, and whether choosing the file again can help:
+ * the same session id gets a fresh upload, so all but lost access and rejected bytes can. The
+ * file the import began with already passed type and size, so a refusal of either means another
+ * file was chosen. Null when another attempt superseded it, which counts as done; a malformed
+ * intent is a defect. */
+export function retryUploadRefusal(error: UploadSessionError): { readonly line: Line; readonly retry: boolean } | null {
   const outcome = error.outcome;
-  if (outcome.kind === "VerificationRejected") {
-    return verificationSentence(outcome);
+  const fact = UPLOAD_COMMAND_FACT.RetryUpload;
+  switch (outcome.kind) {
+    case "IntentMalformed": throw error;
+    case "Superseded": return null;
+    case "VerificationRejected": return { line: { fact, reason: verificationReason(outcome) }, retry: false };
+    case "LibraryForbidden": return { line: { fact, reason: OUTCOME_REASON.LibraryForbidden }, retry: false };
+    case "UnsupportedFileType":
+    case "FileTooLarge":
+    case "FileMismatch": return { line: { fact, reason: OUTCOME_REASON.FileMismatch }, retry: true };
+    case "BytesMissing":
+    case "Expired":
+    case "Unresolved": return { line: { fact, reason: OUTCOME_REASON[outcome.kind] }, retry: true };
+    default: return assertNever(outcome, "Unreachable upload outcome");
   }
-  const sentence =
-    outcome.kind === "IntentMalformed" ? undefined : table[outcome.kind];
-  if (sentence === undefined) throw error;
-  return sentence;
-}
-
-const FILE_DOES_NOT_MATCH =
-  "That file doesn’t match this import. Choose the same file, or start a new import.";
-
-/** Imports' Retry upload and Remove: one truthful next step per outcome. */
-const COMMAND_OUTCOME: Readonly<
-  Record<Exclude<PlainOutcome, "Superseded">, string>
-> = {
-  BytesMissing: "The upload didn’t finish. Choose the original file to retry.",
-  Expired: "upload expired. choose the file again.",
-  Unresolved: "Nexus is still verifying this upload. Refresh in a moment.",
-  UnsupportedFileType: FILE_DOES_NOT_MATCH,
-  FileTooLarge: FILE_DOES_NOT_MATCH,
-  FileMismatch: FILE_DOES_NOT_MATCH,
-  LibraryForbidden:
-    "You no longer have access to a destination library for this import.",
-};
-
-const BUSY =
-  "Nexus couldn’t complete this action. Wait a moment, then refresh.";
-
-/** The upload commands' transport refusals; any other code is a defect. */
-const COMMAND_REFUSAL: Readonly<Record<string, string>> = {
-  E_NETWORK: "Check your connection and try again.",
-  E_UPSTREAM: BUSY,
-  E_UPSTREAM_TIMEOUT: BUSY,
-  E_RATE_LIMITED: BUSY,
-};
-
-/** A refused upload command says what was refused, in the command's words. */
-export function uploadCommandFeedback(
-  command: "RetryUpload" | "RemoveUpload",
-  error: unknown,
-): FeedbackContent {
-  const title =
-    command === "RetryUpload"
-      ? "Couldn’t retry the upload"
-      : "Couldn’t remove the import";
-  if (error instanceof UploadSessionError) {
-    return {
-      tone: "Danger",
-      title,
-      message: outcomeSentence(error, COMMAND_OUTCOME),
-    };
-  }
-  const { code } = modeled(error);
-  if (!Object.hasOwn(COMMAND_REFUSAL, code)) {
-    const transport = apiTransportFeedback(modeled(error), title);
-    if (transport !== null) return transport;
-    throw error;
-  }
-  return { tone: "Danger", title, message: COMMAND_REFUSAL[code] };
 }
 
 export type CaptureOperation = "SaveSource" | "AddAttachment";
-
-const UNSUPPORTED_FILE = "This file type isn’t supported. Use a PDF or EPUB.";
-
-/**
- * Capture and attachments hold one file and no session row, so each outcome is
- * one sentence and, where Imports holds the obligation, a pointer to it.
- */
-const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
-  BytesMissing: "Nexus never received this file. Attach it again.",
-  Expired: "upload expired. choose the file again.",
-  Superseded: "This upload finished elsewhere. Open Imports to find it.",
-  Unresolved:
-    "Nexus couldn’t confirm this upload. Open Imports before attaching it again.",
-  UnsupportedFileType: UNSUPPORTED_FILE,
-  FileTooLarge: "This file is too large. Attach a smaller file.",
-  LibraryForbidden:
-    "You no longer have access to a destination library for this attachment.",
-  FileMismatch: "This upload changed. Attach the file again.",
+const CAPTURE_FACT: Readonly<Record<CaptureOperation, string>> = {
+  SaveSource: "couldn’t save this source.",
+  AddAttachment: "couldn’t attach this file.",
 };
 
-const X_UNAVAILABLE = "X imports are temporarily unavailable.";
+/** A one-file upload's refusal: capture, attachment and Add hold no session row. A malformed
+ * intent is a defect. */
+function outcomeLine(error: UploadSessionError, fact: string): Line {
+  const outcome = error.outcome;
+  switch (outcome.kind) {
+    case "IntentMalformed": throw error;
+    case "Superseded": return { fact: "this upload changed elsewhere." };
+    case "VerificationRejected": return { fact, reason: verificationReason(outcome) };
+    default: return { fact, reason: OUTCOME_REASON[outcome.kind] };
+  }
+}
 
-/** The capture endpoints' declared refusals; any other code is a defect. */
-const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
-  E_RESOURCE_CONFLICT: "save needs review. review your choices and save again.",
-  E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
-  E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
-  E_NETWORK: "Check your connection and retry.",
-  E_UPSTREAM: "The source service is unavailable. Retry in a moment.",
-  E_UPSTREAM_TIMEOUT: "The source took too long to respond. Retry the capture.",
-  E_RATE_LIMITED: "Wait a moment, then retry.",
-  E_FILE_TOO_LARGE: "This capture is too large. Save a smaller source.",
-  E_CAPTURE_TOO_LARGE: "This capture is too large. Save a smaller source.",
-  E_INVALID_FILE_TYPE: UNSUPPORTED_FILE,
-  E_INVALID_REQUEST: "This link can’t be saved. Check it and retry.",
-  E_X_ARTICLE_POST_LINK_REQUIRED: "use the article’s post link.",
-  E_X_PROVIDER_UNAVAILABLE:
-    "X imports are temporarily unavailable. Retry in a moment.",
-  E_X_PROVIDER_CREDITS_DEPLETED: X_UNAVAILABLE,
-  E_X_PROVIDER_AUTH_REJECTED: X_UNAVAILABLE,
-  E_X_PROVIDER_RATE_LIMITED:
-    "X is limiting imports. Wait a moment, then retry.",
-  E_X_PROVIDER_TIMEOUT: "X took too long to respond. Retry the capture.",
+/** The capture endpoints' domain codes (media_source_ingest.py, x_ingest.py, x_client.py). */
+const CAPTURE_REFUSAL: Readonly<Record<string, (fact: string) => Line>> = {
+  E_RESOURCE_CONFLICT: fact => ({ fact, reason: "its libraries changed since you chose them." }),
+  E_LIBRARY_FORBIDDEN: fact => ({ fact, reason: OUTCOME_REASON.LibraryForbidden }),
+  E_SOURCE_IMPORT_ACTIVE: () => ({ fact: "this source is already importing." }),
+  E_X_IDENTITY_CONFLICT: fact => ({ fact, reason: "it matches more than one thread you saved." }),
+  E_X_SOURCE_CONFLICT: fact => ({ fact }),
+  E_FILE_TOO_LARGE: fact => ({ fact, reason: OUTCOME_REASON.FileTooLarge }),
+  E_CAPTURE_TOO_LARGE: fact => ({ fact, reason: OUTCOME_REASON.FileTooLarge }),
+  E_INVALID_FILE_TYPE: fact => ({ fact, reason: OUTCOME_REASON.UnsupportedFileType }),
+  E_INVALID_REQUEST: () => ({ fact: "this link can’t be saved." }),
+  E_X_ARTICLE_POST_LINK_REQUIRED: fact => ({ fact, reason: "x articles save from their post link." }),
+  E_X_PROVIDER_UNAVAILABLE: fact => ({ fact, reason: "x imports aren’t available." }),
+  E_X_PROVIDER_CREDITS_DEPLETED: fact => ({ fact, reason: "x imports aren’t available." }),
+  E_X_PROVIDER_AUTH_REJECTED: fact => ({ fact, reason: "x imports aren’t available." }),
+  E_X_PROVIDER_RATE_LIMITED: fact => ({ fact, reason: "x is limiting imports." }),
+  E_X_PROVIDER_TIMEOUT: fact => ({ fact, reason: "x didn’t answer in time." }),
 };
 
 /**
- * A failed capture or attachment. Anything this does not model, a programming
- * error included, is rethrown for the screen boundary.
+ * A failed capture or attachment: its domain code or upload outcome, ahead of the transport. A
+ * malformed intent and same-system defects rethrow. Until L7, for consumers outside lib/imports.
  */
-export function captureErrorFeedback(
-  error: unknown,
-  operation: CaptureOperation,
-): FeedbackContent {
-  const title =
-    operation === "SaveSource" ? "Couldn’t save" : "Attachment wasn’t added";
-  if (error instanceof UploadSessionError) {
-    return {
-      tone: "Danger",
-      title,
-      message: outcomeSentence(error, CAPTURE_OUTCOME),
-    };
-  }
-  const { code, requestId } = modeled(error);
-  if (!Object.hasOwn(CAPTURE_REFUSAL, code)) {
-    const transport = apiTransportFeedback(modeled(error), title);
-    if (transport !== null) return transport;
-    throw error;
-  }
-  return { tone: "Danger", title, message: CAPTURE_REFUSAL[code], requestId };
+export function captureErrorFeedback(error: unknown, operation: CaptureOperation): FeedbackContent {
+  const fact = CAPTURE_FACT[operation];
+  if (error instanceof UploadSessionError) return content(outcomeLine(error, fact));
+  const failure = modeled(error);
+  return content(Object.hasOwn(CAPTURE_REFUSAL, failure.code)
+    ? CAPTURE_REFUSAL[failure.code](fact)
+    : TRANSPORT_LINES[transportOf(failure)].command(fact));
 }
 
 /** Acceptance records a saved source, independently of processing success. */
 export function captureStatusLine(result: AcceptedIngest): string {
-  return !result.available ? "this item was saved, then removed" : result.processing === "failed" ? "saved · processing failed" : "saved";
+  return !result.available ? "saved, then removed." : result.processing === "failed" ? "saved. nexus couldn’t process it." : "saved.";
 }
 
 export type AcceptanceFailure =
@@ -1199,88 +1065,32 @@ export type AcceptanceFailure =
     }
   | { readonly kind: "Superseded" };
 
-/** An Add row whose acceptance is unknown; Check status replays its intent. */
-export const UNCONFIRMED: FeedbackContent = {
-  tone: "Warning",
-  title: "change not confirmed",
-  message: "check save to retry the original request.",
-};
+/** An Add whose acceptance is unknown: resending its id answers the same acceptance. */
+export const UNCONFIRMED: FeedbackContent = content({ fact: "not sure that saved.", reason: "it may have gone through." });
 
-const notAdded = (
-  message: string,
-): Extract<AcceptanceFailure, { kind: "Rejected" }> => ({
-  kind: "Rejected",
-  feedback: { tone: "Danger", title: "Couldn’t save", message },
-});
-
-/** Add's answer to each upload-session outcome of one frozen intent. */
-const ADD_OUTCOME = {
-  Expired: { kind: "Rejected", feedback: { tone: "Warning", title: "upload expired", message: "upload expired. choose the file again." } },
-  BytesMissing: {
-    kind: "AcceptanceUnresolved",
-    reason: "UploadIncomplete",
-    feedback: {
-      tone: "Warning",
-      title: "Upload didn’t complete",
-      message:
-        "Nexus never received this file. Retry the upload, or remove it and start a new import.",
-    },
-  },
-  Superseded: { kind: "Superseded" },
-  Unresolved: {
-    kind: "AcceptanceUnresolved",
-    reason: "StatusUnknown",
-    feedback: UNCONFIRMED,
-  },
-  UnsupportedFileType: notAdded(
-    "This file type isn’t supported. Start a new import with a PDF or EPUB.",
-  ),
-  FileTooLarge: notAdded(
-    "This file exceeds the import limit. Start a new import with a smaller file.",
-  ),
-  LibraryForbidden: notAdded(
-    "You no longer have access to a destination library. Choose different libraries and start a new import.",
-  ),
-  FileMismatch: notAdded(FILE_DOES_NOT_MATCH),
-} satisfies Readonly<Record<PlainOutcome, AcceptanceFailure>>;
+/** An added file's fact, apart from a link's. */
+const ADDED_FILE = "couldn’t save this file.";
 
 /**
- * Why an Add acceptance did not land: refused, unknown (send its id again to
- * find out), or superseded. A transport failure or a 5xx leaves the
- * acceptance unknown; defects and a malformed intent are rethrown.
+ * Why an Add acceptance did not land: refused, unknown (send its id again to find out), or
+ * superseded. A transport with no answer leaves the acceptance unknown; defects and a malformed
+ * intent rethrow.
  */
 export function acceptanceFailure(error: unknown): AcceptanceFailure {
   if (error instanceof UploadSessionError) {
-    if (error.outcome.kind === "IntentMalformed") throw error;
-    if (error.outcome.kind === "VerificationRejected") {
-      return {
-        kind: "Rejected",
-        feedback: {
-          tone: "Danger",
-          title: UPLOAD_REJECTED_LABEL,
-          message: verificationSentence(error.outcome),
-        },
+    const outcome = error.outcome;
+    switch (outcome.kind) {
+      case "IntentMalformed": throw error;
+      case "Superseded": return { kind: "Superseded" };
+      case "Unresolved":
+      case "BytesMissing": return {
+        kind: "AcceptanceUnresolved", reason: outcome.kind === "Unresolved" ? "StatusUnknown" : "UploadIncomplete",
+        feedback: content({ fact: ADDED_FILE, reason: OUTCOME_REASON[outcome.kind] }),
       };
+      default: return { kind: "Rejected", feedback: content(outcomeLine(error, ADDED_FILE)) };
     }
-    return ADD_OUTCOME[error.outcome.kind];
   }
-  const { status, code, requestId } = modeled(error);
-  if (
-    status >= 500 || outcomeUnknown(error)
-  ) {
-    return {
-      kind: "AcceptanceUnresolved",
-      reason: "StatusUnknown",
-      feedback: { ...UNCONFIRMED, requestId },
-    };
-  }
-  if (code === "E_RESOURCE_CONFLICT") return { kind: "Rejected", feedback: { tone: "Warning", title: "save needs review. review your choices and save again.", requestId } };
-  if (code === "E_LIBRARY_FORBIDDEN") {
-    const failure = ADD_OUTCOME.LibraryForbidden;
-    return { ...failure, feedback: { ...failure.feedback, requestId } };
-  }
-  return {
-    kind: "Rejected",
-    feedback: captureErrorFeedback(error, "SaveSource"),
-  };
+  const transport = transportOf(modeled(error));
+  if (transport === "Offline" || transport === "Unavailable") return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", feedback: UNCONFIRMED };
+  return { kind: "Rejected", feedback: captureErrorFeedback(error, "SaveSource") };
 }

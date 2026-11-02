@@ -118,10 +118,8 @@ export function getFileUploadKind(file: File): UploadFileKind | null {
 /** What the browser can tell before sending; the size limit is the server's. */
 export function getFileUploadError(file: File): string | null {
   const kind = getFileUploadKind(file);
-  if (kind === null) return "Only PDF and EPUB files are supported.";
-  return file.size === 0
-    ? `${kind.toUpperCase()} files must not be empty.`
-    : null;
+  if (kind === null) return "only pdf and epub files can be added.";
+  return file.size === 0 ? `this ${kind.toLowerCase()} file is empty.` : null;
 }
 
 /** The actual form/visit owns this memory; it never lives in browser storage. */

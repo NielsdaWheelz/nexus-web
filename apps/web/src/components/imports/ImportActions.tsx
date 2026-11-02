@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCallback, useRef, useState, type RefObject } from "react";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import type { CommandVerb } from "@/components/feedback/stage";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -9,8 +10,10 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
-import { uploadCommandFeedback } from "@/lib/imports/copy";
+import { UPLOAD_COMMAND_FACT, retryUploadRefusal, type UploadCommand } from "@/lib/imports/copy";
 import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
@@ -26,30 +29,24 @@ import styles from "./Imports.module.css";
 type Command = Extract<ActionDescriptor, { kind: "command" }>;
 
 /** Readiness offers Open; its fresh activation still authorizes the navigation. */
-function useOpenAction(item: ImportItem) {
+function useOpenAction(item: ImportItem): Command | null {
   const { ctx, run } = useActionRuntime();
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
+  const outcome = useOutcome();
   const mediaRef = item.media_id === null ? null : `media:${item.media_id}`;
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
-  const mounted = useRef(false);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const open = (ref: string, intent: OpenIntent) => openAsyncResult({
     ctx, originPaneId: runtime.paneId, intent, subject: item.title,
     create: async () => {
       const current = await resolveResourceItem(ref);
       if (current.missing || current.activation.kind !== "route" || current.activation.href === null) {
-        if (mounted.current) setFailure({
-          tone: "Warning", title: "couldn’t open this item", message: BLOCKED_COPY.TemporarilyUnavailable,
-        });
+        outcome.say({ fact: `couldn’t open "${item.title}".`, reason: "it isn’t available." });
         return null;
       }
-      if (mounted.current) setFailure(null);
-      return { target: { href: current.activation.href, labelHint: item.title }, title: "item available", openLabel: "open item" };
+      return { target: { href: current.activation.href, labelHint: item.title }, title: "ready to open", openLabel: "open" };
     },
   });
-  const action: Command | null = mediaRef !== null && (item.can_read || item.can_play) ? {
+  return mediaRef !== null && (item.can_read || item.can_play) ? {
     kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
@@ -57,7 +54,6 @@ function useOpenAction(item: ImportItem) {
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
-  return { action, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 function OpenControl({ item, action }: { readonly item: ImportItem; readonly action: Command }) {
@@ -65,7 +61,7 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
     const detail = prepareActionSelect(event, null);
     if (detail && !action.disabled) action.onSelect(detail);
   };
-  return <ButtonLink reserveIcon busyKey={item.ref} href={`/media/${item.media_id}`}
+  return <ButtonLink href={`/media/${item.media_id}`}
     aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}
   >{action.label}</ButtonLink>;
@@ -73,8 +69,8 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
 
 /** The row and inspector share the same Open command, including modifier intent. */
 export function ImportOpenAction({ item }: { readonly item: ImportItem }) {
-  const { action, feedback } = useOpenAction(item);
-  return <>{action ? <OpenControl item={item} action={action} /> : null}{feedback}</>;
+  const action = useOpenAction(item);
+  return action ? <OpenControl item={item} action={action} /> : null;
 }
 
 /** Exact offered attempt/job/revision, shared busy identity and catalog wording. */
@@ -95,52 +91,68 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
 }
 
 function RecoveryControl({ action }: { readonly action: Command }) {
-  return <Button reserveIcon busyKey={action.id} aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
+  return <Button aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     onClick={event => { if (!action.disabled) action.onSelect({ triggerEl: event.currentTarget, openIntent: "default" }); }}
   >{action.label}</Button>;
 }
 
 /**
  * Upload retries retain the session's id and selected file; removal is idempotent.
- * File selection is synchronous with activation. Cancellation submits nothing.
+ * File selection is synchronous with activation. Cancellation submits nothing. A command whose
+ * answer was lost is held until a resend lands; a removal's also leaves with its row.
  */
 function useUploadActions(item: ImportItem) {
   const { run } = useActionRuntime();
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
+  const outcome = useOutcome();
+  const [unsure, setUnsure] = useState<{ readonly command: UploadCommand; readonly attempt: number } | null>(null);
   const busy = useBusyActionIds(item.ref);
   const inputRef = useRef<HTMLInputElement>(null);
-  if (item.media_id !== null) return { input: null, retry: null, remove: null, feedback: null };
+  if (item.media_id !== null) return { input: null, retry: null, remove: null, held: null };
   const sessionId = item.ref.slice("upload:".length);
   const retrying = busy.has("RetryUpload");
   const removing = busy.has("RemoveUpload");
-  const send = (id: "RetryUpload" | "RemoveUpload", command: () => Promise<unknown>) => run({
+  const chooseFile = () => { if (!retrying) inputRef.current?.click(); };
+  const again: Readonly<Record<UploadCommand, CommandVerb>> = {
+    RetryUpload: { label: "retry", commandKey: `${item.ref} RetryUpload`, run: chooseFile, busy: retrying },
+    RemoveUpload: { label: "retry", commandKey: `${item.ref} RemoveUpload`, run: () => sendRemove(), busy: removing },
+  };
+  const send = (id: UploadCommand, command: () => Promise<unknown>) => run({
     ref: item.ref, id, label: ACTION_CATALOG[id].label, title: item.title,
     confirmation: null, tracked: true,
     execute: async () => {
       try {
         await command();
-        setFailure(null);
+        setUnsure(null);
       } catch (error) {
-        if (error instanceof UploadSessionError && error.outcome.kind === "Superseded") {
-          setFailure(null);
+        if (error instanceof UploadSessionError) {
+          setUnsure(null);
+          // Removal settles its one declared outcome itself (ingest.ts); any other is a defect.
+          if (id === "RemoveUpload") throw error;
+          const refusal = retryUploadRefusal(error);
+          if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [again.RetryUpload] : undefined);
           return;
         }
-        setFailure(uploadCommandFeedback(id, error));
+        const transport = isApiError(error) && !isSameSystemApiDefect(error) ? transportOf(error) : null;
+        if (transport === "Offline" || transport === "Unavailable") {
+          setUnsure((current) => ({ command: id, attempt: current?.command === id ? current.attempt + 1 : 0 }));
+          return;
+        }
+        setUnsure(null);
+        outcome.fail(error, UPLOAD_COMMAND_FACT[id], again[id]);
       }
     },
   });
+  const sendRemove = () => send("RemoveUpload", () => removeUploadSession(sessionId));
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
     kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon size={16} aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
-    onSelect: () => { if (!retrying) inputRef.current?.click(); },
+    onSelect: chooseFile,
   } : null;
   const remove: Command = {
     kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: <ACTION_CATALOG.RemoveUpload.icon size={16} aria-hidden="true" />,
-    tone: "danger", disabled: removing, disabledReason: removing ? "Removal is in progress." : undefined,
+    tone: "danger", disabled: removing, disabledReason: removing ? "removing." : undefined,
     onSelect: () => {
-      if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`))
-        send("RemoveUpload", () => removeUploadSession(sessionId));
+      if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`)) sendRemove();
     },
   };
   const input = retry === null ? null : <input ref={inputRef} className="sr-only" type="file" tabIndex={-1}
@@ -153,7 +165,10 @@ function useUploadActions(item: ImportItem) {
         send("RetryUpload", () => uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }));
     }}
   />;
-  return { input, retry, remove, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
+  const held = unsure === null ? null : <Hold id={`${item.ref} ${unsure.command}`} attempt={unsure.attempt}
+    line={{ fact: unsure.command === "RetryUpload" ? "not sure the upload finished." : "not sure this import was removed.", reason: "it may have gone through." }}
+    verbs={[again[unsure.command]]} />;
+  return { input, retry, remove, held };
 }
 
 /** Commands and feedback survive CSS promotion; the row owns its overflow ref. */
@@ -176,14 +191,14 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   const upload = useUploadActions(item);
   const recovery = item.primary === "search" ? search : source;
   const metadata = item.obligations.metadata;
-  const commands = [open.action, source, search].filter((action): action is Command => action !== null);
+  const commands = [open, source, search].filter((action): action is Command => action !== null);
   const shortcuts = <div ref={shortcutsRef} className={styles.rowActions} data-import-shortcuts="">
     {upload.input}
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
       ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
       : browserOffer && item.primary === "source" ? <span data-import-shortcut=""><ButtonLink href={browserOffer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink></span>
       : recovery ? <span data-import-shortcut=""><RecoveryControl action={recovery} /></span> : null}
-    {open.action ? <span data-import-shortcut=""><OpenControl item={item} action={open.action} /></span> : null}
+    {open ? <span data-import-shortcut=""><OpenControl item={item} action={open} /></span> : null}
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}
   </div>;
   const menu = item.media_id === null ? <ActionMenu
@@ -205,7 +220,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}
   />;
-  return { shortcuts, menu, feedback: open.feedback || upload.feedback ? <>{open.feedback}{upload.feedback}</> : null };
+  return { shortcuts, menu, held: upload.held };
 }
 
 /** Each inspector section invokes only its owner's offered recovery. */
@@ -215,17 +230,17 @@ export function ImportObligationActions({ item, obligation }: {
 }) {
   const offer = item.obligations[obligation]?.recovery ?? null;
   const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" || offer?.kind === "BrowserCapture" ? null : offer);
-  if (offer?.kind === "BrowserCapture") return <ButtonLink reserveIcon busyKey={item.ref} href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
+  if (offer?.kind === "BrowserCapture") return <ButtonLink href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
   if (item.media_id === null) return obligation === "source" ? <UploadActions item={item} /> : null;
   return action ? <RecoveryControl action={action} /> : null;
 }
 
 function UploadActions({ item }: { readonly item: ImportItem }) {
-  const { input, retry, remove, feedback } = useUploadActions(item);
+  const { input, retry, remove, held } = useUploadActions(item);
   return <>{input}{retry ? <RecoveryControl action={retry} /> : null}
     <ActionMenu label={`more actions for ${item.title}`}
       source={{ kind: "Immediate", subjectKey: `import:${item.ref}`, title: item.title,
         content: { sections: [{ id: "Import", label: null, options: remove ? [remove] : [] }] },
       }}
-    />{feedback}</>;
+    />{held}</>;
 }

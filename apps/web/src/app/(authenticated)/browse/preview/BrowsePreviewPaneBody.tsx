@@ -10,17 +10,14 @@ import { useCommand } from "@/lib/podcasts/paneState";
 import MediaActions from "@/components/media/MediaActions";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import {
-  FeedbackFailure, useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { Verbs } from "@/components/feedback/stage";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import {
   fetchBrowsePreview,
@@ -38,65 +35,8 @@ import {
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { providerRefusal } from "../providerRefusal";
 import styles from "../browse.module.css";
-
-interface Failure {
-  readonly content: FeedbackContent;
-  readonly retryable: boolean;
-}
-
-const INVALID: Failure = {
-  content: {
-    tone: "Warning",
-    title: "Invalid preview link",
-    message: "This link is malformed or obsolete.",
-  },
-  retryable: false,
-};
-
-/** Retryable or terminal; any other code is a defect. */
-function previewErrorMessage(error: ApiError): Failure {
-  const failed = (message: string): Failure => ({
-    content: {
-      tone: "Danger",
-      title: "Preview couldn’t be loaded",
-      message,
-      requestId: error.requestId,
-    },
-    retryable: true,
-  });
-  const terminal = (title: string, message?: string): Failure => ({
-    content: { tone: "Warning", title, message, requestId: error.requestId },
-    retryable: false,
-  });
-  switch (error.code) {
-    case "E_NETWORK":
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return failed("Check your connection and retry.");
-    case "E_BROWSE_PROVIDER_UNAVAILABLE":
-      return failed(
-        "The discovery provider is unavailable. Retry in a moment.",
-      );
-    case "E_RATE_LIMITED":
-    case "E_BROWSE_PROVIDER_RATE_LIMITED":
-      return failed("Wait a moment, then retry.");
-    case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
-      return terminal(
-        "Preview isn’t available",
-        "The discovery provider’s allowance has been exhausted.",
-      );
-    case "E_INVALID_DISCOVERY_TARGET":
-      return terminal("Invalid preview link");
-    case "E_NOT_FOUND":
-      return terminal("No longer available");
-    default: {
-      const transport = apiTransportFeedback(error, "preview couldn’t be loaded");
-      if (transport !== null) return { content: transport, retryable: true };
-      throw error;
-    }
-  }
-}
 
 export default function BrowsePreviewPaneBody() {
   const display = useRenderEnvironment();
@@ -118,7 +58,7 @@ export default function BrowsePreviewPaneBody() {
   const attempted = useRef(false);
   const resolve = () => {
     if (preview === null || (preview.kind !== "Podcast" && preview.kind !== "Episode") || owned !== null) return;
-    opening.run("couldn’t open the catalogue item", async () => {
+    opening.run(preview.kind === "Podcast" ? "couldn’t open this podcast." : "couldn’t open this episode.", async () => {
       const resolved = preview.kind === "Podcast" ? await resolvePodcast(preview.target, ctx.sessionSignal()) : await resolvePodcastEpisode(preview.target, ctx.sessionSignal());
       if (!ctx.isActive()) return;
       const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
@@ -132,12 +72,18 @@ export default function BrowsePreviewPaneBody() {
     attempted.current = true;
     resolve();
   });
-  const failure =
-    target === null
-      ? INVALID
-      : resource.status === "failed"
-        ? previewErrorMessage(resource.error)
-        : null;
+  const back = () =>
+    router.canGoBack ? router.back({ disposition: { kind: "Follow" } }) : router.replace("/browse");
+  const backVerbs: Verbs = [{ label: "back to browse", commandKey: "back to browse", run: back }];
+  const retry = { run: () => { void resource.refetch().catch(() => {}); }, busy: resource.status === "failed" && resource.retrying };
+  const refusal = resource.status === "failed" ? providerRefusal(resource.error, display) : null;
+  const failure = target === null || resource.status === "failed" && resource.error.code === "E_INVALID_DISCOVERY_TARGET"
+    ? <Fact line={{ fact: "this link has nothing to preview." }} verbs={backVerbs} />
+    : resource.status !== "failed" ? null
+    : resource.error.code === "E_NOT_FOUND" ? <Fact line={{ fact: "this item isn’t available from its source." }} verbs={backVerbs} />
+    : refusal !== null ? <Fact line={{ fact: "couldn’t load preview details.", reason: refusal.reason }}
+      verbs={refusal.retry ? [{ label: "retry", commandKey: "retry preview details", ...retry }] : undefined} />
+    : <Failed error={resource.error} noun="preview details" retry={retry} />;
   usePreviewTitleHint(target, preview?.title);
 
   usePaneChrome({
@@ -166,33 +112,16 @@ export default function BrowsePreviewPaneBody() {
               },
             },
   });
-  const readOccurrence = useFeedbackOccurrence(failure !== null);
-  const openingOccurrence = useFeedbackOccurrence(opening.failure !== null);
   usePaneReturnReady(failure !== null || (preview !== null && owned === null));
 
-  if (failure !== null) {
-    const back = () =>
-      router.canGoBack ? router.back({ disposition: { kind: "Follow" } }) : router.replace("/browse");
-    return (
-      <PaneSurface
-        state={
-          <FeedbackFailure scope="Local" occurrence={readOccurrence}
-            content={failure.content}
-            announcement="Assertive"
-            actions={failure.retryable && resource.status === "failed"
-              ? [{ label: "retry", onClick: resource.refetch, busy: resource.retrying }]
-              : [{ label: "back to browse", onClick: back }]}
-          />
-        }
-      />
-    );
-  }
+  if (failure !== null) return <PaneSurface state={failure} />;
   if (preview === null || owned !== null || preview.kind === "Podcast" || preview.kind === "Episode") {
     return (
       <PaneSurface
         state={
-          opening.failure !== null ? <FeedbackFailure scope="Local" occurrence={openingOccurrence} content={opening.failure} announcement="Polite" actions={[{ label: "retry opening", onClick: resolve, busy: opening.running !== null }]} />
-            : <PaneLoadingState />
+          opening.failure !== null ? <Fact line={{ fact: opening.failure.title, reason: opening.failure.message }}
+            verbs={[{ label: "retry", commandKey: "retry opening", run: resolve, busy: opening.running !== null }]} />
+            : <Ruling />
         }
       />
     );

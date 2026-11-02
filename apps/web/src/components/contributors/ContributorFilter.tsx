@@ -4,7 +4,8 @@
 // handle to `authors=`; applied chips read display names from a label cache.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackBusy, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
@@ -81,11 +82,9 @@ export default function ContributorFilter({
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
   const failure = live && search.failure?.op !== "More" ? search.failure : null;
-  const failureOccurrence = useFeedbackOccurrence(failure !== null, search.requestedKey);
-  const emptyTitle = search.complete ? "no other authors match this search." : "no other matching authors found so far.";
   const readFeedback = useCollectionReadFeedback({
     list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null,
-    outcome: suggestions.length > 0 ? "results updated." : emptyTitle,
+    outcome: null,
     returnFocus: () => inputRef.current,
   });
   return (
@@ -100,14 +99,9 @@ export default function ContributorFilter({
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
-      {failure !== null ? (
-        <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={{ tone: "Warning", title: "couldn’t load authors", requestId: failure.error.requestId }}
-          announcement={search.active ? "Polite" : "None"}
-          actions={[{ label: "try again", onClick: search.retry, busy: search.running !== null }]}
-          returnFocus={() => inputRef.current} />
-      ) : live && !search.current ? (
-        <FeedbackBusy subject={q} pending/>
-      ) : null}
+      {failure !== null ? <Failed error={failure.error} noun="authors" retry={{ run: search.retry, busy: search.running !== null }} />
+        : live && search.failure === null && (!search.current || suggestions.length === 0 && !search.complete) ? <Ruling />
+        : null}
       {suggestions.length > 0 ? (
         <div className={styles.suggestions}>
           {suggestions.map((item) => (
@@ -125,8 +119,8 @@ export default function ContributorFilter({
           ))}
         </div>
       ) : null}
-      {live && search.current && failure === null && suggestions.length === 0 ? <FeedbackStatus
-        content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
+      {live && search.complete && failure === null && suggestions.length === 0
+        ? <Fact line={{ fact: "no other authors match this search." }} speak={active} /> : null}
       {live ? readFeedback.notice : null}
       {readFeedback.announcement}
     </div>

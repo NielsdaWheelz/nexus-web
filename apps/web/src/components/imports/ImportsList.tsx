@@ -8,13 +8,13 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { FeedbackFailure, FeedbackState, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { listRowStatus, useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
@@ -25,11 +25,9 @@ import {
   type ImportsView,
 } from "@/lib/imports/api";
 import {
-  STALE_NOTICE,
   VIEW_LABEL,
   countText,
-  emptyCopy,
-  loadFailure,
+  emptyLine,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
@@ -114,17 +112,7 @@ export default function ImportsList({
     if (previous !== observation) revalidate();
   }, [observation, revalidate]);
   const items = rows.items;
-  const error = rows.failure?.error ?? null;
   const counts = summary.status === "ready" ? summary.data : null;
-  const summaryFailed =
-    summary.status === "failed" ||
-    (summary.status === "ready" && summary.error !== null);
-  const stale =
-    (rows.status === "ready" && rows.failure !== null && rows.failure.op !== "More") ||
-    (summaryFailed && counts !== null);
-  const summaryOccurrence = useFeedbackOccurrence(summaryFailed);
-  const rowsOccurrence = useFeedbackOccurrence(error !== null, query);
-  const staleOccurrence = useFeedbackOccurrence(stale, query);
   const settled = rows.status !== "loading";
   useEffect(() => onSettled(settled), [onSettled, settled]);
 
@@ -284,12 +272,10 @@ export default function ImportsList({
   );
 
   const filtered = chips.some((chip) => chip.id !== "q");
-  const empty = emptyCopy(view, state.q !== undefined, filtered);
-  const emptyTitle = rows.complete ? empty.title
-    : state.q !== undefined || filtered ? "no matching import found so far." : "no imports loaded so far.";
+  const searched = state.q !== undefined;
   const readFeedback = useCollectionReadFeedback({
     list: rows, unit: UNIT, waiting: rows.status === "loading",
-    outcome: items.length > 0 ? "results updated." : emptyTitle,
+    outcome: null,
     returnFocus: () => inputRef.current,
   });
   return (
@@ -320,53 +306,23 @@ export default function ImportsList({
     >
       {readFeedback.announcement}
       <PaneSurface
-        state={
-          <>
-            {summary.status === "failed" ? (
-              <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
-                content={loadFailure(summary.error)}
-                announcement="Assertive"
-                actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
-              />
-            ) : null}
-            {rows.status === "failed" ? (
-              <FeedbackFailure scope="Local" occurrence={rowsOccurrence}
-                content={loadFailure(error)}
-                announcement="Assertive"
-                actions={[{ label: "try again", onClick: rows.retry, busy: rows.running !== null }]}
-              />
-            ) : null}
-            {stale ? (
-              <FeedbackFailure scope="Local" occurrence={staleOccurrence}
-                content={STALE_NOTICE}
-                announcement="Polite"
-                actions={[{ label: "try again", onClick: refresh,
-                  busy: (rows.status === "ready" && rows.running !== null) ||
-                    (summary.status === "ready" && summary.refreshing) }]}
-              />
-            ) : null}
-            {rows.status === "loading" ? (
-              <PaneLoadingState />
-            ) : null}
-          </>
-        }
-        empty={
-          !rows.current ? undefined : (
-            <FeedbackState
-              content={{ tone: "Neutral", title: emptyTitle, message: rows.complete ? empty.body : undefined }}
-              announcement="None"
-              actions={rows.complete && (filtered || state.q !== undefined) ? [{
-                  label: filtered
-                    ? state.q === undefined ? "clear filters" : "clear search and filters"
-                    : "clear search",
-                  onClick: () => {
-                    setState(withoutFilters({ ...state, q: undefined }));
-                    focusInput();
-                  },
-              }] : undefined}
-            />
-          )
-        }
+        state={rows.status === "loading" ? <Ruling />
+          : rows.status === "failed" && rows.failure !== null ? <Failed error={rows.failure.error} noun="imports" retry={{ run: rows.retry, busy: rows.running !== null }} />
+          : null}
+        empty={!rows.current ? undefined : !rows.complete ? rows.failure === null ? <Ruling /> : undefined : (
+          <Fact
+            line={{ fact: emptyLine(view, searched, filtered) }}
+            verbs={filtered || searched ? [{
+              label: filtered ? searched ? "clear search and filters" : "clear filters" : "clear search",
+              commandKey: "clear search and filters",
+              run: () => {
+                setState(withoutFilters({ ...state, q: undefined }));
+                focusInput();
+              },
+            }] : undefined}
+            speak={active}
+          />
+        )}
         footer={readFeedback.notice}
       >
         {items.length > 0 ? (

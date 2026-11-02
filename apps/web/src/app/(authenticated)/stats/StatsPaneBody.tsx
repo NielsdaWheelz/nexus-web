@@ -6,7 +6,9 @@ import { CircleMinus } from "lucide-react";
 // pane url (statsPeriod.ts). The figures are one server snapshot per read; sessions page by
 // keyset under their own snapshot. The pane rereads when it becomes active, when the page
 // returns to the screen and, while active, when Consumption moves. One correction at a time:
-// "Don't count this session" mints the exclusion's id once per session and resends it.
+// "Don't count this session" mints the exclusion's id once per session and resends it, so a
+// correction whose answer was lost is held, and its retry sends the same id; the server answers a
+// repeat as success. The held row leaves when it lands, or when a reread shows it landed.
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -16,8 +18,11 @@ import Input from "@/components/ui/Input";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackState, useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   useServerValue,
@@ -87,32 +92,14 @@ const SHORT_DATE = {
   hour: "numeric",
   minute: "2-digit",
 } as const;
-const RETRY = {
-  title: "activity correction unconfirmed",
-  message: "it may already be applied. refresh this view to check before retrying.",
-};
-const STALE = {
-  title: "Activity changed before this correction",
-  message: "Review the refreshed history and retry if needed.",
-};
-/** Copy for an expected correction failure; anything else is a defect. */
-function correctionFailure(
-  error: unknown,
-): { title: string; message?: string } | null {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) return null;
-  if (
-    error.status === 0 ||
-    error.status === 408 ||
-    error.status === 429 ||
-    error.status >= 500
-  )
-    return RETRY;
-  const transport = apiTransportFeedback(error, "activity correction wasn’t confirmed");
-  if (transport !== null) return transport;
-  if (error.status === 404)
-    return { title: "That activity is no longer available" };
-  return error.status === 400 || error.status === 409 ? STALE : null;
-}
+/** One correction: its id is the exclusion's, minted once and resent. */
+type Correction = { readonly kind: "Exclude" | "Restore"; readonly id: string; readonly send: () => Promise<void> };
+/** A correction whose answer was lost; `attempt` keys its speech. */
+type Unconfirmed = Correction & { readonly attempt: number };
+const CORRECTION_FACT = {
+  Exclude: "couldn’t stop counting this session.",
+  Restore: "couldn’t restore this session.",
+} as const;
 
 const pad = (value: number) => String(value).padStart(2, "0");
 const count = (value: number) => new Intl.NumberFormat().format(value);
@@ -476,7 +463,7 @@ function Sessions(props: {
       <ActionMenu
         label={`more actions for ${row.title}, ${row.modality}, ${shortDate(row.started_at)}`}
         triggerDisabled={correcting}
-        triggerDisabledReason="Another activity correction is in progress"
+        triggerDisabledReason="another correction is running."
         source={{ kind: "Immediate", subjectKey: `activity-session:${sessionKey(row)}`, title: `${row.title}, ${row.modality}, ${shortDate(row.started_at)}`, content: { sections: [{ id: "Session", label: null, options: [
           {
             kind: "command",
@@ -487,7 +474,6 @@ function Sessions(props: {
         ] }] } }}
       />
     );
-  const sessionsOccurrence = useFeedbackOccurrence(sessions.failure !== null, sessions.requestedKey);
   return (
     <Section
       title="Sessions"
@@ -509,12 +495,8 @@ function Sessions(props: {
             movement(row.forward_word_position, row.forward_media_position_ms),
           ])}
         />
-        {sessions.failure !== null && sessions.failure.op !== "More" ? (
-          <FeedbackFailure scope="Local" occurrence={sessionsOccurrence}
-            content={{ tone: "Warning", title: sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
-            announcement="Polite"
-            actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
-          />
+        {!sessions.current && sessions.failure !== null ? (
+          <Failed error={sessions.failure.error} noun="sessions" retry={{ run: sessions.retry, busy: sessions.running !== null }} />
         ) : null}
         {readFeedback.notice}
         {readFeedback.announcement}
@@ -835,8 +817,8 @@ export default function StatsPaneBody() {
       mounted.current = false;
     };
   }, []);
-  const feedback = useFeedback();
-  const fail = useThrowLater();
+  const outcome = useOutcome();
+  const throwLater = useThrowLater();
   const timeZone = useHydratedBrowserTimeZone();
   const isActive = usePaneIsActive();
   const router = usePaneRouter();
@@ -844,6 +826,7 @@ export default function StatsPaneBody() {
   const refresh = useRefreshStamp(isActive, 0);
   const consumption = useChangeStamp("Consumption");
   const [correcting, setCorrecting] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState<readonly Unconfirmed[]>([]);
   const exclusionIds = useRef(new Map<string, string>());
   const update = (next: Partial<StatsView>) =>
     router.replace(statsViewHref({ ...view, ...next }));
@@ -887,31 +870,48 @@ export default function StatsPaneBody() {
   const shown = useRef<{ view: StatsView; data: Stats } | null>(null);
   if (stats.status === "ready") shown.current = { view, data: stats.data };
   const data = shown.current?.data ?? null;
-  const updating = stats.status === "loading" && data !== null;
   const initialLoading = data === null && stats.status === "loading";
   usePaneReturnReady(!initialLoading);
+  // A reread that shows a held correction landed resolves it.
+  const landed = (correction: Correction) => data !== null &&
+    (correction.kind === "Exclude") === data.activity.active_exclusions.some((row) => row.id === correction.id);
+  if (unconfirmed.some(landed)) setUnconfirmed(unconfirmed.filter((correction) => !landed(correction)));
 
   // The refreshed timeline shows a landed correction; only a failure reports.
-  const correct = async (
-    send: () => Promise<void>,
-    confirmation: string,
-  ) => {
-    if (!mounted.current || correcting || !window.confirm(confirmation)) return;
+  const send = async (correction: Correction) => {
+    if (!mounted.current || correcting) return;
     setCorrecting(true);
+    const others = (held: readonly Unconfirmed[]) => held.filter((item) => item.id !== correction.id);
     try {
-      await send();
+      await correction.send();
       if (!mounted.current) return;
+      setUnconfirmed(others);
       publishChange("Consumption");
     } catch (error) {
       if (!mounted.current) return;
       if (handleUnauthenticatedApiError(error)) return;
-      const failure = correctionFailure(error);
-      if (failure === null) return fail({ error });
-      feedback.receipt({ tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined });
-      if (failure === STALE) publishChange("Consumption");
+      if (!isApiError(error) || isSameSystemApiDefect(error)) return throwLater({ error });
+      const transport = transportOf(error);
+      if (transport === "Offline" || transport === "Unavailable") {
+        setUnconfirmed((held) => [...others(held), { ...correction, attempt: (held.find((item) => item.id === correction.id)?.attempt ?? -1) + 1 }]);
+        return;
+      }
+      setUnconfirmed(others);
+      const fact = CORRECTION_FACT[correction.kind];
+      if (transport !== "Refused") {
+        outcome.fail(error, fact, { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction) });
+      } else if (error.status === 404) {
+        outcome.say(correction.kind === "Exclude" ? { fact, reason: "its work isn’t available anymore." } : { fact });
+      } else if (error.status === 400 || error.status === 409) {
+        outcome.say(correction.kind === "Exclude" && error.status === 400 ? { fact, reason: "its activity changed since this view loaded." } : { fact });
+        publishChange("Consumption");
+      } else throwLater({ error });
     } finally {
       if (mounted.current) setCorrecting(false);
     }
+  };
+  const correct = (correction: Correction, confirmation: string) => {
+    if (!correcting && window.confirm(confirmation)) void send(correction);
   };
   const exclude = (row: Session) => {
     const key = sessionKey(row);
@@ -925,26 +925,17 @@ export default function StatsPaneBody() {
       ended_at: row.ended_at,
     };
     // One id per attempt at this session, resent until it lands.
-    const send = async () => {
+    correct({ kind: "Exclude", id, send: async () => {
       await apiFetch<void>(`/api/consumption/exclusions/${id}`, {
         method: "PUT",
         body: JSON.stringify(body),
       });
       exclusionIds.current.delete(key);
-    };
-    void correct(
-      send,
-      `Don’t count this ${duration(row.active_ms)} session?`,
-    );
+    } }, `Don’t count this ${duration(row.active_ms)} session?`);
   };
-  const restore = (row: Exclusion) =>
-    void correct(
-      () =>
-        apiFetch<void>(`/api/consumption/exclusions/${row.id}`, {
-          method: "DELETE",
-        }),
-      `Count this ${duration(row.excluded_active_ms)} session again?`,
-    );
+  const restore = (row: Exclusion) => correct({ kind: "Restore", id: row.id, send: () =>
+    apiFetch<void>(`/api/consumption/exclusions/${row.id}`, { method: "DELETE" }),
+  }, `Count this ${duration(row.excluded_active_ms)} session again?`);
 
   const yearView = view.view === "year";
   const today = browserToday();
@@ -977,22 +968,15 @@ export default function StatsPaneBody() {
     data.completion.total === 0 &&
     kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
     data.activity.active_exclusions.length === 0;
-  const failure = stats.status === "failed" || stats.status === "ready" ? stats.error : null;
-  const readOccurrence = useFeedbackOccurrence(failure !== null);
-  const retryActions = [{
-    label: "retry statistics", onClick: stats.refetch,
-    busy: stats.status === "failed" ? stats.retrying : stats.status === "ready" && stats.refreshing,
-  }] as const;
-
   return (
-    <main className={styles.pane} aria-busy={updating || initialLoading}>
+    <main className={styles.pane}>
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>
             {yearView ? "A factual annual record" : "Consumption activity"}
           </p>
           <p className={styles.timeZone}>
-            Local time · {timeZone ?? "detecting your time zone"}
+            Local time{timeZone ? ` · ${timeZone}` : null}
           </p>
         </div>
         <Controls
@@ -1003,20 +987,16 @@ export default function StatsPaneBody() {
         />
       </header>
 
-      {initialLoading ? (
-        <FeedbackBusy subject={query} pending/>
-      ) : null}
-      {failure !== null && data === null ? (
-        <FeedbackState content={{ tone: "Warning", title: "statistics couldn’t load", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
-      ) : null}
-      {failure !== null && data !== null ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence} content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
+      {initialLoading ? <Ruling /> : null}
+      {stats.status === "failed" && data === null ? (
+        <Failed error={stats.error} noun="statistics" retry={{ run: () => { void stats.refetch().catch(() => {}); }, busy: stats.retrying }} />
       ) : null}
       {totals?.recorded_active_ms === 0 ? (
-        <FeedbackState content={data!.activity.applied_filters.length > 1
-          ? { tone: "Neutral", title: "no activity matches this view", message: "try a broader period." }
-          : { tone: "Neutral", title: "no observed activity yet", message: "reading, listening and video activity appears here when recorded." }} announcement="None" />
+        <Fact line={{ fact: data!.activity.applied_filters.length > 1 ? "no activity matches these filters." : "no activity recorded in this period." }} />
       ) : null}
+      {unconfirmed.map((correction) => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
+        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
+        verbs={[{ label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting }]} />)}
       {data === null || totals === undefined || wholeEmpty ? null : yearView ? (
         <YearInReading data={data} year={view.year ?? today.slice(0, 4)} />
       ) : totals.active_ms === 0 ? (
