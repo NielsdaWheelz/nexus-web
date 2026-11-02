@@ -145,6 +145,8 @@ export function FailureAnnouncement({ failure, session }: { failure: Failure; se
       onPublish={() => session.spoken.set(failure.occurrence, occurrence)} /> : null;
 }
 
+// Neutral has no tone. A toned signal paints its tone on its sign; a tone with no sign
+// keeps the sign's slot blank and paints its title, as FieldFeedback paints its words.
 const ICONS = { Neutral: null, Info: null, Success: Icon.Check, Warning: Icon.Warning, Danger: null };
 const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
 
@@ -237,6 +239,7 @@ export function Signal({
     });
   }, [overlay, mayRestoreFocus]);
   const Glyph = plain ? null : ICONS[content.tone];
+  const unsigned = !plain && Glyph === null && content.tone !== "Neutral";
   const Title = surfaceState ? "h2" : "p";
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
@@ -251,8 +254,8 @@ export function Signal({
     aria-labelledby={titleId}
   >
     <div ref={setSummaryElement} className={styles.summary}>
-      {Glyph ? <Glyph className={styles.icon} size={16} aria-hidden="true" /> : null}
-      <Title id={titleId} className={styles.title}>{content.title}</Title>
+      {Glyph ? <Glyph className={styles.icon} size={16} aria-hidden="true" /> : unsigned ? <span className={styles.slot} /> : null}
+      <Title id={titleId} className={unsigned ? `${styles.title} ${styles.tonedTitle}` : styles.title}>{content.title}</Title>
       <div className={styles.controls}>
         {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} contextId={titleId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
         {hasDetails ? <Button
