@@ -34,9 +34,11 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiTransportFeedback, outcomeUnknown, type ApiError } from "@/lib/api/client";
+import type { Line } from "@/components/feedback/stage";
+import { outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { CONFLICT_NOTICE } from "@/lib/imports/copy";
+import { remoteAdmission } from "@/lib/native/admission";
 
 type Group =
   | "Navigate"
@@ -310,68 +312,74 @@ export const ACTION_CATALOG = {
 
 export type ActionId = keyof typeof ACTION_CATALOG;
 
+/** The server's `blocked` reasons. `Loading` and `Busy` describe waits, so their sites keep them
+ * off screen, for a screen reader alone. */
 export const BLOCKED_COPY = {
-  PodcastSubscription: "included by this podcast subscription",
-  PermissionDenied: "You don’t have permission to do this.",
-  Locked: "This item is locked.",
-  Processing: "Available when processing finishes.",
-  TemporarilyUnavailable: "Temporarily unavailable. Try again.",
-  Loading: "Still loading. Try again in a moment.",
-  CapacityReached: "Lectern is full. Remove an item to add this one.",
-  RequiresOnline: "Connect to the internet to use this action.",
-  UnsupportedOnDevice: "Not supported on this device.",
-  Busy: "This action is in progress.",
+  PodcastSubscription: "included by this podcast subscription.",
+  PermissionDenied: "you don’t have permission.",
+  Locked: "this item is locked.",
+  Processing: "available once processing finishes.",
+  TemporarilyUnavailable: "unavailable right now.",
+  Loading: "still loading.",
+  CapacityReached: "lectern is full. remove an item first.",
+  RequiresOnline: "needs a connection.",
+  UnsupportedOnDevice: "not available on this device.",
+  Busy: "in progress.",
 } as const;
 
 export type BlockedReason = keyof typeof BLOCKED_COPY;
 
-/** A verb's modeled failure; a recovery that met newer work is the imports conflict. */
-export function actionFailure(
-  id: ActionId,
-  label: string,
-  error: ApiError,
-): FeedbackContent {
-  if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
-    return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
-  if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
-    return { tone: "Warning", title: `couldn’t complete “${label.replace(/…$/, "")}”`, message: error.message };
-  if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
-    return { tone: "Warning", title: "playback request not confirmed",
-      message: "check the player’s current state before trying again." };
-  const recovery =
-    id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
-  if (
-    id === "LecternMembership" &&
-    error.code === "E_RESOURCE_CONFLICT"
-  )
-    return {
-      tone: "Warning",
-      title: "lectern changed",
-      message: "review its current state before trying again.",
-      requestId: error.requestId,
-    };
-  if (recovery && error.code === "E_RESOURCE_CONFLICT")
-    return { ...CONFLICT_NOTICE, requestId: error.requestId };
-  const unconfirmed = outcomeUnknown(error);
-  const title = unconfirmed
-    ? `couldn't confirm: ${label.replace(/…$/, "")}`
-    : `couldn't complete “${label.replace(/…$/, "")}”`;
-  const transport = apiTransportFeedback(error, title);
-  if (transport !== null) return unconfirmed ? {
-    ...transport,
-    tone: "Warning",
-    message: "check the item's current state before trying again.",
-  } : transport;
-  return {
-    tone: "Danger",
-    title,
-    message: error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED"
-      ? "this account doesn't have permission for that change."
-      : error.code === "E_NOT_FOUND" || error.code === "E_MEDIA_NOT_FOUND"
-        ? "this item is no longer available."
-        : error.code === "E_LIMIT"
-          ? "the destination is full. make room before trying again."
-          : undefined,
-    requestId: error.requestId,
-  };
+/** Why a remote verb is unavailable, from admission. A browser offline while admitted lacks a
+ * connection too. A durable reason, shown. */
+export function admissionReason(): string {
+  const admission = remoteAdmission();
+  switch (admission) {
+    case "SignInRequired": return "sign in to use this.";
+    case "UpdateRequired": return staleBuild();
+    case "Checking":
+    case "Unavailable":
+    case "Ready":
+      return BLOCKED_COPY.RequiresOnline;
+  }
+}
+
+/** What a failed verb tells. `Domain` is the verb's own line, translated from a domain code ahead
+ * of the transport; `Transport` leaves the reason and verb to the transport; `Unknown` is a write
+ * that may have gone through, held until the verb runs again. `retry` resends the same verb. */
+export type ActionOutcome =
+  | { readonly kind: "Domain"; readonly line: Line; readonly retry: boolean }
+  | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
+  | { readonly kind: "Unknown"; readonly line: Line };
+
+export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError): ActionOutcome {
+  const named = `“${label.replace(/…$/, "")}”`;
+  const fact = `couldn’t complete ${named}.`;
+  const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
+  if (id === "Playback") switch (error.code) {
+    case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
+    case "E_PLAYBACK_REFUSED":
+    case "E_PLAYBACK_STALE": return domain({ fact: `couldn’t ${label.replace(/…$/, "").toLowerCase()}.`, reason: error.message }, true);
+    case "E_PLAYBACK_UNCONFIRMED": return { kind: "Unknown", line: { fact: "not sure playback started.", reason: "it may have gone through." } };
+  }
+  if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
+    return domain({ fact: "couldn’t change the lectern.", reason: "it changed since this menu opened." });
+  if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
+    return domain({ fact: CONFLICT_NOTICE.title, reason: CONFLICT_NOTICE.message });
+  if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
+  switch (error.code) {
+    case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });
+    case "E_FORBIDDEN":
+    case "E_OWNER_REQUIRED": return domain({ fact, reason: "you don’t have permission." });
+    case "E_NOT_FOUND":
+    case "E_MEDIA_NOT_FOUND": return domain({ fact, reason: "this item is gone." });
+    case "E_LIMIT": return domain({ fact, reason: "the destination is full." });
+  }
+  return { kind: "Transport", fact, retry: id === "Playback" };
+}
+
+/** The player's one sentence for a refused verb; lib/player reads its title until L7. */
+export function actionFailure(id: ActionId, label: string, error: ApiError): { readonly title: string } {
+  const outcome = actionOutcome(id, label, label, error);
+  const line = outcome.kind === "Transport" ? TRANSPORT_LINES[transportOf(error)].command(outcome.fact) : outcome.line;
+  return { title: line.reason ? `${line.fact} ${line.reason}` : line.fact };
 }

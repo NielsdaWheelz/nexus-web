@@ -4,14 +4,16 @@
  * One account's external-media intention, retained independently of its row or
  * picker. URL admission saves; episode resolution establishes catalogue identity.
  * Placement retains its exact guards through response loss. Nothing survives a
- * reload. Podcast subscription is a separate operation. Each failure reports once;
- * the subject's own lectern or library control then carries its recovery.
+ * reload. Podcast subscription is a separate operation. A refusal reports once; a save
+ * that may have gone through stands until it is retried or resolved. Either way the
+ * subject's own lectern or library control then carries its recovery.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import type { Line, Verb } from "@/components/feedback/stage";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchBrowsePreview, type BrowsePreview } from "@/lib/browse/api";
@@ -38,16 +40,23 @@ export interface MediaContinuation {
   readonly guard: AcquisitionGuard | null;
   readonly finalMediaId: string | null;
   readonly placement: { readonly libraryId: string; readonly body: Schema<"PlaceItemRequest"> } | null;
-  readonly failure: { readonly content: FeedbackContent; readonly unknown: boolean; readonly review: boolean } | null;
+  readonly failure: ContinuationFailure | null;
   readonly retryRevision: number;
 }
+/** `unknown`: the save may have gone through. `review`: the next press chooses again rather
+ * than resends. `error`: a transport failure, whose reason is the transport's. */
+type ContinuationFailure = { readonly line: Line; readonly unknown: boolean; readonly review: boolean; readonly error: ApiError | null };
 type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
-const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "Lectern" : destination.kind === "All" ? "All" : destination.library.name;
+const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "lectern" : destination.kind === "All" ? "All" : destination.library.name;
+const addLine = (operation: MediaContinuation, reason?: string): Line =>
+  ({ fact: `couldn’t add “${operation.subject.title}” to ${destinationLabel(operation.destination)}.`, reason });
+const UNAVAILABLE = (operation: MediaContinuation): ContinuationFailure =>
+  ({ line: { fact: `couldn’t save “${operation.subject.title}”.`, reason: "it’s no longer available." }, unknown: false, review: true, error: null });
 
-/** The one recovery a failed continuation offers, wherever it is shown. */
-export function continuationRecoveryLabel(operation: MediaContinuation, failure: NonNullable<MediaContinuation["failure"]>): string {
-  return failure.review ? "Review choices" : failure.unknown ? "Check change"
-    : operation.accepted === null ? "Retry import" : `Retry adding to ${destinationLabel(operation.destination)}`;
+/** The one recovery a failed continuation offers, wherever it is shown: a library's review
+ * opens the picker; anything else sends again. */
+export function continuationRecoveryLabel(operation: MediaContinuation, failure: ContinuationFailure): string {
+  return failure.review && operation.destination.kind === "Library" ? "choose libraries" : "retry";
 }
 
 export function useMediaContinuationOwner(ctx: Context) {
@@ -73,24 +82,15 @@ export function useMediaContinuationOwner(ctx: Context) {
     }
     const operation = get(id);
     if (!operation) return;
-    const resolved = operation.accepted !== null;
-    const unavailable = isApiError(error) && ["E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
-    const review = isApiError(error) && ["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
-    update(id, value => ({ ...value,
-      phase: unavailable ? "unavailable" : value.phase,
-      failure: {
-        unknown: isAbortError(error) || outcomeUnknown(error), review,
-        content: { tone: "Warning", title: unavailable && resolved ? "item is no longer available"
-          : review ? "save needs review"
-          : resolved ? operation.phase === "resolving" ? "resolving item" : "destination change not confirmed"
-          : `couldn’t import for ${operation.subject.title}`,
-          message: review ? "review the current choices before saving again."
-            : resolved ? "check the remaining action before trying again."
-            : "check this same request before choosing again.",
-          requestId: isApiError(error) ? error.requestId : undefined,
-        },
-      },
-    }));
+    const code = isApiError(error) ? error.code : null;
+    const unavailable = code === "E_NOT_FOUND" || code === "E_IMPORT_NOT_FOUND";
+    const failure: ContinuationFailure = !isApiError(error) || outcomeUnknown(error)
+      ? { line: { fact: `not sure “${operation.subject.title}” was saved.`, reason: "it may have gone through." }, unknown: true, review: false, error: null }
+      : unavailable ? UNAVAILABLE(operation)
+      : code === "E_RESOURCE_CONFLICT" ? { line: addLine(operation, `${destinationLabel(operation.destination)} changed since you chose it.`), unknown: false, review: true, error: null }
+      : code === "E_FORBIDDEN" || code === "E_LIBRARY_FORBIDDEN" ? { line: addLine(operation, `you can’t add to ${destinationLabel(operation.destination)}.`), unknown: false, review: true, error: null }
+      : { line: operation.accepted === null ? { fact: `couldn’t import “${operation.subject.title}”.` } : addLine(operation), unknown: false, review: false, error };
+    update(id, value => ({ ...value, phase: unavailable ? "unavailable" : value.phase, failure }));
   };
   const apply = async (id: string, mediaId: string) => {
     const operation = get(id);
@@ -101,9 +101,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     try {
       let confirmed: boolean;
       if (!await mediaAcquisitionAvailable(mediaId, signal)) {
-        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
-          tone: "Warning", title: "this item is no longer available", message: "review the source before saving again.",
-        } } }));
+        update(id, value => ({ ...value, phase: "unavailable", failure: UNAVAILABLE(value) }));
         return;
       }
       if (operation.accepted?.kind === "Episode" && operation.destination.kind !== "Lectern") {
@@ -112,11 +110,9 @@ export function useMediaContinuationOwner(ctx: Context) {
         if (held !== null) {
           if (held.phase === "Unknown") await ctx.podcasts.check(held.key);
           if (get(id)?.phase !== "complete") {
-            const pending = ctx.podcasts.pending(subject);
-            update(id, value => ({ ...value, phase: "resolving", failure: {
-              unknown: pending?.phase === "Unknown", review: pending === null || pending.phase === "Refused",
-              content: { tone: "Warning", title: "change not confirmed", message: "review this item’s library controls to check the saved request." },
-            } }));
+            const unknown = ctx.podcasts.pending(subject)?.phase === "Unknown";
+            update(id, value => ({ ...value, phase: "resolving", failure: unknown ? { line: { fact: `not sure “${value.subject.title}” was added to ${destinationLabel(value.destination)}.`,
+              reason: "it may have gone through." }, unknown, review: false, error: null } : { line: addLine(value), unknown, review: true, error: null } }));
           }
           return;
         }
@@ -140,13 +136,9 @@ export function useMediaContinuationOwner(ctx: Context) {
           },
         });
         if (!confirmed) {
-          const pending = ctx.podcasts.pending(subject);
-          update(id, value => ({ ...value, phase: "resolving",
-            failure: { unknown: pending?.phase === "Unknown", review: pending?.phase === "Refused", content: {
-              tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "save needs review",
-              message: "review this item’s library controls to check the saved request.",
-            } },
-          }));
+          const phase = ctx.podcasts.pending(subject)?.phase;
+          update(id, value => ({ ...value, phase: "resolving", failure: phase === "Unknown" ? { line: { fact: `not sure “${value.subject.title}” was added to ${destinationLabel(value.destination)}.`,
+            reason: "it may have gone through." }, unknown: true, review: false, error: null } : { line: addLine(value), unknown: false, review: phase === "Refused", error: null } }));
           return;
         }
       } else if (operation.destination.kind === "Library") {
@@ -163,10 +155,9 @@ export function useMediaContinuationOwner(ctx: Context) {
       }
       if (signal.aborted) return;
       if (!confirmed) {
-        update(id, value => ({ ...value, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
-          tone: "Warning", title: operation.destination.kind === "Library" ? "library filing changed" : "lectern change not confirmed",
-          message: operation.destination.kind === "Library" ? "review the current libraries before choosing again." : "check the current lectern change before trying again.",
-        } } }));
+        const library = operation.destination.kind === "Library";
+        update(id, value => ({ ...value, failure: { line: addLine(value, library ? `${destinationLabel(value.destination)} changed since you chose it.` : undefined),
+          unknown: false, review: library, error: null } }));
         return;
       }
       update(id, value => ({ ...value, phase: "complete", failure: null }));
@@ -198,9 +189,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       // Record the exact acceptance before beginning any remaining membership.
       update(id, value => ({ ...value, accepted, phase: "resolving", failure: null }));
       if (!accepted.available) {
-        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
-          tone: "Warning", title: "this item is no longer available", message: "review the source before saving again.",
-        } } }));
+        update(id, value => ({ ...value, phase: "unavailable", failure: UNAVAILABLE(value) }));
         return;
       }
       if (accepted.kind === "Episode") void apply(id, accepted.mediaId);
@@ -316,13 +305,15 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
       : imports.summary.status === "ready" && !imports.summary.refreshing ? imports.summary.error : null;
     if (source.status === "ready" && !source.data.settled && error !== null) owner.fail(operation.intentId, error);
   }, [source, resolving, imports.summary, owner, operation.intentId]);
-  const feedback = useFeedback();
+  const { say, fail } = useOutcome();
   const failure = operation.failure;
+  const recover: Verb | null = failure === null || operation.phase === "unavailable" ? null
+    : { label: continuationRecoveryLabel(operation, failure), commandKey: `recover ${operation.intentId}`, run: () => owner.recover(operation.intentId) };
   useEffect(() => {
-    if (failure === null) return;
-    return feedback.receipt(failure.content, { label: continuationRecoveryLabel(operation, failure), onClick: () => owner.recover(operation.intentId) });
-    // One report per failure the owner records, retracted once it resolves or retries.
+    if (failure === null || failure.unknown) return;
+    return failure.error !== null ? fail(failure.error, failure.line.fact, recover ?? undefined) : say(failure.line, recover ? [recover] : undefined);
+    // One report per refusal the owner records, retracted once it resolves or retries.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the failure identity alone
   }, [failure]);
-  return null;
+  return failure?.unknown ? <Hold id={operation.intentId} line={failure.line} verbs={recover ? [recover] : undefined} /> : null;
 }

@@ -103,13 +103,9 @@ export async function openAsyncResult({
     }
   }
   const label = subject ?? result.target.labelHint;
-  const shownLabel = label === undefined ? undefined : truncateText(label, 120);
   // Navigation moved on before the result was ready: this is the result's only way open,
   // so it waits for an unblocked workspace like any other non-success outcome.
-  ctx.feedback.receipt({
-    tone: "Info", title: shownLabel ? `${result.title} · ${shownLabel}` : result.title,
-    message: label !== shownLabel ? label : undefined,
-  }, {
+  ctx.feedback.say({ fact: label === undefined ? result.title : `${result.title} · ${truncateText(label, 40)}` }, [{
     label: result.openLabel,
     href: result.target.href,
     onActivate: event => {
@@ -123,5 +119,5 @@ export async function openAsyncResult({
         entry: result.entry,
       });
     },
-  });
+  }]);
 }
