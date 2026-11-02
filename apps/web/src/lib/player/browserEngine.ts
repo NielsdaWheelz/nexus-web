@@ -18,6 +18,10 @@
  * it checks local progress fences but neither rereads a descriptor nor reloads audio.
  * Natural end reports its real terminal sample to the queue command owner. The engine never
  * chooses a successor; durable queue advancement precedes the next load.
+ * A paused seek to the end is an ordinary seek, never a natural end: nothing was heard, so it
+ * samples like any seek, moves no cursor, and rests at Ended until the next play replays it. The
+ * engine holds that rest itself, because the element cannot: paused, chromium fires no `ended`,
+ * and a table-of-contents seek can grow `duration` past the target.
  * Each installation/reload owns a fresh playback subject. A seek validates that occurrence
  * immediately before changing the element; deferred metadata work keeps the load generation
  * and applies the latest seek target, so an explicit seek outranks the initial resume point.
@@ -80,6 +84,7 @@ interface Episode {
   observer: ActivityObserver | null;
   fenced: boolean;
   active: boolean; // a play or explicit seek, never an authority installation
+  restsAtEnd: boolean; // a paused seek reached the end, and no seek or play has moved it since
 }
 
 export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
@@ -105,8 +110,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   };
   const ms = (seconds: number) =>
     Number.isFinite(seconds) ? Math.floor(seconds * 1000) : 0;
+  const atEnd = () => audio.ended || episode?.restsAtEnd === true;
   const phase = (): EngineState["phase"] =>
-    audio.ended
+    atEnd()
       ? "Ended"
       : audio.paused
         ? "Paused"
@@ -136,7 +142,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const path = (mediaId: string) =>
     `/api/media/${mediaId}/listening-state` as const;
   const news = (current: Episode) =>
-    !audio.ended &&
+    !atEnd() &&
     (!audio.paused ||
       audio.seeking ||
       current.writing !== null ||
@@ -147,7 +153,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const write = (current: Episode | null = episode): Promise<void> => {
     if (current === null || current.stopped || current.fenced || !current.active)
       return current?.writing ?? Promise.resolve();
-    if (current === episode && !audio.ended)
+    if (current === episode && (!audio.ended || current.restsAtEnd))
       current.queued = listening(current);
     if (current.writing === null && current.queued !== null)
       current.writing = send(current);
@@ -204,6 +210,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     target.resetEpoch = resetEpoch;
     target.overrideRevision = consumptionOverrideRevision;
     target.active = false;
+    target.restsAtEnd = false;
     if (target !== episode) return;
     audio.pause();
     metadataPositionMs = positionMs;
@@ -319,7 +326,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const sync = () => {
     set({
       phase: phase(),
-      positionMs: ms(audio.currentTime),
+      positionMs: episode?.restsAtEnd ? durationMs() : ms(audio.currentTime),
       durationMs: durationMs(),
       bufferedMs: audio.buffered.length
         ? ms(audio.buffered.end(audio.buffered.length - 1))
@@ -358,7 +365,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     ended: () => {
       sync();
       const current = episode;
-      if (current === null) return;
+      if (current === null || current.restsAtEnd) return;
       observe(current, false);
       current.queued = null; // the settle carries the terminal sample
       const subject = state.playbackSubject;
@@ -453,6 +460,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         observer: null,
         fenced: false,
         active: false,
+        restsAtEnd: false,
       };
       // Retire the current source and play this one, unless a later start wins the close.
       const mine = ++generation;
@@ -513,12 +521,17 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         const fresh = await deps.fresh(current.descriptor.media_id);
         if (mine !== asked || current !== episode) return;
         const best = fresh ?? (given && given.reset_epoch > current.resetEpoch ? given : null);
-        if (best !== null && (audio.ended || best.reset_epoch !== current.resetEpoch ||
+        const replay = atEnd();
+        if (best !== null && (replay || best.reset_epoch !== current.resetEpoch ||
             best.position_ms !== ms(audio.currentTime))) {
-          await engine.load(best, true, null, true);
+          await engine.load(best, true, replay ? 0 : null, true);
           return;
         }
         if (best !== null) current.overrideRevision = best.consumption_override_revision;
+      }
+      if (current?.restsAtEnd) {
+        current.restsAtEnd = false;
+        audio.currentTime = 0;
       }
       const subject = state.playbackSubject!;
       capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), subject, generation, mine);
@@ -546,7 +559,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     cancelPendingPlayback() { asked += 1; },
     async seekAndPlay(mediaId, positionMs) {
       const current = episode;
-      if (current?.descriptor.media_id !== mediaId || state.playbackSubject === null || audio.ended)
+      if (current?.descriptor.media_id !== mediaId || state.playbackSubject === null || atEnd())
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
       if (current.fenced)
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
@@ -566,11 +579,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (subject === null || subject !== state.playbackSubject || episode?.fenced) return;
       advanceAllowed = !audio.paused;
       asked += 1;
-      if (episode) episode.active = true;
       const duration = durationMs();
       metadataPositionMs = Math.max(0, duration > 0 ? Math.min(positionMs, duration) : positionMs);
-      // ms() floors, and only the element's exact duration reaches `ended`.
-      audio.currentTime = metadataPositionMs > 0 && metadataPositionMs === ms(audio.duration) ? audio.duration : metadataPositionMs / 1000;
+      if (episode) {
+        episode.active = true;
+        episode.restsAtEnd = audio.paused && duration > 0 && metadataPositionMs === duration;
+      }
+      audio.currentTime = metadataPositionMs / 1000;
       sync();
     },
     skipBy: (deltaMs) => engine.seekTo({ positionMs: ms(audio.currentTime) + deltaMs }),

@@ -651,14 +651,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             return if (mine != activationGeneration) "Stale" else if (activated) null else "Unavailable"
         }
         val mediaId = UUID.fromString(expectedKey)
-        if (leased != null && player.playbackState != Player.STATE_ENDED || player.playWhenReady || recorder.pending()) { playHere(); return null }
+        if (leased != null && !atEnd() || player.playWhenReady || recorder.pending()) { playHere(); return null }
         val loaded = loadId
         val fresh = resolveDescriptor(mediaId, prepared = prepared)
         if (mine != activationGeneration || loadId != loaded) { fresh?.lease?.close(); return "Stale" }
         val epoch = recorder.resetEpoch() ?: run { fresh?.lease?.close(); return "Stale" }
         val best = fresh?.descriptor ?: return "Unavailable"
-        if (player.playbackState == Player.STATE_ENDED || best.getLong("reset_epoch") != epoch || best.getLong("position_ms") != player.currentPosition) {
-            if (!install(best, occurrenceId = loadedEntryId, lease = fresh.lease, localRepair = fresh.localRepair))
+        if (atEnd() || best.getLong("reset_epoch") != epoch || best.getLong("position_ms") != player.currentPosition) {
+            if (!install(best, occurrenceId = loadedEntryId, positionMs = 0L.takeIf { atEnd() }, lease = fresh.lease, localRepair = fresh.localRepair))
                 return if (mine != activationGeneration) "Stale" else "Unavailable"
         } else {
             fresh.lease?.close()
@@ -716,10 +716,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     private fun playHere() {
-        if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+        if (atEnd()) player.seekTo(0)
         preparePlayback()
         player.play()
     }
+
+    /**
+     * Ended, or resting at the end. STATE_ENDED needs the clock to pass the duration and media3 clamps
+     * a seek 1 µs short of it, so a paused seek to the end never gets there. That seek is an ordinary
+     * seek, not a natural end, and the next play replays from the start. Both reads floor to ms, so
+     * 1 µs short can read 1 ms short.
+     */
+    private fun atEnd(): Boolean = player.playbackState == Player.STATE_ENDED ||
+        (!player.playWhenReady && player.duration != C.TIME_UNSET && player.currentPosition >= player.duration - 1)
 
     /** Preparing after stop/error reloads the media, including through a media-session controller. */
     private fun preparePlayback() {
@@ -1384,7 +1393,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             "phase",
             when {
                 source == null -> "Paused"
-                player.playbackState == Player.STATE_ENDED -> "Ended"
+                atEnd() -> "Ended"
                 player.isPlaying -> "Playing"
                 player.playbackState == Player.STATE_BUFFERING && player.playWhenReady -> "Buffering"
                 else -> "Paused"
