@@ -32,9 +32,12 @@ function nativePort(): Port {
     if (reply.kind === "authored_foreground") { receiveForeground(reply.active, reply.revision); return; }
     if (reply.kind === "authored_hint") { for (const wake of hints) wake(); return; }
     const waiting = pending.get(reply.id); pending.delete(reply.id);
-    if (reply.ok) waiting?.resolve(reply.result);
-    // the bridge sends its own code; the origin's survives only in NexusOriginError's message.
-    else waiting?.reject(Object.assign(new Error(reply.error.message), { status: reply.error.status, code: reply.error.message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : reply.error.code }));
+    if (reply.ok) { waiting?.resolve(reply.result); return; }
+    const { message, status, code } = reply.error;
+    // the bridge answers 500 for every throw it cannot name, and its own code for every failure;
+    // only NexusOriginError's message says the origin spoke. the rest is a broken local invariant.
+    const invariant = code === "E_AUTHORED" && status === 500 && !message.startsWith("origin ");
+    waiting?.reject(Object.assign(new Error(message), invariant ? { code } : { status, code: message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : code }));
   };
   }
   return port;
