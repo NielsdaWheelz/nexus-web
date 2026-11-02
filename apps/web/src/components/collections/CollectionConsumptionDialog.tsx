@@ -15,9 +15,9 @@ import { installedApp, remoteReady } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
-/** Review freezes the complete selection. Only the account owner sends its bytes. A confirm the
- * review cannot vouch for stays disabled and says why. An unknown outcome holds inside this
- * dialog, in its own frame, while the dialog is open. */
+/** Review freezes the complete selection. Only the account owner sends its bytes. The confirm
+ * waits busy on the review's read; one the review cannot vouch for stays disabled and says why.
+ * An unknown outcome holds inside this dialog, in its own frame, while the dialog is open. */
 export default function CollectionConsumptionDialog({ selection, desiredState, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly selection: CollectionSelection;
   readonly desiredState: "finished" | "unread";
@@ -39,8 +39,10 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   const scopeLabel = selection.kind === "Podcast" && selection.state !== "all"
     ? `all ${selection.state === "in_progress" ? "in-progress" : selection.state} episodes`
     : podcast ? "the whole podcast" : "the whole library";
+  const armed = admitted && source.status === "ready" && !source.refreshing && source.error === null && source.data.items.length > 0 && pending === null;
+  const reviewing = source.status === "loading" || (source.status === "ready" ? source.refreshing : source.retrying);
   const submit = () => {
-    if (!admitted || source.status !== "ready" || source.refreshing || source.error !== null || source.data.items.length === 0 || pending !== null) return;
+    if (!armed || source.status !== "ready") return;
     const outcome = ctx.consumption.submitCollection({ title: source.data.label, scopeLabel,
       request: { target, desired_state: desiredState, items: source.data.items } });
     if (outcome === "Started") onClose();
@@ -68,8 +70,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending", run: () => ctx.consumption.forget(pending.commandKey) },
         ]} /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || undefined} aria-describedby={gate === null ? undefined : gateId}
-          disabled={!admitted || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>
+        <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || reviewing || undefined} aria-describedby={gate === null ? undefined : gateId}
+          disabled={!armed} onClick={submit}>mark {verb}</Button>
         <Button onClick={onClose}>cancel</Button>
         {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}
       </div>

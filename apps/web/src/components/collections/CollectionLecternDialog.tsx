@@ -20,8 +20,9 @@ import styles from "@/components/podcasts/PodcastCommands.module.css";
 
 /** One complete, fixed-order append enters the existing account lectern lane. An unknown append
  * holds here with its retry while the dialog is open; the lane blocks other changes meanwhile. A
- * refusal says why in this dialog, which rereads both reads and re-arms when they land. A confirm
- * the reads cannot vouch for stays disabled and says why. */
+ * refusal, or a retry that finds the lectern moved, rereads what moved, and the confirm re-arms
+ * when the reads land. The confirm waits busy on its reads; one they cannot vouch for stays
+ * disabled and says why. */
 export default function CollectionLecternDialog({ target, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly target: CollectionTarget;
   readonly title: string;
@@ -39,14 +40,18 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
   const gateId = useId();
   const source = usePaneFreeServerValue({ key: `collection-lectern-review:${ctx.accountId}:${JSON.stringify(target)}`, stale: "", load: signal => prepareCollectionLectern(target, signal) });
   const accountReady = lectern.status === "ready" && lectern.error === null && !lectern.refreshing;
+  const reviewing = lectern.status === "loading" || (lectern.status === "ready" ? lectern.refreshing : lectern.retrying)
+    || source.status === "loading" || (source.status === "ready" ? source.refreshing : source.retrying);
   const prepared = source.status === "ready" ? source.data : null;
   const needed = prepared === null ? 0 : prepared.media_ids.length - prepared.already_present_count;
   const capacity = prepared !== null && needed > prepared.available_slots;
+  const armed = admitted && prepared !== null && source.status === "ready" && source.error === null && !source.refreshing
+    && prepared.media_ids.length > 0 && !capacity && !sending && pending === null && accountReady;
   const gate = !admitted ? admissionReason()
     : source.status === "ready" && source.error !== null ? "the selection couldn’t refresh."
       : lectern.status === "ready" && lectern.error !== null ? "the lectern couldn’t refresh." : null;
   const submit = async () => {
-    if (!admitted || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || pending !== null || !accountReady) return;
+    if (!armed || prepared === null) return;
     const fact = `couldn’t add “${prepared.label}” to the lectern.`;
     const reread = () => { lectern.refetch(); source.refetch(); };
     setSending(true);
@@ -79,11 +84,10 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
       {pending !== null && pending.phase !== "Sending" ? <Hold id="lectern-collection" attempt={pending.attempt}
         line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
         verbs={[{ label: "retry", commandKey: "lectern-collection", busy: pending.phase === "Checking",
-          run: () => void pending.check().catch((error: unknown) => fail({ error })) }]} /> : null}
+          run: () => void pending.check().then(settled => { if (settled === "Superseded") source.refetch(); }, (error: unknown) => fail({ error })) }]} /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" aria-busy={sending || undefined} aria-describedby={gate === null ? undefined : gateId}
-          disabled={!admitted || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || pending !== null || !accountReady}
-          onClick={() => void submit()}>add to lectern</Button>
+        <Button emphasis="strong" aria-busy={sending || reviewing || undefined} aria-describedby={gate === null ? undefined : gateId}
+          disabled={!armed} onClick={() => void submit()}>add to lectern</Button>
         <Button onClick={onClose}>cancel</Button>
         {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}
       </div>

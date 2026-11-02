@@ -20,6 +20,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
@@ -92,8 +93,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
   let active = false;
   let lifetime = new AbortController();
   let defect: { error: unknown } | null = null;
-  /** A same-system defect stops the owner; its provider throws it to the boundary. */
-  const isDefect = (error: unknown) => !isApiError(error) || isSameSystemApiDefect(error);
+  /** A same-system defect stops the owner; its provider throws it to the boundary. An abort is none. */
+  const isDefect = (error: unknown) => !isAbortError(error) && (!isApiError(error) || isSameSystemApiDefect(error));
   const get = (target: LibraryPlacementTarget): Target => {
     const key = keyOf(target);
     let row = targets.get(key);
@@ -129,9 +130,10 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         }
       } catch (error) {
         if (!active || lifetime !== run || run.signal.aborted) return false;
+        row.dirty = true;
+        if (isAbortError(error)) return false;
         if (isDefect(error)) { defect = { error }; return false; }
         signIn(error);
-        row.dirty = true;
         row.readError = error;
         if (isApiError(error) && error.status === 404) { row.unavailable = true; row.data = null; }
       }

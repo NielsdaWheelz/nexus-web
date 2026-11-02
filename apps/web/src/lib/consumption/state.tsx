@@ -173,7 +173,7 @@ function createConsumptionCommands(
       if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;
       const defect = !(error instanceof ProgressPreparationError) && (!isApiError(error) || isSameSystemApiDefect(error));
       const refused = !sent || isRefusal(error);
-      const authHandled = sent && handleUnauthenticatedApiError(error);
+      if (sent) handleUnauthenticatedApiError(error);
       const fact = `couldn’t undo finishing “${entry.title}”.`;
       const gone = `can’t undo finishing “${entry.title}”.`;
       if (!refused || entry.unconfirmed > 0) {
@@ -193,7 +193,7 @@ function createConsumptionCommands(
         else if (isApiError(error) && error.code === "E_LIMIT") outcome.say({ fact, reason: "the lectern is full." }, retry(entry));
         else if (!defect) outcome.fail(error, fact, retry(entry)[0]);
       }
-      if (defect && !authHandled) fail({ error });
+      if (defect) fail({ error });
       return;
     }
     if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;

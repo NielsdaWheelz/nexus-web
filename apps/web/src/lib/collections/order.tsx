@@ -214,15 +214,14 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
     case "Ready":
     case "Incomplete":
     case "Refreshing":
+    case "Saving":
+    case "Checking":
+    case "Unconfirmed":
       return null;
     case "Sorted":
       return "choose custom order to reorder.";
     case "Filtered":
       return "clear filters to reorder.";
-    case "Saving":
-    case "Checking":
-    case "Unconfirmed":
-      return null;
   }
 }
 
