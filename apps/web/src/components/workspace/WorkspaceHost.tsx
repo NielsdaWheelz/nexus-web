@@ -15,6 +15,7 @@ import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { useStageWorkspace } from "@/components/feedback/stage";
@@ -45,13 +46,12 @@ import {
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
-/** What admission refuses a cold body with. Rendering asks native nothing, so this reads
+/** What a decided admission refuses a cold body with. Rendering asks native nothing, so this reads
  * admission itself: `admissionRefusal` would also demand a session check, which only `retry` makes. */
-function refusalOf(admission: RemoteAdmission): ApiError {
+function refusalOf(admission: Exclude<RemoteAdmission, "Checking">): ApiError {
   switch (admission) {
     case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", "remote work is unavailable");
     case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", "remote work is unavailable");
-    case "Checking":
     case "Unavailable":
     case "Ready":
       return new ApiError(0, "E_NETWORK", "remote work is unavailable");
@@ -61,7 +61,8 @@ function refusalOf(admission: RemoteAdmission): ApiError {
 /** cold bodies wait for presentation; admitted bodies retain their mounted work.
  * the existing body key owns replacement, and primitive props avoid unrelated renders.
  * a browser admits while unavailable, so the body's own read probes; a refusal names what
- * admission waits on, and only an installed client can ask its shell to check again. */
+ * admission waits on, and only an installed client can ask its shell to check again. a check
+ * still pending is nothing to show yet, so the body rules until admission decides. */
 const PaneContent = memo(function PaneContent(props: {
   readonly routeId: PaneRouteId | "unsupported";
   readonly pathname: string;
@@ -79,7 +80,7 @@ const PaneContent = memo(function PaneContent(props: {
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
-  if (!admitted && !canAdmit) return <div className={styles.paneFailure}>
+  if (!admitted && !canAdmit) return admission === "Checking" ? <Ruling /> : <div className={styles.paneFailure}>
     <Failed error={refusalOf(admission)} noun="this pane’s contents" retry={installedApp ? { run: checkSession } : undefined} />
   </div>;
   if (props.routeId !== "unsupported") return <IndexPaneEntry routeId={props.routeId} params={runtime.pathParams} query={runtime.searchParams}>{renderPane(props.routeId)}</IndexPaneEntry>;
