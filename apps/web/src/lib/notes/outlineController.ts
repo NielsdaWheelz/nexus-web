@@ -43,7 +43,6 @@ export class OutlineActionRefusal extends Error {
   constructor(readonly line: {readonly fact: string; readonly reason?: string}) {super(line.fact);}
 }
 const AT_LIMIT = "this outline has reached its editing limit.";
-const UNSAVED = "it has writing that isn’t saved yet.";
 export interface BranchRequest {parent_id: string; ref: string; branch: OutlineBranch; cursor: string | null; anchor: string | null; limit: number; foreground?: boolean;
   navigation?: {lease(): boolean; previous: BranchRequest}}
 interface Held {document: WritingDocument; captureBytes: number; release(): void}
@@ -407,6 +406,14 @@ export class OutlineController {
     if (this.view?.hasFocus() && this.selectionRow) protectedRows.add(this.selectionRow);
     for (const id of [...protectedRows]) {let parent = this.parent(id); while (parent) {protectedRows.add(parent); parent = this.parent(parent);}}
     return protectedRows;
+  }
+  /** Why these rows cannot leave view now, or null: writing not yet saved, else a block selection
+   * among them, else the caret in one. */
+  private keepReason(rows: ReadonlySet<string>): string | null {
+    const ids = [...rows];
+    if (ids.some(id => this.pending.fields.get(id)?.pending || this.pending.fields.get(id)?.relocating)) return "it has writing that isn’t saved yet.";
+    if (ids.some(id => this.selected.has(id))) return "items in it are selected.";
+    return this.view?.hasFocus() && this.selectionRow !== null && rows.has(this.selectionRow) ? "the caret is in it." : null;
   }
   private protectedDescendants(parent_id: string): boolean {
     for (const id of this.protectedRows()) {let parent = this.parent(id); while (parent) {if (parent === parent_id) return true; parent = this.parent(parent);}}
@@ -1126,16 +1133,16 @@ export class OutlineController {
       const lease = this.lease();
       const descendants = new Set<string>();
       for (const candidate of this.rows.values()) {let parent = candidate.parent_id; while (parent) {if (parent === row_id) {descendants.add(candidate.row_id); break;} parent = this.parent(parent);}}
-      const protectedWriting = () => [...descendants].some(id => this.pending.fields.get(id)?.pending || this.pending.fields.get(id)?.relocating || this.selected.has(id) || this.view?.hasFocus() && this.selectionRow === id);
-      if (protectedWriting()) {this.error = new OutlineActionRefusal({fact: "couldn’t close this branch.", reason: UNSAVED}); this.notify(); return;}
+      const kept = this.keepReason(descendants);
+      if (kept !== null) {this.error = new OutlineActionRefusal({fact: "couldn’t close this branch.", reason: kept}); this.notify(); return;}
       this.admission = this.admission.then(async () => {
-        if (!this.active || !lease() || protectedWriting() || !this.handle?.canArrange()) return;
+        if (!this.active || !lease() || this.keepReason(descendants) !== null || !this.handle?.canArrange()) return;
         for (const id of descendants) this.blockedRows.add(id);
         this.syncReadOnly(); this.notify();
         try {
           const refs = new Set([...descendants].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref ? [ref] : [];}));
           await Promise.all([...refs].map(ref => this.captureDocument(ref)));
-          if (!this.active || !lease() || protectedWriting() || !this.handle?.canArrange()) return;
+          if (!this.active || !lease() || this.keepReason(descendants) !== null || !this.handle?.canArrange()) return;
           this.opened.delete(row_id);
           for (const id of [row_id, ...descendants]) {this.requests.delete(id); this.windows.delete(id);}
           for (const [id, embed] of this.embedded) if (embed.projection !== null && descendants.has(embed.owner)) {this.requests.delete(id); this.windows.delete(id);}
@@ -1279,12 +1286,12 @@ export class OutlineController {
       let parent = row.parent_id;
       while (parent) {if (parent === id) {descendants.add(row.row_id); break;} parent = this.parent(parent);}
     }
-    const protectedWriting = () => [...descendants].some(row => this.pending.fields.get(row)?.pending || this.pending.fields.get(row)?.relocating || this.selected.has(row) || this.view?.hasFocus() && this.selectionRow === row);
-    if (protectedWriting() || !this.handle?.canArrange()) {this.error = new OutlineActionRefusal(protectedWriting() ? {fact: "couldn’t close this preview.", reason: UNSAVED} : {fact: "couldn’t close this preview."}); this.notify(); return false;}
+    const kept = this.keepReason(descendants);
+    if (kept !== null || !this.handle?.canArrange()) {this.error = new OutlineActionRefusal(kept !== null ? {fact: "couldn’t close this preview.", reason: kept} : {fact: "couldn’t close this preview."}); this.notify(); return false;}
     try {
       const refs = new Set([...descendants].flatMap(row => {const ref = this.rows.get(row)?.ref; return ref ? [ref] : [];}));
       await Promise.all([...refs].map(ref => this.captureDocument(ref)));
-      return this.active && lease() && this.embedded.get(id) === branch && branch.projection !== null && !protectedWriting() && !!this.handle?.canArrange();
+      return this.active && lease() && this.embedded.get(id) === branch && branch.projection !== null && this.keepReason(descendants) === null && !!this.handle?.canArrange();
     } catch (error) {if (this.active) {this.error = error; this.notify();} return false;}
   }
   commandState(command: OutlineCommand) {
