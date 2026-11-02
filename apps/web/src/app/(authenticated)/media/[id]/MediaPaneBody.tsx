@@ -483,7 +483,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const authored = useAuthoredStore();
   const [store] = useState(() => createMediaAnnotations(authored, id));
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
-  useEffect(() => { if (doc) store.bind(doc); else if (documentFailed || !readable) store.bind(null); }, [doc, documentFailed, readable, store]);
+  const sourceAbsent = documentFailed || !readable;
+  useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);
   const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
@@ -811,9 +812,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         actions={actions}
         openKey={openKey}
         onRetry={store.refresh}
+        sourceAbsent={sourceAbsent}
       />
     ),
-    [actions, annotations, openKey, reader, runtime.visitId, store],
+    [actions, annotations, openKey, reader, runtime.visitId, sourceAbsent, store],
   );
   const contents = useMemo(
     () =>

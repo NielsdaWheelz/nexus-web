@@ -1,10 +1,10 @@
 # reader-root sibling insertion has no editor host
 
-problem: selecting an unanchored connections root and choosing `insert item`
-opens session composer state but renders no editor.
+problem: in `all`, selecting an unplaced connections root and choosing
+`insert item` opens session composer state but renders no editor.
 
 evidence: unmodified `a09557224`, real browser lab
-`20261025-134906-55006e56fd6f`, following journey. the discovery row selected,
+`20261025-134906-55006e56fd6f`. the discovery row selected,
 its enabled outline command ran, then no `insert item` textbox appeared.
 `evidence/model.ts:25` publishes sibling destinations with prefix `evidence`;
 `ResourceOutlineRow.tsx:414-416` hosts only prefixes equal to the full occurrence

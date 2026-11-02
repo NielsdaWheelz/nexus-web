@@ -313,10 +313,10 @@ external resource/file admission and flat index sorting retain their existing ow
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the keyboard-focused root stays
 mounted beyond overscan and retains its control position until attention leaves.
-independent list scrolling preserves the explicitly selected view. retained root
-rows keep the same container across follow/browse layout changes, preserving their inline
-editors. follow mode hides offscreen placed roots rather than unmounting them; measurement
-ignores hidden geometry. mobile always uses ordinary flow.
+independent list scrolling preserves the explicitly selected view. the margin mounts
+only placements and held rows. a held row keeps its container across view changes,
+preserving its inline editors; measurement ignores hidden geometry. mobile, the
+desktop sheet and no-source layouts use ordinary flow.
 
 ## historical targets and arrival
 

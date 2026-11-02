@@ -44,12 +44,11 @@ export function sourceTextKey(entry: EvidenceEntry): string | null {
     ? JSON.stringify([entry.root.source.media_id, entry.root.source.identity, `evidence/${entry.key}`]) : null;
 }
 
-export default function EvidenceRow({ entry, actions, active, visible, placed, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout, position, count }: {
+export default function EvidenceRow({ entry, actions, active, visible, placed, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, position, count }: {
   readonly position: number | null;
   readonly count: number;
   readonly sourceText: ReadonlySet<string>;
   readonly onSourceTextChange: (key: string, open: boolean) => void;
-  readonly onSourceLayout: (key: string, pending: boolean | null) => void;
   readonly entry: EvidenceEntry;
   readonly actions: EvidenceActions;
   readonly active: boolean;
@@ -94,7 +93,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
       omitResourceActions={actions.sourceContext ? ["EditHighlightAnnotation"] : ["EditHighlightAnnotation", "Share"]}
       rowActions={[{ kind: "command", id: "EditHighlightAnnotation", label: annotation.body === null ? "annotate" : "edit annotation",
         icon: <ACTION_CATALOG.EditHighlightAnnotation.icon size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
-      annotationFocusRequest={verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
+      annotationFocusRequest={visible && verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
       resourceDetails={<>
         {placement === "unlocated" && unresolvedText ? <FeedbackNotice content={{ tone: "Warning", title: PLACEMENT_COPY.unlocated }} announcement="None"
@@ -114,7 +113,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
-    sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} onLayout={onSourceLayout} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
+    sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}
     resourceDetails={<>
       {placementDetails}

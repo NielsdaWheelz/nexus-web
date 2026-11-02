@@ -91,7 +91,8 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
       const saved = correction.current;
       const row = list.querySelector<HTMLElement>(`[data-window-key="${CSS.escape(saved.key)}"]`);
       if (row) {
-        scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
+        // A port at its origin stays there: rows landing above it are the list's start.
+        if (scroll.scrollTop > 0) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
         correction.current = null;
       }
     }

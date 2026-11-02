@@ -26,12 +26,11 @@ import { readerDestinationHref } from "../hostedReader";
 import type { EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
-export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged, disclosureKey, open, onOpenChange, onLayout }: {
+export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged, disclosureKey, open, onOpenChange }: {
   readonly occurrenceKey: string;
   readonly disclosureKey: string;
   readonly open: boolean;
   readonly onOpenChange: (key: string, open: boolean) => void;
-  readonly onLayout: (key: string, pending: boolean | null) => void;
   readonly reference: Schema<"ReaderEvidenceSourceReferenceOut">;
   readonly mediaId: string;
   readonly identity: string;
@@ -53,14 +52,12 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
         onOpenChange(disclosureKey, !expanded);
       }}>source text{label ? ` · ${label}` : ""}</Button>
     {expanded ? <div ref={details} id={id} className={styles.sourceTargets}>
-      <SourceNoteDetail disclosureKey={disclosureKey} onLayout={onLayout} occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
+      <SourceNoteDetail occurrenceKey={occurrenceKey} referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
     </div> : null}
   </>;
 }
 
-function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged, disclosureKey, onLayout }: {
-  readonly disclosureKey: string;
-  readonly onLayout: (key: string, pending: boolean | null) => void;
+function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, reader, onContentChanged }: {
   readonly occurrenceKey: string;
   readonly referenceRef: string;
   readonly mediaId: string;
@@ -87,11 +84,6 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
       }
     },
   });
-  // A failed read is a terminal layout too; the evidence owner must not wait for success.
-  useLayoutEffect(() => {
-    onLayout(disclosureKey, detail.status === "loading");
-    return () => onLayout(disclosureKey, null);
-  }, [detail.status, disclosureKey, onLayout]);
   const announcement = paneActive ? "Polite" : "None";
   const occurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, identity);
   if (detail.status === "loading") return <FeedbackBusy pending />;

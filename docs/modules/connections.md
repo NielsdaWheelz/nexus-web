@@ -69,8 +69,8 @@ connection snapshots do not supply current root bodies.
 
 root placement uses only that resource's own current local extent. whole resources
 and other-source passages have no local extent; rejected local locations remain
-visible as unavailable. placed roots precede `unanchored connections`, whose
-nonempty groups are `whole document` and `location unavailable`.
+visible as unavailable. the margin lists placed roots only. all is one flat list
+without headers, in tier order: placed, whole, unavailable.
 unaligned graph roots follow their first incident fact in document order, never
 their label. sibling continuation uses that first fact and the captured document
 links version. a separate authored placement names only an admitted
@@ -85,14 +85,17 @@ body stays empty. apparatus producers trim canonical text, so the bounded head
 retains this empty/nonempty distinction. source details apply the same quote
 contract; location reasons do not grant or deny insertion.
 
-the reader exposes four quiet native checkbox facets below its follow/all radio
-choice. controls reflow by companion width. counts are exact only when every
-contributing source is complete: highlights require local annotations and remote
-evidence; links require local links and remote evidence; citations and librarian
-links require remote evidence. a ready remote map is complete only at ready/empty,
-not partial. otherwise the count is a dash described as unavailable, incomplete
-or loading, in that precedence. partial totals never masquerade as exact zero or
-a lower bound. available content survives another source loading or failing.
+the reader exposes four quiet native checkbox facets below its margin/all radio
+choice. controls reflow by companion width. counts describe the current view: the
+margin counts placed roots across the document, never just the visible stretch;
+all counts every root. counts are exact only when every contributing source is
+complete and, in the margin, the document is mounted: highlights require local
+annotations and remote evidence; links require local links and remote evidence;
+citations and librarian links require remote evidence. a ready remote map is
+complete only at ready/empty, not partial. otherwise the count is a dash described
+as unavailable, incomplete or loading, in that precedence. partial totals never
+masquerade as exact zero or a lower bound. available content survives another
+source loading or failing.
 all types off offers show-all regardless of completeness; resetting focuses the
 first checkbox. incomplete empty inventories cannot claim global absence.
 
@@ -105,9 +108,10 @@ starts without an entering edge;
 shared lazy disclosure exposes every exact relationship and its own capability.
 one grouped resource never supplies an aggregate unlink action.
 all roots share the outline editing session with their descendants; grouped
-roots have no incoming relationship. view filters, follow/all and regrouping
-retain activated bodies and sessions. pending creations remain reachable until
-a complete post-acknowledgement read accounts for their exact edges. composite
+roots have no incoming relationship. view filters, margin/all and regrouping
+retain folds and sessions; an unheld row remounts its body. pending creations
+remain reachable until a complete post-acknowledgement read accounts for their
+exact edges. composite
 maps preserve the chosen source's media, continuation and placement together.
 selection keeps a root in the aligned layout; only a connected control inside
 that root pins its screen position. replacing an insertion line with an editor
@@ -115,12 +119,12 @@ without a live pin uses the normal placement floor.
 
 the reader pane admits root occurrences before their resource reads and child
 probes mount. all-items uses measured variable heights and estimated gaps;
-desktop follow mounts its source placements. geometry belongs to the current
+the margin mounts its source placements. geometry belongs to the current
 publication and width. complete membership, facets and source order remain with
 the pane, including keyboard successors, explicit arrivals and unlink recovery.
-saved restoration demands its occurrence and that occurrence's terminal source
-detail, never every remembered disclosure. late layout preserves the visible
-occurrence's offset; user interaction retires restoration.
+saved restoration and the switch to all hold their occurrence until the reader
+acts; a removed occurrence returns the list to its start. late layout preserves
+the visible occurrence's offset, and a list at its start stays at its start.
 
 focus, inspector selection, menus, actual draft risk, pending local document
 edits and unsettled row commands retain the existing occurrence and editor.
