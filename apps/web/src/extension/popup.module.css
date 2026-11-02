@@ -12,14 +12,22 @@ body {
   height: auto;
 }
 
+/* The stage's root anchor stands in the popup, outside its scroller, so a slip stays in view. */
 .popup {
+  position: relative;
   display: flex;
   max-height: 560px;
+  flex-direction: column;
+  font-size: var(--text-sm);
+}
+
+.body {
+  display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: var(--space-3);
   overflow-y: auto;
   padding: var(--space-4);
-  font-size: var(--text-sm);
 }
 
 .source {
@@ -125,4 +133,3 @@ body {
   gap: var(--space-2);
 }
 
-.popup { position: relative; }

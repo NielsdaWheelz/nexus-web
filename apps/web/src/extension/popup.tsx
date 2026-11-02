@@ -169,7 +169,7 @@ function Popup() {
   };
 
   const disconnection = disconnected ? <Hold id="capture-disconnected" line={{ fact: "capture disconnected.", reason: "reopen this popup to continue." }} /> : null;
-  if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<Ruling /></main>;
+  if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<div className={styles.body}><Ruling /></div></main>;
 
   const { account, draft } = state;
   const chosen = pending.reduce((destinations, edit) => edit.kind === "set_destination" && edit.draftId === draft?.id && edit.accountId === account?.userId
@@ -202,6 +202,7 @@ function Popup() {
     <main className={styles.popup} tabIndex={-1}>
       <StageAnchor kind="Root" />
       {disconnection}
+      <div className={styles.body}>
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
@@ -322,6 +323,7 @@ function Popup() {
           ) : null}
         </div>
       ) : null}
+      </div>
       </main>
   );
 }
