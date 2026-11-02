@@ -20,6 +20,16 @@
   min-height: 0;
 }
 
+/* content beside a text reads as a margin. a full-screen companion replaces the text, so it is
+   a page and keeps page type. */
+.contents:not([data-presentation="FullScreen"]) {
+  --content-font-size: var(--text-sm);
+  --content-meta-font-size: var(--text-xs);
+  --content-line-height: var(--leading-snug);
+  --excerpt-scale: .875;
+  --excerpt-max-size: var(--text-md);
+}
+
 .header {
   display: grid;
   grid-auto-flow: column;
