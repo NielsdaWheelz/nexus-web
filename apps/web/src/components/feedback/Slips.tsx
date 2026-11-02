@@ -320,5 +320,12 @@ function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
     aria-label={count > 1 ? `show ${count} notices` : "show notice"}
     onFocus={focus.entered}
     onClick={() => stage.restore(room.id)}
+    onKeyDown={event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const target = focus.target();
+      if (target) takeFocus(target);
+    }}
   >{count > 1 ? <span aria-hidden="true">{count}</span> : null}</button>;
 }

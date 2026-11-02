@@ -109,7 +109,7 @@
 .tab {
   position: absolute;
   inset-inline: 0;
-  inset-block-end: var(--stage-bottom-clearance, 0px);
+  inset-block-end: calc(var(--stage-bottom-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
   inline-size: 44px;
   block-size: 32px;
   margin-inline: auto;
