@@ -30,7 +30,10 @@ Recent is the viewer's own imports, every classification, newest accepted first:
 superseded onto it, that is not a podcast transcript request. shared media,
 metadata-only rows and a join of another reader's run in flight are not their
 imports. it matches no obligation, so complete imports stay, and its `matched_count`
-is the page's own, sparing a second pass over the read model.
+is the page's own, sparing a second pass over the read model. it orders by the
+item's `accepted_at`, which for a `media:` row is its latest source attempt by any
+reader: a superseded own import sorts at its winner's latest attempt, and another
+reader's retry or refresh of a shared import lifts it.
 
 `ImportItem{ref, media_id, title, original_filename, media_kind, source_label, can_read, can_play, text_search_ready, classification, primary, accepted_at, updated_at, matched_event, obligations{source, search, metadata}, source_issue_count}`; `primary` is null exactly when complete. source and search are `ImportObligation{classification, stage, status, waiting_reason, progress, next_retry_at, failure_code, recovery, unavailable_reason}` (status, waiting reason, progress and next retry describe active work, the code attention); metadata is `MetadataEnrichmentView`. `HistoryEntry{id: upload:|processing:|metadata:<uuid>, occurred_at, stage, failure_code, facts}` with `facts` one stored kind or `MetadataOperation`. a list cursor binds the viewer, the view and `ImportListQuery.normalized()`; a history cursor binds the viewer and the ref.
 

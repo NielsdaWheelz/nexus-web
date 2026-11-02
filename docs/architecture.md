@@ -1267,8 +1267,9 @@ lenses and the complete pane aggregate; no DML), and `services/library_members.p
   canonical relations feed search, atlas and suggestions. all's podcast
   commands cascade to affected destinations; [podcasts](modules/podcast.md) owns
   exact preview, preservation and authority contracts.
-- **guarded organization**: destination and placement reads return named rows,
-  exact library revisions and the viewer removal revision from one snapshot.
+- **guarded organization**: destination and placement reads return named rows and
+  the viewer removal revision from one snapshot; placement rows add their exact
+  library revisions, which acquisition, an append, never compares.
   public placement accepts one absolute `included` command with frozen expected
   revision; even accepted no-ops advance it. stale commands conflict before
   desired-state equality. create-and-file is one atomic client-id creation;
