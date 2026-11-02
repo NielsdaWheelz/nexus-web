@@ -171,7 +171,7 @@ export function reviewUploadAttempt(attempt: UploadAttempt): void {
  * Losing the owner requires file reselection; expired bytes cannot be resumed.
  * `exclusive` runs the confirm, the one step serializable under the viewer lock, in the
  * caller's one-at-a-time acquisition slot (docs/issues/concurrent-acquisitions-exhaust-retry.md). */
-export async function uploadIngestFile({ file, attempt, guard, signal = new AbortController().signal, exclusive = run => run(), onPhaseChange, onProgress, onImportRef }: {
+export async function uploadIngestFile({ file, attempt, guard, signal = new AbortController().signal, exclusive = run => run(), onPhaseChange, onProgress }: {
   file: File;
   attempt: UploadAttempt;
   guard?: AcquisitionGuard;
@@ -180,7 +180,6 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
   onPhaseChange?: (phase: UploadPhase) => void;
   /** Bytes the put has sent so far. */
   onProgress?: (sentBytes: number) => void;
-  onImportRef?: (ref: string) => void;
 }): Promise<Extract<AcceptedIngest, { kind: "Upload" }>> {
   const kind = getFileUploadKind(file);
   if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
@@ -202,14 +201,10 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
       if (isRefusal(error instanceof UploadSessionError ? error.cause : error)) attempt.guard = null;
       throw error;
     }
-    onImportRef?.(answer.import_ref);
     if (answer.kind === "Rejected") throw outcome({ kind: "VerificationRejected", code: answer.code });
     if (answer.kind === "Published") published = answer;
     else { attempt.session = answer; published = await transferAndConfirm(); }
-  } else {
-    onImportRef?.(attempt.session.import_ref);
-    published = await transferAndConfirm();
-  }
+  } else published = await transferAndConfirm();
   publishChange("Entries");
   publishImportsInvalidation();
   return { kind: "Upload", available: published.current_placements !== null, created: published.created, mediaId: published.media_id,

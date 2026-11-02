@@ -17,12 +17,6 @@ export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean |
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import" | "Browse"}`;
 
 
-export interface AddSeed {
-  readonly kind: "Content";
-  readonly initialDestinations: readonly LibraryDestination[];
-  readonly initialUrlDraft?: string;
-}
-
 export type DailyPageLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
 
 /** A day opened as is, with a new empty row, or at the note a capture just added. */
@@ -47,12 +41,6 @@ export type NexusTarget =
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
   | {
-      readonly kind: "OpenAcceptedSource";
-      readonly sourceAttemptId: string;
-      readonly label: string;
-      readonly destination: "import" | "media";
-    }
-  | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
       readonly entry:
@@ -60,7 +48,10 @@ export type NexusTarget =
         | { readonly kind: "AppendNote"; readonly initialText: string };
     }
   | { readonly kind: "ResumeCurrentPlayback" }
-  | { readonly kind: "OpenAdd"; readonly seed: AddSeed }
+  /** The import page, with `text` in its field when given; it sends nothing. */
+  | { readonly kind: "OpenImport"; readonly text: string }
+  /** Sends the links, then shows their lines on the import page: root's only writing row. */
+  | { readonly kind: "ImportLinks"; readonly links: readonly string[] }
   | { readonly kind: "CreatePage"; readonly titleDraft: string }
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
@@ -86,6 +77,8 @@ export interface NexusRow {
   readonly key: string;
   readonly localMatch: LocalMatch | null;
   readonly label: string;
+  /** The spoken name, where it is not the label's words. */
+  readonly name?: string;
   readonly icon: NexusIcon;
   readonly type?: string;
   readonly detail?: string;
@@ -126,7 +119,7 @@ export interface NexusRootOrigin {
   readonly mode: NexusRootMode;
   readonly control: string;
 }
-/** The palette as the Add page left it; null on the page means it was opened from outside. */
+/** The palette as the import page left it; null on the page means it was opened from outside. */
 export type NexusImportOrigin = NexusRootOrigin & { readonly query: string };
 
 export type UseTextPage = { readonly kind: "UseText"; readonly text: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
@@ -161,9 +154,12 @@ export type NexusPage =
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }
-  | { readonly kind: "Add"; readonly sessionId: string; readonly origin: NexusImportOrigin | null };
+  /** `select` is the link whose line is selected first: what root just sent or re-sent. */
+  | { readonly kind: "Import"; readonly origin: NexusImportOrigin | null; readonly select: string | null };
 
 export type NexusOpenIntent =
-  | { readonly kind: "Root" }
-  | { readonly kind: "Add"; readonly seed: AddSeed }
+  /** `query` opens root on that text, in search on phones. */
+  | { readonly kind: "Root"; readonly query?: string }
+  /** The import page from outside the palette, filing into `into` beside All. */
+  | { readonly kind: "Import"; readonly into: readonly LibraryDestination[] }
   | { readonly kind: "QuickAction"; readonly actionId: NexusCommandId };

@@ -15,6 +15,7 @@ import Button from "@/components/ui/Button";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
+import { flattenedPaste } from "@/lib/nexus/query";
 import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useCollectionLayout } from "@/lib/ui/collection";
@@ -163,6 +164,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             data-nexus-control="Search"
             onFocus={controller.enterSearch}
             onChange={(event) => controller.setQuery(event.currentTarget.value)}
+            onPaste={(event) => {
+              const value = flattenedPaste(event);
+              if (value !== null) controller.setQuery(value);
+            }}
             onCompositionStart={() => { composing.current = true; controller.setComposing(true); }}
             onCompositionEnd={() => { composing.current = false; controller.setComposing(false); }}
             onKeyDown={(event) => {
@@ -196,7 +201,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             <ul className={styles.rows} id={group.id === "Open" && controller.paneListPresented ? "mobile-nexus-open-panes" : undefined}>
               {group.rows.map((row, rowIndex) => {
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
-                const name = rowName([nexusRowPrimaryText(row), rowFacts(row), unavailable]);
+                const name = row.name ?? rowName([nexusRowPrimaryText(row), rowFacts(row), unavailable]);
                 const hasEvidence = nexusRowEvidenceText(row) !== null;
                 return (
                   <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <li ref={drag.setNodeRef} style={paneDragStyle(drag)} data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined} data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined} className={styles.row} data-current={row.state === "Current" || undefined} onPointerDown={() => controller.setActive(row.key)}>
@@ -257,7 +262,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
 
   return (
     <MobileFullScreenTask interactionLayer={controller.interactionLayer} active={controller.open} scope="Nexus" onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
-      ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
+      ariaLabel={controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
       <div className={`${styles.admission} ${styles.mobile}`}
         onPointerDownCapture={(event) => { taskPointerId.current = event.pointerId; }}

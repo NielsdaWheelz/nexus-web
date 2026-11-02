@@ -7,8 +7,7 @@ import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Fee
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
-import AddPanel from "./AddPanel";
-import AddPanelBoundary from "./AddPanelBoundary";
+import ImportPage from "./ImportPage";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
@@ -90,28 +89,9 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           onSubmit={controller.submitLibrary}
         />
       );
-    case "Add":
-      return (
-        <AddPanelBoundary
-          activeDefect={controller.addDefect}
-          resetKey={page.sessionId}
-          session={controller.addSession}
-          controller={controller}
-          onClearDefect={controller.clearAddDefect}
-          onDefect={controller.reportAddDefect}
-        >
-          <AddPanel
-            key={page.sessionId}
-            session={controller.addSession}
-            mobile={mobile}
-            openingSources={controller.openingSources}
-            onOpen={controller.openAddTarget}
-            onBack={controller.back}
-            onClose={controller.close}
-            onDefect={controller.reportAddDefect}
-          />
-        </AddPanelBoundary>
-      );
+    case "Import":
+      // the phone task stays mounted while closed: a closed page must not count as showing lines
+      return controller.open ? <ImportPage controller={controller} page={page} mobile={mobile} /> : null;
   }
 }
 

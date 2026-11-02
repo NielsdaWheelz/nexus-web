@@ -17,10 +17,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { apiTransportFeedback, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { modeledApiError } from "@/lib/api/serverState";
-import { savedSourceReadFailure } from "@/lib/imports/copy";
-import { fetchAcceptedSource } from "@/lib/imports/ingest";
-import { encodeImportsUrl } from "@/lib/imports/query";
+import { useImportIntake, type Admission } from "@/lib/imports/intake";
 import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
@@ -54,8 +51,6 @@ import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useLatestWorkspace, useSubscribeWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { resolveAddPanelInitialFocus } from "./AddPanel";
-import { useAddContentSession } from "./useAddContentSession";
 import { useNexusPaneReorder } from "./useNexusPaneReorder";
 
 const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
@@ -70,7 +65,7 @@ const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
 };
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
-/** What leaving the current page means; leaving Add may first need the user's confirmation. */
+/** What leaving the current page means; leaving a draft may first need the user's confirmation. */
 type Exit =
   | { readonly kind: "Close" }
   | { readonly kind: "Root" }
@@ -82,7 +77,6 @@ export type NexusController = ReturnType<typeof useNexusController>;
 export function useNexusController() {
   const { ctx } = useActionRuntime();
   const interactionLayer = useRef<Layer | null>(null);
-  const [openingSources, setOpeningSources] = useState<ReadonlySet<string>>(() => new Set());
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
   const captureAttempt = useRef<{ noteId: string; promise: Promise<string>; retry: (() => Promise<unknown>) | null } | null>(null);
   const guard = useWorkGuard();
@@ -90,7 +84,10 @@ export function useNexusController() {
   const { platform } = useRenderEnvironment();
   const player = usePlayerSession();
   const playerCommands = usePlayerCommands();
-  const addSession = useAddContentSession();
+  const intake = useImportIntake();
+  /** Whether this visit sent anything: the back table's middle row. A visit is palette open
+   * to close; the arrow does not end one. */
+  const sent = useRef(false);
   const workspace = useWorkspaceStore();
   const latestWorkspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
@@ -105,8 +102,13 @@ export function useNexusController() {
   const [page, writePage] = useState<NexusPage>({ kind: "Root" });
   const currentPage = useRef(page);
   const [pageListeners] = useState(() => new Set<() => void>());
+  /** Leaving the import page is an exit: an armed line no longer opens. */
+  function disarmImports() {
+    for (const line of intake.lines) if (line.openOnAccept !== null) intake.disarm(line.id);
+  }
   function setPage(change: NexusPage | ((current: NexusPage) => NexusPage)) {
     const next = typeof change === "function" ? change(currentPage.current) : change;
+    if (currentPage.current.kind === "Import" && next.kind !== "Import") disarmImports();
     currentPage.current = next;
     writePage(next);
     for (const listener of pageListeners) listener();
@@ -136,7 +138,6 @@ export function useNexusController() {
   const [paneFocus, setPaneFocus] = useState<{ key: string | null; revision: number }>({ key: null, revision: 0 });
   const latestRequestExit = useRef(requestExit);
   latestRequestExit.current = requestExit;
-  const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
   const handoffPaneId = useRef<string | null>(null);
@@ -146,9 +147,12 @@ export function useNexusController() {
   const shell = useRef(viewport.isMobile);
   const transferFocus = useRef<"Field" | "Heading" | "PaneList" | null>(null);
   const wasOpen = useRef(false);
+  const endVisit = useRef(() => {});
+  endVisit.current = () => { disarmImports(); intake.endVisit(); };
+  // every close path ends the visit here, since navigation closes without an exit
   useEffect(() => {
     if (open && !wasOpen.current) { presentations.retryTitles(); readRecent(); }
-    if (!open && wasOpen.current) presentations.holdRecent([]);
+    if (!open && wasOpen.current) { presentations.holdRecent([]); endVisit.current(); }
     wasOpen.current = open;
   }, [open, presentations, readRecent]);
 
@@ -361,8 +365,7 @@ export function useNexusController() {
 
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
-    if (current.kind === "Add") return addSession.workOwnerIds;
-    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "UseText") return [];
+    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "UseText" || current.kind === "Import") return [];
     if (current.kind === "ChooseCreate" && target !== null) {
       const transferred = target.kind === "CreatePage" ? target.titleDraft
         : target.kind === "CreateLibrary" ? target.nameDraft
@@ -405,7 +408,6 @@ export function useNexusController() {
     visible.current = false;
     handoffPaneId.current = focusPaneId;
     suppressReturnFocus.current = true;
-    addSession.discard();
     setPage({ kind: "Root" });
     setRootMode("Overview");
     setOpen(false);
@@ -426,7 +428,7 @@ export function useNexusController() {
   function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, origin?: NexusImportOrigin): WorkspaceTargetActivationResult | null {
     reorder.cancel({ silent: true });
     if (target.kind !== "InternalHref" && target.kind !== "PaneOpen" && target.kind !== "OpenDailyPage" &&
-      target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" && target.kind !== "CreatePage" &&
+      target.kind !== "Resource" && target.kind !== "CreatePage" &&
       !guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
     switch (target.kind) {
       case "Resource": {
@@ -437,11 +439,14 @@ export function useNexusController() {
         });
         return result;
       }
-      case "OpenAcceptedSource":
-        openAcceptedSource(target, activation);
+      case "OpenImport":
+        if (target.text !== "") intake.setField(target.text);
+        setPage({ kind: "Import", origin: origin ?? rootOrigin(row), select: null });
+        setOpen(true);
         return null;
-      case "OpenAdd":
-        setPage({ kind: "Add", sessionId: addSession.start(target.seed), origin: origin ?? rootOrigin(row) });
+      case "ImportLinks":
+        admitImport({ links: target.links, files: [], ...(activation.disposition.kind === "Fork" ? { open: "Fork" } as const : {}) });
+        setPage({ kind: "Import", origin: origin ?? rootOrigin(row), select: target.links[0]! });
         setOpen(true);
         return null;
       case "CreatePage":
@@ -493,45 +498,6 @@ export function useNexusController() {
     const href = materialized.kind === "InternalHref" ? materialized.href : pane?.href ?? null;
     if (href) find.remember({ query: parsed.text || null, target_href: href });
     return result;
-  }
-
-  function openAcceptedSource(target: Extract<NexusTarget, { kind: "OpenAcceptedSource" }>, activation: NexusTargetActivation) {
-    if (openingSources.has(target.sourceAttemptId)) return;
-    setOpeningSources(current => new Set(current).add(target.sourceAttemptId));
-    const originPaneId = latestWorkspace().state.active_primary_pane_id;
-    const initiatingPage = currentPage.current;
-    const fromLauncher = visible.current;
-    const signal = ctx.sessionSignal();
-    void openAsyncResult({
-      ctx, originPaneId, intent: activation.disposition.kind === "Fork" ? "new_pane" : "default",
-      subject: target.label,
-      mayOpen: () => !fromLauncher || (visible.current && currentPage.current === initiatingPage),
-      discardOwnerIds: fromLauncher ? sourceOwnerIds() : [],
-      onOpened: () => { if (fromLauncher && currentPage.current === initiatingPage) finishNavigation(null); },
-      create: async () => {
-        const source = await fetchAcceptedSource(target.sourceAttemptId, signal);
-        if (target.destination === "media") return {
-          target: { href: source.settled ? `/media/${source.media_id}`
-            : `/media/${source.media_id}?source_attempt_id=${encodeURIComponent(target.sourceAttemptId)}` },
-          title: "item available", openLabel: "open",
-        };
-        return { target: source.settled
-          ? { href: `/imports?${encodeImportsUrl({ selected: source.import_ref })}`, secondaryActivation: { surfaceId: "import-detail" } }
-          : { href: `/imports?${encodeImportsUrl({ view: "InProgress" })}` },
-        title: "import ready to open", openLabel: "view import" };
-      },
-    }).catch(error => {
-      if (signal.aborted) return;
-      const failure = modeledApiError(error, ctx.reportDefect);
-      if (failure === null) return;
-      ctx.feedback.receipt(savedSourceReadFailure(failure), { label: "retry", onClick: intent => {
-        if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
-      } });
-    }).catch(error => ctx.reportDefect({ error })).finally(() => setOpeningSources(current => {
-      const next = new Set(current);
-      next.delete(target.sourceAttemptId);
-      return next;
-    }));
   }
 
   /** Quick note with text: one append to the day, then the day at that note (the
@@ -633,7 +599,6 @@ export function useNexusController() {
     reorder.cancel({ silent: true });
     setAnnouncement("");
     if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
-    addSession.discard();
     setPage({ kind: "Root" });
     if (exit.kind === "Close") { visible.current = false; setRootMode("Overview"); setOpen(false); }
     return null;
@@ -644,7 +609,7 @@ export function useNexusController() {
     return performExit(exit)?.kind !== "Cancelled";
   }
 
-  /** An open request resets to Root or Add. */
+  /** An open request resets to Root, on its query when it brings one, or to the import page. */
   function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null) {
     reorder.cancel({ silent: true });
     setPanesExpanded(false);
@@ -654,17 +619,15 @@ export function useNexusController() {
       rootScroll.current = { Overview: 0, Search: 0, NewPane: 0 };
       suppressReturnFocus.current = false;
       transferFocus.current = null;
-      addSession.beginVisit();
+      sent.current = false;
     }
     rootFocus.current = null;
-    setRootMode("Overview");
-    const nextPage: NexusPage = intent.kind === "Add"
-      ? { kind: "Add", sessionId: addSession.start(intent.seed), origin: null }
-      : { kind: "Root" };
-    if (intent.kind !== "Add") addSession.discard();
-    setQueryState("");
+    const query = intent.kind === "Root" ? intent.query ?? "" : "";
+    setRootMode(query !== "" && viewport.isMobile ? "Search" : "Overview");
+    if (intent.kind === "Import" && intent.into.length > 0) intake.setInto(intent.into);
+    setQueryState(query);
     setList(EMPTY_LIST);
-    setPage(nextPage);
+    setPage(intent.kind === "Import" ? { kind: "Import", origin: null, select: null } : { kind: "Root" });
     setOpen(true);
     if (intent.kind === "QuickAction") {
       const action = NEXUS_COMMANDS[intent.actionId].action("");
@@ -696,23 +659,34 @@ export function useNexusController() {
   }
 
   /** Esc, the scrim and android back step back only to a palette that opened the page and has sent nothing this visit. */
-  const dismissClosesAdd = page.kind === "Add" && (page.origin === null || addSession.state.sent);
+  const dismissCloses = () => page.kind === "Import" && (page.origin === null || sent.current);
+
+  /** Every admission nexus makes, from root or the page: the visit has sent something, and a
+   * batch of two or more says it has begun. */
+  function admitImport(admission: Admission) {
+    sent.current = true;
+    const listed = new Set(intake.lines.flatMap(line => line.source.kind === "Link" ? [line.source.url] : []));
+    const links = admission.links.filter(link => !listed.has(new URL(link).href)).length;
+    const files = admission.files.length;
+    if (links + files >= 2) setAnnouncement(files === 0 ? `importing ${links} links.` : links === 0 ? `importing ${files} files.` : `importing ${links + files}.`);
+    intake.admit(admission);
+  }
 
   function back() {
     if (reorder.cancel()) return;
     const exit: Exit = { kind: "Root" };
     if (guardExit(exit) !== "accepted") return;
     setAnnouncement("");
-    if (page.kind === "Add" && page.origin !== null) {
+    if (page.kind === "Import" && page.origin !== null) {
       const { mode, control, query: text } = page.origin;
-      const { sent } = addSession.state;
-      // setQuery enters search on phones; the origin's mode then overrides it.
-      setQuery(sent ? "" : text);
+      // setQuery enters search on phones; the origin's mode then overrides it. A query is
+      // never restored after a send, or enter would send it again.
+      setQuery(sent.current ? "" : text);
       setRootMode(mode);
       // Search on a phone rests in its input. Otherwise the row: the one that opened
       // this page, or the import row if that row left with the query or never existed.
       rootFocus.current = viewport.isMobile && mode === "Search" ? "Search"
-        : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control;
+        : sent.current || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control;
     }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
@@ -734,7 +708,7 @@ export function useNexusController() {
 
   function escape() {
     if (reorder.cancel()) return;
-    if (dismissClosesAdd) requestExit({ kind: "Close" });
+    if (dismissCloses()) requestExit({ kind: "Close" });
     else if (page.kind !== "Root") back();
     else if (rootMode === "NewPane") {
       rootFocus.current = viewport.isMobile ? "NewPane" : "Search";
@@ -806,6 +780,11 @@ export function useNexusController() {
   }, [open]);
 
   if (defect) throw defect.error;
+  // root reads only the intake's count; merged lists freeze labels, so it lands last
+  const importing = intake.unsettled;
+  const counted = importing === 0 ? groups : groups.map(group => ({ ...group, rows: group.rows.map(row =>
+    row.key !== "QuickAction:Nexus.Quick.Import" || row.detail !== undefined ? row
+      : { ...row, label: `import · ${importing}${viewport.isMobile ? "" : " importing"}`, name: `import, ${importing} importing` }) }));
   const resultsHeld = list.identity === listIdentity && list.pending;
   const noticeText = [find.progress.kind === "Notice" ? find.progress.text : null, resultsHeld ? "search update ready" : null,
     !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, lookupGuidance].filter(Boolean).join(" ") || null;
@@ -818,7 +797,7 @@ export function useNexusController() {
     page,
     rootMode,
     rootScroll,
-    groups,
+    groups: counted,
     activeKey,
     choices: choiceRows(page),
     explicitIntent: parsed.intent.kind !== "Search",
@@ -851,11 +830,8 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     announcement,
-    dialogLabel: page.kind === "Add" ? "Add content" : page.kind === "Root" && rootMode === "NewPane" ? "open in new pane" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
-    focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
-    addSession,
-    openingSources,
-    addDefect: addDefect?.sessionId === addSession.state.sessionId,
+    dialogLabel: page.kind === "Import" ? "import" : page.kind === "Root" && rootMode === "NewPane" ? "open in new pane" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
+    focusKey: page.kind === "Import" ? page.kind : `${page.kind}:${rootMode}:${focusRevision}`,
     panes,
     panesExpanded,
     recentlyClosedExpanded,
@@ -921,9 +897,10 @@ export function useNexusController() {
     setActive,
     retry: find.retry,
     activate,
-    /** Explicit destination controls capture their own gesture, through the Add guard. */
+    /** Explicit destination controls capture their own gesture, through the page's guard. */
     openTarget: (target: NexusTarget, activation: NexusTargetActivation = PROGRAMMATIC_NEXUS_TARGET_ACTIVATION) => requestExit({ kind: "Navigate", target, activation }),
-    openAddTarget: (target: NexusTarget, intent: OpenIntent) => requestExit({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : PROGRAMMATIC_NEXUS_TARGET_ACTIVATION }),
+    admitImport,
+    announce: setAnnouncement,
     back,
     escape,
     close: () => requestExit({ kind: "Close" }),
@@ -931,7 +908,7 @@ export function useNexusController() {
     /** Native keyboard dismissal precedes this task-owned Back transition. */
     guardClose(): DismissDecision {
       if (reorder.cancel()) return "blocked";
-      if (dismissClosesAdd) return guardExit({ kind: "Close" });
+      if (dismissCloses()) return guardExit({ kind: "Close" });
       if (viewport.isMobile && page.kind === "Root" && rootMode !== "Overview") {
         escape();
         return "blocked";
@@ -943,11 +920,6 @@ export function useNexusController() {
       return guardExit({ kind: "Close" });
     },
     dismissAccepted: () => performExit({ kind: "Close" }),
-    stopAddForReview(): boolean {
-      if (!guard.confirmLoss({ scopes: [], ownerIds: addSession.workOwnerIds })) return false;
-      addSession.stop();
-      return true;
-    },
     suppressReturnFocus: () => suppressReturnFocus.current || shell.current !== viewport.isMobile,
     returnFocusTo: () => opener.current,
     returnFocusFallback: () => findPaneLandmarkFocusTarget(state.active_primary_pane_id),
@@ -962,10 +934,9 @@ export function useNexusController() {
         return [...container.querySelectorAll<HTMLElement>("[data-nexus-control]")].find((node) => node.dataset.nexusControl === key)
           ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
       }
-      if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading], [data-add-heading]");
-      if (page.kind === "Add") {
-        return resolveAddPanelInitialFocus(container, transfer === "Field" ? false : viewport.isMobile);
-      }
+      if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading]");
+      // focus lands in the field on both shells
+      if (page.kind === "Import") return container.querySelector<HTMLElement>('[role="combobox"]');
       const control = rootFocus.current;
       rootFocus.current = null;
       if (control && !viewport.isMobile && page.kind === "Root") {
@@ -999,11 +970,6 @@ export function useNexusController() {
     },
     submitLibrary,
     retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content, unconfirmed: page.submit.unconfirmed } }),
-    reportAddDefect(error: unknown) {
-      console.error("Add content contract failed:", error);
-      setAddDefect({ sessionId: addSession.state.sessionId, error });
-    },
-    clearAddDefect: () => setAddDefect(null),
     closePane,
     restoreClosedPane: restoreClosed,
     activateAdjacentPane(input: Parameters<typeof workspace.activateAdjacentPane>[0]) {

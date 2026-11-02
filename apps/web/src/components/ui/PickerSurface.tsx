@@ -38,6 +38,7 @@ export default function PickerSurface({
   focusKey,
   panelId,
   placement = "below",
+  align = "start",
   initialFocus,
   desktopRole = "dialog",
   heightLimit,
@@ -59,6 +60,8 @@ export default function PickerSurface({
   readonly focusKey?: unknown;
   readonly panelId?: string;
   readonly placement?: "above" | "below";
+  /** Which edge of the trigger the desktop panel lines up with. */
+  readonly align?: "start" | "end";
   readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
   /** A listbox supplies its own named root inside a neutral desktop shell. */
   readonly desktopRole?: "dialog" | null;
@@ -80,7 +83,7 @@ export default function PickerSurface({
   const panel = useAnchoredPosition<HTMLDivElement>(anchorEl, {
     enabled: desktop,
     placement,
-    align: "start",
+    align,
     flip: true,
     keepAnchorVisible: true,
   });

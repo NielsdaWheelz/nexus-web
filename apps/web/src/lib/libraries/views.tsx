@@ -1,6 +1,7 @@
 // The libraries panes' url-owned view choices, spelled as the server reads them,
-// and the one name rule. The server validates every value and every combination
-// composes; these are only the options offered.
+// the one name rule, and the one order and summary of library names. The server
+// validates every value and every combination composes; these are only the options
+// offered.
 
 import type { FeedbackProps } from "@/components/feedback/Feedback";
 import type { ViewChanges } from "@/lib/collections/view";
@@ -13,6 +14,18 @@ export function libraryNameError(text: string): string | null {
   if (name === "") return "enter a library name.";
   if ([...name].length > 100) return "use 100 characters or fewer.";
   return name.toLowerCase() === "all" ? "All is reserved for the All view." : null;
+}
+
+/** Library names as every chooser lists them: case-blind, then exact, then by id. */
+export function compareLibraryNames(a: { id: string; name: string }, b: { id: string; name: string }) {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id.localeCompare(b.id));
+}
+
+/** Libraries in one short phrase: one or two in full, else the first two and how many more. */
+export function libraryNames(libraries: readonly { id: string; name: string }[]): string {
+  const names = libraries.toSorted(compareLibraryNames).map(library => library.name);
+  return names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
 }
 
 export const INDEX_SORTS: Options = [

@@ -192,10 +192,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               className={cx(buttonClassName({}), styles.item)}
               aria-haspopup="dialog"
               aria-label="Add content"
-              onClick={() => requestNexusOpen({
-                kind: "Add",
-                seed: { kind: "Content", initialDestinations: [] },
-              })}
+              onClick={() => requestNexusOpen({ kind: "Import", into: [] })}
             >
               <Plus className={styles.icon} size={20} aria-hidden="true" />
               <span className={styles.label}>Add</span>

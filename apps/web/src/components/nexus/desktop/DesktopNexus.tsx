@@ -2,13 +2,14 @@
 
 // The query edits text and selects candidates; native secondary buttons own their actions.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
+import { flattenedPaste } from "@/lib/nexus/query";
 import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
@@ -105,6 +106,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><Button onClick={controller.escape}>cancel</Button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
       <div className={styles.inputRow} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
         <span className="sr-only">Find anything…</span>
+        <span className={styles.slot} aria-hidden="true"><Search size={18} /></span>
         <Input
           ref={inputRef}
           bare
@@ -125,6 +127,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           onFocus={() => setInputFocused(true)}
           onBlur={() => setInputFocused(false)}
           onChange={(event) => controller.setQuery(event.currentTarget.value)}
+          onPaste={(event) => {
+            const value = flattenedPaste(event);
+            if (value !== null) controller.setQuery(value);
+          }}
           onCompositionStart={() => {
             composing.current = true;
             controller.setComposing(true);
@@ -228,7 +234,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   <div
                     id={candidateId(row.key)}
                     role="gridcell"
-                    aria-label={group.id === "Open" && controller.paneListPresented ? paneCandidateName(controller, row, rowIndex) : rowName([nexusRowPrimaryText(row), rowFacts(row), snippet, passageFacts, reason])}
+                    aria-label={group.id === "Open" && controller.paneListPresented ? paneCandidateName(controller, row, rowIndex) : row.name ?? rowName([nexusRowPrimaryText(row), rowFacts(row), snippet, passageFacts, reason])}
                     className={styles.candidateCell}
                     onPointerMove={event => {
                       const press = pointerPress.current;

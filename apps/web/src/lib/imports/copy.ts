@@ -10,7 +10,7 @@ import type {
   FeedbackContent,
   FeedbackTone,
 } from "@/components/feedback/Feedback";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -197,7 +197,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
       "Open the original page in your browser and use Nexus Capture there.",
   },
   E_SOURCE_FETCH_FAILED: {
-    reason: "couldn’t fetch the page",
+    reason: "the download failed",
     title: "Nexus could not fetch this source.",
     explanation: "The source did not respond.",
   },
@@ -1181,97 +1181,3 @@ export function captureStatusLine(result: AcceptedIngest): string {
   return !result.available ? "this item was saved, then removed" : result.processing === "failed" ? "saved · processing failed" : "saved";
 }
 
-export type AcceptanceFailure =
-  | { readonly kind: "Rejected"; readonly feedback: FeedbackContent }
-  | {
-      readonly kind: "AcceptanceUnresolved";
-      readonly reason: "StatusUnknown" | "UploadIncomplete";
-      readonly feedback: FeedbackContent;
-    }
-  | { readonly kind: "Superseded" };
-
-/** An Add row whose acceptance is unknown; Check status replays its intent. */
-export const UNCONFIRMED: FeedbackContent = {
-  tone: "Warning",
-  title: "change not confirmed",
-  message: "check save to retry the original request.",
-};
-
-const notAdded = (
-  message: string,
-): Extract<AcceptanceFailure, { kind: "Rejected" }> => ({
-  kind: "Rejected",
-  feedback: { tone: "Danger", title: "Couldn’t save", message },
-});
-
-/** Add's answer to each upload-session outcome of one frozen intent. */
-const ADD_OUTCOME = {
-  Expired: { kind: "Rejected", feedback: { tone: "Warning", title: "upload expired", message: "upload expired. choose the file again." } },
-  BytesMissing: {
-    kind: "AcceptanceUnresolved",
-    reason: "UploadIncomplete",
-    feedback: {
-      tone: "Warning",
-      title: "Upload didn’t complete",
-      message:
-        "Nexus never received this file. Retry the upload, or remove it and start a new import.",
-    },
-  },
-  Superseded: { kind: "Superseded" },
-  Unresolved: {
-    kind: "AcceptanceUnresolved",
-    reason: "StatusUnknown",
-    feedback: UNCONFIRMED,
-  },
-  UnsupportedFileType: notAdded(
-    "This file type isn’t supported. Start a new import with a PDF or EPUB.",
-  ),
-  FileTooLarge: notAdded(
-    "This file exceeds the import limit. Start a new import with a smaller file.",
-  ),
-  LibraryForbidden: notAdded(
-    "You no longer have access to a destination library. Choose different libraries and start a new import.",
-  ),
-  FileMismatch: notAdded(FILE_DOES_NOT_MATCH),
-} satisfies Readonly<Record<PlainOutcome, AcceptanceFailure>>;
-
-/**
- * Why an Add acceptance did not land: refused, unknown (send its id again to
- * find out), or superseded. A transport failure or a 5xx leaves the
- * acceptance unknown; defects and a malformed intent are rethrown.
- */
-export function acceptanceFailure(error: unknown): AcceptanceFailure {
-  if (error instanceof UploadSessionError) {
-    if (error.outcome.kind === "IntentMalformed") throw error;
-    if (error.outcome.kind === "VerificationRejected") {
-      return {
-        kind: "Rejected",
-        feedback: {
-          tone: "Danger",
-          title: UPLOAD_REJECTED_LABEL,
-          message: verificationSentence(error.outcome),
-        },
-      };
-    }
-    return ADD_OUTCOME[error.outcome.kind];
-  }
-  const { status, code, requestId } = modeled(error);
-  if (
-    status >= 500 || outcomeUnknown(error)
-  ) {
-    return {
-      kind: "AcceptanceUnresolved",
-      reason: "StatusUnknown",
-      feedback: { ...UNCONFIRMED, requestId },
-    };
-  }
-  if (code === "E_RESOURCE_CONFLICT") return { kind: "Rejected", feedback: { tone: "Warning", title: "save needs review. review your choices and save again.", requestId } };
-  if (code === "E_LIBRARY_FORBIDDEN") {
-    const failure = ADD_OUTCOME.LibraryForbidden;
-    return { ...failure, feedback: { ...failure.feedback, requestId } };
-  }
-  return {
-    kind: "Rejected",
-    feedback: captureErrorFeedback(error, "SaveSource"),
-  };
-}

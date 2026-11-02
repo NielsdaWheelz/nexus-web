@@ -7,7 +7,7 @@ import {ControlContents} from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
-import { libraryNameError } from "@/lib/libraries/views";
+import { compareLibraryNames, libraryNameError } from "@/lib/libraries/views";
 import styles from "./LibraryChooser.module.css";
 
 type Membership = { readonly included: number; readonly total: number };
@@ -34,11 +34,6 @@ export interface ChooserCreation {
   readonly available: boolean;
   readonly pendingNames: readonly string[];
   readonly onCreate: (name: string) => boolean;
-}
-
-export function compareLibraryNames(a: { id: string; name: string }, b: { id: string; name: string }) {
-  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
-    || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id.localeCompare(b.id));
 }
 
 function membership(value: Membership | null, kind: "Confirmed" | "Chosen"): string {

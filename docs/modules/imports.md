@@ -62,7 +62,7 @@ owner-defined control markers; they do not interpret metadata workflow internals
 
 the workspace planner owns reuse and creation; pane count never refuses completion.
 
-in process: `append_upload_event` and `append_processing_event` (caller's transaction, nothing returned), `delete_upload_history_in_current_transaction` and `delete_processing_history_in_current_transaction` (history dies with its session or media), `events_of_import_sql`, the queue hooks `on_source_job_outcome` and `on_index_job_outcome` (inside the job transition), `assume_safe_failure_code`, `queue_failure_code`, `parse_import_ref`, `format_import_ref`. web: `publishImportsInvalidation` / `subscribeImportsInvalidations` (the in-tab `Imports.Invalidated` event), `encodeImportsUrl` (Add's "view import"), `ImportsBadge`, the companion group `imports-inspector` with surface `import-detail`, `FAILURE_COPY` (the media banner) and the acquisition copy the add panel, share, Connections and note attachments word their outcomes with.
+in process: `append_upload_event` and `append_processing_event` (caller's transaction, nothing returned), `delete_upload_history_in_current_transaction` and `delete_processing_history_in_current_transaction` (history dies with its session or media), `events_of_import_sql`, the queue hooks `on_source_job_outcome` and `on_index_job_outcome` (inside the job transition), `assume_safe_failure_code`, `queue_failure_code`, `parse_import_ref`, `format_import_ref`. web: `publishImportsInvalidation` / `subscribeImportsInvalidations` (the in-tab `Imports.Invalidated` event), `encodeImportsUrl` (a line's `see why`, the import page's shelf), `ImportsBadge`, the companion group `imports-inspector` with surface `import-detail`, `FAILURE_COPY` (the media banner) and the acquisition copy the intake, share, Connections and note attachments word their outcomes with.
 
 url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&before&selected`, by wire name in one order; decoding is tolerant and keeps what the reader wrote; dates are UTC days, `[from, before)`; `selected` is admitted only as one `upload:` or `media:` path segment. no browser storage.
 
@@ -167,6 +167,10 @@ for every surface and for the intake's slips. nothing survives a reload.
   of one, asks `window.confirm` first, since either may have landed.
 - **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
   removed lines leave. everything else stays until `×`.
+- **surfaces.** the [import page](app-navigation.md#the-import-page) shows lines while it is
+  mounted and open, so a batch settling there speaks instead of slipping; nexus's root reads
+  only `unsettled`. every admission nexus makes goes through its controller, which tells the
+  back table that the visit sent something.
 
 - **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
 - **I12** a line once unknown keeps its frozen id, guard and confirmation until a retry of
@@ -183,7 +187,7 @@ for every surface and for the intake's slips. nothing survives a reload.
 and current-reference supersession; [libraries](library.md) owns retention and
 placement revisions. import views never infer current saving from a past receipt.
 
-[add content](add-content.md) owns live upload recovery. a guard refusal permits
+the intake owns live upload recovery (`replay` above). a guard refusal permits
 review against the same staged generation before expiry; an unknown confirmation
 retains its exact command. losing that owner requires file reselection/recapture.
 imports exposes its existing retry-upload action rather than durable confirmation

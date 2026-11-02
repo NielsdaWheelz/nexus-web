@@ -6,13 +6,12 @@
  */
 
 import type { Line } from "@/components/feedback/stage";
-import { compareLibraryNames } from "@/components/libraries/LibraryChooser";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
 import { CAPTURE_REFUSAL, FAILURE_COPY } from "@/lib/imports/copy";
 import type { IntakeLine, LineRefusal, LineStage, Truth } from "@/lib/imports/intake";
 import { encodeImportsUrl } from "@/lib/imports/query";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import { libraryNames } from "@/lib/libraries/views";
 import { mediaKindLabel } from "@/lib/media/kind";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 
@@ -50,17 +49,12 @@ export function linePhase(stage: LineStage): "Running" | "Accepted" | "Settled" 
   }
 }
 
-/** A link minus its scheme, a leading `www.` and a trailing `/`; a file's name. */
-export function pointer(line: IntakeLine): string {
-  return line.source.kind === "File" ? line.source.name
-    : line.source.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
-}
+/** A link minus its scheme, a leading `www.` and a trailing `/`. */
+export const linkPointer = (url: string) => url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
 
-/** Libraries in one short phrase, as the destination trigger names them: one or two in
- * full, else the first two and how many more. */
-function libraryNames(libraries: readonly LibraryDestination[]): string {
-  const names = libraries.toSorted(compareLibraryNames).map(library => library.name);
-  return names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
+/** A link's pointer; a file's name. */
+export function pointer(line: IntakeLine): string {
+  return line.source.kind === "File" ? line.source.name : linkPointer(line.source.url);
 }
 
 const RETRY = { kind: "Retry", label: "retry" } as const;

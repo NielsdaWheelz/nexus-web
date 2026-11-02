@@ -177,13 +177,14 @@ page, chat, library, import and browse. recognized commands show their prepared 
 `/` and unknown heads retain a literal-search escape and show all six commands,
 without a default; selecting one starts it empty. unknown text is never attached
 to a guessed command or automatically sent to corpus search. unavailable preparation retains
-the input and reason. import draft validation and capacity belong to add.
+the input and reason. a query that is wholly links reads `import {pointer}` or
+`import {n} links`, at most 100: the only root row that writes (see the import page).
 
 nonempty quick-note activation says `save note to today` and commits locally;
 empty quick note opens insertion. page/chat/library/import/browse open their
 existing draft or chooser and never submit it implicitly. natural-language
-recognition is unchanged: `import policy` searches; `/i policy` opens an import
-draft. literal search uses outer-trimmed input without interpreting filters.
+recognition is unchanged: `import policy` searches; `/i policy` opens the import
+page with `policy` in its field and sends nothing. literal search uses outer-trimmed input without interpreting filters.
 
 navigation action labels describe their outcome: `open libraries`, `search
 people`. the latter opens the existing empty people search and describes its
@@ -255,6 +256,52 @@ delayed creation/lookup uses the shared attention owner and canonical placement,
 then the controller preserves destination or entry focus. later explicit add
 result controls capture a fresh gesture rather than replaying add's opener.
 
+## the import page
+
+the import page is a nexus page, one tree for both shells through `NexusPages`, in the
+palette's frame. a bare combobox field (`links to import`) over one grid (`import options`);
+focus stays in the field and the selection is its active descendant. root has a faint search
+glyph in a leading slot; the page's arrow takes that slot, so typed text and line pointers
+keep one edge. on a phone the header holds the arrow and `import`, and `into` stacks under
+the field. the field and `into` are the intake's, for one visit: palette open to close, on
+every close path (the controller's close edge). the arrow does not end a visit.
+
+rows, in order: what enter would send (`import {pointer}`, `import {n} links`) while the
+field holds links; the lines, newest batch first and each batch in paste order, a settled
+batch of two or more closed by its colophon; `choose a file…`; with no lines, the `recent`
+shelf (the viewer's five newest own imports, `view=Recent`, reread on each imports
+observation while it shows, retaining the observer); `all imports`, with its attention
+count. with no lines and an empty field, `choose a file…` is selected. a line renders
+`lineView` through `ImportLine`; a settled line's menu is the resource menu for its media.
+
+| key | effect |
+| --- | --- |
+| ⏎ in root on a query of links | sends them, opens the page with the line selected; ⏎ again opens it, armed until accepted |
+| ⇧⏎ | sends, arms the first new line to open beside on acceptance |
+| ⏎ on the page | the field while it holds text and no arrow moved the selection since the last edit, else the selected row's verb |
+| the field's ⏎ | takes the links, leaves the rest with `not a link`; over 100, `100 at a time. this has {n}.` and nothing sent |
+| a link already listed | adds no line; the selection moves to it |
+| ⏎ on an unaccepted line | arms its open; failure, a moved selection, input and leaving the page disarm |
+| ⏎ on `choose a file…` | opens the picker inside that gesture |
+| ↑↓, tab | select; tab reaches `into`, then the selected row's controls |
+| paste | a multi-line paste flattens to one line, in root and in the field |
+
+both `escape()` and `guardClose()` (phones, android back) branch on one table. nothing on
+it prompts: sent work belongs to the intake, which leaving never loses.
+
+| | arrow | esc, scrim, android back |
+| --- | --- | --- |
+| from the palette, nothing sent this visit | root, origin restored | same |
+| from the palette, something sent this visit | root, query cleared | close |
+| from outside (rail, library) | root, overview | close to the opener |
+
+the origin is the palette's mode, control and query. restored means the query, the mode,
+the `import` row selected and focus in the combobox; a phone has no row selection, so from
+search focus lands in the search input and from the overview on the `import` row. a query
+is never restored after a send, or ⏎ would send it again. an open picker takes esc first.
+root's `import` row reads `import · {n} importing` (`import · {n}` on a phone) while the
+intake has unsettled lines.
+
 ## keyboard shortcuts
 
 app shortcuts are fixed product behavior. `lib/shortcuts.ts` owns their keys,
@@ -308,6 +355,7 @@ actions remain accessible through nexus and ordinary controls.
 | Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/DesktopNexus.tsx`                                                           |
 | Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
+| The import page and its lines (both surfaces)                    | `apps/web/src/components/nexus/ImportPage.tsx` and `ImportLine.tsx`, over the intake (`lib/imports/intake.tsx`)    |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and note entries                             | `/daily/{date}` (`dailyDateFor` in `lib/notes/api.ts`) with `AppendNote` / `FocusNote`; the store delivers the entry to the visit the target lands on |
 | fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |

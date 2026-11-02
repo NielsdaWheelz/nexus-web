@@ -4,10 +4,16 @@
  * where a scheme starts, unless a `/`, `=` or `%` precedes it, as in a redirect parameter;
  * trailing punctuation and unbalanced closing brackets are prose, not url. A link is
  * returned as first written; a repeat is one that parses to the same url, so
- * `https://a.com` and `https://A.com/` are one. `UrlsAndDomains`, the import field's rule
- * alone, also reads a bare domain as its https url.
+ * `https://a.com` and `https://A.com/` are one. `UrlsOrSoleDomain`, the import field's rule
+ * alone, also reads a bare domain as its https url when it is the text's only token: in a
+ * list or prose, `README.md` and `Node.js` are words.
  */
-export function extractLinks(text: string, accept: "Urls" | "UrlsAndDomains"): { links: string[]; rest: string } {
+export function extractLinks(text: string, accept: "Urls" | "UrlsOrSoleDomain"): { links: string[]; rest: string } {
+  const tokens = text.split(/\s+/).filter(token => token !== "");
+  if (accept === "UrlsOrSoleDomain" && tokens.length === 1) {
+    const domain = trimProse(tokens[0]!);
+    if (BARE_DOMAIN.test(domain) && isHttpUrl(`https://${domain}`)) return { links: [`https://${domain}`], rest: "" };
+  }
   const links: string[] = [];
   const rest: string[] = [];
   const seen = new Set<string>();
@@ -17,14 +23,11 @@ export function extractLinks(text: string, accept: "Urls" | "UrlsAndDomains"): {
     seen.add(url);
     links.push(link);
   };
-  for (const token of text.split(/\s+/)) {
-    if (token === "") continue;
+  for (const token of tokens) {
     const starts = [...token.matchAll(/https?:\/\//gi)].map(match => match.index)
       .filter(index => index === 0 || !"/=%".includes(token[index - 1]!));
     if (starts.length === 0) {
-      const domain = trimProse(token);
-      if (accept === "UrlsAndDomains" && BARE_DOMAIN.test(domain) && isHttpUrl(`https://${domain}`)) keep(`https://${domain}`);
-      else rest.push(token);
+      rest.push(token);
       continue;
     }
     if (starts[0]! > 0) rest.push(token.slice(0, starts[0]));

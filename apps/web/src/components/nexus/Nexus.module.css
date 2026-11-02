@@ -470,3 +470,6 @@
 .mobile .row:has(.mobileEvidence:not(:empty)) { flex-wrap: wrap; }
 .mobileEvidence { --control-min-size: 48px; flex-basis: 100%; min-width: 0; padding: 0 var(--space-2) var(--space-3); color: var(--ink-muted); font-size: var(--text-xs); }
 .mobileEvidence:empty { display: none; }
+
+/* Root's search glyph sits in the leading slot the import page's arrow takes, so text keeps one edge. */
+.slot { display: grid; flex: 0 0 var(--size-md); min-inline-size: var(--size-md); place-items: center; color: var(--ink-faint); }

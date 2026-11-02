@@ -10,15 +10,10 @@ reads the holder's pre-commit state; every insert advances its library's
 `order_revision` (`library_entries._ensure_entry_locked`), All included, so a
 waiter behind an insert always aborts once and spends one of its attempts (six for
 a url, three for upload and capture confirm), leaving the rest for the account's
-background work (`lone-acquisition-exhausts-serializable-retry`). the add panel
-sends one row at a time, a file's create, put and confirm whole, and share one link
-at a time, so one client no longer races itself; two clients still can.
-
-slice 2 note: intake sends links one at a time but puts files two at a time. two
-upload confirms in flight meet this hazard unless confirm is also sent one at a time:
-it is the only upload step that runs serializable under the viewer lock (create
-takes the lock in read committed and only waits; the put never reaches the
-database).
+background work (`lone-acquisition-exhausts-serializable-retry`). the intake takes
+one acquisition step at a time (a link's accept or an upload's confirm, while puts
+run two at a time) and share sends one link at a time, so one client no longer
+races itself; two clients still can.
 
 impact: a link refused with the removal-fence copy (`save needs review`, intake's
 `changed`), though nothing changed.

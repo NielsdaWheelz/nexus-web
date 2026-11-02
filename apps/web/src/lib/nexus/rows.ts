@@ -7,8 +7,8 @@ import {
   FilePlus2,
   FileText,
   Globe,
+  Import,
   Library,
-  Link as LinkIcon,
   MessageSquarePlus,
   Play,
   Search,
@@ -38,7 +38,8 @@ import type {
   NexusRootMode,
   NexusTarget,
 } from "./model";
-import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
+import { linkPointer } from "@/lib/imports/lineView";
+import { importLinksAction, NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
 
 const RESULT_CAP = 8;
 const OPEN_CAP = 5;
@@ -52,7 +53,7 @@ const TIERS: readonly NexusRankTier[] = [
   "FuzzyOrSynonym",
   "Semantic",
 ];
-const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "Continuation"];
+const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "Import", "Intent", "Continuation"];
 const UNRANKED = { stream: "Navigation", tier: "FuzzyOrSynonym", score: 0, frecency: 0 } as const;
 const MOBILE_PLACES: readonly DestinationId[] = ["lectern", "libraries", "browse", "podcasts", "chats", "notes"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
@@ -165,14 +166,13 @@ function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string): 
 function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency, picker: boolean): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
-  if (intent.kind === "ImportUrl") {
+  if (intent.kind === "ImportLinks") {
+    const [only, ...more] = intent.links;
     explicit.push({
-      key: `ImportUrl:${intent.url}`, localMatch: null,
-      label: "import",
-      icon: LinkIcon,
-      type: "URL",
-      detail: intent.url,
-      action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url),
+      key: "Import", localMatch: null,
+      ...(more.length === 0 ? { label: "import", detail: linkPointer(only!), name: `import ${linkPointer(only!)}` } : { label: `import ${intent.links.length} links` }),
+      icon: Import,
+      action: importLinksAction(intent.links),
       rank: { stream: "Navigation", tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
   } else if (intent.kind === "Command") {
@@ -448,7 +448,7 @@ export function pickerTarget(target: NexusTarget, panes: readonly NexusPane[]): 
     }
     case "Resource": return target.activation.kind === "route" ? target : null;
     case "InternalHref": case "OpenDailyPage": case "CreatePage": case "CreateLibrary": case "ChooseCreate": case "ChooseBrowse": case "UseText": return target;
-    case "OpenAcceptedSource": case "OpenAdd": case "ResumeCurrentPlayback": return null;
+    case "OpenImport": case "ImportLinks": case "ResumeCurrentPlayback": return null;
   }
 }
 
