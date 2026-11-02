@@ -99,10 +99,14 @@ function createCommands(accountId: string, guard: WorkGuard, fail: (input: { err
       if (sent) handleUnauthenticatedApiError(error);
       const unauthenticated = sent && isUnauthenticatedApiError(error);
       const defect = (!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error);
-      if (!sent || isRefusal(error)) {
+      if (!sent) {
         retire(entry);
-        const conflict = isApiError(error) && (error.code === "E_RESOURCE_CONFLICT" || error.code === "E_SELECTION_CHANGED" || error.code === "E_CONFLICT");
-        outcome.say({ fact: transcriptsRefused(entry.title), reason: !sent ? "nothing was sent." : conflict ? "the eligible episodes changed." : undefined });
+        outcome.say({ fact: transcriptsRefused(entry.title), reason: "nothing was sent." });
+      } else if (isRefusal(error)) {
+        retire(entry);
+        if (error.code === "E_RESOURCE_CONFLICT" || error.code === "E_SELECTION_CHANGED" || error.code === "E_CONFLICT")
+          outcome.say({ fact: transcriptsRefused(entry.title), reason: "the eligible episodes changed." });
+        else outcome.fail(error, transcriptsRefused(entry.title));
       } else {
         entry.phase = "unconfirmed";
         publish();

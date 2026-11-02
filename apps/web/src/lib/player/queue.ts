@@ -12,10 +12,12 @@ import type { Schema } from "@/lib/api/wire";
 export type QueueRefusal =
   | "Loading" | "LoadFailed" | "Saving" | "Changed" | "Refused" | "Unsettled" | "AddUnsettled" | "NoRestore"
   | "NotQueued" | "NotInView" | "TooMany" | "OwnerSilent" | "Moving" | "NotMoved" | "Unsupported" | "NotConnected"
-  | "Superseded";
+  | "Unresponsive" | "Superseded";
 
-/** What a refusal tells its reader. null: nothing to tell. `Superseded`: a newer press owns the
- * outcome. `Unsettled`: the held line for the unconfirmed change already stands. */
+/** What a refusal tells its reader, a refused press or the queue's own failed read. null: nothing
+ * to tell. `Superseded`: a newer press owns the outcome. `Unsettled`: a sent change went
+ * unanswered, so the held line for it stands; nothing else may claim it. The native player's
+ * conditions name only the cause, so they are true of a read and a change alike. */
 const REFUSAL_LINES: Readonly<Record<QueueRefusal, Line | null>> = {
   Loading: { fact: "the queue is still loading." },
   LoadFailed: { fact: "couldn’t load the queue." },
@@ -32,7 +34,8 @@ const REFUSAL_LINES: Readonly<Record<QueueRefusal, Line | null>> = {
   Moving: { fact: "playback is moving to another tab." },
   NotMoved: { fact: "couldn’t move playback to this tab." },
   Unsupported: { fact: "this browser can’t run the player." },
-  NotConnected: { fact: "couldn’t change the queue.", reason: "the player isn’t connected." },
+  NotConnected: { fact: "the player isn’t connected." },
+  Unresponsive: { fact: "the player isn’t responding." },
   Superseded: null,
 };
 
@@ -89,7 +92,8 @@ export type QueueFence = Pick<QueueRequest, "queue_id" | "expected_revision">;
  * `known` distinguishes its initial placeholder from an accepted null snapshot. */
 export interface NativeQueueOwner {
   known(): boolean;
-  uncertain(): boolean;
+  /** Sends and checks of a change that went unanswered; 0 once every change is confirmed. */
+  unanswered(): number;
   read(): Promise<QueueHeader | null>;
   page(input: { readonly expected_revision: string; readonly offset: number; readonly limit: number }): Promise<QueueEntry[]>;
   replace(input: { readonly state: QueueState; readonly expected_revision: string | null; readonly known_descriptor: Schema<"PlayerDescriptor"> | null; readonly is_current: () => boolean }): Promise<QueueHeader>;

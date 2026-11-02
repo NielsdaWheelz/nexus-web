@@ -5,6 +5,7 @@
  * Knowledge begins with a successful read or acknowledged save; failed reads
  * retain the last confirmed state, and the first one's error stands as `unread`
  * until a read lands. A refused write throws its refusal and keeps nothing.
+ * `unanswered` counts the retained request's sends that had no answer.
  * Only the account's Web Lock holder may call this owner.
  */
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, requestWithDeadline, type ApiError } from "@/lib/api/client";
@@ -28,6 +29,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
   let phase: QueueSavePhase = "Ready";
   let unread: ApiError | null = null;
   let previous: QueueState | null = null;
+  let unanswered = 0;
   const publish = () => changed();
   const read = async () => {
     if (pending !== null) throw new QueueCommandError("Unsettled");
@@ -66,6 +68,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       pendingPrevious = null;
       pending = null;
       frozenBody = null;
+      unanswered = 0;
       phase = "Ready";
       publish();
       return saved;
@@ -75,11 +78,13 @@ export function createBrowserSession(accountId: string, changed: () => void) {
         throw cause;
       }
       if (isSameSystemApiDefect(cause) || (!isApiError(cause) && !isAbortError(cause))) {
+        unanswered += 1;
         phase = "Uncertain";
         publish();
         throw cause;
       }
       if (!isRefusal(cause)) {
+        unanswered += 1;
         phase = "Uncertain";
         publish();
         throw new QueueCommandError("Unsettled");
@@ -87,6 +92,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       pending = null;
       frozenBody = null;
       pendingPrevious = null;
+      unanswered = 0;
       phase = "Ready";
       publish();
       if (cause.code === "E_LIMIT") throw new QueueCommandError("TooMany");
@@ -97,7 +103,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     }
   };
   return {
-    snapshot: () => ({ saved, known, phase, unread, canRestore: previous !== null }),
+    snapshot: () => ({ saved, known, phase, unread, canRestore: previous !== null, unanswered }),
     read,
     async save(state: QueueState, terminal: QueueTerminal | null = null, replacement = false) {
       if (pending !== null) throw new QueueCommandError("Unsettled");

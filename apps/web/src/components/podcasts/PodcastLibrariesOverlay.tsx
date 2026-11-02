@@ -67,11 +67,13 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
       note: included ? `podcast subscription${item.writable ? "" : " · read only"}` : reason === "couldn’t refresh libraries." ? reason : undefined,
       action: reason === null ? { kind: "Set", included: true, label: "choose destination" } : { kind: "Blocked", reason } };
   });
-  // Coexistence until L5a's chooser takes a `failure` node: the read's `Failed` line, by transport.
-  const readLine = source.status === "failed" ? TRANSPORT_LINES[transportOf(source.error)].read("libraries") : null;
-  const readError = readLine === null ? null : {
+  // Coexistence until L5a's chooser takes a `failure` node: the read's `Failed` line, by transport,
+  // and `retry` only where the transport offers it. Sign-in and reload verbs wait for that node.
+  const transport = source.status === "failed" ? TRANSPORT_LINES[transportOf(source.error)] : null;
+  const readLine = transport?.read("libraries");
+  const readError = transport === null || readLine === undefined ? null : {
     occurrence, content: { tone: "Warning" as const, title: readLine.fact, message: readLine.reason },
-    retry: source.refetch, busy: loading,
+    retry: transport.verb === "Retry" ? source.refetch : null, busy: loading,
   };
   switch (step.kind) {
     case "Choose":

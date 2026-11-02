@@ -9,6 +9,7 @@ import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
 import RadioGroup from "@/components/ui/RadioGroup";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import CommandRefusal from "./CommandRefusal";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -133,8 +134,7 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, c
     {preview.blocked.length > 0 ? <Fact line={{ fact: `only a library admin can change ${preview.blocked.map(item => item.name).join(", ")}.` }} /> : null}
     {source.error !== null ? <Fact line={{ fact: "couldn’t refresh affected libraries.", reason: "they may be out of date." }}
       verbs={[{ label: "retry", commandKey: "retry affected libraries", run: source.refetch }]} /> : null}
-    {pending?.phase === "Refused" && pending.refusal !== null ? <Fact line={pending.refusal} speak
-      verbs={[{ label: "check", commandKey: `check ${pending.key}`, run: () => { ctx.podcasts.review(pending.key); source.refetch(); } }]} /> : null}
+    <CommandRefusal subject={subject} reread={source.refetch} />
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
         {cleanup ? `remove ${count} episodes` : episodes === "remove" ? "unsubscribe and remove episodes" : "unsubscribe"}

@@ -6,6 +6,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import CommandRefusal from "./CommandRefusal";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -59,8 +60,7 @@ export default function EpisodeRemovalDialog({ mediaId, title, returnFocusTo, re
           {source.error !== null ? <Fact line={{ fact: "couldn’t refresh affected libraries.", reason: "they may be out of date." }}
             verbs={[{ label: "retry", commandKey: "retry affected libraries", run: source.refetch }]} /> : null}
         </>}
-      {pending?.phase === "Refused" && pending.refusal !== null ? <Fact line={pending.refusal} speak
-        verbs={[{ label: "check", commandKey: `check ${pending.key}`, run: () => { ctx.podcasts.review(pending.key); source.refetch(); } }]} /> : null}
+      <CommandRefusal subject={subject} reread={source.refetch} />
       <div className={styles.actions}>
         <Button emphasis="strong" tone="danger" disabled={source.status !== "ready" || source.error !== null || source.refreshing || !source.data.can_execute || sending || pending !== null}
           aria-busy={sending || pending?.phase === "Sending" || undefined} onClick={() => void submit()}>remove from all</Button>

@@ -215,7 +215,8 @@ export function createNativeEngine(
   let responding = true;
   let snapshotId = 0;
   let bound = true;
-  let uncertain = false;
+  /** Sends and checks of a queue change that went unanswered; 0 once every change is confirmed. */
+  let unanswered = 0;
   let chaptersSubject: string | null = null;
   let chapters: PlayerDescriptor["chapters"] = [];
   let lastError: string | null = null;
@@ -410,73 +411,80 @@ export function createNativeEngine(
     if (queue == null) throw new Error("NotConnected");
     return queue;
   };
-  const queueError = (error: unknown): Error => {
+  /** A read names what it could not load; a change, what it could not do. A service that did not
+   * answer leaves an unanswered change unsettled, its held line standing; otherwise it says so. */
+  const queueError = (error: unknown, read: boolean): Error => {
     if (!(error instanceof Error)) throw error;
     switch (error.message) {
       case "Unauthenticated": return new ApiError(401, "E_UNAUTHENTICATED", "");
-      case "Stale": return new QueueCommandError("Changed");
+      case "Stale": return new QueueCommandError(read ? "LoadFailed" : "Changed");
       case "Limit": return new QueueCommandError("TooMany");
-      case "Invalid": return new QueueCommandError("Refused");
+      case "Invalid": return new QueueCommandError(read ? "LoadFailed" : "Refused");
       case "NotConnected": return new QueueCommandError("NotConnected");
       case "Unavailable":
-      case "NotResponding": return new QueueCommandError("Unsettled");
+      case "NotResponding": return new QueueCommandError(unanswered > 0 ? "Unsettled" : "Unresponsive");
       default: return error;
     }
   };
   const readQueue = async () => {
-    await call("queue_read", { reconcile: uncertain }, { timeoutMs: LOAD_TIMEOUT_MS });
-    uncertain = false;
+    await call("queue_read", { reconcile: unanswered > 0 }, { timeoutMs: LOAD_TIMEOUT_MS });
+    unanswered = 0;
     return state.queue;
+  };
+  /** A sent change the service did not answer may have landed: it is unanswered until a read
+   * reconciles it, tried once here. */
+  const unsettle = async (error: Error) => {
+    unanswered = 1;
+    const refusal = queueError(error, false);
+    await readQueue().catch(() => undefined);
+    return refusal;
   };
   const queue: NativeQueueOwner = {
     known: () => snapshotId > 0,
-    uncertain: () => uncertain,
-    async read() { try { return await readQueue(); } catch (error) { throw queueError(error); } },
+    unanswered: () => unanswered,
+    async read() {
+      try { return await readQueue(); }
+      catch (error) {
+        if (unanswered > 0) unanswered += 1;
+        throw queueError(error, true);
+      }
+    },
     async page(input) {
       try {
         const reply = await call("queue_page", input);
         // justify-defect: every successful queue page supplies its entries, including an empty page.
         if (reply.entries === undefined) throw new TypeError("native queue page omitted entries");
         return reply.entries;
-      } catch (error) { throw queueError(error); }
+      } catch (error) { throw queueError(error, true); }
     },
     async replace({ state: next, expected_revision, is_current }) {
       const begin = { queue_id: next.queue_id, expected_revision, count: next.entries.length,
         current_entry_id: next.current_entry_id };
-      if (!bound) throw queueError(new Error("NotConnected"));
-      if (!is_current()) throw queueError(new Error("Stale"));
-      if (uncertain) throw new QueueCommandError("Unsettled");
-      try { await call("queue_begin", begin); } catch (error) { throw queueError(error); }
+      if (!bound) throw queueError(new Error("NotConnected"), false);
+      if (!is_current()) throw queueError(new Error("Stale"), false);
+      if (unanswered > 0) throw new QueueCommandError("Unsettled");
+      try { await call("queue_begin", begin); } catch (error) { throw queueError(error, false); }
       let committed = false;
       try {
         for (let offset = 0; offset < next.entries.length; offset += 100) {
-          if (!bound) throw queueError(new Error("NotConnected"));
-          if (!is_current()) throw queueError(new Error("Stale"));
+          if (!bound) throw queueError(new Error("NotConnected"), false);
+          if (!is_current()) throw queueError(new Error("Stale"), false);
           await call("queue_chunk", { queue_id: next.queue_id, offset, entries: next.entries.slice(offset, offset + 100) });
         }
-        if (!bound) throw queueError(new Error("NotConnected"));
-        if (!is_current()) throw queueError(new Error("Stale"));
+        if (!bound) throw queueError(new Error("NotConnected"), false);
+        if (!is_current()) throw queueError(new Error("Stale"), false);
         committed = true;
         return header(await call("queue_commit", { queue_id: next.queue_id }, { timeoutMs: LOAD_TIMEOUT_MS }));
       } catch (error) {
-        if (committed && nativeUnavailable(error)) {
-          uncertain = true;
-          await readQueue().catch(() => undefined);
-        }
-        else await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
-        throw queueError(error);
+        if (committed && nativeUnavailable(error)) throw await unsettle(error);
+        await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
+        throw queueError(error, false);
       }
     },
     async command(input: QueueRequest) {
-      if (uncertain) throw new QueueCommandError("Unsettled");
+      if (unanswered > 0) throw new QueueCommandError("Unsettled");
       try { return header(await call("queue_command", { ...input }, { timeoutMs: LOAD_TIMEOUT_MS })); }
-      catch (error) {
-        if (nativeUnavailable(error)) {
-          uncertain = true;
-          await readQueue().catch(() => undefined);
-        }
-        throw queueError(error);
-      }
+      catch (error) { throw nativeUnavailable(error) ? await unsettle(error) : queueError(error, false); }
     },
   };
   const owner = {

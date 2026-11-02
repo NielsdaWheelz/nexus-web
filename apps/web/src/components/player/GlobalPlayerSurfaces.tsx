@@ -305,14 +305,15 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       return getPodcastSettings(podcastId, signal);
     },
   });
-  const save = usePodcastSettingsSave(podcastId, loaded?.source.kind === "Episode" ? loaded.source.descriptor.subtitle ?? "this podcast" : "this podcast",
-    playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded?.source.kind === "Episode" && loaded.playbackFailed
     && queue.error?.kind === "Episode" && queue.error.entry_id === queue.header?.current_entry_id;
   const sheetShown = !modeChanged && isMobile && sheetOpen;
-  const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
-  currentSurface.current = { sheetShown, playbackSubject, desktopVisible: presentation.visible };
+  const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible, panelOpen });
+  currentSurface.current = { sheetShown, playbackSubject, desktopVisible: presentation.visible, panelOpen };
+  const save = usePodcastSettingsSave(podcastId, loaded?.source.kind === "Episode" ? loaded.source.descriptor.subtitle ?? "this podcast" : "this podcast",
+    playbackSubject === null ? null : `${accountId}:${playbackSubject}`, () => currentSurface.current.panelOpen);
+  const panelFact = useRef<HTMLDivElement>(null);
   const suppressed = isMobile ? sheetShown || (textEntryFocused && nativeKeyboard !== false) : !presentation.visible;
   const setFooter = useCallback((element: HTMLElement | null) => {
     footerRef.current = element;
@@ -490,9 +491,11 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
             pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
           });
         };
+        const unread = operation?.kind === "ReadFailed" && operation.reason === "Conflict";
         const fact: Line | null = replaced ? { fact: "these defaults were replaced elsewhere.", reason: "reopen to edit them." }
           : missing ? { fact: "this podcast isn’t available." }
           : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "these defaults changed elsewhere." : "the saved defaults differ from this change." }
+          : unread ? { fact: "these defaults changed elsewhere.", reason: "couldn’t load the current ones." }
           : null;
         const readFailed = !missing && settingsRead.status !== "loading" && settingsRead.error !== null ? settingsRead.error : null;
         playbackPanel = <section className={styles.panel} aria-label="playback">
@@ -510,7 +513,11 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
             {!missing && !replaced ? <Button size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
               {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
-            {fact ? <Fact line={fact} /> : null}
+            {fact ? <div ref={panelFact}><Fact line={fact} verbs={unread ? [{ label: "check", commandKey: `check podcast defaults ${podcastId}`, run: () => {
+              // `check` reads, and its Fact leaves with the press, so focus it held moves to the panel's frame.
+              if (panelFact.current?.contains(document.activeElement)) panelFact.current.closest<HTMLElement>('[role="dialog"]')?.focus();
+              save.check();
+            } }] : undefined} /></div> : null}
             {reviewed && !replaced ? <div className={styles.comparison}>
               <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
               <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
@@ -688,8 +695,9 @@ function PlayerOutcomes() {
   return <>
     {place?.kind === "Unsaved" && admitted && episode !== null && title !== null ? <Hold id={`place:${episode}`} attempt={place.attempt}
       line={{ fact: `couldn’t save your place in “${title}”.` }} verbs={[{ label: "retry", commandKey: "retry place", run: commands.retry }]} /> : null}
-    {queue.phase === "Uncertain" ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} line={{ fact: "not sure the queue saved.", reason: "it may have gone through." }}
-      verbs={[androidShell ? { label: "check", commandKey: "check queue", run: commands.checkQueue } : { label: "retry", commandKey: "retry queue", run: commands.checkQueue }]} /> : null}
+    {queue.unanswered > 0 ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} attempt={queue.unanswered}
+      line={{ fact: "not sure the queue saved.", reason: "it may have gone through." }}
+      verbs={[{ label: androidShell ? "check" : "retry", commandKey: androidShell ? "check queue" : "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" }]} /> : null}
   </>;
 }
 

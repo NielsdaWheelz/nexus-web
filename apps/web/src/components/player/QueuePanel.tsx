@@ -216,16 +216,14 @@ export default function QueuePanel({ scrollport, runtime, onOpened, revealOnOpen
       opener: ("entry_id" in request.command ? rowElement(request.command.entry_id)?.querySelector('[data-queue-action="more"]') : null) ?? document.activeElement,
       accepted: false };
     if (recovery !== null) setPendingFocus(recovery);
-    try {
-      await liveCommands.current.queueCommand(request);
-      if (authority.current.header?.queue_id !== request.queue_id) return true;
-      if (recovery !== null) setPendingFocus(pending => pending === recovery ? { ...recovery, accepted: true } : pending);
-      return true;
-    } catch {
-      // The command owner reports modeled refusals and defects before rejecting.
+    // The player says a refusal; focus stays where it was.
+    if (await liveCommands.current.queueCommand(request) === "Refused") {
       if (recovery !== null) setPendingFocus(pending => pending === recovery ? null : pending);
       return false;
     }
+    if (authority.current.header?.queue_id !== request.queue_id) return true;
+    if (recovery !== null) setPendingFocus(pending => pending === recovery ? { ...recovery, accepted: true } : pending);
+    return true;
   }, [rowElement]);
 
   const activateAnchor = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
@@ -245,7 +243,8 @@ export default function QueuePanel({ scrollport, runtime, onOpened, revealOnOpen
     }}>
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
     {manifest !== null || queue.index.kind !== "Failed" ? null : queue.index.error instanceof QueueCommandError
-      ? queue.index.error.line === null ? null : <Fact line={queue.index.error.line} />
+      ? queue.index.error.line === null ? null : <Fact line={queue.index.error.line}
+        verbs={[{ label: "retry", commandKey: "retry queued episodes", run: () => void commands.retryQueueIndex() }]} />
       : <Failed error={queue.index.error} noun="queued episodes" retry={{ run: () => void commands.retryQueueIndex() }} />}
     {empty ? <Fact line={{ fact: "nothing queued" }} /> : null}
     {manifest !== null ? <ResourceList key={manifest.queue_id} ariaLabel="queued episodes" busy={!ready || !queueWindow.geometryReady}>

@@ -447,7 +447,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             episodeFailure.code === "E_INVALID_REQUEST"
               ? <Fact line={{ fact: "couldn’t load episodes for this view." }}
                 verbs={[{ label: "reset view", commandKey: "reset episodes view", run: () => replaceView({ state: null, sort: null }) }]} />
-              : episodeFailure.status === 403 || episodeFailure.status === 404 ? <Fact line={{ fact: "this podcast isn’t available." }} />
+              : episodeFailure.code === "E_NOT_FOUND" || episodeFailure.code === "E_PODCAST_NOT_FOUND" || episodeFailure.code === "E_FORBIDDEN"
+                ? <Fact line={{ fact: "this podcast isn’t available." }} />
               : <Failed error={episodeFailure} noun="episodes" retry={{ run: retry, busy }} />
           ) : known === undefined || ready === null ? null : (
             <PlaybackSourceContext.Provider value={async selected_media_id => {

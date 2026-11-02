@@ -2,10 +2,10 @@
 
 /** Account-memory podcast commands freeze ids, scope and guards before sending.
  * Accepted retires a command. Refused retires it and says its fact as a slip, unless the
- * surface that sent it still stands to show the refusal (`shown`): then it stays `Refused`
- * for that surface's `check` to review. Unanswered, it stays `Unknown`, a held line in
- * `feedback` until a replay settles it or `stop tracking` forgets it, never undoing it. A
- * replay sends the same body and ids; an import is checked by reading its operation.
+ * surface that sent it still stands to show a refusal a reread can answer (`shown`): then it
+ * stays `Refused` for that surface's `check` to review. Unanswered, it stays `Unknown`, a held
+ * line in `feedback` until a replay settles it or `stop tracking` forgets it, never undoing
+ * it. A replay sends the same body and ids; an import is checked by reading its operation.
  * Mount `feedback` once. Dismissal changes presentation only.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
@@ -14,7 +14,7 @@ import type { Line, Verbs } from "@/components/feedback/stage";
 import { assertNever } from "@/lib/assertNever";
 import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { transportOf } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -96,12 +96,16 @@ function createOwner(accountId: string, guard: WorkGuard, defect: (input: { erro
   const emit = () => { snapshot = [...entries.values()]; for (const listener of listeners) listener(); };
   const retire = (entry: Entry) => { entries.delete(entry.subject); entry.unregister(); emit(); };
   const current = (entry: Entry, scope: AbortController) => lifetime === scope && !scope.signal.aborted && entries.get(entry.subject) === entry;
+  /** A standing sender keeps a refusal its `check` can act on: the domain's, or one the server
+   * gave no reason for. Sign-in, a stale build and a busy server are the transport's to say, with
+   * its verb, since a reread cannot answer them. */
   const refuse = (entry: Entry, error: ApiError) => {
     const fact = refusedFact(entry);
     const reason = refusalReason(entry, error);
-    if (entry.shown?.()) {
+    const reviewable = reason !== undefined || transportOf(error) === "Refused";
+    if (reviewable && entry.shown?.()) {
       entry.phase = "Refused";
-      entry.refusal = reason === undefined ? TRANSPORT_LINES[transportOf(error)].command(fact) : { fact, reason };
+      entry.refusal = { fact, reason };
       emit();
       return;
     }

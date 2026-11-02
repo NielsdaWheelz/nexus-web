@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { transportVerbs, type Line } from "@/components/feedback/stage";
@@ -55,7 +55,10 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
   const missing = readError?.code === "E_NOT_FOUND";
   // A refresh failure heals unseen, except a stale build, which gates the form until reload.
   const reloadRequired = readError !== null && !missing && transportOf(readError) === "Update";
-  const save = usePodcastSettingsSave(podcastId, source.podcast.title, `${accountId}:${podcastId}`);
+  const live = useRef(false);
+  useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const factRegion = useRef<HTMLDivElement>(null);
+  const save = usePodcastSettingsSave(podcastId, source.podcast.title, `${accountId}:${podcastId}`, () => live.current);
   const operation = save.state;
   useEffect(() => {if (operation?.kind === "Accepted") onClose();}, [operation, onClose]);
   const reviewed = operation?.kind === "Review" ? operation.current : null;
@@ -96,11 +99,18 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
   };
   const defaults = (speed: number | null, mode: PodcastSettings["pause_shortening_mode"]) =>
     `speed ${speed === null ? "not set (1×)" : formatPlaybackRate(speed)} · skip silence on android: ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
+  const unread = operation?.kind === "ReadFailed" && operation.reason === "Conflict";
   const fact: Line | null = reloadRequired ? { fact: staleBuild() }
     : replaced ? { fact: "these defaults were replaced elsewhere." }
     : absent ? { fact: "this podcast isn’t available." }
     : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "these defaults changed elsewhere." : "the saved defaults differ from this change." }
+    : unread ? { fact: "these defaults changed elsewhere.", reason: "couldn’t load the current ones." }
     : null;
+  // `check` reads, and the Fact it stands in leaves with the press, so focus it held moves to the dialog.
+  const check = { label: "check", commandKey: `check podcast defaults ${podcastId}`, run: () => {
+    if (factRegion.current?.contains(document.activeElement)) factRegion.current.closest<HTMLElement>('[role="dialog"]')?.focus();
+    save.check();
+  } };
   return <Dialog open onClose={onClose} title="playback defaults"
     onDismissRequest={() => requestDismiss() ? "accepted" : "blocked"}
     initialFocus={card => card.querySelector<HTMLElement>('input[type="range"]')}>
@@ -113,7 +123,8 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
         <SkipSilenceField checked={pause_shortening_mode === "Natural"} label="skip silence on android"
           onChange={checked => draft.set(value => ({ ...value, pause_shortening_mode: checked ? "Natural" : "Off" }))} />
       </fieldset>
-      {fact ? <Fact line={fact} verbs={reloadRequired ? transportVerbs("Update", { signIn: null }) ?? undefined : undefined} /> : null}
+      {fact ? <div ref={factRegion}><Fact line={fact}
+        verbs={reloadRequired ? transportVerbs("Update", { signIn: null }) ?? undefined : unread ? [check] : undefined} /></div> : null}
       {reviewed && !replaced && !absent && operation?.kind === "Review" ? <div className={styles.comparison}>
         <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
         <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
