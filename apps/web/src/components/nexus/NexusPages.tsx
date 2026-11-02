@@ -106,6 +106,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             mobile={mobile}
             openingSources={controller.openingSources}
             onOpen={controller.openAddTarget}
+            onBack={controller.back}
             onClose={controller.close}
             onDefect={controller.reportAddDefect}
           />

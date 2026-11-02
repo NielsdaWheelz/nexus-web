@@ -50,9 +50,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   useLayoutEffect(() => {
     const port = gridRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !port) return;
-    const positions = controller.rootScroll.current;
-    port.scrollTop = positions.Search;
-    return () => { positions.Search = port.scrollTop; };
+    port.scrollTop = controller.rootScroll.current.Search;
   }, [controller.open, controller.page.kind, controller.query, controller.rootScroll]);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
@@ -192,6 +190,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         aria-busy={controller.busy || undefined}
         className={`${collection.fillViewport} ${styles.resultScroll}`}
         data-collection-viewport=""
+        onScroll={event => { controller.rootScroll.current.Search = event.currentTarget.scrollTop; }}
         onPointerDownCapture={controller.interact}
         onFocusCapture={event => { if (event.target instanceof HTMLElement && gridRef.current?.contains(event.target)) focusedNative.current = event.target; controller.interact(); }}
         onWheelCapture={controller.interact}

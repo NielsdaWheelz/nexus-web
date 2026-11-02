@@ -76,6 +76,12 @@ export type AddItem =
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
       readonly upload: UploadAttempt | null;
+      /**
+       * The palette query's text, unedited. Until the visit's first send the palette owns it: the arrow
+       * and esc restore it as the query, and close discards it with the query. After a send the arrow
+       * restores no query, so the row is the page's work.
+       */
+      readonly seeded?: true;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
   | {
@@ -129,6 +135,11 @@ export type AddSessionState = Readonly<{
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
+  /**
+   * A row has left Draft this visit. Removing or re-staging it does not unsend it, and
+   * starting or discarding a session keeps it, since the arrow does not end a visit.
+   */
+  sent: boolean;
 }>;
 
 export interface DraftDestinationScope {
@@ -146,6 +157,8 @@ export interface AddContentSessionController {
   readonly state: AddSessionState;
   readonly workOwnerIds: readonly string[];
   start(seed: AddSeed): string;
+  /** Clears `sent`. The palette calls it as it opens. */
+  beginVisit(): void;
   setItemUrl(input: {
     itemId: string;
     text: string;
@@ -192,12 +205,14 @@ function initialState(seed: AddSeed): AddSessionState {
           destinations: [...seed.initialDestinations],
           showFeedback: true,
           upload: null,
+          seeded: true,
         }),
       ),
       { kind: "Insertion", id: createRandomId("add-item") },
     ],
     newItemDestinations: [...seed.initialDestinations],
     mutation: { kind: "Idle" },
+    sent: false,
   };
 }
 
@@ -301,7 +316,8 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item),
+        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item)
+            && !(item.kind === "Draft" && item.seeded && !current.current.sent),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
       },
@@ -313,7 +329,7 @@ export function useAddContentSession(): AddContentSessionController {
     const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
-    update(() => next);
+    update((snapshot) => ({ ...next, sent: snapshot.sent }));
     return next.sessionId;
   }
   /**
@@ -611,7 +627,7 @@ export function useAddContentSession(): AddContentSessionController {
       ...next,
       newItemDestinations: scope.includeNewItems ? setDestination(next.newItemDestinations, { destination, included }) : next.newItemDestinations,
       items: next.items.map(row => row.kind === "Draft" && ids.has(row.id)
-        ? { ...row, destinations: setDestination(row.destinations, { destination, included }) } : row),
+        ? { ...row, seeded: undefined, destinations: setDestination(row.destinations, { destination, included }) } : row),
     }));
     return true;
   }
@@ -745,6 +761,7 @@ export function useAddContentSession(): AddContentSessionController {
     });
     update((next) => ({
       ...next,
+      sent: next.sent || rows.length > 0,
       mutation:
         rows.length === 0
           ? { kind: "Idle" }
@@ -770,6 +787,7 @@ export function useAddContentSession(): AddContentSessionController {
     state,
     workOwnerIds,
     start,
+    beginVisit: () => update((snapshot) => ({ ...snapshot, sent: false })),
     setItemUrl,
     revealItemFeedback,
     pasteUrls,
