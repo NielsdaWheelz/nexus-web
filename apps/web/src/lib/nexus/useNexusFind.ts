@@ -9,9 +9,9 @@ import type { SearchFamily } from "@nexus/authored/scope";
 import type { AuthoredQuery } from "@nexus/authored/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback, isApiError, type ApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -47,8 +47,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     live.current = true;
     return () => { live.current = false; };
   }, []);
-  const feedback = useFeedback();
-  const latestSelection = useRef<(() => Promise<void>) | null>(null);
   const [rankingWanted, setRankingWanted] = useState(false);
   const [revision, setRevision] = useState(0);
   const fail = useThrowLater();
@@ -173,8 +171,8 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const remoteBusy = identityKey !== null && best?.phase !== "hybrid" && ((best?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
     || (open && referenceRef !== null && localReference === null && reference.status === "loading");
   const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending;
-  const [incidents,setIncidents] = useState<ReadonlyMap<NexusSource,{identity: string; error: ApiError; occurrence: object}>>(() => new Map());
-  const readFailures = new Map<NexusSource,{identity: string; error: ApiError; occurrence: object}>();
+  const [incidents,setIncidents] = useState<ReadonlyMap<NexusSource,{identity: string; error: ApiError}>>(() => new Map());
+  const readFailures = new Map<NexusSource,{identity: string; error: ApiError}>();
   const retrying = new Set<NexusSource>();
   for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
     if (!wanted) continue;
@@ -183,7 +181,7 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     const previous = incidents.get(source);
     const retained = previous?.identity === identity ? previous : null;
     const error = value.status === "loading" ? null : value.error;
-    if (error !== null) readFailures.set(source, retained?.error === error ? retained : {identity,error,occurrence:retained?.occurrence??{}});
+    if (error !== null) readFailures.set(source, retained?.error === error ? retained : {identity,error});
     else if (retained && value.status === "loading") readFailures.set(source,retained);
     if (readFailures.has(source) && (value.status === "loading" || (value.status === "failed" ? value.retrying : value.refreshing))) retrying.add(source);
   }
@@ -203,33 +201,18 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const baseData = base.status === "ready" ? base.data.data : null;
   const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
-  /** Record an accepted selection now; a transport failure offers one retry (a retry after a lost answer counts twice). */
+  /** Record an accepted selection now. It is a background ranking write: a transport failure
+   * says nothing, since the open itself succeeded. */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
     if (!live.current || !remoteReady()) return;
-    const body = JSON.stringify(selection);
-    let sending: Promise<void> | null = null;
-    const send = (): Promise<void> => {
-      if (!live.current) return Promise.resolve();
-      if (sending) return sending;
-      sending =
-      apiFetch<void>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
-        () => { if (live.current) setRevision((value) => value + 1); },
-        (error: unknown) => {
-          if (!live.current) return;
-          if (handleUnauthenticatedApiError(error)) return;
-          const content = isApiError(error) ? apiTransportFeedback(error, "selection not confirmed") : null;
-          if (content === null) {
-            // justify-defect: ranking admits only auth recovery and transport feedback (a stale build too).
-            fail({ error });
-            return;
-          }
-          if (latestSelection.current === send) feedback.receipt(content, { label: "retry save", onClick: () => void send() });
-        },
-      ).finally(() => { sending = null; });
-      return sending;
-    };
-    latestSelection.current = send;
-    void send();
+    apiFetch<void>("/api/me/nexus-selections", { method: "POST", keepalive: true, body: JSON.stringify(selection) }).then(
+      () => { if (live.current) setRevision((value) => value + 1); },
+      (error: unknown) => {
+        if (!live.current || handleUnauthenticatedApiError(error)) return;
+        // justify-defect: ranking admits only auth recovery and transport failure (a stale build too).
+        if (!isApiError(error) || isSameSystemApiDefect(error) || transportOf(error) === "Refused") fail({ error });
+      },
+    );
   };
 
   let presentation: SearchProgress = progress;

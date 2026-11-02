@@ -1,12 +1,14 @@
 "use client";
 
-import { forwardRef, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import choices from "@/components/ui/ChoiceField.module.css";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT, type FindRow } from "@/lib/find/find";
@@ -16,38 +18,39 @@ import { activateTargetLink, type TargetLinkActivationResult } from "@/lib/panes
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./Find.module.css";
 
+const TOO_MANY = `more than ${FIND_LIMIT} matches. narrow the search.`;
+
+/** Find's own count, beside its input. A pane that has not loaded leaves the input disabled with
+ * a reason for a screen reader alone; a search under way shows nothing here. */
 function findFeedback(result: FindResult | null): {
   readonly placement: "Inline" | "Details";
+  readonly visible: boolean;
   readonly content: ReactNode;
   readonly description: string;
 } | null {
   if (result === null)
-    return { placement: "Inline", content: "Not ready", description: "Find is not ready." };
+    return { placement: "Inline", visible: false, content: null, description: "available once this pane loads." };
   switch (result.kind) {
     case "Idle":
-      return null;
     case "Searching":
-      return { placement: "Inline", content: "Searching…", description: "Searching…" };
-    case "TooMany": {
-      const text = `More than ${FIND_LIMIT} matches. Refine your search.`;
-      return { placement: "Details", content: text, description: text };
-    }
+      return null;
+    case "TooMany":
+      return { placement: "Details", visible: true, content: TOO_MANY, description: TOO_MANY };
     case "Failed":
-      return { placement: "Details", content: result.message, description: result.message };
+      return { placement: "Details", visible: true, content: result.message, description: result.message };
     case "Rows": {
       const count = result.rows.length;
       const found = count === 0
-        ? "No matches"
+        ? "no matches"
         : `${result.active + 1} of ${count} ${count === 1 ? "match" : "matches"}`;
       const partial = result.partial !== null;
-      const text = partial
-        ? `${found} in the ${result.partial}; results are incomplete.`
-        : found;
+      const text = partial ? `${found} in the ${result.partial} only.` : found;
       return {
         placement: partial ? "Details" : "Inline",
+        visible: true,
         content: partial || count === 0 ? text : <span aria-hidden="true">{result.active + 1}/{count}</span>,
         description: result.wrapped
-          ? `${text}${partial ? "" : "."} Wrapped to ${result.wrapped} match.`
+          ? `${text}${partial ? "" : "."} wrapped to the ${result.wrapped} match.`
           : text,
       };
     }
@@ -145,7 +148,7 @@ const FindBar = forwardRef<
         status={feedback ? {
           placement: feedback.placement,
           id: statusId,
-          visible: true,
+          visible: feedback.visible,
           content: <span className={styles.status}>{feedback.content}</span>,
         } : undefined}
         actions={<>
@@ -191,7 +194,8 @@ export function FindResults({
 }) {
   const resultsRef = useRef<HTMLDivElement>(null);
   const runtime = usePaneRuntime();
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const { say } = useOutcome();
+  const refuse = () => say({ fact: "couldn’t show that match.", reason: "it’s no longer there." });
   const { result } = find;
   const open = (row: FindRow<unknown>, href: string | null, event: TargetActivationEvent): TargetLinkActivationResult => {
     const activation = workspaceTargetActivationIntent(event, href === null ? "activate" : "native");
@@ -200,19 +204,19 @@ export function FindResults({
     const currentHref = find.targetHref(row);
     const local = () => {
       void find.activate(row).then((shown) => {
-        if (shown) { setRefusal(null); onPreviewed(); }
-        else setRefusal("this match is no longer available");
+        if (shown) onPreviewed();
+        else refuse();
       });
     };
     if (currentHref === null) {
       event.preventDefault();
       if (activation.intent === "default") { local(); return "handled-default"; }
-      setRefusal("this match is no longer available");
+      refuse();
       return "consumed";
     }
-    if (currentHref !== href) { event.preventDefault(); setRefusal("this match is no longer available"); return "consumed"; }
+    if (currentHref !== href) { event.preventDefault(); refuse(); return "consumed"; }
     const handled = activateTargetLink({ event, runtime, target: { href: currentHref }, onDefault: local });
-    if (handled === "handled-new-pane") { setRefusal(null); onPreviewed(); }
+    if (handled === "handled-new-pane") onPreviewed();
     return handled;
   };
   const rows = result.kind === "Rows" ? result.rows.map((row, index): CollectionRowView => {
@@ -254,13 +258,10 @@ export function FindResults({
   }) : [];
   return (
     <div ref={resultsRef} className={styles.results} role="group" aria-label="Search results" tabIndex={-1}>
-      {refusal ? <FeedbackNotice content={{ tone: "Warning", title: refusal }} announcement="Polite" onDismiss={() => setRefusal(null)} /> : null}
       {result.kind === "Rows" && rows.length > 0 ? (
         <>
           {result.partial !== null ? (
-            <p className={styles.partial}>
-              Showing matches in the {result.partial}. Results are incomplete.
-            </p>
+            <p className={styles.partial}>matches in the {result.partial} only.</p>
           ) : null}
           <CollectionView
             returnScope="PaneFind.Results"
@@ -271,19 +272,12 @@ export function FindResults({
             surface={false}
           />
         </>
-      ) : result.kind === "Idle" ? null : (
-        <div className={styles.message}>
-          <span>{findFeedback(result)?.description}</span>
-          {result.kind === "Failed" ? (
-            <Button onClick={() => {
-              resultsRef.current?.focus({ preventScroll: true });
-              find.retry();
-            }}>
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      )}
+      ) : result.kind === "Idle" ? null : result.kind === "Searching" ? <Ruling />
+        : result.kind === "Failed" ? <Fact line={{ fact: result.message }} verbs={[{ label: "retry", commandKey: "retry find", run: () => {
+          resultsRef.current?.focus({ preventScroll: true });
+          find.retry();
+        } }]} />
+        : <Fact line={{ fact: result.kind === "TooMany" ? TOO_MANY : "no matches" }} />}
     </div>
   );
 }

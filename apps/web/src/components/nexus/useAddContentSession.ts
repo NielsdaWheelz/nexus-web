@@ -11,7 +11,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -96,7 +96,7 @@ export type AddItem =
       kind: "Rejected";
       id: string;
       intent: AcceptanceIntent;
-      feedback: FeedbackContent;
+      feedback: Line;
       importRef: string | null;
     }
   | {
@@ -104,7 +104,7 @@ export type AddItem =
       id: string;
       intent: AcceptanceIntent;
       reason: "StatusUnknown" | "UploadIncomplete";
-      feedback: FeedbackContent;
+      feedback: Line;
       importRef: string | null;
     }
   | {
@@ -125,7 +125,7 @@ type Mutation =
 
 export type AddSessionState = Readonly<{
   sessionId: string;
-  intakeFeedback?: FeedbackContent;
+  intakeFeedback?: Line;
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
@@ -331,7 +331,7 @@ export function useAddContentSession(): AddContentSessionController {
         if (row.kind !== "Submitting") return row;
         return {
           kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, importRef: row.importRef,
-          reason: "StatusUnknown", feedback: { tone: "Warning", title: "change not confirmed", message: "check save to retry the original request." },
+          reason: "StatusUnknown", feedback: { fact: "change not confirmed", reason: "check save to retry the original request." },
         };
       }),
     }));
@@ -340,11 +340,7 @@ export function useAddContentSession(): AddContentSessionController {
     if (current.current.mutation.kind === "Idle") return true;
     update((snapshot) => ({
       ...snapshot,
-      intakeFeedback: {
-        tone: "Warning",
-        title:
-          "Wait for this operation to finish, or stop it before adding items.",
-      },
+      intakeFeedback: { fact: "Wait for this operation to finish, or stop it before adding items." },
     }));
     return false;
   }
@@ -363,9 +359,8 @@ export function useAddContentSession(): AddContentSessionController {
     update((snapshot) => ({
       ...snapshot,
       intakeFeedback: {
-        tone: "Danger",
-        title: `Add up to ${MAX_ADD_ITEMS} items at a time.`,
-        message: `${places} ${places === 1 ? "place" : "places"} left. ${
+        fact: `Add up to ${MAX_ADD_ITEMS} items at a time.`,
+        reason: `${places} ${places === 1 ? "place" : "places"} left. ${
           count === 1 ? "This item wasn’t" : `These ${count} items weren’t`
         } added.`,
       },
@@ -505,10 +500,7 @@ export function useAddContentSession(): AddContentSessionController {
     ) {
       update((snapshot) => ({
         ...snapshot,
-        intakeFeedback: {
-          tone: "Warning",
-          title: "Select the whole link to paste a list.",
-        },
+        intakeFeedback: { fact: "Select the whole link to paste a list." },
       }));
       return { kind: "Rejected" };
     }
@@ -583,7 +575,7 @@ export function useAddContentSession(): AddContentSessionController {
     } catch (error) {
       if (!active(signal) || handleUnauthenticatedApiError(error)) return;
       const feedback = captureErrorFeedback(error, "SaveSource");
-      update(next => ({ ...next, intakeFeedback: feedback }));
+      update(next => ({ ...next, intakeFeedback: { fact: feedback.title, reason: feedback.message } }));
     } finally {
       if (active(signal)) update(next => ({ ...next, mutation: { kind: "Idle" } }));
     }
@@ -685,7 +677,7 @@ export function useAddContentSession(): AddContentSessionController {
               intent,
               importRef,
               reason: "StatusUnknown",
-              feedback: UNCONFIRMED,
+              feedback: { fact: UNCONFIRMED.title, reason: UNCONFIRMED.message },
             };
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
         item(frozen);
@@ -704,8 +696,8 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, importRef, ...failure, ...(failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
-          ? { feedback: { ...failure.feedback, title: "save needs review. review your choices and save again.", message: "your upload is still available." } } : {}) });
+        item({ id, intent, importRef, ...failure, feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
+          ? { fact: "save needs review. review your choices and save again.", reason: "your upload is still available." } : { fact: failure.feedback.title, reason: failure.feedback.message } });
       }
     }
   }
@@ -719,7 +711,8 @@ export function useAddContentSession(): AddContentSessionController {
     catch (error) {
       if (!active(signal)) return;
       if (handleUnauthenticatedApiError(error)) { update(next => ({ ...next, mutation: { kind: "Idle" } })); return; }
-      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: captureErrorFeedback(error, "SaveSource") }));
+      const feedback = captureErrorFeedback(error, "SaveSource");
+      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: { fact: feedback.title, reason: feedback.message } }));
       return;
     }
     if (!active(signal)) return;

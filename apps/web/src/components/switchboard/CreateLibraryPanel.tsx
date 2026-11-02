@@ -1,9 +1,12 @@
 "use client";
 
 import { ArrowLeft } from "lucide-react";
-import type { FormEvent } from "react";
+import { useId, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
-import { FeedbackFailure, FeedbackRecoveryControl, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Field } from "@/components/feedback/Fact";
+import { Hold } from "@/components/feedback/Feedback";
+import { transportVerbs } from "@/components/feedback/stage";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "@/components/nexus/Nexus.module.css";
@@ -24,8 +27,13 @@ export default function CreateLibraryPanel({
   mobile: boolean;
 }) {
   const running = submit.kind === "Running";
-  const failure = submit.kind === "Ready" || submit.kind === "Acknowledged" ? null : submit.content ?? null;
-  const occurrence = useFeedbackOccurrence(failure !== null, name);
+  const failure = submit.kind === "Ready" || submit.kind === "Acknowledged" ? null : submit.failure ?? null;
+  const fieldId = useId();
+  // A refusal stands under the name, and `create` is its retry. A transport's verb is the
+  // transport's own: reload for a stale build.
+  const transport = failure?.kind === "Transport" ? transportOf(failure.error) : null;
+  const refusal = failure?.kind === "Refused" ? failure.line
+    : failure?.kind === "Transport" && transport !== null ? TRANSPORT_LINES[transport].command(failure.fact) : null;
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (name.trim() && !running) onSubmit("default");
@@ -45,7 +53,6 @@ export default function CreateLibraryPanel({
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>
-        <FeedbackRecoveryControl />
       </header>
       <form className={styles.form} onSubmit={handleSubmit} onKeyDown={submitGesture}>
         <label>
@@ -55,13 +62,13 @@ export default function CreateLibraryPanel({
             value={name}
             autoComplete="off"
             disabled={running}
+            aria-describedby={refusal ? fieldId : undefined}
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {failure ? <FeedbackFailure scope="Local" occurrence={occurrence}
-          content={failure} announcement="Assertive"
-          actions={[{ label: "retry same request", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]} /> : null}
-        <Button reserveIcon busyKey={occurrence} emphasis="strong" type="submit" aria-busy={running || undefined}
+        {refusal ? <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport, { signIn: null }) ?? undefined : undefined} /> : null}
+        {failure?.kind === "Unknown" ? <Hold id="create-library" line={{ fact: "not sure the library was created.", reason: "it may have gone through." }} /> : null}
+        <Button emphasis="strong" type="submit" aria-busy={running || undefined}
           disabled={!name.trim() || running} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
       </form>
     </div>

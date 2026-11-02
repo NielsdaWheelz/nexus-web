@@ -14,7 +14,7 @@ import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowExcerptItem, nexusRowExcerptName, nexusRowPrimaryText } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusQuerySpinner, NexusNotices, nexusRowEvidenceText, nexusRowExcerptItem, nexusRowExcerptName, nexusRowPrimaryText } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "../NexusPaneList";
 import type { NexusController } from "../useNexusController";
@@ -177,7 +177,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             }
           }}
         />
-        <NexusQueryStatus />
+        <NexusQuerySpinner pending={controller.pending} mobile={false} />
       </div>
       <span id={HELP_ID} className="sr-only">
         {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.`
@@ -351,12 +351,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           </Fragment>
         ))}
         </div>
-        {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       </div>
       </NexusPaneDrag>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.searchProgress.kind === "Pending" ? controller.searchProgress.text : null, controller.noticeText, !controller.pending ? status : null].filter(Boolean).join(" ")}
+        {controller.pending ? null : status}
       </div>
     </>
   );

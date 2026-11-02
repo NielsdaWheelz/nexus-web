@@ -2,14 +2,11 @@
 // the invite and recovery landings. the GET is inert; Continue spends the
 // token and goes on to /account/password, replacing the token url in history.
 import Link from "next/link";
-import { useState } from "react";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { useId, useState } from "react";
+import { Fact, Field } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
-import { buttonClassName } from "@/components/ui/control";
-import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
 import authStyles from "./AuthForms.module.css";
 import AuthSurface from "./AuthSurface";
 
@@ -18,28 +15,17 @@ const COPY = {
     title: "You’re invited to Nexus",
     description: "Accept this invitation to continue and choose a password.",
     action: "Accept invitation",
-    pending: "Accepting invitation…",
     invalidTitle: "This invitation link can’t be used",
-    invalidMessage: "Ask the Nexus owner to send a new invitation.",
-    unavailable: {
-      tone: "Danger",
-      title: "We couldn’t confirm the invitation.",
-      message:
-        "Try again. If the link can’t be used, ask the Nexus owner for a new invitation.",
-    },
+    invalid: { fact: "it may have expired or been used.", reason: "ask the nexus owner for a new invitation." },
+    unavailable: "couldn’t accept the invitation.",
   },
   recovery: {
     title: "Reset your password",
     description: "Continue to verify this link and choose a new password.",
     action: "Continue password reset",
-    pending: "Continuing…",
     invalidTitle: "This password-reset link can’t be used",
-    invalidMessage: "Request a new password-reset link.",
-    unavailable: {
-      tone: "Danger",
-      title: "We couldn’t confirm the password-reset link.",
-      message: "Try again. If the link can’t be used, request a new one.",
-    },
+    invalid: { fact: "it may have expired or been used." },
+    unavailable: "couldn’t continue the reset.",
   },
 } as const;
 
@@ -52,20 +38,17 @@ export default function EmailActionLanding({
 }) {
   const copy = COPY[purpose];
   const [invalid, setInvalid] = useState(tokenHash === null);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  // A refusal stands under the submit, which is its retry.
+  const [failure, setFailure] = useState<Line | null>(null);
+  const failureId = useId();
   const { pending, submit } = useAuthForm<
     "InvalidOrExpired" | "RateLimited" | "ServiceUnavailable"
   >((kind) => {
     if (kind === "InvalidOrExpired") setInvalid(true);
-    else if (kind === "RateLimited") {
-      setFailure({
-        tone: "Danger",
-        title: "Too many attempts.",
-        message: "Wait a few minutes, then try again.",
-      });
-    } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
-      setFailure(copy.unavailable);
-    } else if (kind === "Forbidden") setFailure(WRONG_ADDRESS);
+    else if (kind === "RateLimited") setFailure({ fact: "too many attempts.", reason: "wait a while before continuing." });
+    else if (kind === "ServiceUnavailable" || kind === "Unreachable")
+      setFailure({ fact: copy.unavailable, reason: kind === "Unreachable" && !navigator.onLine ? "you’re offline." : "nexus isn’t answering." });
+    else if (kind === "Forbidden") setFailure(WRONG_ADDRESS_LINE);
     else throw new Error(`Unexpected email-confirmation outcome ${kind}`);
   });
   const back = (
@@ -80,19 +63,7 @@ export default function EmailActionLanding({
     return (
       <AuthSurface title={copy.invalidTitle}>
         <div className={authStyles.stack}>
-          <FeedbackNotice
-            content={{
-              tone: "Danger",
-              title: "It may be invalid, expired, or already used.",
-              message: copy.invalidMessage,
-            }}
-            announcement="Assertive"
-          />
-          {purpose === "recovery" ? (
-            <Link href="/forgot-password" className={buttonClassName({ emphasis: "strong", size: "comfortable" })}>
-              Request a new link
-            </Link>
-          ) : null}
+          <Fact line={copy.invalid} verbs={purpose === "recovery" ? [{ label: "request a new link", href: "/forgot-password" }] : undefined} speak />
           {back}
         </div>
       </AuthSurface>
@@ -102,9 +73,6 @@ export default function EmailActionLanding({
   return (
     <AuthSurface title={copy.title} description={copy.description}>
       <div className={authStyles.stack}>
-        {failure ? (
-          <FeedbackNotice content={failure} announcement="Assertive" />
-        ) : null}
         <form
           className={authStyles.form}
           method="post"
@@ -116,9 +84,11 @@ export default function EmailActionLanding({
           }}
         >
           <input type="hidden" name="token_hash" value={tokenHash} />
-          <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
-            {pending ? copy.pending : failure ? "Try again" : copy.action}
+          <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}
+            aria-describedby={failure ? failureId : undefined}>
+            {copy.action}
           </Button>
+          {failure ? <Field id={failureId} line={failure} /> : null}
         </form>
         {back}
       </div>

@@ -3,10 +3,14 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
-import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
+import { useThrowLater } from "@/lib/api/serverState";
+import type { NexusPage } from "@/lib/nexus/model";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import type { NexusController } from "./useNexusController";
@@ -24,7 +28,6 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
-      <FeedbackRecoveryControl />
     </header>
   );
 }
@@ -70,15 +73,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
         </section>
       );
     case "CaptureToday":
-      return (
-        <section className={styles.page}>
-          <Header title="add to today" onBack={controller.back} />
-          <p>{page.text}</p>
-          <FeedbackBusy pending={page.submit.kind === "Running"} />
-          <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}
-            aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={() => controller.retryCapture("default")}>retry saving</Button>
-        </section>
-      );
+      return <CaptureToday page={page} controller={controller} />;
     case "CreateLibrary":
       return (
         <CreateLibraryPanel
@@ -114,12 +109,37 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
   }
 }
 
+/** A note whose words are not saved on this device yet: the one interrupt, until it commits. */
+function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "CaptureToday" }>; controller: NexusController }) {
+  const copy = useCopyFeedback(page.text);
+  const { say } = useOutcome();
+  const throwLater = useThrowLater();
+  const running = page.submit.kind === "Running";
+  const atRisk = (page.submit.kind === "Running" || page.submit.kind === "Retryable") && page.submit.failure?.kind === "AtRisk";
+  const retry = () => controller.retryCapture("default");
+  const copyText = () => void copy.copy(page.text).catch((error: unknown) => {
+    if (error instanceof ClipboardWriteUnavailableError) say({ fact: "copying isn’t available here.", reason: "select the text and copy it." });
+    else throwLater({ error });
+  });
+  return (
+    <section className={styles.page}>
+      <Header title="add to today" onBack={controller.back} />
+      <p>{page.text}</p>
+      <Button aria-busy={running || undefined} aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={retry}>retry</Button>
+      {atRisk ? <Hold id={page.noteId} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
+        { label: "retry", commandKey: `retry capture ${page.noteId}`, run: retry, busy: running },
+        { label: "copy text", commandKey: `copy capture ${page.noteId}`, run: copyText, copied: copy.occurrence ?? undefined },
+      ]} /> : null}
+    </section>
+  );
+}
+
 export default function NexusPages({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
   return (
     <>
       <Page controller={controller} mobile={mobile} />
       <div className="sr-only" role="status" aria-label="Nexus status" aria-live="polite">
-        {controller.announcement}
+        {controller.reorderSpeech}
       </div>
     </>
   );

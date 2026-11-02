@@ -1,4 +1,4 @@
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import {
   getFileUploadError,
   getFileUploadKind,
@@ -21,7 +21,7 @@ export type AddSource =
 
 export type DraftValidation =
   | { kind: "Empty" }
-  | { kind: "Invalid"; feedback: FeedbackContent }
+  | { kind: "Invalid"; feedback: Line }
   | { kind: "Ready"; source: AddSource };
 
 const LIST_DELIMITER = /,\s+|\r\n?|\n|\t/u;
@@ -63,10 +63,7 @@ export function validateDraftSource(source: DraftSource): DraftValidation {
         ? { kind: "Ready", source: { kind: "Url", url } }
         : {
             kind: "Invalid",
-            feedback: {
-              tone: "Danger",
-              title: "Use an http:// or https:// link.",
-            },
+            feedback: { fact: "Use an http:// or https:// link." },
           };
     }
     case "File": {
@@ -75,10 +72,7 @@ export function validateDraftSource(source: DraftSource): DraftValidation {
       return error !== null || fileKind === null
         ? {
             kind: "Invalid",
-            feedback: {
-              tone: "Danger",
-              title: error ?? "Only PDF and EPUB files are supported.",
-            },
+            feedback: { fact: error ?? "Only PDF and EPUB files are supported." },
           }
         : { kind: "Ready", source: { ...source, fileKind } };
     }

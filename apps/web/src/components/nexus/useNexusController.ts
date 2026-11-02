@@ -5,7 +5,8 @@
 import { useRecent } from "@/lib/recent/store";
 import { recentTargetKey } from "@/lib/recent/model";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { truncateText } from "@/lib/display/format";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
@@ -15,7 +16,7 @@ import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
 import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
-import { apiTransportFeedback, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { modeledApiError } from "@/lib/api/serverState";
 import { savedSourceReadFailure } from "@/lib/imports/copy";
@@ -29,6 +30,7 @@ import {
   type ChoiceReturn,
   type NexusAction,
   type NexusOpenIntent,
+  type SubmitFailure,
   type NexusPage,
   type NexusPane,
   type NexusRow,
@@ -39,7 +41,7 @@ import {
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, nexusQueryAction, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, nexusPanePreview, pickerTarget, playbackRow, recentRow, resourceAction } from "@/lib/nexus/rows";
-import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
+import { useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
@@ -57,15 +59,14 @@ import { resolveAddPanelInitialFocus } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 import { useNexusPaneReorder } from "./useNexusPaneReorder";
 
-const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
-const FORBIDDEN = "This account can’t make that change.";
-const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
-  E_FORBIDDEN: FORBIDDEN,
-  E_LIBRARY_FORBIDDEN: FORBIDDEN,
-  E_INVALID_REQUEST: "Review the request and retry.",
-  E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
-  E_RESOURCE_CONFLICT: "This create request conflicts with another resource.",
-  E_NOTE_CONFLICT: "This note was saved before and has since left that day, so it wasn’t added again.",
+const CREATED = "couldn’t create the library.";
+/** What the library form tells of a refused create, by the server's code; transport has its own line. */
+const CREATE_REFUSALS: Readonly<Record<string, Line>> = {
+  E_FORBIDDEN: { fact: CREATED, reason: "this account doesn’t have permission." },
+  E_LIBRARY_FORBIDDEN: { fact: CREATED, reason: "this account doesn’t have permission." },
+  E_NAME_INVALID: { fact: "this name can’t be used.", reason: "use 1 to 100 characters, other than “All”." },
+  E_INVALID_REQUEST: { fact: CREATED },
+  E_RESOURCE_CONFLICT: { fact: CREATED },
 };
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
@@ -80,6 +81,7 @@ export type NexusController = ReturnType<typeof useNexusController>;
 
 export function useNexusController() {
   const { ctx } = useActionRuntime();
+  const { say, fail } = useOutcome();
   const interactionLayer = useRef<Layer | null>(null);
   const [openingSources, setOpeningSources] = useState<ReadonlySet<string>>(() => new Set());
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
@@ -129,7 +131,8 @@ export function useNexusController() {
   const [focusRevision, setFocusRevision] = useState(0);
   const [searchRefreshRevision, setSearchRefreshRevision] = useState(0);
   const [list, setList] = useState(EMPTY_LIST);
-  const [announcement, setAnnouncement] = useState("");
+  // A keyboard pane move speaks where it lands, as a sortable list's does.
+  const [reorderSpeech, setReorderSpeech] = useState("");
   const [panesExpanded, setPanesExpanded] = useState(false);
   const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(false);
   const [paneFocus, setPaneFocus] = useState<{ key: string | null; revision: number }>({ key: null, revision: 0 });
@@ -153,9 +156,9 @@ export function useNexusController() {
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const queryAction = nexusQueryAction(parsed);
-  const lookupGuidance = parsed.intent.kind === "CommandLookup"
-    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)}. `}choose a command to start empty, or search this text`
-    : null;
+  const lookupGuidance: Line | null = parsed.intent.kind !== "CommandLookup" ? null
+    : parsed.intent.head === "/" ? { fact: "choose a command, or search for this text." }
+    : { fact: `no command named “${truncateText(parsed.intent.head, 32)}”.`, reason: "choose one, or search for this text." };
   const listIdentity = JSON.stringify([accountId, rootMode, viewport.isMobile, query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && (!viewport.isMobile || rootMode !== "Overview");
   const retainedLocalTargets = list.identity === listIdentity ? list.groups.flatMap(group => group.rows).flatMap(row => row.localMatch
@@ -299,7 +302,7 @@ export function useNexusController() {
   }
   const reorder = useNexusPaneReorder({
     open, eligible: paneListComplete && panes.length >= 2, isMobile: viewport.isMobile,
-    panes, interactionLayer, announce: setAnnouncement, focus: requestPaneFocus,
+    panes, interactionLayer, announce: setReorderSpeech, focus: requestPaneFocus,
   });
   // Capture focus before the retiring shell disappears. The desktop query also
   // owns pane browsing; arranging panes does not imply mobile text entry.
@@ -337,11 +340,11 @@ export function useNexusController() {
       else reorder.place(reorder.placement.paneIds.indexOf(action.target.paneId) + 1);
       return null;
     }
-    if (action.kind === "Unavailable") { setAnnouncement(action.reason); return null; }
+    if (action.kind === "Unavailable") { say({ fact: `${action.reason}.` }); return null; }
     if (row?.localMatch && (find.missingLocal.has(row.localMatch.resource.ref)
       || !find.local.some(match => match.resource.ref === row.localMatch?.resource.ref
         && (match.matchedField === "annotation") === (row.localMatch?.matchedField === "annotation")) && !find.localValidationReady)) {
-      setAnnouncement(find.missingLocal.has(row.localMatch.resource.ref) ? "selection no longer available" : "checking availability…");
+      say({ fact: find.missingLocal.has(row.localMatch.resource.ref) ? "that result is gone." : "still checking that result." });
       return null;
     }
     let target = action.target;
@@ -349,7 +352,7 @@ export function useNexusController() {
     // The new-pane picker admits only its target contract and always forks.
     if (rootMode === "NewPane" && current.kind === "Root") {
       const admitted = pickerTarget(target, panes);
-      if (!admitted) { setAnnouncement("this action isn’t available in this picker"); return null; }
+      if (!admitted) { say({ fact: "that can’t open in a new pane." }); return null; }
       target = admitted;
       activation = { disposition: { kind: "Fork" } };
     } else if ((current.kind === "UseText" || current.kind === "ChooseCreate" || current.kind === "ChooseBrowse") && current.activation.disposition.kind === "Fork") {
@@ -485,7 +488,6 @@ export function useNexusController() {
         : target;
     const result = dispatch(materialized, activation, sourceOwnerIds(target));
     if (!result || result.kind === "Cancelled") return result;
-    setAnnouncement("");
     finishNavigation(null);
     if (!row?.learns_selection) return result;
     const pane = materialized.kind === "PaneOpen" ? panes.find((candidate) => candidate.id === materialized.paneId) : null;
@@ -509,21 +511,28 @@ export function useNexusController() {
       onOpened: () => { if (fromLauncher && currentPage.current === initiatingPage) finishNavigation(null); },
       create: async () => {
         const source = await fetchAcceptedSource(target.sourceAttemptId, signal);
+        // `settled` is the source's own fact: only then is it ready.
         if (target.destination === "media") return {
           target: { href: source.settled ? `/media/${source.media_id}`
             : `/media/${source.media_id}?source_attempt_id=${encodeURIComponent(target.sourceAttemptId)}` },
-          title: "item available", openLabel: "open",
+          title: source.settled ? "ready" : "still processing", openLabel: "open",
         };
         return { target: source.settled
           ? { href: `/imports?${encodeImportsUrl({ selected: source.import_ref })}`, secondaryActivation: { surfaceId: "import-detail" } }
           : { href: `/imports?${encodeImportsUrl({ view: "InProgress" })}` },
-        title: "import ready to open", openLabel: "view import" };
+        title: source.settled ? "import ready" : "import in progress", openLabel: "open" };
       },
     }).catch(error => {
       if (signal.aborted) return;
       const failure = modeledApiError(error, ctx.reportDefect);
       if (failure === null) return;
-      ctx.feedback.receipt(savedSourceReadFailure(failure), { label: "retry", onClick: intent => {
+      const fact = `couldn’t open “${target.label}”.`;
+      // The saved source's own codes come first; the rest are transport.
+      if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST") {
+        say({ fact, reason: savedSourceReadFailure(failure).message });
+        return;
+      }
+      fail(failure, fact, { label: "retry", commandKey: `retry open ${target.sourceAttemptId}`, run: intent => {
         if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
       } });
     }).catch(error => ctx.reportDefect({ error })).finally(() => setOpeningSources(current => {
@@ -546,7 +555,7 @@ export function useNexusController() {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         if (error instanceof LocalCommitError) {
           if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
-          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t confirm saving on this device",message:"keep nexus open. retry saving."},unconfirmed:false}};
+          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",failure:{kind:"AtRisk"},unconfirmed:false}};
           setPage(retryable);
           void error.completion.then(() => {
             if (!visible.current || currentPage.current !== retryable || ctx.sessionSignal().aborted || captureAttempt.current?.noteId !== running.noteId) return;
@@ -556,8 +565,8 @@ export function useNexusController() {
           }, () => {});
           return;
         }
-        const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
-        if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
+        // a capture is a local commit: any other failure is a defect.
+        setDefect({ error });
       });
   }
 
@@ -579,7 +588,7 @@ export function useNexusController() {
       create: async () => {
         const result = await create();
         if (currentPage.current === running && !ctx.sessionSignal().aborted) {
-          livePage = { ...running, submit: { kind: "Acknowledged", content: { tone: "Success", title: result.title } } };
+          livePage = { ...running, submit: { kind: "Acknowledged" } };
           setPage(livePage);
         }
         return result;
@@ -587,23 +596,15 @@ export function useNexusController() {
     });
   }
 
-  /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
-  function createFailure(error: unknown, title: string, codes: readonly string[], unconfirmed: boolean): FeedbackContent | null {
+  /** What the form tells of a failed create; anything undeclared becomes a workspace defect.
+   * An unknown outcome holds: `create` replays the same id, which the server answers idempotently. */
+  function createFailure(error: unknown, unconfirmed: boolean): SubmitFailure | null {
     if (handleUnauthenticatedApiError(error)) return null;
-    if (isApiError(error)) {
-      const transport = apiTransportFeedback(error, title);
-      if (transport !== null) return transport;
+    if (isApiError(error) && !isSameSystemApiDefect(error)) {
+      if (unconfirmed || outcomeUnknown(error)) return { kind: "Unknown" };
+      const refusal = CREATE_REFUSALS[error.code];
+      return refusal !== undefined ? { kind: "Refused", line: refusal } : { kind: "Transport", fact: CREATED, error };
     }
-    if (isApiError(error) && codes.includes(error.code)) {
-      if (unconfirmed || outcomeUnknown(error)) return {
-        tone: "Warning", title: "request unconfirmed",
-        message: "it may already have started work. retry sends the same request. accepted server work is not cancelled.",
-        requestId: error.requestId,
-      };
-      const message = CREATE_FAILURE_COPY[error.code];
-      if (message !== undefined) return { tone: "Danger", title, message, requestId: error.requestId };
-    }
-    // justify-defect: creation admits only declared outcomes with complete feedback.
     setDefect({ error });
     return null;
   }
@@ -611,15 +612,15 @@ export function useNexusController() {
   function submitLibrary(intent: OpenIntent) {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
     const running = { ...page, name: page.name.trim(), activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } as const : page.activation,
-      submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined,
+      submit: { kind: "Running", failure: page.submit.kind === "Retryable" ? page.submit.failure : undefined,
         unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed } } as const;
     void openCreated(running, async () => {
       const library = await createLibrary({ id: running.libraryId, name: running.name, initial_items: [], expected_removal_revision: null });
       return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"], running.submit.unconfirmed);
-        if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
+        const failure = createFailure(error, running.submit.unconfirmed);
+        if (failure) setPage({ ...running, submit: { kind: "Retryable", failure, unconfirmed: running.submit.unconfirmed || outcomeUnknown(error) } });
       });
   }
 
@@ -630,7 +631,6 @@ export function useNexusController() {
   function performExit(exit: Exit): WorkspaceTargetActivationResult | null {
     if (exit.kind === "Navigate") return run(exit.target, exit.activation);
     reorder.cancel({ silent: true });
-    setAnnouncement("");
     if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
     addSession.discard();
     setPage({ kind: "Root" });
@@ -667,13 +667,13 @@ export function useNexusController() {
     if (intent.kind === "QuickAction") {
       const action = NEXUS_COMMANDS[intent.actionId].action("");
       if (action.kind === "Available") run(action.target, PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search" });
-      else setAnnouncement(action.reason);
+      else say({ fact: `${action.reason}.` });
     }
   }
 
   function setQuery(next: string) {
     reorder.cancel({ restoreFocus: false });
-    if (reorder.placement === null && reorder.draggingPaneId === null) setAnnouncement("");
+    if (reorder.placement === null && reorder.draggingPaneId === null) setReorderSpeech("");
     setQueryState(next);
     if (viewport.isMobile) setRootMode((mode) => mode === "NewPane" ? mode : "Search");
     if (next !== query) { rootScroll.current[rootMode === "NewPane" ? "NewPane" : "Search"] = 0; presentations.holdRecent([]); }
@@ -697,7 +697,6 @@ export function useNexusController() {
     if (reorder.cancel()) return;
     const exit: Exit = { kind: page.kind === "Add" ? "Close" : "Root" };
     if (guardExit(exit) !== "accepted") return;
-    setAnnouncement("");
     if (page.kind === "Add") { performExit(exit); return; }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
@@ -792,8 +791,6 @@ export function useNexusController() {
 
   if (defect) throw defect.error;
   const resultsHeld = list.identity === listIdentity && list.pending;
-  const noticeText = [find.progress.kind === "Notice" ? find.progress.text : null, resultsHeld ? "search update ready" : null,
-    !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, lookupGuidance].filter(Boolean).join(" ") || null;
   return {
     interactionLayer,
     open,
@@ -809,13 +806,12 @@ export function useNexusController() {
     explicitIntent: parsed.intent.kind !== "Search",
     lookupGuidance,
     failures: find.failures,
-    recentStatus: { blank: !parsed.text, snapshot: recent.snapshot, readFailure: recent.readFailure, writeFailure: recent.writeFailure, read: recent.read },
+    recentStatus: { blank: !parsed.text, snapshot: recent.snapshot, readFailure: recent.readFailure, read: recent.read },
     searchProgress: find.progress,
     searchFailures: find.readFailures,
     localSearchFailures: find.localFailures,
     searchIdentity: find.queryIdentity,
     resultsHeld,
-    noticeText,
     searchUnavailable: find.searchUnavailable,
     searchRefreshRevision,
     interact,
@@ -835,7 +831,7 @@ export function useNexusController() {
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,
-    announcement,
+    reorderSpeech,
     dialogLabel: page.kind === "Add" ? "Add content" : page.kind === "Root" && rootMode === "NewPane" ? "open in new pane" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
     addSession,
@@ -879,21 +875,22 @@ export function useNexusController() {
       const admission = parsed.intent.kind === "Command" ? NEXUS_COMMANDS[parsed.intent.id].action("") : queryAction;
       const deliberateSelection = !viewport.isMobile && list.identity === listIdentity && list.moved && currentActive?.key != null;
       if (rootMode === "NewPane" && !deliberateSelection && admission?.kind === "Available" && parsed.intent.kind !== "Search" && pickerTarget(admission.target, panes) === null) {
-        setAnnouncement("this action isn’t available in this picker");
+        say({ fact: "that can’t open in a new pane." });
         return;
       }
       if (!viewport.isMobile) {
-        if (currentActive?.key == null) { setAnnouncement("selection no longer available"); return; }
+        if (lookupGuidance !== null) { say(lookupGuidance); return; }
+        if (currentActive?.key == null) { say({ fact: "no result is selected." }); return; }
         if (!admitted) return;
         const selected = rows.find(row => row.key === currentActive.key);
         if (selected) activate(selected.action, activation, selected);
         return;
       }
-      if (lookupGuidance !== null) { setAnnouncement(lookupGuidance); return; }
+      if (lookupGuidance !== null) { say(lookupGuidance); return; }
       if (parsed.intent.kind === "Resource") {
         const local = find.localReference;
         if (local !== null) {
-          if (local.href === null) setAnnouncement("source unavailable");
+          if (local.href === null) say({ fact: "the source isn’t available." });
           else activate({ kind: "Available", target: { kind: "InternalHref", href: local.href, labelHint: local.label } }, activation);
           return;
         }
@@ -980,7 +977,7 @@ export function useNexusController() {
       });
     },
     submitLibrary,
-    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content, unconfirmed: page.submit.unconfirmed } }),
+    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", failure: page.submit.failure, unconfirmed: page.submit.unconfirmed } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });

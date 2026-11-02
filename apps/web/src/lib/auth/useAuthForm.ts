@@ -9,14 +9,16 @@
 // defect for the error boundary.
 import { useRef, useState, type FormEvent } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 
 // the origin check refuses posts from any host but APP_PUBLIC_URL (the vercel
 // default domain, an alias).
-export const WRONG_ADDRESS: FeedbackContent = {
-  tone: "Danger",
-  title: "This address can’t be used with Nexus.",
-  message: "Open Nexus at its usual address and try again.",
+export const WRONG_ADDRESS_LINE: Line = {
+  fact: "this web address can’t be used with nexus.",
+  reason: "open nexus at its usual address.",
 };
+/** Until L7: app/login, app/forgot-password and app/account read it in the old shape. */
+export const WRONG_ADDRESS: FeedbackContent = { tone: "Danger", title: WRONG_ADDRESS_LINE.fact, message: WRONG_ADDRESS_LINE.reason };
 
 export function useAuthForm<Kind extends string>(
   onFailure: (kind: Kind | "Forbidden" | "Unreachable") => void,

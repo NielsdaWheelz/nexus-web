@@ -2,11 +2,10 @@
 
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
-import { ArrowLeft, Search, X } from "lucide-react";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import { ArrowLeft, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowEvidence, NexusRowMenu, NexusQueryStatus, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
+import { NexusRowBody, NexusRowEvidence, NexusRowMenu, NexusQuerySpinner, NexusNotices, nexusRowEvidenceText, nexusRowPrimaryText } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import { NexusPaneDrag, NexusPaneSortable, NexusPaneListHeader, NexusClosedPanes, paneCandidateName, paneRowName, paneDragStyle } from "@/components/nexus/NexusPaneList";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
@@ -125,7 +124,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching && !picker ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{picker ? "open in new pane" : searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
-          {!searching ? <FeedbackRecoveryControl /> : null}
           {picker ? <Button className={styles.iconButton} onClick={controller.escape}>cancel</Button> : <><AccountMenu
             activeId={accountId}
             placement="below"
@@ -147,7 +145,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       </header>
       <div className={styles.searchInput}>
         <div className={styles.searchField} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
-          <Search size={19} aria-hidden="true" />
+          <NexusQuerySpinner pending={searching && controller.pending} mobile />
           <input
             ref={inputRef}
             type="search"
@@ -181,7 +179,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               }
             }}
           />
-          {searching ? <NexusQueryStatus /> : null}
           {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
       </div>
@@ -242,13 +239,12 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             {group.id === "Open" ? <NexusClosedPanes controller={controller} mobile /> : null}
           </section>
         ))}
-        {picker && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => searching ? inputRef.current : headingRef.current} />
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>
       </NexusPaneDrag>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.noticeText, searching && controller.searchProgress.kind === "Pending" ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {searching && typed && !controller.pending ? `${results} results shown.` : null}
       </div>
     </div>
   );

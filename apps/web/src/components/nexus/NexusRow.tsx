@@ -4,12 +4,13 @@ import { X } from "lucide-react";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 // Row parts: resource bodies, menus, and visible search status.
-import { checkSession } from "@/lib/native/admission";
-import { useRemoteAdmission } from "@/lib/native/admissionHooks";
+import { Search } from "lucide-react";
 import type { ComponentProps } from "react";
-import { FeedbackFailure, FeedbackBusy, FeedbackNotice, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
+import { ControlContents } from "@/components/ui/control";
+import { isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
@@ -22,7 +23,6 @@ import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { PANE_TITLES_FAILED, useWorkspacePresentations } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
@@ -189,57 +189,41 @@ export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; me
     : null;
 }
 
-/** The compact query keeps one permanently reserved recovery/busy control. */
-export function NexusQueryStatus() {
-  return <span className={styles.queryStatus}><FeedbackRecoveryControl className={styles.queryStatusButton} /></span>;
+/** The query's wait: control busy over the field's end padding on desktop, in the search
+ * glyph's slot on phones. It reserves nothing. */
+export function NexusQuerySpinner({ pending, mobile }: { pending: boolean; mobile: boolean }) {
+  return mobile ? <span className={styles.searchGlyph}><ControlContents icon={<Search />} busy={pending} /></span>
+    : pending ? <span className={styles.querySpinner}><ControlContents busy /></span> : null;
 }
 
-function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
-  const presentations = useWorkspacePresentations();
-  const failure = presentations.titleFailure;
-  return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence}
-    content={apiTransportFeedback(failure.error,PANE_TITLES_FAILED) ?? {tone:"Warning",title:PANE_TITLES_FAILED}} announcement="Polite"
-    actions={isStaleBuild(failure.error) ? undefined : [{label:"retry",onClick:presentations.retryTitles,busy:failure.pending}]} returnFocus={returnFocus}/> : null;
-}
+const SOURCE_NOUNS: Record<string, string> = { Hybrid: "related matches", Reference: "linked items", Direct: "destinations" };
 
-/** Domain notices follow candidates; operational failures use the same host's recovery. */
+/** The query's own facts, after its candidates: each failed source where its results would be,
+ * then what the query and recent say. A refresh failure over shown data says nothing. */
 export function NexusNotices({ controller, returnFocus, id }: {
   controller: NexusController; returnFocus: () => HTMLElement | null; id: string;
 }) {
-  const admission = useRemoteAdmission();
   const { kind, text, action } = controller.searchProgress;
-  const { blank, snapshot, readFailure, writeFailure, read } = controller.recentStatus;
-  return <>
-    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending} />
-    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}
-    {[...controller.searchFailures].map(([source, failure]) => {
-      const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
-        : source === "Hybrid" ? "related matches aren’t available" : source === "Direct" ? "couldn’t find this destination" : "couldn’t search your content";
-      const blocked = isStaleBuild(failure.error) || ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code);
-      return <FeedbackFailure key={source} scope="Local" occurrence={failure.occurrence} announcementOccurrence={failure.error}
-        content={apiTransportFeedback(failure.error, title) ?? {tone: "Warning", title, requestId: failure.error.requestId}}
-        announcement="Polite" returnFocus={returnFocus}
-        actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
-          onClick: () => { if (admission !== "Ready") void checkSession(); else controller.retry(source); }, busy: controller.retrying.has(source)}]} />;
-    })}
-    <NexusTitleFailure returnFocus={returnFocus} />
-    {controller.noticeText !== null ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
-      {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
-      {kind === "Notice" ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
-        actions={action === null ? undefined : [{label: SEARCH_ACTION_LABELS[action], onClick: () => {
-          if (action === "refresh") controller.refreshResults();
-          else if (action === "related") controller.retryRelated();
-          else controller.retrySearch();
-          returnFocus()?.focus({preventScroll: true});
-        }, busy: controller.retrying.size > 0}]} /> : null}
-      {controller.resultsHeld ? <FeedbackNotice content={{tone: "Info", title: "search update ready"}} announcement="None"
-        actions={[{label: SEARCH_ACTION_LABELS.refresh, onClick: () => { controller.refreshResults(); returnFocus()?.focus({preventScroll: true}); }}]} /> : null}
-      {blank ? <>
-        {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} returnFocus={returnFocus} />
-          : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
-          : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
-        {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} returnFocus={returnFocus} /> : null}
-      </> : null}
-    </section> : null}
-  </>;
+  const { blank, snapshot, readFailure, read } = controller.recentStatus;
+  const back = () => returnFocus()?.focus({ preventScroll: true });
+  return <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
+    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device." />)}
+    {[...controller.searchFailures].map(([source, failure]) => source === "Reference" && ["E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code)
+      ? <Fact key={source} line={{ fact: "nothing in nexus matches that link." }} speak />
+      : <Failed key={source} error={failure.error} noun={SOURCE_NOUNS[source] ?? "search results"}
+        retry={isStaleBuild(failure.error) || failure.error.code === "E_INVALID_REQUEST" ? undefined
+          : { run: () => controller.retry(source), busy: controller.retrying.has(source) }} />)}
+    {controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={controller.lookupGuidance} speak /></div> : null}
+    {kind === "Notice" ? <Fact line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
+      if (action === "refresh") controller.refreshResults();
+      else if (action === "related") controller.retryRelated();
+      else controller.retrySearch();
+      back();
+    } }]} /> : null}
+    {controller.resultsHeld ? <Fact line={{ fact: "newer results are ready." }} speak
+      verbs={[{ label: SEARCH_ACTION_LABELS.refresh, commandKey: "search refresh", run: () => { controller.refreshResults(); back(); } }]} /> : null}
+    {!blank ? null
+      : snapshot === null ? readFailure ? <Fact line={{ fact: "couldn’t load recent items." }} speak verbs={[{ label: "retry", commandKey: "retry recent", run: read }]} /> : <Ruling />
+      : snapshot.entries.length === 0 ? <Fact line={{ fact: "items you open will appear here." }} /> : null}
+  </section>;
 }

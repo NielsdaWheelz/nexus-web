@@ -2,7 +2,10 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import { FeedbackFailure, FeedbackNotice, FeedbackStatus, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
+import { Hold } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
+import type { ApiError } from "@/lib/api/client";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import PlacementOverlay from "@/components/libraries/PlacementOverlay";
@@ -10,7 +13,7 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { modeledApiError } from "@/lib/api/serverState";
-import { captureStatusLine, savedSourceReadFailure } from "@/lib/imports/copy";
+import { captureStatusLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource, getFileUploadKind, type AcceptedIngest } from "@/lib/imports/ingest";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import type { LibraryDestination } from "@/lib/libraries/api";
@@ -157,8 +160,8 @@ export default function AddPanel({
   const placementKey = useRef(0);
   const savedRead = useRef<AbortController | null>(null);
   const [checkingSaved, setCheckingSaved] = useState(false);
-  const [savedFeedback, setSavedFeedback] = useState<FeedbackContent | null>(null);
-  const [savedFailure, setSavedFailure] = useState<{ key: string; content: FeedbackContent; occurrence: object; retry(): void; busy: boolean } | null>(null);
+  const [savedFeedback, setSavedFeedback] = useState<Line | null>(null);
+  const [savedFailure, setSavedFailure] = useState<{ key: string; error: ApiError; retry(): void; busy: boolean } | null>(null);
   const [savedReadTarget, setSavedReadTarget] = useState<{ itemId: string | null } | null>(null);
 
 
@@ -199,9 +202,8 @@ export default function AddPanel({
     } catch (error) {
       if (controller.signal.aborted) return;
       const failure = modeledApiError(error, ({ error: defect }) => onDefect(defect));
-      if (failure !== null) setSavedFailure(previous => ({ key, content: savedSourceReadFailure(failure),
-        occurrence: previous?.key === key ? previous.occurrence : {}, busy: false,
-        retry: () => { void readSaved(results, ready).catch(onDefect); } }));
+      if (failure !== null) setSavedFailure({ key, error: failure, busy: false,
+        retry: () => { void readSaved(results, ready).catch(onDefect); } });
     } finally {
       if (savedRead.current === controller) {
         savedRead.current = null;
@@ -214,8 +216,8 @@ export default function AddPanel({
     setSavedReadTarget({ itemId });
     void readSaved(results, (locations) => {
       if (locations.some((location) => !location.settled)) {
-        setSavedFeedback({ tone: "Neutral", title: "source is still processing",
-          message: "your chosen libraries are already saved. change them here after processing finishes." });
+        setSavedFeedback({ fact: "source is still processing",
+          reason: "your chosen libraries are already saved. change them here after processing finishes." });
         return;
       }
       const ids = [...new Set(locations.map((location) => location.mediaId))];
@@ -446,14 +448,10 @@ export default function AddPanel({
                   : `${(fileBytes / 1024 ** 2).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB`}
             </span>
           ) : null}
-          {status && feedback === null ? <FeedbackStatus content={{
-            tone: item.kind === "AcceptanceUnresolved" ? "Warning" : item.kind === "Rejected" ? "Danger"
-              : item.kind === "Accepted" ? !item.result.available || item.result.processing === "failed" ? "Warning" : "Success" : "Neutral",
-            title: status,
-          }} announcement="None" /> : null}
+          {status && feedback === null ? <Fact line={{ fact: status }} /> : null}
           {feedback && feedbackId ? editable
-            ? <FieldFeedback id={feedbackId} content={feedback} />
-            : <div id={feedbackId}><FeedbackNotice content={feedback} announcement="None" /></div>
+            ? <Field id={feedbackId} line={feedback} />
+            : <div id={feedbackId}><Fact line={feedback} /></div>
             : null}
           {split ? (
             <Button
@@ -534,7 +532,6 @@ export default function AddPanel({
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
               disabled={checkingSaved}
-              reserveIcon
               aria-busy={checkingSaved && savedReadTarget?.itemId === item.id || undefined}
               onClick={(event) => {
                 if (item.kind === "Accepted") placeSaved([item.result], event.currentTarget, item.id);
@@ -559,7 +556,7 @@ export default function AddPanel({
   ].filter(Boolean).join(" · ");
   const progress = operation ? mutationLabel({ operation, items: state.items }) : null;
   const liveStatus = announcement ?? (state.intakeFeedback
-    ? [state.intakeFeedback.title, state.intakeFeedback.message].filter(Boolean).join(" ")
+    ? [state.intakeFeedback.fact, state.intakeFeedback.reason].filter(Boolean).join(" ")
     : progress ?? counts);
 
   return (
@@ -637,7 +634,6 @@ export default function AddPanel({
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
               disabled={checkingSaved}
-              reserveIcon
               aria-busy={checkingSaved && savedReadTarget?.itemId === null || undefined}
               onClick={(event) => placeSaved(accepted.map((item) => item.result), event.currentTarget, null)}
             >libraries for all…</Button>
@@ -659,15 +655,14 @@ export default function AddPanel({
         <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to the current unsubmitted items; use for new items to change defaults</span>
       </header>
       {!editor || placementEditor ? <>
-        {creation.error ? <FeedbackFailure scope="Local" occurrence={creation.error.occurrence} content={creation.error.content} announcement="Assertive"
-          actions={creation.error.retry ? [{ label: "retry", onClick: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey }] : undefined} /> : null}
+        {creation.error ? <Hold id="add-library-creation" line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
+          verbs={creation.error.retry ? [{ label: "retry", run: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey ?? "retry library creation" }] : undefined} /> : null}
       </> : null}
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
-        {savedFailure ? <FeedbackFailure scope="Local" occurrence={savedFailure.occurrence} content={savedFailure.content} announcement="Polite"
-          actions={[{ label: "retry checking saved sources", onClick: savedFailure.retry, busy: savedFailure.busy }]} /> : null}
-        {savedFeedback ? <div className={styles.intakeFeedback}><FeedbackStatus content={savedFeedback} announcement="None" /></div> : null}
-        {state.intakeFeedback ? <div className={styles.intakeFeedback}><FeedbackNotice content={state.intakeFeedback} announcement="None" /></div> : null}
+        {savedFailure ? <Failed error={savedFailure.error} noun="saved sources" retry={{ run: savedFailure.retry, busy: savedFailure.busy }} /> : null}
+        {savedFeedback ? <div className={styles.intakeFeedback}><Fact line={savedFeedback} /></div> : null}
+        {state.intakeFeedback ? <div className={styles.intakeFeedback}><Fact line={state.intakeFeedback} /></div> : null}
         {state.items.map(row)}
       </div>
       <div className={styles.visuallyHidden} role="status" aria-live="polite">{liveStatus}</div>
@@ -675,7 +670,6 @@ export default function AddPanel({
         <p>{populatedCount > 0 ? counts : `up to ${MAX_ADD_ITEMS} items`}</p>
         <Button
           emphasis="strong"
-          reserveIcon
           disabled={creation.creating || busy || (readyCount === 0 && !done)}
           onClick={() => {
             if (busy) return;
