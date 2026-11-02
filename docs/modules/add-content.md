@@ -74,10 +74,12 @@ all older callbacks. reload loses browser drafts/files.
 
 the task registers actual populated rows, unresolved acceptance, destination
 creation and its running browser pipeline with the common work guard. empty
-drafts, destination seed changes and settled receipts are clean; so is a row
-seeded from the palette query until its first edit or the visit's first send,
-because until then leaving restores the query that holds that text. normal and
-defect-boundary dismissal use one native confirmation. cancellation keeps the
+drafts, destination seed changes and settled receipts are clean. so is a row
+seeded from the palette query, until its first edit or the visit's first send:
+its text is the palette's, and the palette owns it. the arrow and esc restore it
+as the query; close discards it, as close discards any query. after a send the
+arrow restores no query, so a seeded row is work. normal and defect-boundary
+dismissal use one native confirmation. cancellation keeps the
 transfer running; confirmed leave stops remaining browser work and discards its
 local state. accepted imports remain server-owned. add has no reload recovery.
 

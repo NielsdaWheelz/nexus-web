@@ -76,7 +76,11 @@ export type AddItem =
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
       readonly upload: UploadAttempt | null;
-      /** The palette query's text, unedited. Until a send this visit, leaving restores that query. */
+      /**
+       * The palette query's text, unedited. Until the visit's first send the palette owns it: the arrow
+       * and esc restore it as the query, and close discards it with the query. After a send the arrow
+       * restores no query, so the row is the page's work.
+       */
       readonly seeded?: true;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
