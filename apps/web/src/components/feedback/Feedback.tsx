@@ -2,6 +2,7 @@
 
 import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
+  useCallback,
   useContext,
   useEffect,
   useId,
@@ -157,7 +158,8 @@ const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.lo
 const NO_SHELL: Shell = { signIn: null };
 
 /** One account's presentation, above every owner that speaks. The geometry provider is above
- * this. `shell` is the host's: the workspace signs in, shelf and capture open the workspace. */
+ * this. `shell` is the host's: the workspace signs in, shelf and capture open the workspace. Its
+ * verb stays one value across renders, because `fail` is stable only while it does. */
 export function FeedbackProvider({ shell = NO_SHELL, children }: { shell?: Shell; children: ReactNode }) {
   const [session] = useState(createFeedbackSession);
   const [stage] = useState(createStage);
@@ -187,17 +189,16 @@ export function useOutcome(): Outcome {
   const address = useAddress();
   const { signIn } = useContext(ShellContext);
   const throwLater = useThrowLater();
-  return useMemo(() => ({
-    say: (line, verbs) => stage.say({ address, line, verbs: verbs ?? null }),
-    fail: (error, title, verb) => {
-      if (!isApiError(error) || isSameSystemApiDefect(error)) {
-        throwLater({ error });
-        return () => {};
-      }
-      const transport = transportOf(error);
-      return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
-    },
-  }), [stage, address, signIn, throwLater]);
+  const say = useCallback<Outcome["say"]>((line, verbs) => stage.say({ address, line, verbs: verbs ?? null }), [stage, address]);
+  const fail = useCallback<Outcome["fail"]>((error, title, verb) => {
+    if (!isApiError(error) || isSameSystemApiDefect(error)) {
+      throwLater({ error });
+      return () => {};
+    }
+    const transport = transportOf(error);
+    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
+  }, [stage, address, signIn, throwLater]);
+  return useMemo(() => ({ say, fail }), [say, fail]);
 }
 
 /** A fact that stands while its owner holds it: mounted is present, unmounted is resolved.
