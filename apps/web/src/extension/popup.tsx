@@ -66,7 +66,6 @@ const SIGN_IN_CODES = new Set(["E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAP
 const RECAPTURE: Partial<Record<string, string>> = {
   E_CAPTURE_TARGET_CHANGED: "this import changed since capture.",
   E_UPLOAD_CAPABILITY_EXPIRED: "this upload expired.",
-  E_WIRE_MISMATCH: "nexus updated.",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */

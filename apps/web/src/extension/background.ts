@@ -57,8 +57,10 @@ declare const __NEXUS_STORAGE_ORIGIN__: string;
 
 const MENU_ID = "nexus-capture-link";
 const CREDENTIAL_KEY = "nexusCaptureCredential";
-/** Codes after which the same request can never succeed: no Retry. */
+/** Codes after which the same request can never succeed: no Retry. A stale extension cannot
+    capture again either, until it updates. */
 const TERMINAL = new Set([
+  "E_WIRE_MISMATCH",
   "E_SOURCE_INTEGRITY",
   "E_INVALID_FILE_TYPE",
   "E_FILE_TOO_LARGE",
@@ -1059,8 +1061,7 @@ async function save(signal: AbortSignal): Promise<void> {
       current.submission.confirmation = null;
       recovery = "Review";
     } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
-               shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED" ||
-               shown.code === "E_WIRE_MISMATCH") {
+               shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED") {
       recovery = "Recapture";
     } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
       recovery = "Check";
