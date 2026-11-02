@@ -126,6 +126,8 @@ export interface NexusRootOrigin {
   readonly mode: NexusRootMode;
   readonly control: string;
 }
+/** The palette as the Add page left it; null on the page means it was opened from outside. */
+export type NexusImportOrigin = NexusRootOrigin & { readonly query: string };
 
 export type UseTextPage = { readonly kind: "UseText"; readonly text: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
 export type ChoiceReturn = { readonly kind: "Root"; readonly origin: NexusRootOrigin } | UseTextPage;
@@ -159,7 +161,7 @@ export type NexusPage =
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }
-  | { readonly kind: "Add"; readonly sessionId: string };
+  | { readonly kind: "Add"; readonly sessionId: string; readonly origin: NexusImportOrigin | null };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }
