@@ -569,7 +569,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (episode) episode.active = true;
       const duration = durationMs();
       metadataPositionMs = Math.max(0, duration > 0 ? Math.min(positionMs, duration) : positionMs);
-      audio.currentTime = metadataPositionMs / 1000;
+      // ms() floors, and only the element's exact duration reaches `ended`.
+      audio.currentTime = metadataPositionMs > 0 && metadataPositionMs === ms(audio.duration) ? audio.duration : metadataPositionMs / 1000;
       sync();
     },
     skipBy: (deltaMs) => engine.seekTo({ positionMs: ms(audio.currentTime) + deltaMs }),
