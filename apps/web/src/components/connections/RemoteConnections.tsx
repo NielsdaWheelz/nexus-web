@@ -3,12 +3,13 @@
 // Server-owned facts about one resource: citations, librarian links, chat context
 // and document embeds. Authored links, highlight notes and note-body embeds are
 // local and never read here. This section fails on its own; it never hides or
-// replaces local results beside it.
+// replaces local results beside it. A first page that fails stands where its rows
+// would; a refresh that fails over shown rows says nothing; a later page that fails
+// stands beneath them.
 import { useContext } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerList, type ServerList } from "@/lib/api/useServerList";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { queryConnections, type ConnectionOut } from "@/lib/resourceGraph/links";
@@ -16,15 +17,6 @@ import styles from "./ConnectionsSurface.module.css";
 
 const REMOTE_ORIGINS: NonNullable<NonNullable<Parameters<typeof queryConnections>[0]["filters"]>["origins"]> =
   ["citation", "discovery", "assistant", "system", "document_embed"];
-
-export function remoteConnectionsError(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = "couldn’t refresh connections";
-  const transport = apiTransportFeedback(error, title);
-  if (transport !== null) return transport;
-  if (!["E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_REQUEST"].includes(error.code)) throw error;
-  return { tone: "Danger", title, message: "This item or connection is no longer available. Refresh Connections.", requestId: error.requestId };
-}
 
 /** One read per mounted section: `occurrencePrefix` keeps sections with different invalidation apart. */
 export function useRemoteConnections(ownerRef: string, occurrencePrefix: string, stale: string): ServerList<ConnectionOut> {
@@ -50,18 +42,12 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   onChanged: () => void;
 }) {
   const branch = useContext(ResourceBranch);
-  const error = list.failure?.error ?? null;
-  const occurrence = useFeedbackOccurrence(error !== null, list.requestedKey);
-  const continuation = list.failure?.op === "More";
-  const rejected = continuation && error?.code === "E_INVALID_CURSOR";
   // The fact this branch entered through comes back from a both-directions read; it is not another connection.
   const items = list.items.filter((connection) => !branch.traversedEdgeIds.has(connection.edge_id));
+  const retry = { run: list.retry, busy: list.running !== null };
+  const continuation = list.failure?.op === "More";
   return <>
-    <FeedbackBusy subject={list.requestedKey} pending={list.status === "loading"}/>
-    {error ? <FeedbackFailure scope="Local" occurrence={occurrence} content={continuation
-      ? {tone: "Warning", title: "couldn’t load remaining connections", requestId: error.requestId}
-      : remoteConnectionsError(error)} announcement="Polite"
-      actions={[{ label: rejected ? "refresh list" : "retry", onClick: list.retry, busy: list.running !== null }]} /> : null}
+    {list.failure && !continuation && items.length === 0 ? <Failed error={list.failure.error} noun="other connections" retry={retry} /> : null}
     {items.length ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
       <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}>
@@ -71,5 +57,6 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
           historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged} />)}
       </ResourceOutlineList>
     </section> : null}
+    {list.failure && continuation ? <Failed error={list.failure.error} noun="the remaining connections" retry={retry} /> : null}
   </>;
 }

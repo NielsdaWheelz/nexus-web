@@ -2,10 +2,10 @@
 
 /** One outer outline batches mounted occurrence probes. Local committed links are
  * authoritative; remote facts fail separately and never decide local emptiness.
- * Descriptor identity fences results from a previous occurrence's exclusions. */
+ * Descriptor identity fences results from a previous occurrence's exclusions. A probe
+ * is auxiliary to rows already shown: a failed one proves nothing and says nothing. */
 import {useCallback, useEffect, useState} from "react";
 import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
-import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
 import {useChangeStamp} from "@/lib/api/changes";
@@ -58,33 +58,25 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     return {key:id,refs:owner&&owner!==descriptor.resource_ref?[descriptor.resource_ref,owner]:[descriptor.resource_ref],excluded_link_ids:descriptor.excluded_edge_ids};
   });
   const localKey=JSON.stringify([accountId,occurrences]);
-  const chunkKeys=new Set<string>();
-  for(let offset=0;offset<occurrences.length;offset+=100)chunkKeys.add(JSON.stringify(occurrences.slice(offset,offset+100)));
-  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;errors:ReadonlyMap<string,{error:unknown;occurrence:object}>;pending:ReadonlySet<string>;accountId:string|null}>(()=>({proofs:new Map(),errors:new Map(),pending:chunkKeys,accountId}));
+  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;accountId:string|null}>(()=>({proofs:new Map(),accountId}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
     const mounted=new Set(occurrences.map(item=>item.key));
-    setLocal(current=>({accountId,proofs:new Map(current.accountId===accountId?[...current.proofs].filter(([id])=>mounted.has(id)):[]),errors:new Map(current.accountId===accountId?[...current.errors].filter(([key])=>chunkKeys.has(key)):[]),pending:chunkKeys}));
+    setLocal(current=>({accountId,proofs:new Map(current.accountId===accountId?[...current.proofs].filter(([id])=>mounted.has(id)):[])}));
     for(let offset=0;offset<occurrences.length;offset+=100){
-      const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))},chunkKey=JSON.stringify(chunk);
+      const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))};
       let revision:bigint|null=null;
       const receive=(result:Awaited<ReturnType<typeof store.query>>)=>{
         if(!active||revision!==null&&BigInt(result.store_revision)<revision)return;
         revision=BigInt(result.store_revision);
         if(result.children.length!==chunk.length)throw Error("Local child proof cardinality mismatch");
         setLocal(current=>{
-          const proofs=new Map(current.proofs),errors=new Map(current.errors);errors.delete(chunkKey);
+          const proofs=new Map(current.proofs);
           chunk.forEach((item,index)=>proofs.set(item.key,{query:item,value:result.children[index]===true}));
-          const pending=new Set(current.pending);pending.delete(chunkKey);
-          return {accountId,proofs,errors,pending};
+          return {accountId,proofs};
         });
       };
-      stops.push(store.subscribe(query,receive,error=>{
-        if(!active)return;
-        setLocal(current=>{
-        const pending=new Set(current.pending);pending.delete(chunkKey);
-        return {...current,pending,errors:new Map(current.errors).set(chunkKey,{error,occurrence:current.errors.get(chunkKey)?.occurrence??{}})};
-      });}));
+      stops.push(store.subscribe(query,receive,()=>{}));
     }
     return()=>{active=false;for(const stop of stops)stop();};
     // Serialized descriptors are the closed query's identity.
@@ -100,10 +92,5 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     items.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
   }
   const retry=useCallback(()=>setAttempt(n=>n+1),[]);
-  const failure=local.accountId===accountId?[...local.errors].find(([key])=>chunkKeys.has(key))?.[1]??null:null;
-  const remoteError=remote.status==="loading"?null:remote.error;
-  const remoteOccurrence=useFeedbackOccurrence(remoteError!==null,remoteKey);
-  return {items,error:failure?.error??null,occurrence:failure?.occurrence??null,
-    pending:local.accountId!==accountId||[...local.pending].some(key=>chunkKeys.has(key)),
-    remoteError,remoteOccurrence,remotePending:remote.status==="loading"||remote.status==="failed"&&remote.retrying||remote.status==="ready"&&remote.refreshing,retry};
+  return {items,retry};
 }
