@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import { installedApp } from "@/lib/native/admission";
-import { sessionSignIn } from "@/lib/native/client";
 import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
@@ -26,9 +25,8 @@ import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actio
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import { RecentProvider } from "@/lib/recent/store";
-import { AuthoredProvider } from "@/lib/authored/provider";
+import { AuthoredProvider, useAuthoredSignIn } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
-import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
@@ -62,18 +60,6 @@ import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
-/** The workspace signs in: a browser leaves for login and comes back here, an installed app asks
- * its shell. One value, so `fail` stays stable. */
-const SHELL: Shell = {
-  signIn: {
-    label: "sign in", commandKey: "SignIn",
-    run: () => {
-      if (installedApp) void sessionSignIn().catch(reportError);
-      else window.location.assign(loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)));
-    },
-  },
-};
-
 export default function AuthenticatedShell(props: {
   browserLifetime?: string;
   account: AuthenticatedAccount;
@@ -85,11 +71,19 @@ export default function AuthenticatedShell(props: {
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
+  // The workspace signs in through the account's one sign-in owner, which ignores a press while
+  // a sign-in runs and tells its result. That owner sits beneath the feedback provider, so the
+  // workspace binds it here once the account opens. One value, so `fail` stays stable.
+  const [{ shell, bindSignIn }] = useState(() => {
+    let owner: (() => void) | null = null;
+    const shell: Shell = { signIn: { label: "sign in", commandKey: "SignIn", run: () => owner?.() } };
+    return { shell, bindSignIn: (signIn: (() => void) | null) => { owner = signIn; } };
+  });
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <MobileViewportProvider>
-          <FeedbackProvider shell={SHELL}>
+          <FeedbackProvider shell={shell}>
             <AuthoredProvider accountId={props.account.accountId}>
               <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
                 <UnauthenticatedApiBoundary>
@@ -99,7 +93,7 @@ export default function AuthenticatedShell(props: {
                     <ServerSeedsProvider seeds={props.seeds}>
                       <ReaderProvider initialProfile={props.readerProfile}>
                         <Workspace accountId={props.account.accountId} initialState={props.initialState}
-                          locationLinkFailure={props.locationLinkFailure} />
+                          locationLinkFailure={props.locationLinkFailure} bindSignIn={bindSignIn} />
                       </ReaderProvider>
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
@@ -118,8 +112,14 @@ function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
   locationLinkFailure: "TooLong" | null;
+  bindSignIn: (signIn: (() => void) | null) => void;
 }) {
-  const { accountId } = props;
+  const { accountId, bindSignIn } = props;
+  const { signIn } = useAuthoredSignIn();
+  useLayoutEffect(() => {
+    bindSignIn(signIn);
+    return () => bindSignIn(null);
+  }, [bindSignIn, signIn]);
   const { profile } = useReaderContext();
   // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
