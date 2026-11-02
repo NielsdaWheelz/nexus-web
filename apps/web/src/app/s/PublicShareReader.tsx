@@ -4,8 +4,9 @@
 // quote over the whole shared document, read-only, opened at the shared
 // highlight. Another `#share=` hash opens in place; any other hash change (an
 // in-document link) leaves the reading alone. What a read finds stands where the
-// reading would; slips stand at the page's root, over the viewport.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// reading would; slips stand at the page's root, over the viewport. Focus inside
+// the gate when the reading replaces it moves to the reading.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
@@ -27,6 +28,7 @@ import DocumentReaderView, {
 } from "@/lib/documentReader/DocumentReader";
 import type { ReaderTarget } from "@/lib/documentReader/model";
 import { isAbortError } from "@/lib/errors";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { publicFetch, publicSource } from "./publicSource";
 import styles from "./publicShare.module.css";
 
@@ -73,6 +75,17 @@ export default function PublicShareReader() {
     setAttempt(value => value + 1);
   }, []);
   const reread = () => setAttempt(value => value + 1);
+  // A ref's cleanup runs before react removes its element, so focus is still where it was.
+  const gateHeldFocus = useRef(false);
+  const gate = useCallback((element: HTMLElement | null) => {
+    if (element === null) return;
+    return () => { gateHeldFocus.current = element.contains(document.activeElement); };
+  }, []);
+  useLayoutEffect(() => {
+    if (state.kind !== "Ready" || !gateHeldFocus.current) return;
+    gateHeldFocus.current = false;
+    shell.current?.querySelector("main")?.focus({ preventScroll: true });
+  }, [state.kind]);
 
   useEffect(() => {
     let controller = new AbortController();
@@ -127,7 +140,9 @@ export default function PublicShareReader() {
         />
       ) : (
         <main
-          className={styles.header}
+          ref={gate}
+          className={`${styles.header} ${styles.gate}`}
+          style={readerSurfaceStyle(PUBLIC_PROFILE)}
           tabIndex={-1}
         >
           <div className={styles.brand}>Nexus</div>

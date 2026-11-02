@@ -32,7 +32,7 @@ import type {Schema} from "@/lib/api/wire";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
-import type {WritingRuntime} from "@/lib/notes/runtime";
+import {isAuthoredStorageFailure, type WritingRuntime} from "@/lib/notes/runtime";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
@@ -134,6 +134,8 @@ function LocalRow(props:Shared&{subject:string}){
   const resource=read.data?.rows[0]?.resource;
   const [ownedRef,setOwnedRef]=useState<string|null>(null);
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
+  // A storage failure speaks only until the row has shown; a defect throws whenever it comes.
+  if(read.error!==null&&!isAuthoredStorageFailure(read.error))throw read.error;
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
   if(read.data)return <ReferenceRow {...props}/>;
   const type=resourceTypeLabel(parseResourceRef(props.subject)!.scheme).toLowerCase();
@@ -201,6 +203,8 @@ function ReferenceRow(props: Shared & {subject: string}) {
   const remote = usePaneFreeServerValue<Item>({key: `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
     load: signal => resolveResourceItem(props.subject, signal)});
   const local = useAuthoredQuery(remote.status === "ready" ? null : {kind: "resource", ref: props.subject});
+  // The stub read is auxiliary: its storage failure says nothing, its defect throws.
+  if (local.error !== null && !isAuthoredStorageFailure(local.error)) throw local.error;
   const stub = local.data?.rows[0]?.resource ?? null;
   // Until the server item arrives the row shows the stub's label, else the literal ref; its status says why.
   const label = stub ? localResourceLabel(stub) : props.subject;

@@ -2,11 +2,14 @@
 
 // User links, mentions and embeds are local authored facts and render from the
 // device store online and offline. Server facts render in their own section,
-// which may fail without hiding local writing.
+// which may fail without hiding local writing. Until anything has shown, the body
+// is a ruling; a local storage failure says so until its rows have shown, and a
+// defect in any local read throws to the boundary.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import type { CommandVerb } from "@/components/feedback/stage";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import LocalOutline from "@/components/notes/LocalOutline";
@@ -16,9 +19,11 @@ import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { outcomeUnknown } from "@/lib/api/client";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -42,12 +47,17 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
   const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
-  const localRead = self.error !== null ? self : linked.error !== null ? linked : mentions;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
+  const local = [self, linked, mentions];
+  for (const read of local) if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
+  const unread = local.find(read => read.error !== null && read.data === null);
   const empty = linked.data?.rows.length === 0 && mentions.data?.rows.length === 0 && self.data !== null &&
-    embedded.length === 0 && remote.complete && remote.running === null && remote.items.length === 0;
+    embedded.length === 0 && remote.complete && remote.items.length === 0;
+  const shown = Boolean(linked.data?.rows.length || mentions.data?.rows.length || embedded.length || remote.items.length);
+  const opening = !shown && unread === undefined && remote.status !== "failed"
+    && (local.some(read => read.data === null && read.pending) || remote.status === "loading");
 
   return (
     <section ref={section} tabIndex={-1} className={styles.section} aria-label="Connections"
@@ -62,9 +72,9 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       </div>
 
       {scan.held}
-      {localRead.data === null ? <AuthoredReadFailure {...localRead} title="couldn’t open connections on this device."
+      {unread ? <AuthoredReadFailure {...unread} title="couldn’t open connections on this device."
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
-      {empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
+      {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
@@ -102,8 +112,8 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const hold = (kind: "Unsure" | "Waiting") => setHeld(current => ({ kind, attempt: current?.kind === kind ? current.attempt + 1 : 0 }));
   // `retry` sends a new scan; `check` only reads its status.
   const verb = (command: ScanCommand): CommandVerb => command === "StartScan"
-    ? { label: "retry", commandKey: `Connections.Scan.start:${selfRef}`, run: () => void latest.current.begin("StartScan") }
-    : { label: "check", commandKey: `Connections.Scan.check:${selfRef}`, run: () => void latest.current.begin("ScanStatus") };
+    ? { label: "retry", commandKey: `Connections.Scan.start:${selfRef}`, run: () => void latest.current("StartScan") }
+    : { label: "check", commandKey: `Connections.Scan.check:${selfRef}`, run: () => void latest.current("ScanStatus") };
   const settle = (state: DiscoveryScanStatus) => {
     if (state.status === "pending" || state.status === "running") return false;
     setPhase("idle");
@@ -130,20 +140,21 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
       setPhase("polling");
     } catch (error) { failed(error, command); }
   };
-  const latest = useRef({ begin, settle });
-  latest.current = { begin, settle };
-  // A scan already running resumes its watch. This read is auxiliary: failing, it says nothing.
+  const latest = useRef(begin);
+  latest.current = begin;
+  const throwLater = useThrowLater();
+  // A scan already running resumes its watch; one that ended before this visit is no news. This
+  // read is auxiliary: a modeled failure says nothing, and a defect throws to the boundary.
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     void fetchDiscoveryScanStatus(selfRef).then((state) => {
-      if (cancelled || state.status === "idle") return;
-      if (state.status === "failed") { latest.current.settle(state); return; }
+      if (cancelled || state.status === "idle" || state.status === "failed") return;
       deadline.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
       setPhase("polling");
-    }, () => {});
+    }, (error: unknown) => { if (!cancelled) modeledApiError(error, throwLater); });
     return () => { cancelled = true; };
-  }, [enabled, selfRef]);
+  }, [enabled, selfRef, throwLater]);
   // justify-polling: user-requested background work has no SSE plane; poll at
   // 2s for at most 45s, then hold the scan as still running, with a status read.
   useIntervalPoll({ enabled: phase === "polling", pollIntervalMs: DISCOVERY_SCAN_POLL_MS, onPoll: async () => {

@@ -7,6 +7,7 @@ import { modeledApiError, useFailedReadRepair, useThrowLater } from "@/lib/api/s
 import { Fact, Failed } from "@/components/feedback/Fact";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { authoredItem } from "@/lib/notes/presentation";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import Button from "@/components/ui/Button";
@@ -87,6 +88,8 @@ function useFullExcerpt(observed: ResourceItem) {
 
 function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boolean }) {
   const loaded = useFullExcerpt(item);
+  // A storage failure speaks only while nothing full has shown; a defect throws whenever it comes.
+  if (loaded.query.error !== null && !isAuthoredStorageFailure(loaded.query.error)) throw loaded.query.error;
   return <>
     {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t open the full excerpt on this device." /> : null}
     {loaded.error ? <Failed error={loaded.error} noun="full excerpts" retry={{ run: loaded.retry, busy: loaded.pending }} /> : null}

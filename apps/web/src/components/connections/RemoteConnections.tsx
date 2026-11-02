@@ -3,9 +3,9 @@
 // Server-owned facts about one resource: citations, librarian links, chat context
 // and document embeds. Authored links, highlight notes and note-body embeds are
 // local and never read here. This section fails on its own; it never hides or
-// replaces local results beside it. A first page that fails stands where its rows
-// would; a refresh that fails over shown rows says nothing; a later page that fails
-// stands beneath them.
+// replaces local results beside it. A first read that fails stands where its rows
+// would; a refresh that fails over a list already shown, even an empty one, says
+// nothing; a later page that fails stands beneath the rows.
 import { useContext } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
@@ -44,10 +44,10 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   const branch = useContext(ResourceBranch);
   // The fact this branch entered through comes back from a both-directions read; it is not another connection.
   const items = list.items.filter((connection) => !branch.traversedEdgeIds.has(connection.edge_id));
+  const failure = list.failure;
   const retry = { run: list.retry, busy: list.running !== null };
-  const continuation = list.failure?.op === "More";
   return <>
-    {list.failure && !continuation && items.length === 0 ? <Failed error={list.failure.error} noun="other connections" retry={retry} /> : null}
+    {failure !== null && list.status === "failed" ? <Failed error={failure.error} noun="other connections" retry={retry} /> : null}
     {items.length ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
       <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}>
@@ -57,6 +57,6 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
           historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged} />)}
       </ResourceOutlineList>
     </section> : null}
-    {list.failure && continuation ? <Failed error={list.failure.error} noun="the remaining connections" retry={retry} /> : null}
+    {failure?.op === "More" ? <Failed error={failure.error} noun="the remaining connections" retry={retry} /> : null}
   </>;
 }

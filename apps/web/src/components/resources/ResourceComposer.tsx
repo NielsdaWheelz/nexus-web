@@ -6,8 +6,9 @@
 // after any caller prelude (a latent day's page). A
 // failed commit keeps its input visible and frozen until its retry lands the same
 // bytes. Once saved, the note keeps editing in place through its bound editor.
-// A save that didn't land puts the draft's words at risk until one does; a link whose
-// commit may still land holds until it does or its retry settles it.
+// A save that didn't land puts the draft's words at risk until one does, while any words
+// or a frozen commit remain; a link whose commit may still land holds until it does or
+// its retry settles it.
 import {useEffect, useRef, useState} from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -190,8 +191,9 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
         disabled={writing === null || value.state !== "editing" || value.linking !== null || !value.unsaved?.retry && (value.searching || !bodyHasContent(value.body))}>
         {value.unsaved?.retry ? "retry" : "save note"}</Button>
     </>}
-    {value.unsaved ? <Hold id={`ResourceComposer.unsaved:${value.noteRef}`} attempt={value.unsaved.attempt} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
-      { label: "retry", commandKey: `ResourceComposer.save:${value.noteRef}`, run: save, busy: saving },
+    {value.unsaved && (value.unsaved.retry !== null || bodyHasContent(value.body)) ? <Hold id={`ResourceComposer.unsaved:${value.noteRef}`} attempt={value.unsaved.attempt} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
+      { label: "retry", commandKey: `ResourceComposer.save:${value.noteRef}`, run: save, busy: saving,
+        disabledReason: value.unsaved.retry === null && value.searching ? "finish the link first" : undefined },
       { label: "copy text", commandKey: `ResourceComposer.copy:${value.noteRef}`, run: copyText, copied: copied.occurrence ?? undefined },
     ]} /> : null}
     {value.linking ? <Hold id={`ResourceComposer.link:${value.noteRef}`} attempt={value.linking.attempt}

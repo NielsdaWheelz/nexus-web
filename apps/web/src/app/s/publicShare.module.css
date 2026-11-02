@@ -27,6 +27,11 @@
   border-bottom: 1px solid var(--edge-subtle);
 }
 
+/* What stands where the reading will: its ruling is six of the reading's lines tall. */
+.gate {
+  --ruling-pitch: calc(var(--reader-font-size-px, var(--text-md)) * var(--reader-line-height, var(--leading-normal)));
+}
+
 .brand,
 .callout > span {
   color: var(--ink-faint);

@@ -3,13 +3,15 @@
 /** One outer outline batches mounted occurrence probes. Local committed links are
  * authoritative; remote facts fail separately and never decide local emptiness.
  * Descriptor identity fences results from a previous occurrence's exclusions. A probe
- * is auxiliary to rows already shown: a failed one proves nothing and says nothing. */
+ * is auxiliary to rows already shown: one that fails in storage proves nothing and says
+ * nothing; a defect throws to the boundary. */
 import {useCallback, useEffect, useState} from "react";
 import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
 import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
 import {useChangeStamp} from "@/lib/api/changes";
-import {usePaneFreeServerValue} from "@/lib/api/serverState";
+import {usePaneFreeServerValue, useThrowLater} from "@/lib/api/serverState";
+import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import type {OutlineChildrenOccurrence} from "@nexus/authored/types";
 
 export interface OutlineChildrenDescriptor {
@@ -58,6 +60,7 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     return {key:id,refs:owner&&owner!==descriptor.resource_ref?[descriptor.resource_ref,owner]:[descriptor.resource_ref],excluded_link_ids:descriptor.excluded_edge_ids};
   });
   const localKey=JSON.stringify([accountId,occurrences]);
+  const throwLater=useThrowLater();
   const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;accountId:string|null}>(()=>({proofs:new Map(),accountId}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
@@ -76,12 +79,12 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
           return {accountId,proofs};
         });
       };
-      stops.push(store.subscribe(query,receive,()=>{}));
+      stops.push(store.subscribe(query,receive,error=>{if(active&&!isAuthoredStorageFailure(error))throwLater({error});}));
     }
     return()=>{active=false;for(const stop of stops)stop();};
     // Serialized descriptors are the closed query's identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[store,localKey,attempt]);
+  },[store,localKey,attempt,throwLater]);
   const localQueries=new Map(occurrences.map(item=>[item.key,item]));
   const items=new Map<string,Proof>();
   for(const [id,descriptor]of entries){

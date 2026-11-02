@@ -5,13 +5,16 @@
 // Upload is server-owned; each uploaded file then links to the owner in one local
 // commit. A failed local commit retries its frozen command, never a fresh link.
 // What a stopped file still owes holds the task under the loss guard, with its one
-// verb; a file that wasn't added ends the task, and its slip carries the retry.
+// verb, and so does an upload whose answer was lost; a file the server refused, or
+// whose guard read failed before anything was sent, ends the task, and its slip
+// carries the retry.
 import { useRef } from "react";
 import { Paperclip } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
@@ -166,7 +169,9 @@ export function useConnectionAttachments(selfRef: string) {
       if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
       if (handleUnauthenticatedApiError(error)) return;
       if (task.mediaId !== null) owe(task, "Unlinked");
-      else if (error instanceof UploadSessionError && error.outcome.kind === "Unresolved") owe(task, "AddUnsure");
+      // The guard read precedes every send, so a lost answer without a guard sent nothing.
+      else if (error instanceof UploadSessionError ? error.outcome.kind === "Unresolved"
+        : outcomeUnknown(error) && task.files[task.index]!.upload.guard !== null) owe(task, "AddUnsure");
       else try { endWithRefusal(task, error); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {

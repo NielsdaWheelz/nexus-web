@@ -10,11 +10,13 @@ import Button from "@/components/ui/Button";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
 import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
+import { cx } from "@/lib/ui/cx";
 import collection from "@/components/ui/Collection.module.css";
+import styles from "./ReferencePicker.module.css";
 export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
   const { state, search, bindings } = input;
   if (!state) return null;
-  return <div className={collection.surface}>
+  return <div className={cx(collection.surface, styles.picker)}>
     {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} />
       : search.items.length ? null
       : search.loading ? <Ruling />
