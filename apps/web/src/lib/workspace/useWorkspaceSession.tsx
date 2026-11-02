@@ -29,7 +29,8 @@ export function useWorkspaceSession(store: WorkspaceStore) {
     let sending = false;
     let again = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const save = async () => {
+    // `pressed` is the slip's retry: only its failure is a new attempt, which speaks again.
+    const save = async (pressed: boolean) => {
       clearTimeout(timer);
       if (!live) return;
       if (sending) { again = true; return; }
@@ -48,17 +49,18 @@ export function useWorkspaceSession(store: WorkspaceStore) {
           if (isApiError(error) ? isSameSystemApiDefect(error) && error.status < 500 : !isAbortError(error)) setDefect({ error });
           if (!isApiError(error) || error.status < 500) saved = state;
           if (live) setFailure(null);
-        } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, attempt: previous === null ? 0 : previous.attempt + 1 }));
+        } else if (live) setFailure(previous => ({ retry: () => { void save(true); }, busy: false,
+          attempt: previous === null ? 0 : pressed ? previous.attempt + 1 : previous.attempt }));
       } finally {
         sending = false;
-        if (live && again) { again = false; void save(); }
+        if (live && again) { again = false; void save(false); }
       }
     };
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(() => { void save(); }, 200); };
+    const schedule = () => { clearTimeout(timer); timer = setTimeout(() => { void save(false); }, 200); };
     const unsubscribe = store.subscribe(schedule);
     schedule();
-    const hidden = () => { if (document.visibilityState === "hidden") void save(); };
-    const flush = () => { void save(); };
+    const hidden = () => { if (document.visibilityState === "hidden") void save(false); };
+    const flush = () => { void save(false); };
     window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", hidden);
     return () => { live = false; clearTimeout(timer); unsubscribe(); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); };
   }, [account.accountId, generation, store]);
