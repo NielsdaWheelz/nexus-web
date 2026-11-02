@@ -958,7 +958,7 @@ capability-owned:
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
 - `api/routes/playback.py`: the player read (`GET /media/{id}/player`), the
-  epoch-fenced listening write and activity capture;
+  epoch-fenced listening write, episode downloads and queue snapshot/session;
   listening DML is owned by `services/consumption/listening.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: in-process queued, extraction-start, readiness,
