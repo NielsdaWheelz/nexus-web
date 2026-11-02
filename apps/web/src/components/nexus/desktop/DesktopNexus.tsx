@@ -48,6 +48,9 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     return () => { positions.Typed = port.scrollTop; };
   }, [controller.open, controller.page.kind, controller.query, controller.rootScroll]);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
+  // Law 3: the pointer is deliberate once it has travelled 8px since the last keystroke; at rest it is not.
+  const pointerRest = useRef<{ readonly x: number; readonly y: number } | "Travelled" | null>(null);
+  useLayoutEffect(() => { pointerRest.current = null; }, [controller.open]);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
   const focusedNative = useRef<HTMLElement | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
@@ -120,6 +123,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             controller.setComposing(false);
           }}
           onKeyDown={(event) => {
+            pointerRest.current = null;
             if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
               // The modal's document-level Escape owner must not see an IME key.
               event.stopPropagation();
@@ -212,7 +216,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     onPointerMove={event => {
                       const press = pointerPress.current;
                       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
-                      if (event.pointerType !== "touch" && event.buttons === 0 && press?.moved && document.activeElement === inputRef.current) controller.arm(row.key);
+                      if (event.pointerType === "touch") return;
+                      const rest = pointerRest.current;
+                      if (rest === null) {
+                        pointerRest.current = { x: event.clientX, y: event.clientY };
+                        return;
+                      }
+                      if (rest !== "Travelled") {
+                        if (Math.hypot(event.clientX - rest.x, event.clientY - rest.y) < 8) return;
+                        pointerRest.current = "Travelled";
+                      }
+                      if (event.buttons === 0 && document.activeElement === inputRef.current) controller.arm(row.key);
                     }}
                   >
                     <div
