@@ -47,16 +47,19 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
   }, [owner]);
 }
 
+/** The frame on the finger, or back in place. */
+function follow(element: HTMLElement | null, offset: number | null) {
+  if (!element) return;
+  element.toggleAttribute("data-dragging", offset !== null);
+  element.style.transform = offset === null || matchMedia("(prefers-reduced-motion: reduce)").matches ? "" : `translateY(${offset}px)`;
+}
+
 /** Touch only. The frame follows the finger on `transform`; down past the line, or fast enough
  * as it lifts, `sweep` takes it from where it was let go. Everything else settles it back. */
-function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
+function useSwipe(frame: RefObject<HTMLElement | null>, leaving: boolean, sweep: () => void) {
   const drag = useRef<{ pointer: number; startY: number; y: number; trail: { y: number; at: number }[] } | null>(null);
-  const follow = (offset: number | null) => {
-    const element = frame.current;
-    if (!element) return;
-    element.toggleAttribute("data-dragging", offset !== null);
-    element.style.transform = offset === null || matchMedia("(prefers-reduced-motion: reduce)").matches ? "" : `translateY(${offset}px)`;
-  };
+  // A frame that stops leaving outlived its sweep, so it stands back where it belongs.
+  useLayoutEffect(() => { if (!leaving) follow(frame.current, null); }, [frame, leaving]);
   return {
     onPointerDown(event: PointerEvent) {
       if (event.pointerType === "touch") drag.current = { pointer: event.pointerId, startY: event.clientY, y: event.clientY, trail: [{ y: event.clientY, at: event.timeStamp }] };
@@ -67,7 +70,7 @@ function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
       current.y = event.clientY;
       current.trail.push({ y: event.clientY, at: event.timeStamp });
       const offset = current.y - current.startY;
-      if (Math.abs(offset) >= SWIPE_STARTS_PX) follow(offset < 0 ? offset * SWIPE_UPWARD_FRICTION : offset);
+      if (Math.abs(offset) >= SWIPE_STARTS_PX) follow(frame.current, offset < 0 ? offset * SWIPE_UPWARD_FRICTION : offset);
     },
     onPointerUp(event: PointerEvent) {
       const current = drag.current;
@@ -77,11 +80,11 @@ function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
       const from = current.trail.findLast(({ at }) => at <= event.timeStamp - SWIPE_SPEED_SPAN_MS) ?? current.trail[0];
       const speed = (current.y - from.y) / Math.max(1, event.timeStamp - from.at);
       if (offset >= SWIPE_STARTS_PX && (offset > SWIPE_DISMISSES_PX || speed >= SWIPE_DISMISSES_PX_PER_MS)) sweep();
-      else follow(null);
+      else follow(frame.current, null);
     },
     onPointerCancel() {
       drag.current = null;
-      follow(null);
+      follow(frame.current, null);
     },
   };
 }
@@ -222,7 +225,6 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
   const [onset, setOnset] = useState<"Risk" | "Notice" | null>(room.slips.some(({ row }) => row.weight === "Risk") ? "Risk" : "Notice");
   const standing = useRef(false);
   const end = useRef<HTMLElement>(null);
-  const swipe = useSwipe(frame, () => stage.sweep(room.id));
   useFocusReturn(frame, focus.target);
   // Nothing changes under a hold: a row stacking in cannot widen the frame beneath a pointer.
   useLayoutEffect(() => {
@@ -251,6 +253,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     };
   }, [stage, room.id]);
   const leaving = room.slips.some(slip => slip.leaving === null) ? null : room.slips[0].leaving;
+  const swipe = useSwipe(frame, leaving !== null, () => stage.sweep(room.id));
   return <section
     ref={frame}
     className={styles.frame}
