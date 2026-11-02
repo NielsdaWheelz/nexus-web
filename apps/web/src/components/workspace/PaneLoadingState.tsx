@@ -1,10 +1,8 @@
 "use client";
 
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { FeedbackBusy } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 
-/** Cold reads occupy the host's existing control slot; the unfinished body stays sparse. */
+/** Until L7, for bodies outside the shell: `Ruling`, where the body is empty. */
 export function PaneLoadingState() {
-  const pane = usePaneRuntime();
-  return <FeedbackBusy pending subject={pane?.visitId} />;
+  return <Ruling />;
 }

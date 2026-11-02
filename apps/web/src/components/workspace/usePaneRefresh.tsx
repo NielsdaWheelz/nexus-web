@@ -11,12 +11,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import {
   PANE_COMMAND_RESOLVING_REASON,
   type PaneRefresh,
   type PaneRefreshProgress,
-  type PaneRefreshResult,
 } from "@/lib/panes/paneChrome";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { TOUCH_DRAG_CLAIMED } from "@/lib/ui/dragGesture";
@@ -25,28 +25,25 @@ import styles from "./PaneShell.module.css";
 const ARM_PX = 72;
 const MAX_PX = 96;
 const RESISTANCE = 0.45;
-const SETTLED_MS = 900;
 
 type State =
   | { readonly kind: "Idle" }
   | { readonly kind: "Pulling" | "Armed"; readonly offsetPx: number }
-  | { readonly kind: "Refreshing"; readonly progress: PaneRefreshProgress }
-  | { readonly kind: "Settled"; readonly result: PaneRefreshResult };
+  | { readonly kind: "Refreshing"; readonly progress: PaneRefreshProgress };
 
-function feedback(state: State): string | null {
+/** The gesture's own label. */
+function label(state: State): string | null {
   switch (state.kind) {
     case "Idle":
       return null;
     case "Pulling":
-      return "Pull to refresh";
+      return "pull to refresh";
     case "Armed":
-      return "Release to refresh";
+      return "release to refresh";
     case "Refreshing":
       return state.progress.kind === "Determinate"
-        ? `Refreshing ${state.progress.finishedCount} of ${state.progress.requestedCount}`
-        : "Refreshing";
-    case "Settled":
-      return state.result.announcement;
+        ? `refreshing ${state.progress.finishedCount} of ${state.progress.requestedCount}`
+        : "refreshing";
   }
 }
 
@@ -54,7 +51,8 @@ function feedback(state: State): string | null {
  * The pane's one refresh operation, shared by the More command, the mobile
  * pull gesture on the scrollport and the indicator. An execution belongs to
  * the fence (route and source) that started it: a new fence aborts it, so its
- * result never lands on another route or source.
+ * result never lands on another route or source. Success has no home; anything
+ * short of it is a plain slip in the producer's words.
  */
 export function usePaneRefresh(input: {
   readonly refresh: PaneRefresh | undefined;
@@ -65,7 +63,6 @@ export function usePaneRefresh(input: {
 }): {
   readonly command: ActionDescriptor | null;
   readonly indicator: ReactNode;
-  readonly announcement: ReactNode;
 } {
   const { refresh, pull, scrollportRef } = input;
   const fence = `${input.routeKey}|${refresh?.kind === "Refreshable" ? refresh.sourceKey : ""}`;
@@ -77,10 +74,9 @@ export function usePaneRefresh(input: {
     stateRef.current = next;
     setStateValue(next);
   }, []);
-  const [announcement, setAnnouncement] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const execution = useRef<AbortController | null>(null);
-  const settledTimer = useRef(0);
+  const { say } = useOutcome();
 
   const start = useCallback(() => {
     const current = refreshRef.current;
@@ -88,8 +84,6 @@ export function usePaneRefresh(input: {
     const controller = new AbortController();
     const mine = () => execution.current === controller;
     execution.current = controller;
-    window.clearTimeout(settledTimer.current);
-    setAnnouncement(null);
     setState({ kind: "Refreshing", progress: { kind: "Indeterminate" } });
     current
       .execute({
@@ -102,12 +96,8 @@ export function usePaneRefresh(input: {
         (result) => {
           if (!mine()) return;
           execution.current = null;
-          setAnnouncement(result.announcement);
-          setState({ kind: "Settled", result });
-          settledTimer.current = window.setTimeout(
-            () => setState({ kind: "Idle" }),
-            SETTLED_MS,
-          );
+          setState({ kind: "Idle" });
+          if (result.kind !== "Complete") say({ fact: result.announcement });
         },
         (error: unknown) => {
           if (!mine()) return;
@@ -116,19 +106,17 @@ export function usePaneRefresh(input: {
           if (!isAbortError(error)) setDefect({ error });
         },
       );
-  }, [setState]);
+  }, [setState, say]);
 
   // a new route or source aborts the running refresh and drops what it showed.
   useLayoutEffect(() => {
     const abort = () => {
-      window.clearTimeout(settledTimer.current);
       execution.current?.abort(
         new DOMException("Pane refresh target changed.", "AbortError"),
       );
       execution.current = null;
     };
     abort();
-    setAnnouncement(null);
     setState({ kind: "Idle" });
     return abort;
   }, [fence, setState]);
@@ -205,7 +193,7 @@ export function usePaneRefresh(input: {
       : state.kind === "Idle"
         ? 0
         : ARM_PX;
-  const text = feedback(state);
+  const text = label(state);
   return {
     command: refresh
       ? {
@@ -218,6 +206,7 @@ export function usePaneRefresh(input: {
             refresh.kind === "Resolving"
               ? PANE_COMMAND_RESOLVING_REASON
               : undefined,
+          waiting: refresh.kind === "Resolving" || undefined,
           onSelect: start,
         }
       : null,
@@ -242,11 +231,6 @@ export function usePaneRefresh(input: {
           {text}
         </span>
       </div>
-    ),
-    announcement: (
-      <span className="sr-only" aria-live="polite" aria-atomic="true">
-        {announcement}
-      </span>
     ),
   };
 }

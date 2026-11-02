@@ -4,7 +4,7 @@
  * so the next change, hide or admission generation sends it again; nothing resends on a clock.
  * A modeled refusal is dropped, and any other defect throws to the boundary. */
 import { useEffect, useState } from "react";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
+import { Hold } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -20,7 +20,7 @@ export function useWorkspaceSession(store: WorkspaceStore) {
   const local = useDeviceWorkspace();
   const nativeFailure = useDeviceWorkspaceSave(store, local);
   const generation = useRemoteGeneration();
-  const [failure, setFailure] = useState<{ retry(): void; busy: boolean; occurrence: object } | null>(null);
+  const [failure, setFailure] = useState<{ retry(): void; busy: boolean; attempt: number } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   if (defect !== null) throw defect.error;
   useEffect(() => {
@@ -48,7 +48,7 @@ export function useWorkspaceSession(store: WorkspaceStore) {
           if (isApiError(error) ? isSameSystemApiDefect(error) && error.status < 500 : !isAbortError(error)) setDefect({ error });
           if (!isApiError(error) || error.status < 500) saved = state;
           if (live) setFailure(null);
-        } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
+        } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, attempt: previous === null ? 0 : previous.attempt + 1 }));
       } finally {
         sending = false;
         if (live && again) { again = false; void save(); }
@@ -62,5 +62,7 @@ export function useWorkspaceSession(store: WorkspaceStore) {
     window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", hidden);
     return () => { live = false; clearTimeout(timer); unsubscribe(); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); };
   }, [account.accountId, generation, store]);
-  return <>{nativeFailure}{failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} announcement="Polite" content={{ tone: "Warning", title: "couldn’t confirm workspace changes on this device", message: "keep this page open and retry." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null}</>;
+  return <>{nativeFailure}{failure ? <Hold id="workspace-session" attempt={failure.attempt}
+    line={{ fact: "workspace changes aren’t saved on this device.", reason: "this tab still has them." }}
+    verbs={[{ label: "retry", commandKey: "retry workspace save", run: failure.retry, busy: failure.busy }]} /> : null}</>;
 }

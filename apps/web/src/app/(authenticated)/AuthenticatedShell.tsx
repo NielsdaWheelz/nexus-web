@@ -1,20 +1,21 @@
 "use client";
 
-import { NavigationIdentity, useHostPolicy } from "@/lib/host/policy";
+import { NavigationIdentity } from "@/lib/host/policy";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
-  useTransition,
   type ReactNode,
 } from "react";
 import { installedApp } from "@/lib/native/admission";
+import { sessionSignIn } from "@/lib/native/client";
 import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { FeedbackProvider, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackProvider, useOutcome } from "@/components/feedback/Feedback";
+import type { Shell } from "@/components/feedback/stage";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -27,6 +28,7 @@ import { ServerSeedsProvider } from "@/lib/api/serverState";
 import { RecentProvider } from "@/lib/recent/store";
 import { AuthoredProvider } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
+import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
@@ -60,6 +62,17 @@ import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
+/** The workspace signs in: a browser leaves for login and comes back here, an installed app asks
+ * its shell. One value, so `fail` stays stable. */
+const SHELL: Shell = {
+  signIn: {
+    label: "sign in", commandKey: "SignIn",
+    run: () => {
+      if (installedApp) void sessionSignIn().catch(reportError);
+      else window.location.assign(loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)));
+    },
+  },
+};
 
 export default function AuthenticatedShell(props: {
   browserLifetime?: string;
@@ -68,6 +81,7 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   seeds: Record<string, Record<string, unknown>>;
+  /** Until L7: both producers pass null. */
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
@@ -75,7 +89,7 @@ export default function AuthenticatedShell(props: {
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <MobileViewportProvider>
-          <FeedbackProvider>
+          <FeedbackProvider shell={SHELL}>
             <AuthoredProvider accountId={props.account.accountId}>
               <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
                 <UnauthenticatedApiBoundary>
@@ -85,7 +99,7 @@ export default function AuthenticatedShell(props: {
                     <ServerSeedsProvider seeds={props.seeds}>
                       <ReaderProvider initialProfile={props.readerProfile}>
                         <Workspace accountId={props.account.accountId} initialState={props.initialState}
-                          entryFailure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
+                          locationLinkFailure={props.locationLinkFailure} />
                       </ReaderProvider>
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
@@ -103,7 +117,6 @@ export default function AuthenticatedShell(props: {
 function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
-  entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
   const { accountId } = props;
@@ -142,7 +155,7 @@ function Workspace(props: {
         columnWidthPx={columnWidthPx}
       >
         <ChatWorkOwners />
-        <WorkspaceEntryNotice failure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
+        <WorkspaceEntryNotice locationLinkFailure={props.locationLinkFailure} />
         <SignOutProvider>
           <MobileChromeProvider>
             {/* One Lectern owner wraps the workspace leaves and the player
@@ -220,27 +233,14 @@ function ChatWorkOwners() {
   return null;
 }
 
-/** Entry failures are discrete outcomes: the open workspace stays in this tab either way. */
-function WorkspaceEntryNotice({ failure, locationLinkFailure }: { failure: { requestId?: string } | null; locationLinkFailure: "TooLong" | null }) {
-  const host = useHostPolicy();
-  const feedback = useFeedback();
-  const reportedLocation = useRef(false);
-  const [, startTransition] = useTransition();
-
+/** A link the workspace could not open is a discrete outcome: the workspace opened without it. */
+function WorkspaceEntryNotice({ locationLinkFailure }: { locationLinkFailure: "TooLong" | null }) {
+  const { say } = useOutcome();
+  const reported = useRef(false);
   useEffect(() => {
-    if (locationLinkFailure === null || reportedLocation.current) return;
-    reportedLocation.current = true;
-    feedback.receipt({ tone: "Warning", title: "this location link is too long" });
-  }, [feedback, locationLinkFailure]);
-
-  useEffect(() => {
-    if (failure === null) return;
-    feedback.receipt({
-      tone: "Warning",
-      title: "workspace update not confirmed",
-      message: "your open workspace remains in this tab.",
-      requestId: failure.requestId,
-    }, { label: "try again", onClick: () => startTransition(() => host.recover()) });
-  }, [failure, feedback, host]);
+    if (locationLinkFailure === null || reported.current) return;
+    reported.current = true;
+    say({ fact: "couldn’t open this link.", reason: "it’s too long." });
+  }, [say, locationLinkFailure]);
   return null;
 }

@@ -28,9 +28,9 @@ import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
 
-/** Why a pane command holds its place while the fact deciding it loads. */
-export const PANE_COMMAND_RESOLVING_REASON =
-  "Available when this pane finishes loading.";
+/** Why a pane command holds its place while the fact deciding it loads: a wait, so its controls
+ * keep it for a screen reader alone. */
+export const PANE_COMMAND_RESOLVING_REASON = "available once this pane loads.";
 
 /** The pane search row's input cap, for filter and find alike. */
 export function truncatePaneSearchQuery(query: string): string {

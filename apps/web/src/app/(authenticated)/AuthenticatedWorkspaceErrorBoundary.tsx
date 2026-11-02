@@ -1,9 +1,12 @@
 "use client";
 
 import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackState, type FeedbackActions } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import type { Verb, Verbs } from "@/components/feedback/stage";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
+import { isStaleBuild } from "@/lib/api/client";
+import { staleBuild } from "@/lib/api/failure";
+import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { getWritingRuntime, hasUncommittedWriting, writingStoreStopped } from "@/lib/notes/runtime";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
@@ -11,9 +14,9 @@ import styles from "./layout.module.css";
 
 /**
  * The whole authenticated workspace's boundary: bootstrap and live workspace
- * defects, and a stale build's 426 (the update copy and a reload; not a
- * defect). Expected bootstrap transport failures are handled before this
- * boundary. #entry-failure is the notice return-focus target, shared with root
+ * defects, and a stale build's 426 (the update line and, where it can work, a
+ * reload; not a defect). Expected bootstrap transport failures are handled before
+ * this boundary. #entry-failure is the return-focus target, shared with root
  * containment.
  */
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
@@ -37,13 +40,9 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
 }
 
 const LOSS = "some writing couldn’t be saved on this device and will be lost.\n\nleave anyway?";
-const SAVE_FAILURE = { tone: "Danger" as const, title: "couldn’t save on this device", message: "keep this page open. retry saving." };
-/** A stopped local store refuses every call; retrying is futile, so copy then restart. */
-const STORE_STOPPED = { tone: "Danger" as const, title: "couldn’t save on this device",
-  message: "the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus." };
 const noRuntime = () => () => {};
-// A failed retry republishes its error into the runtime state this surface shows.
-const retry = (runtime: { retry(): Promise<void> }) => ({ label: "retry saving", onClick: () => { void runtime.retry().catch(() => {}); } });
+const two = (first: Verb | null, second: Verb | null): Verbs | undefined =>
+  first && second ? [first, second] : first ? [first] : second ? [second] : undefined;
 
 /** The account's guard retains visit input above this boundary. The writing runtime
  * separately retains uncommitted note edits; its guard, retry and export remain
@@ -87,10 +86,10 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
       if (error instanceof ClipboardWriteUnavailableError) setManualPending(text); else reportError(error);
     });
   };
-  const pendingAction = pendingText !== null ? {label: "copy pending outline text", onClick: copyPending} : null;
-  const reloadAction = stale && STALE_BUILD_FEEDBACK.reload ? {label: "reload app", onClick: reload} : null;
-  const failureActions: FeedbackActions | undefined = pendingAction && reloadAction ? [pendingAction, reloadAction]
-    : pendingAction ? [pendingAction] : reloadAction ? [reloadAction] : undefined;
+  // A stale build reloads only where reload can replace it; a defect's reload starts afresh.
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  const reloadVerb: Verb | null = !stale || remedy === "Reload" ? { label: "reload", commandKey: "Reload", run: reload } : null;
+  const draftsVerb: Verb | null = pendingText !== null ? { label: "copy drafts", commandKey: "CopyDrafts", run: copyPending } : null;
   useEffect(() => {
     if (!failed || runtime === null) return;
     let live = true;
@@ -99,12 +98,12 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
   }, [failed, runtime, saveState]);
   const copyable = failed ? retained : "";
   const stopped = failed && writingStoreStopped(saveState?.error);
-  const saveActions = (owner: { retry(): Promise<void> }): FeedbackActions => {
-    const copyAction = { label: "copy unsaved note edits", onClick: () => { void copy(); } };
-    // the restart passes through the same loss confirmation as any other exit.
-    const next = stopped ? { label: "restart nexus", onClick: reload } : retry(owner);
-    return copyable === "" ? [next] : stopped ? [copyAction, next] : [next, copyAction];
-  };
+  const editsVerb: Verb | null = copyable === "" ? null : { label: "copy note edits", commandKey: "CopyNoteEdits", run: () => { void copy(); } };
+  // A stopped store refuses every call, so it copies then restarts, through the same loss
+  // confirmation as any other exit. A failed retry republishes its error into the runtime.
+  const saveVerbs = (owner: { retry(): Promise<void> }) => stopped
+    ? two(editsVerb, { label: "restart nexus", commandKey: "Restart", run: reload })
+    : two({ label: "retry", commandKey: "RetrySaving", run: () => { void owner.retry().catch(() => {}); } }, editsVerb);
   const copy = () => copyText(copyable).then(() => setManual(false), (error: unknown) => {
     if (error instanceof ClipboardWriteUnavailableError) setManual(true); else reportError(error);
   });
@@ -118,26 +117,15 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
       tabIndex={-1}
       className={styles.error}
     >
-      <div role="alert">
-        <FeedbackState
-          content={stale ? { tone: STALE_BUILD_FEEDBACK.tone, title: STALE_BUILD_FEEDBACK.title, message: STALE_BUILD_FEEDBACK.message } : {
-            tone: "Danger",
-            title: "the workspace stopped unexpectedly",
-            message: "nexus needs a fix before this can continue.",
-          }}
-          // The stale build's reload passes through the same loss check as any other exit.
-          actions={failureActions}
-          announcement="None"
-        />
-      </div>
-      {failed && runtime !== null ? <FeedbackNotice content={stopped ? STORE_STOPPED : SAVE_FAILURE} announcement="Polite" actions={saveActions(runtime)} /> : null}
+      <Fact line={{ fact: stale ? staleBuild() : "the workspace stopped unexpectedly." }} verbs={two(draftsVerb, reloadVerb)} speak />
+      {failed && runtime !== null ? <Fact line={{ fact: stopped ? "local notes stopped." : "some note edits aren’t saved yet." }} verbs={saveVerbs(runtime)} speak /> : null}
       {manual && copyable !== "" ? <>
-        <p>copying is unavailable here. select the text and copy it.</p>
-        <textarea className={styles.retained} readOnly value={copyable} aria-label="unsaved writing" />
+        <Fact line={{ fact: "copying isn’t available here.", reason: "select the text and copy it." }} />
+        <textarea className={styles.retained} readOnly value={copyable} aria-label="unsaved note edits" />
       </> : null}
       {manualPending !== null ? <>
-        <p>copying is unavailable here. select the text and copy it.</p>
-        <textarea className={styles.retained} readOnly value={manualPending} aria-label="pending outline text" />
+        <Fact line={{ fact: "copying isn’t available here.", reason: "select the text and copy it." }} />
+        <textarea className={styles.retained} readOnly value={manualPending} aria-label="drafts" />
       </> : null}
     </main>
   );

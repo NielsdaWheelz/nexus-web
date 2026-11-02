@@ -16,10 +16,10 @@ import {
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
+import { admissionReason } from "@/lib/actions/catalog";
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
@@ -82,7 +82,7 @@ import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/wo
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { useWorkspaceStore, WorkspaceSessionNotice, type PaneHistoryOptions } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
 /** One route-owned composition, derived by the workspace before its body mounts. */
@@ -360,6 +360,7 @@ function PaneView({
       icon: <Search size={16} aria-hidden="true" />,
       disabled: resolving || undefined,
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
+      waiting: resolving || undefined,
       restoreFocusOnClose: false,
       state: findVisible
         ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
@@ -381,7 +382,8 @@ function PaneView({
     kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
     icon: <Download size={16} aria-hidden="true" />,
     disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
-    disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,
+    disabledReason: admission !== "Ready" ? admissionReason() : catalog.accepting || catalog.status?.refreshing ? "the catalog is updating." : undefined,
+    waiting: admission === "Ready" && (catalog.accepting || catalog.status?.refreshing === true) || undefined,
     onSelect: () => { void catalog.refresh(); },
   });
   const share = resolvePaneRouteShareIdentity(route, header.title);
@@ -518,8 +520,6 @@ function PaneView({
     <FeedbackSurface bounds={feedbackBounds} interaction={null} modal={null} active={isActive}
       protectedTargets={() => [chromeRef.current, paneRef.current?.querySelector<HTMLElement>("[data-feedback-recovery]") ?? null].filter((element): element is HTMLElement => element !== null)}
       returnFocus={() => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id)}>
-    <RetainedActionFeedback />
-    <WorkspaceSessionNotice />
     <section
       ref={paneRef}
       className={styles.paneShell}
@@ -631,7 +631,6 @@ function PaneView({
           />
         </div>
       )}
-      {refresh.announcement}
       <Companion
         resourceTitle={header.title}
         paneId={paneId}
@@ -663,6 +662,11 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
       return "Applied";
     },
   });
-  const occurrence = useFeedbackOccurrence(arrival.failure !== null, resourceRef);
-  return arrival.failure ? <FeedbackFailure occurrence={occurrence} scope="Local" content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
+  const { say, fail } = useOutcome();
+  const failure = arrival.failure;
+  useEffect(() => {
+    if (failure === null) return;
+    return failure.error === null ? say({ fact: failure.title }) : fail(failure.error, failure.title);
+  }, [failure, say, fail]);
+  return null;
 }
