@@ -242,7 +242,9 @@ function ShareCaptureContent({
       setSaving(false);
       return;
     }
-    runBoundedTasks({ items: targets, concurrency: 2, run: saveUrl })
+    // one at a time: the server serializes an account's acquisitions, and a
+    // concurrent one can exhaust its retries into a refusal.
+    runBoundedTasks({ items: targets, concurrency: 1, run: saveUrl })
       .then((outcomes) => {
         const settled = outcomes.map((outcome) => {
           if (outcome.kind === "Rejected") throw outcome.error;

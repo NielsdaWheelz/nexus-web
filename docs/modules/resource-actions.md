@@ -17,9 +17,9 @@ means the supplied homepage; feed is a separate native rss link. absent facts gr
 no action.
 
 podcast subscription, libraries and more share one finite subject across rows and
-headers. row hosts promote subscription; library management stays in their complete
-menus. headers retain their responsive shortcuts. library cards retain their single
-scoped removal shortcut. captured
+headers. search, browse and chat rows promote subscription; subscribed-show lists do
+not. library management stays in complete menus. headers retain their responsive
+shortcuts. named library cards keep their single scoped removal shortcut. captured
 evidence and outline relationships acquire no resource shortcuts. menus retain
 their prepared canonical-facts lifecycle; opening a bulk dialog starts its own
 selection read. [collection actions](collection-actions.md) owns batch semantics.
@@ -163,13 +163,14 @@ selection scope while execution keeps the same catalog command ids.
   `ActionButtons` does not assemble names or know domain state. it
   owns only button anatomy, disabled explanations, event isolation and focus
   recovery. podcast subscription keeps one control key while its verb changes.
-  expanded media indexes promote lectern and episode playback; show indexes and
-  discovery rows promote subscription. their complete more menus retain libraries
+  expanded media indexes promote lectern and episode playback; search, browse and
+  chat rows promote subscription, and subscribed-show lists do not. complete more
+  menus retain libraries
   and applicable all-membership commands. row hosts hide `LibraryPlacement`,
   `PodcastLibraries` and `AddEpisodeToAll` controls and associated explanations at
   every width; below their 32em boundary only playback survives from the shortcut
-  group. headers retain library shortcuts and demote at 479px. library
-  cards retain their scoped single-shortcut policy. shows receive no playback controls.
+  group. headers retain library shortcuts and demote at 479px. named library
+  cards keep their scoped single-shortcut policy. shows receive no playback controls.
   live search/chat rows receive explicit subjects matching their own podcast ref;
   captured evidence and editable references receive none.
 - podcast shortcut and menu commands share projectors. `PodcastLibraries` is

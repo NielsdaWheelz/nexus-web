@@ -289,7 +289,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       onSelect: ({ triggerEl }) =>
         requestNexusOpen({
           kind: "Add",
-          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name, order_revision: library.order_revision }] },
+          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name }] },
         }, triggerEl),
     }
     : undefined;

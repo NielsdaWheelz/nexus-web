@@ -353,12 +353,21 @@ class PodcastLibraryAddInput(_Closed):
 class LibraryAddInput(_Closed):
     podcast: PodcastLibraryAddInput | None
     library_id: Annotated[UUID, Field(description="The named library returned by inspect.")]
-    expected_order_revision: OrderRevision
+    expected_order_revision: Annotated[
+        OrderRevision | None,
+        Field(description="The inspected order revision for media; null for a podcast."),
+    ]
     expected_removal_revision: OrderRevision
     resource_uri: Annotated[
         str,
         Field(max_length=_URI, description="The user-visible resource to file."),
     ]
+
+    @model_validator(mode="after")
+    def require_media_order(self) -> LibraryAddInput:
+        if (self.podcast is None) != (self.expected_order_revision is not None):
+            raise ValueError("Media filing requires an order revision; a podcast requires null")
+        return self
 
 
 class LibraryAddSuccess(_Closed):
@@ -548,7 +557,8 @@ NEXUS_SPECS = (
         "Add a resource to a user library.",
         "Perform the user's additive library filing request through the existing authorized "
         "library owner. Filing retains media personally; undo removes only the named filing. "
-        "Inspect the library for exact guards. Podcast requests require an explicit follow or current_episodes "
+        "Inspect the library for exact guards; a podcast addition takes a null order revision. "
+        "Podcast requests require an explicit follow or current_episodes "
         "mode and frozen resource ids; null podcast means media filing. Imports are accepted background work. "
         "Conflicts require user review; never refresh tokens internally.",
         (

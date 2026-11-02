@@ -3430,7 +3430,7 @@ export interface components {
         /** AcquireCaptureRequest */
         AcquireCaptureRequest: {
             /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
+            destinations: string[];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /** Generation */
             generation: number;
@@ -4474,7 +4474,7 @@ export interface components {
         /** ConfirmUploadRequest */
         ConfirmUploadRequest: {
             /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
+            destinations: string[];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /** Generation */
             generation: number;
@@ -5637,15 +5637,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["UserSearchOut"][];
         };
-        /** DestinationGuard */
-        DestinationGuard: {
-            expected_order_revision: components["schemas"]["OrderRevision"];
-            /**
-             * Library Id
-             * Format: uuid
-             */
-            library_id: string;
-        };
         /** DetachContextMutation */
         DetachContextMutation: {
             /**
@@ -6643,7 +6634,7 @@ export interface components {
          */
         FromUrlRequest: {
             /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
+            destinations: string[];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
@@ -6687,7 +6678,7 @@ export interface components {
              */
             capture_id: string;
             /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
+            destinations: string[];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
@@ -7282,7 +7273,6 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            order_revision: components["schemas"]["OrderRevision"];
         };
         /** LibraryDestinationsOut */
         LibraryDestinationsOut: {
@@ -7513,7 +7503,6 @@ export interface components {
              * Format: uuid
              */
             library_id: string;
-            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
@@ -9882,7 +9871,6 @@ export interface components {
         };
         /** PodcastImportCreateRequest */
         PodcastImportCreateRequest: {
-            expected_order_revision: components["schemas"]["OrderRevision"];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
@@ -9926,7 +9914,6 @@ export interface components {
             library_is_default: boolean;
             /** Library Name */
             library_name: string;
-            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
@@ -9948,11 +9935,13 @@ export interface components {
              */
             updated_at: string;
         };
-        /** PodcastImportRetryRequest */
+        /**
+         * PodcastImportRetryRequest
+         * @description Retry compares only the frozen attempt: an addition depends on no library order.
+         */
         PodcastImportRetryRequest: {
             /** Expected Attempt Version */
             expected_attempt_version: number;
-            expected_order_revision: components["schemas"]["OrderRevision"];
         };
         /** @enum {string} */
         PodcastImportState: "pending" | "running" | "complete" | "failed" | "cancelled";
@@ -10324,7 +10313,6 @@ export interface components {
         };
         /** PodcastSubscriptionCreateRequest */
         PodcastSubscriptionCreateRequest: {
-            expected_order_revision: components["schemas"]["OrderRevision"];
             expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
@@ -15927,7 +15915,7 @@ export interface operations {
     list_imports_imports_get: {
         parameters: {
             query: {
-                view: "NeedsAttention" | "InProgress" | "History";
+                view: "NeedsAttention" | "InProgress" | "History" | "Recent";
                 q?: string | null;
                 media_kind?: components["schemas"]["MediaKind"] | null;
                 stage?: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing" | "Index" | "Metadata") | null;

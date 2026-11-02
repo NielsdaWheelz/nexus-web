@@ -49,10 +49,12 @@ and editing; final submission waits for it. task close retains its loss guard.
 
 ## acceptance and leaving
 
-submission revalidates the ready subset, retains the selected libraries' reviewed
-order revisions and reads one removal revision before any provider or storage i/o.
-each row freezes that guard vector and its request id (a url attempt or an upload
-session), then admits two at a time within one mutation slot. invalid and
+submission revalidates the ready subset and reads one removal revision before any
+provider or storage i/o. each row freezes that fence with its selected library ids
+and its request id (a url attempt or an upload session), then admits one row at a
+time within one mutation slot, a file's create, put and confirm whole: the server
+serializes an account's acquisitions (url acceptance and upload confirm), and one
+sent beside another can exhaust its retries into a refusal. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
 neither navigates nor closes it. acceptance proves a past save; upload publication
 proves verified bytes. before
@@ -64,8 +66,8 @@ acceptance nor publication proves completed extraction.
 known refusals stay on their row, including revoked destination access. auth and
 sent defects retain their frozen request before the existing handoff. check save
 replays exactly that intent. an unknown outcome cannot return to an
-editable draft. a known guard refusal requires explicit review, refreshes the
-selected library snapshots and returns to draft. a url then receives a fresh id;
+editable draft. a known fence or authority refusal requires explicit review,
+refreshes the selected library snapshots and returns to draft. a url then receives a fresh id;
 a live upload retains its session, generation and staged bytes for confirmation
 with reviewed choices. stopped unsent rows return to drafts; started requests
 remain unconfirmed under the same memory owner.
@@ -144,7 +146,7 @@ is not evidence of content duplication.
 
 an upload's live owner retains its id, generation, frozen confirmation and whether
 the byte put completed. after a successful put, check save retries only that exact
-confirmation. a known revision refusal permits review and confirmation with the
+confirmation. a known fence or authority refusal permits review and confirmation with the
 same generation and bytes; it neither creates another session generation nor
 repeats the put. an unpublished read does not settle unknown publication. the
 server decides staging expiry. file reselection replaces the expired row in

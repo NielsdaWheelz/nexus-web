@@ -29,7 +29,6 @@ import {
   listPodcasts,
   type PodcastRow,
 } from "@/lib/podcasts/api";
-import { remoteReady } from "@/lib/native/admission";
 import { useCatalogRead, useCatalogState, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { unstamped } from "@/lib/consumption/listening";
 import { isApiError } from "@/lib/api/client";
@@ -271,11 +270,6 @@ export default function PodcastsPaneBody() {
         returnScope="Podcasts.Subscriptions"
         rows={visible.map((row) =>
           presentPodcast({
-            facts: failure !== null
-              ? { kind: "Failed", observedSubscribed: list.status === "ready" && list.source.kind === "live" ? true : null, error: failure, retry, retrying: busy }
-              : list.status !== "ready" || list.source.kind !== "live" || !remoteReady() || !list.fresh || busy
-                ? { kind: "Resolving", observedSubscribed: list.status === "ready" && list.source.kind === "live" ? true : null }
-                : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: row.id, subscribed: true } },
             id: row.id,
             title: row.title,
             imageUrl: row.image_url,
