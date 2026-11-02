@@ -178,13 +178,12 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   const rootState = controller.branchRead(pending.value.input.root_id);
   const wordsAtRisk = useWordsAtRisk([rootRef, ...controller.documents.keys()]);
   // A refusal or a failed change is a command's outcome: one slip per error, retracted once it
-  // clears. Pending writing that failed is words at risk, held below.
+  // clears. No verb redoes a failed change; the person makes it again. Pending writing that
+  // failed is words at risk, held below.
   useEffect(() => {
     if (error === null || pendingError !== null) return;
-    if (error instanceof OutlineActionRefusal) return say(error.line);
-    return say({fact: "couldn’t change this outline on this device."},
-      controller.canRetry ? [{label: "retry", commandKey: "RetryOutlineChange", run: () => controller.retry()}] : undefined);
-  }, [error, pendingError, say, controller]);
+    return say(error instanceof OutlineActionRefusal ? error.line : {fact: "couldn’t change this outline on this device."});
+  }, [error, pendingError, say]);
   if (error !== null && !(error instanceof OutlineActionRefusal) && !isAuthoredStorageFailure(error)) throw error;
   const retryPending: CommandVerb = {label: "retry", commandKey: "RetryPendingOutline", run: () => pending.value.input.retry()};
   const copyPending: CommandVerb = {label: "copy text", commandKey: "CopyPendingOutline", copied: copied.occurrence ?? undefined, run: () => {
@@ -203,7 +202,9 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       <Dialog open={manualCopy !== null} title="copy text" onClose={() => setManualCopy(null)}>
         <p>select the text and copy it.</p><textarea readOnly value={manualCopy ?? ""} aria-label="pending outline text"/>
       </Dialog>
-      {rootRead.window === null ? rootState.error === null ? <Ruling/> : <AuthoredReadFailure {...rootState} noun="linked items"/> : null}
+      {/* rows stand once the root's window is installed, not once it is read: its admission can fail */}
+      {controller.windows.has(pending.value.input.root_id) ? null
+        : rootState.error !== null ? <AuthoredReadFailure {...rootState} noun="linked items"/> : rootRead.window === null ? <Ruling/> : null}
       {[...controller.requests.values()].filter(request => request.parent_id !== pending.value.input.root_id).map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items" wordsAtRisk={wordsAtRisk || pendingError !== null}

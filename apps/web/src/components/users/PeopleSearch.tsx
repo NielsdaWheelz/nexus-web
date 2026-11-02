@@ -79,8 +79,9 @@ export default function PeopleSearch({
       });
     },
   });
-  const error = readKey !== null && search.status !== "loading" ? search.error : null;
-  const waiting = selected === null && q.length >= 3 && !admitted && error === null;
+  // a refresh that fails over shown results says nothing: the results stand.
+  const failed = readKey !== null && search.status === "failed" ? search : null;
+  const waiting = selected === null && q.length >= 3 && !admitted && failed === null;
   const status = selected !== null || q === "" ? null
     : q.length < 3 ? "enter at least 3 characters."
       : !admitted || results.length === 0 ? null
@@ -124,7 +125,7 @@ export default function PeopleSearch({
       {description ? <span id={`${id}-description`} className={collection.detail}>{description}</span> : null}
       {status ? <Field id={`${id}-status`} line={{fact: status}}/> : null}
       {waiting ? <Ruling/> : null}
-      {error ? <Failed error={error} noun="people" retry={{run: search.refetch, busy: search.status === "failed" ? search.retrying : search.status === "ready" && search.refreshing}}/> : null}
+      {failed ? <Failed error={failed.error} noun="people" retry={{run: failed.refetch, busy: failed.retrying}}/> : null}
       {empty ? <Fact line={{fact: "no nexus users match."}}/> : null}
       {expanded ? <ul ref={navigation.listRef} {...navigation.listProps}
         aria-busy={!admitted || undefined} className={`${collection.surface} ${collection.compactViewport}`}>

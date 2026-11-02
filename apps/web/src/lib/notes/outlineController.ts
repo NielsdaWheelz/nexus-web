@@ -1165,17 +1165,6 @@ export class OutlineController {
     request.foreground = true;
     this.requests.set(request.parent_id, request); this.attempted.add(request.parent_id); this.versions.set(request.parent_id, (this.versions.get(request.parent_id) ?? 0) + 1); this.proposals.delete(request.parent_id);
   }
-  get canRetry(): boolean {return this.proposals.size > 0;}
-  retry(): void {
-    this.error = null;
-    for (const [parent, window] of this.proposals) {
-      const request = this.requests.get(parent);
-      if (request) request.foreground = true;
-      if (request?.navigation) request.navigation.lease = this.lease();
-      this.accept(parent, window);
-    }
-    this.notify();
-  }
   capture(): InputBookmark {
     if (this.blockRange) return {kind: "blocks", ...this.blockRange};
     if (this.selectionRow === this.pending.root_id && this.rootAttachment) return {kind: "text", root: true, row_id: this.pending.root_id, ref: this.rootRef, range: this.selection, resolve: this.rootAttachment.handle.captureSelection()};

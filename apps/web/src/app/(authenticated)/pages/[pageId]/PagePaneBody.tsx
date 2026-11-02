@@ -88,14 +88,14 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
   const dailyError = currentDaily?.error ?? null;
   const error = dailyError ?? read.error;
-  const failure = <AuthoredReadFailure error={error}
-    pending={dailyError !== null ? dailyRetrying : read.pending}
-    retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
-    noun="this page"/>;
-  return <>{failure}{!ready || ref === null || id === null
-    ? error === null ? <Ruling /> : null
+  // A read that fails over a shown page says nothing: the page is the proof.
+  return !ready || ref === null || id === null
+    ? error === null ? <Ruling /> : <AuthoredReadFailure error={error}
+      pending={dailyError !== null ? dailyRetrying : read.pending}
+      retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
+      noun="this page"/>
     : gone ? <Fact line={{ fact: "this page is no longer available." }} speak />
-    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />}</>;
+    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
