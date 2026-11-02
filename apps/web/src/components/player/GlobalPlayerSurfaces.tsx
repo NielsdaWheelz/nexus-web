@@ -317,7 +317,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
 
   return <>
     <PlayerKeys />
-    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+    <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     <div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
       onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>

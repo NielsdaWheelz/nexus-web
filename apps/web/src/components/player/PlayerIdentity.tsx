@@ -35,7 +35,7 @@ export default function PlayerIdentity(props: {
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
-      {status ? <span id={statusId} className="sr-only">{status}</span> : null}
+      {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
     </span>;
   const className = cx(styles.identity, props.variant === "Mini" && styles.mini, props.variant === "Sheet" && styles.sheet);
   const name = `${label}${subtitle ? `, ${subtitle}` : ""}`;
