@@ -248,3 +248,11 @@
 .tocTitle { min-width: 0; overflow-wrap: anywhere; }
 .tocRow > :last-child:not(:first-child) { flex: 0 0 auto; white-space: nowrap; }
 .tocAttachment { padding-inline-start: var(--space-2); }
+
+/* Row text beside a highlight or a captured article: plain, muted, no notice. */
+.placement,
+.articleContent {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}

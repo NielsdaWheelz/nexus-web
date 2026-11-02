@@ -9,7 +9,9 @@
 // Link preparation owns availability, never action feedback. Busy activation is
 // consumed; unavailable activation enters the same navigator as resolved links.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
-import { FeedbackBusy, FeedbackState } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type * as PdfJs from "pdfjs-dist";
@@ -149,6 +151,7 @@ export default function PdfSurface({
     { kind: "Opening" | "Open" } | { kind: "Failed"; retrying: boolean }
   >({ kind: "Opening" });
   const [attempt, setAttempt] = useState(0);
+  const speak = useActiveRegion();
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);
   const { decorations, activePassage, inspection, isMobile } = view;
@@ -837,25 +840,21 @@ export default function PdfSurface({
     <div className={styles.pdfFrame}>
       {position ? <p
         className={styles.live}
-        role={view.announcement === "None" ? undefined : "status"}
-        aria-live={view.announcement === "None" ? "off" : "polite"}
+        role={speak ? "status" : undefined}
+        aria-live={speak ? "polite" : "off"}
         aria-atomic="true"
       >
-        Page {position.page} of {position.pages}
+        page {position.page} of {position.pages}
       </p> : null}
       {status.kind === "Opening" ? (
         <div className={`${styles.feedback} ${styles.readerState}`}>
-          <FeedbackBusy pending />
+          <Ruling />
         </div>
       ) : null}
       {status.kind === "Failed" ? (
         <div className={`${styles.feedback} ${styles.readerState}`}>
-          <FeedbackState
-            content={{ tone: "Danger", title: "couldn’t open this pdf" }}
-            announcement={view.announcement ?? "Polite"}
-            actions={[{ label: "retry", onClick: () => setAttempt((n) => n + 1), busy: status.retrying }]}
-            returnFocus={() => container.current}
-          />
+          <Fact line={{ fact: "couldn’t open this pdf." }} speak={speak}
+            verbs={[{ label: "retry", commandKey: "RetryPdf", run: () => setAttempt((n) => n + 1), busy: status.retrying }]} />
         </div>
       ) : null}
       <div

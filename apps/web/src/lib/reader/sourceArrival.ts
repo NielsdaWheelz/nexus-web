@@ -210,19 +210,19 @@ export function useSourceArrival(input: {
     if (signal.aborted || captured.current?.phase === "Retired") return;
     if (!ready && intent.target.kind !== "invalid_destination") return;
     if (intent.target.kind === "invalid_destination") {
-      publishStatus({ ...pending, pending: false, failure: { title: intent.target.reason === "location_too_long" ? "this location link is too long" : "this location link is invalid", error: null } });
+      publishStatus({ ...pending, pending: false, failure: { title: intent.target.reason === "location_too_long" ? "this link is too long to open." : "this link is broken.", error: null } });
       return;
     }
     if (intent.target.kind === "reader_destination" && intent.target.destination.source_identity !== sourceIdentity) {
       const target = intent.target.destination.target;
       const title = target.kind === "range" || target.kind === "pdf_find"
-        ? sourceIdentity === null ? "this match is no longer available" : "the document changed. search again to find this passage"
-        : sourceIdentity === null ? "couldn’t open that location" : "this location belongs to a different source version";
+        ? sourceIdentity === null ? "couldn’t find that match here." : "that match is from another version of this document."
+        : sourceIdentity === null ? "couldn’t open that location." : "that location is from another version of this document.";
       publishStatus({ ...pending, pending: false, failure: { title, error: null } });
       return;
     }
     if (intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
-      publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "couldn’t open that location" : "this location belongs to a different source version", error: null } });
+      publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "couldn’t open that location." : "that location is from another version of this document.", error: null } });
       return;
     }
     const pinnedIntent = { ...intent, sourceIdentity };
@@ -278,7 +278,7 @@ export function useSourceArrival(input: {
             : data.location.kind === "resource" && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
           if (sameOwner && data.location.kind === "located" && data.location.source_identity !== null &&
               sourceIdentity !== null && data.location.source_identity !== sourceIdentity) {
-            publishStatus({ ...pending, pending: false, failure: { title: "this location belongs to a different source version", error: null } });
+            publishStatus({ ...pending, pending: false, failure: { title: "that location is from another version of this document.", error: null } });
             return;
           }
           target = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null)
@@ -309,7 +309,7 @@ export function useSourceArrival(input: {
           case "Unavailable":
             controller.abort();
             remember({ ...pinnedIntent, phase: "Pending" });
-            publishStatus({ ...pending, pending: false, failure: { title: intent.target.kind === "chat_destination" || intent.target.kind === "reader_destination" && (intent.target.destination.target.kind === "range" || intent.target.destination.target.kind === "pdf_find") ? "this match is no longer available" : "couldn’t open that location", error: null } });
+            publishStatus({ ...pending, pending: false, failure: { title: intent.target.kind === "chat_destination" || intent.target.kind === "reader_destination" && (intent.target.destination.target.kind === "range" || intent.target.destination.target.kind === "pdf_find") ? "couldn’t find that match here." : "couldn’t open that location.", error: null } });
             break;
           case "Cancelled":
           case "FailureHandled":
@@ -323,7 +323,7 @@ export function useSourceArrival(input: {
         if (!current() || handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
         controller.abort();
-        publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location", error } });
+        publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location.", error } });
       }
     };
     void run();

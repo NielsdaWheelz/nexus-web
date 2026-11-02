@@ -2,7 +2,8 @@
 
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
-// flight, latest wins; a failed save keeps the change and offers Retry.
+// flight, latest wins; a failed save keeps the change and holds a slip with retry
+// until a save lands.
 import {
   createContext,
   useCallback,
@@ -14,11 +15,14 @@ import {
   type ReactNode,
 } from "react";
 import { ReaderProfileProvider } from "./ReaderProfileContext";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteAdmission, remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
-import { FeedbackFailure, useFeedback, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { apiFetch, apiTransportFeedback, outcomeUnknown, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { transportVerbs, type Line } from "@/components/feedback/stage";
+import { apiFetch, outcomeUnknown, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { admissionTransport } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -28,10 +32,10 @@ export interface ReaderProfileCapability {
   readonly profile: ReaderProfile;
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
-    | { readonly state: "SaveFailed"; readonly failure: unknown };
+    | { readonly state: "SaveFailed"; readonly failure: ApiError; readonly attempt: number };
   readonly editable: boolean;
   readonly saving: boolean;
-  readonly failureOccurrence: object;
+  /** Kept for the settings pane's old mount until L7. */
   readonly connectionOccurrence: object | null;
   readonly unavailableReason: string | null;
   setTheme(value: ReaderProfile["theme"]): void;
@@ -55,19 +59,19 @@ export function ReaderProvider({
   readonly children: ReactNode;
 }) {
   const refreshSettings = useSettingsRefresh();
-  const feedback = useFeedback();
+  const { say } = useOutcome();
   const admission = useRemoteAdmission();
   const editable = admission === "Ready";
-  const blockedOccurrence = useFeedbackOccurrence(admission !== "Ready" && admission !== "Checking");
+  const blocked = admission !== "Ready" && admission !== "Checking";
+  const blockedOccurrence = useMemo(() => blocked ? {} : null, [blocked]);
   const connectionOccurrence = admission === "Unavailable" ? blockedOccurrence : null;
-  const unavailableReason = admission === "Ready" ? null : admission === "Checking" ? "checking whether reader settings can be changed"
-    : admission === "SignInRequired" ? "sign in to change reader settings"
-    : admission === "UpdateRequired" ? "update nexus to change reader settings" : "changing reader settings requires a connection";
+  const unavailableReason = admission === "Ready" ? null : admission === "Checking" ? "still checking the connection."
+    : admission === "SignInRequired" ? "sign in to change reader settings."
+    : admission === "UpdateRequired" ? staleBuild() : "reader settings need a connection.";
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
   >({ state: "Clean" });
-  const occurrence = useFeedbackOccurrence(persistence.state === "SaveFailed");
   const [saving, setSaving] = useState(false);
   const unsent = useRef<Partial<ReaderProfile>>({});
   const timer = useRef<number | undefined>(undefined);
@@ -106,15 +110,15 @@ export function ReaderProvider({
       unsent.current = { ...patch, ...unsent.current };
       handleUnauthenticatedApiError(failure);
       if (!isApiError(failure) || isSameSystemApiDefect(failure)) return setDefect({ error: failure });
-      // The retained owner projects the same failure through current hosts.
-      setPersistence({ state: "SaveFailed", failure });
+      setPersistence((current) => ({ state: "SaveFailed", failure, attempt: current.state === "SaveFailed" ? current.attempt + 1 : 0 }));
     }
   }, [refreshSettings]);
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
       if (!remoteReady()) {
-        feedback.receipt({ tone: "Neutral", title: "changing reader settings requires a connection" });
+        const transport = admissionTransport(remoteAdmission());
+        say(TRANSPORT_LINES[transport].command("couldn’t change reader settings."), transportVerbs(transport, { signIn: null }) ?? undefined);
         return;
       }
       setProfile((current) => ({ ...current, ...patch }));
@@ -123,7 +127,7 @@ export function ReaderProvider({
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
-    [feedback, send],
+    [say, send],
   );
 
   useEffect(() => {
@@ -143,7 +147,6 @@ export function ReaderProvider({
       persistence,
       editable,
       saving,
-      failureOccurrence: occurrence,
       connectionOccurrence,
       unavailableReason,
       setTheme: (theme) => intend({ theme }),
@@ -155,11 +158,15 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [editable, intend, persistence, profile, send, saving, occurrence, connectionOccurrence, unavailableReason],
+    [editable, intend, persistence, profile, send, saving, connectionOccurrence, unavailableReason],
   );
   if (defect) throw defect.error;
   return (
-    <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>{children}</ReaderProfileProvider></ReaderContext.Provider>
+    <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>
+      {children}
+      {persistence.state === "SaveFailed" ? <Hold id="reader-settings" attempt={persistence.attempt} line={saveFailureLine(persistence.failure)}
+        verbs={[{ label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving }]} /> : null}
+    </ReaderProfileProvider></ReaderContext.Provider>
   );
 }
 
@@ -170,16 +177,17 @@ export function useReaderContext(): ReaderProfileCapability {
   return context;
 }
 
-/** The profile owner retains this recovery when typography controls leave their pane. */
+/** A failed save, unsure when its outcome is unknown: the change applies here either way. */
+function saveFailureLine(failure: ApiError): Line {
+  if (outcomeUnknown(failure) && failure.code !== "E_UNAUTHENTICATED")
+    return { fact: "not sure reader settings saved.", reason: "they may have gone through." };
+  const transport = transportOf(failure);
+  return transport === "Refused" ? { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." }
+    : TRANSPORT_LINES[transport].command("couldn’t save reader settings.");
+}
+
+/** The provider's held slip is this failure's one home; the settings pane's mount says nothing
+ * more. The export stands until L7 removes that mount. */
 export function ReaderSettingsFailure() {
-  const reader = useReaderContext();
-  if (reader.persistence.state !== "SaveFailed") return null;
-  const failure = reader.persistence.failure;
-  const content = (isApiError(failure) && apiTransportFeedback(failure, "couldn’t save reader settings")) || {
-    tone: "Warning" as const, title: "couldn’t save reader settings", message: "your settings are applied in this tab. retry to sync them.",
-    requestId: isApiError(failure) ? failure.requestId : undefined};
-  return <FeedbackFailure scope="Local" occurrence={reader.failureOccurrence}
-    content={outcomeUnknown(failure) && failure.code !== "E_UNAUTHENTICATED"
-      ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content}
-    announcement="Polite" actions={[{label: "retry", onClick: reader.retrySave, busy: reader.saving}]} />;
+  return null;
 }

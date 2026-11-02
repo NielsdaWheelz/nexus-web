@@ -6,7 +6,9 @@
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { Line } from "@/components/feedback/stage";
 import { formatPublicationDate } from "@/lib/resources/metadata";
 import InformationFrame from "@/components/resources/InformationFrame";
 import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
@@ -24,7 +26,7 @@ import {
   mediaDetailFromResponse,
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
-import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
+import { mediaSearchLine, mediaSourceLine } from "@/lib/media/mediaErrorMessage";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
   METADATA_FAILURE_COPY,
@@ -69,24 +71,17 @@ const publication = (value: string | null): ReactNode =>
     <time dateTime={value}>{formatPublicationDate(value)}</time>
   );
 
+/** A line in a facts table is plain row text. */
+const rowText = ({ fact, reason }: Line) => reason ? `${fact} ${reason}` : fact;
+
 function MediaInfo({
   media,
   metadata,
-  disconnected,
-  refreshing,
-  refreshError,
-  onReread,
 }: {
   readonly media: MediaDetail;
   readonly metadata: MetadataEnrichmentView;
-  readonly disconnected: boolean;
-  readonly refreshing: boolean;
-  readonly refreshError: boolean;
-  readonly onReread: () => void;
 }) {
   const display = useRenderEnvironment();
-  const refreshOccurrence = useFeedbackOccurrence(refreshError, media.id);
-  const disconnectedOccurrence = useFeedbackOccurrence(disconnected, media.id);
   const instant = (value: string | null | undefined): ReactNode =>
     value ? (
       <time dateTime={value}>
@@ -102,16 +97,8 @@ function MediaInfo({
       role.role === "publisher" &&
       role.credits.some((credit) => credit.label === media.publisher),
   );
-  const sourceFailure = mediaErrorMessage({
-    kind: "Source",
-    processingStatus: media.processing_status,
-    lastErrorCode: media.last_error_code,
-  });
-  const retrievalFailure = mediaErrorMessage({
-    kind: "Retrieval",
-    retrievalStatus: media.retrieval_status,
-    textSearchReady: media.text_search_ready,
-  });
+  const sourceFailure = mediaSourceLine(media.processing_status, media.last_error_code);
+  const searchState = mediaSearchLine(media.retrieval_status, media.text_search_ready);
   const { duration, listening_state: listening } = media;
   const verb = duration?.modality === "Read" ? "read" : "listen";
   const operation = metadata.operation;
@@ -123,17 +110,10 @@ function MediaInfo({
   const hasResult = bibliography !== null && (bibliography.changed_fields.length > 0 || bibliography.unresolved_fields.length > 0 || bibliography.container_report !== null) ||
     operation?.status === "no_findings" && operation.container_report !== null;
   return (
-    <div className={styles.content} aria-busy={refreshing || undefined}>
+    <div className={styles.content}>
       <div className={styles.resourceTitle} dir="auto">
         {media.title}
       </div>
-      {refreshError ? (
-        <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
-          content={{ tone: "Warning", title: "couldn’t refresh metadata" }}
-          announcement="Polite"
-          actions={[{ label: "retry", onClick: onReread, busy: refreshing }]}
-        />
-      ) : null}
       {group("publication", [
         fact(
           "authors",
@@ -171,7 +151,6 @@ function MediaInfo({
         fact("publisher", sourceEdition.publisher),
         fact("isbn", sourceEdition.isbn),
       ]) : null}
-      {disconnected ? <FeedbackFailure scope="Local" occurrence={disconnectedOccurrence} content={{tone: "Warning", title: "metadata updates disconnected"}} announcement="Polite" actions={[{label: "reconnect", onClick: () => reconnectMetadataOperations(media.id)}]} /> : null}
       {group(metadataOperationName(operation?.purpose ?? metadata.retry.purpose), [
         fact(
           "status",
@@ -324,15 +303,8 @@ function MediaInfo({
         fact("transcript state", media.transcript_state?.replaceAll("_", " ")),
         fact("transcript origin", media.transcript_origin),
         fact("transcript coverage", media.transcript_coverage),
-        fact("search", retrievalFailure
-          ? <FeedbackStatus content={retrievalFailure} announcement="Polite" />
-          : media.retrieval_status === "ready" ? "available" : null),
-        fact(
-          "processing failure",
-          sourceFailure
-            ? <FeedbackNotice content={sourceFailure} announcement="Polite" />
-            : null,
-        ),
+        fact("search", searchState ? rowText(searchState) : media.retrieval_status === "ready" ? "available" : null),
+        fact("processing failure", sourceFailure ? rowText(sourceFailure) : null),
       ])}
     </div>
   );
@@ -378,22 +350,13 @@ export default function MediaInfoOverlay({
   });
   const content =
     media.status === "loading" ? (
-      <FeedbackBusy pending />
+      <Ruling />
     ) : media.status === "failed" ? (
-      <FeedbackState
-        content={{ tone: "Danger", title: "couldn’t load metadata", requestId: media.error.requestId }}
-        announcement="Polite"
-        actions={[{ label: "retry", onClick: media.refetch, busy: media.retrying }]}
-        returnFocus={() => contentRoot.current}
-      />
+      <Failed error={media.error} noun="metadata" retry={{ run: media.refetch, busy: media.retrying }} />
     ) : (
       <MediaInfo
         media={processing.snapshot ? { ...media.data, ...processing.snapshot } : media.data}
         metadata={observation.view ?? media.data.metadata_enrichment}
-        disconnected={observation.disconnected}
-        refreshing={media.refreshing}
-        refreshError={media.error !== null}
-        onReread={media.refetch}
       />
     );
   return <InformationFrame open={open} title="metadata" returnFocusTo={returnFocusTo}

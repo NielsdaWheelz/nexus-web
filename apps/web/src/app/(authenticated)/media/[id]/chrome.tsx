@@ -5,7 +5,6 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Moon, Sun } from "lucide-react";
-import { FeedbackFailure, useFeedbackOccurrence, } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
@@ -38,7 +37,6 @@ export function useReaderChrome(input: {
   readonly readable: boolean;
   readonly contents: ReactNode;
   readonly evidence: ReactNode;
-  readonly annotationNotice: ReactNode;
   readonly markers: readonly RailMarker[];
   readonly onMarker: (id: string) => void;
   readonly markerTarget: (id: string) => ReaderDestination["target"];
@@ -66,23 +64,11 @@ export function useReaderChrome(input: {
   const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
   const summaries = useMediaSummaries(seed === null ? [] : [seed]);
   const summary = seed === null ? null : summaries.resolve(seed);
-  // The item's own summary refresh failure stays with the item, beside its controls.
-  const { error: summaryError, retrying: summaryRetrying, retry: retrySummary } = summaries;
-  const summaryOccurrence = useFeedbackOccurrence(summaryError !== null, id);
-  const summaryNotice = useMemo(() => summaryError === null ? null : <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
-    content={{ tone: "Warning", title: "couldn’t update items", requestId: summaryError.requestId }} announcement="Polite"
-    actions={[{ label: "try again", busy: summaryRetrying, onClick: retrySummary }]} />, [summaryError, summaryRetrying, retrySummary, summaryOccurrence]);
   const navigation = useMemo(
-    () => {
-      const hasNavigation = readable && (kind === "pdf" || kind === "text" && sectioned);
-      const annotationNotice = readable ? input.annotationNotice : null;
-      if (!hasNavigation && !annotationNotice && summaryNotice === null) return undefined;
-      return {
-        label: annotationNotice || summaryNotice ? "reader controls" : kind === "pdf" ? "PDF controls" : "section navigation",
-        content: <>{hasNavigation ? <ReaderNavigation reader={reader} /> : null}{annotationNotice}{summaryNotice}</>,
-      };
-    },
-    [input.annotationNotice, kind, readable, reader, sectioned, summaryNotice],
+    () => readable && (kind === "pdf" || kind === "text" && sectioned)
+      ? { label: kind === "pdf" ? "PDF controls" : "section navigation", content: <ReaderNavigation reader={reader} /> }
+      : undefined,
+    [kind, readable, reader, sectioned],
   );
   const menuActions = useMemo<MenuOption[]>(() => {
     const theme: MenuOption[] = readable ? [{

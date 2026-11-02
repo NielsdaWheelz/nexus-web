@@ -357,8 +357,10 @@
   scroll-padding-top: calc(var(--reader-content-inset-top, 0px) + var(--space-4));
 }
 
-/* Opening/failure content owns its scroll and clears the shown pane envelope. */
+/* Opening/failure content owns its scroll and clears the shown pane envelope. A cold reader is
+ * ruled at its own line pitch. */
 .readerState {
+  --ruling-pitch: calc(var(--reader-font-size-px, var(--text-md)) * var(--reader-line-height, var(--leading-normal)));
   position: relative;
   z-index: 1;
   flex: 1 1 auto;

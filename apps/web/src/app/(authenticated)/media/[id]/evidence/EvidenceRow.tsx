@@ -4,7 +4,7 @@
 // account database by ref; remote roots keep their server presentation. Membership
 // only selects facets and reveal targets; the shared row owns resource commands.
 import { useLayoutEffect, useRef, type CSSProperties } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
@@ -94,9 +94,8 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
       annotationFocusRequest={visible && verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
       resourceDetails={<>
-        {placement === "unlocated" && unresolvedText ? <FeedbackNotice content={{ tone: "Warning", title: PLACEMENT_COPY.unlocated }} announcement="None"
-          actions={[{ label: "select matching text to relocate", onClick: () => verbs.relocate(annotation.id) }]} />
-          : placement !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[placement] }} announcement="None" /> : null}
+        {placement !== "placed" ? <p className={styles.placement}>{PLACEMENT_COPY[placement]}</p> : null}
+        {placement === "unlocated" && unresolvedText ? <Button onClick={() => verbs.relocate(annotation.id)}>relocate</Button> : null}
         {placementDetails}
       </>} />;
   }

@@ -1,16 +1,17 @@
 "use client";
 
-import { installedApp } from "@/lib/native/admission";
-import { useEffect, useId, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { apiTransportFeedback, outcomeUnknown, isStaleBuild } from "@/lib/api/client";
+import { isApiError, isRefusal, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
+import { staleBuild, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
@@ -48,34 +49,27 @@ export function MetadataReviewButton({
   readonly jobId: string;
 }) {
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const fail = useThrowLater();
-  const occurrence = useFeedbackOccurrence(failure !== null || pending, jobId);
-  const review = async (trigger: HTMLButtonElement) => {
+  const [unknown, setUnknown] = useState<number | null>(null);
+  const { say, fail } = useOutcome();
+  const fact = "couldn’t mark this reviewed.";
+  const review = async (trigger: HTMLElement | null) => {
     if (pending) return;
     setPending(true);
     try {
-      await landing(trigger, () => submitMetadataResultReview(mediaId, jobId));
-      setFailure(null);
+      await (trigger ? landing(trigger, () => submitMetadataResultReview(mediaId, jobId)) : submitMetadataResultReview(mediaId, jobId));
+      setUnknown(null);
     } catch (error) {
-      const modeled = modeledApiError(error, fail);
-      if (modeled !== null) {
-        const content = apiTransportFeedback(modeled, "couldn't confirm this review.") ??
-          (modeled.code === "E_MEDIA_NOT_FOUND" || modeled.code === "E_NOT_FOUND"
-            ? { tone: "Warning" as const, title: "this result is no longer available", requestId: modeled.requestId }
-            : modeled.code === "E_RESOURCE_CONFLICT"
-              ? { tone: "Warning" as const, title: "this result changed", message: "only a result with no findings can be marked reviewed.", requestId: modeled.requestId }
-              : null);
-        if (content === null) fail({ error });
-        else setFailure(outcomeUnknown(modeled) && modeled.code !== "E_UNAUTHENTICATED" ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content);
-      }
+      if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) say({ fact, reason: "this result isn’t available." });
+      else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") say({ fact, reason: "this result changed." });
+      else if (isRefusal(error) || !isApiError(error) || isSameSystemApiDefect(error)) fail(error, fact);
+      else setUnknown(attempt => (attempt ?? -1) + 1);
     } finally {
       setPending(false);
     }
   };
   return (
     <>
-    <Button reserveIcon busyKey={jobId}
+    <Button
       data-metadata-action=""
       aria-disabled={pending || undefined}
       aria-busy={pending || undefined}
@@ -84,7 +78,9 @@ export function MetadataReviewButton({
     >
       mark reviewed
     </Button>
-    {failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure} content={failure} announcement="Polite" />}
+    {unknown === null ? null : <Hold id={`metadata-review:${jobId}`} attempt={unknown}
+      line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
+      verbs={[{ label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending }]} />}
     </>
   );
 }
@@ -108,7 +104,8 @@ export default function MetadataResearchActions({
   const reasonId = useId();
   const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const { say, fail } = useOutcome();
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
   const reviewJob =
@@ -122,9 +119,7 @@ export default function MetadataResearchActions({
   const remedies = useResourceActions(remedyNeeded ? ref : null);
   const { prepare, state } = remedies;
   const remedyRequest = useRef<AbortController | null>(null);
-  const remedyFailure = state?.kind === "Failed" ? state.feedback : state?.kind === "Loading" ? state.failure?.feedback ?? null : null;
-  const failureOccurrence = useFeedbackOccurrence(failure !== null, mediaId);
-  const remedyOccurrence = useFeedbackOccurrence(remedyFailure !== null, mediaId);
+  const remedyFailure = state?.kind === "Failed" ? { error: state.error } : state?.kind === "Loading" ? state.failure : null;
   useEffect(() => {
     if (!remedyNeeded) return;
     const controller = new AbortController();
@@ -157,8 +152,9 @@ export default function MetadataResearchActions({
       execute: () => landing(trigger, async () => {
         const result = await admissions.admit({ kind: "MetadataResearch", mediaId,
           request: { expected_job_id: retry.expected_job_id } });
-        if (result.kind !== "OwnerGone")
-          setFailure(result.kind === "LocalFailure" ? result.content : null);
+        if (result.kind !== "LocalFailure") return;
+        if (result.error) fail(result.error, result.line.fact);
+        else say(result.line, result.verbs ?? undefined);
       }),
     });
   };
@@ -169,12 +165,12 @@ export default function MetadataResearchActions({
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button reserveIcon data-metadata-action="" aria-disabled={installedApp || undefined}
-          tooltip={installedApp ? { text: "install the current nexus apk, then reopen the app." } : undefined}
-          onClick={() => { if (!installedApp) window.location.reload(); }}>
-          {installedApp ? "update nexus" : "reload app"}
+        isStaleBuild(pending.error) ? <Button data-metadata-action="" aria-disabled={remedy !== "Reload" || undefined}
+          tooltip={remedy === "Reload" ? undefined : { text: staleBuild() }}
+          onClick={() => { if (remedy === "Reload") window.location.reload(); }}>
+          reload
         </Button> :
-        <Button reserveIcon
+        <Button
           data-metadata-action=""
           aria-busy={pending.kind === "sending" || undefined}
           aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
@@ -183,13 +179,13 @@ export default function MetadataResearchActions({
           onClick={(event) => {
             if (pending.kind === "sending" || !ctx.online) return;
             const trigger = event.currentTarget;
-            run({ ref, id: "RetryMetadata", label: "retry same request", title: "", confirmation: null, tracked: false,
+            run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
               execute: () => landing(trigger, () => admissions.retry(pending.key)),
             });
           }}
-        >retry same request</Button>
+        >retry</Button>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
-        <Button reserveIcon
+        <Button
           data-metadata-action=""
           aria-disabled={!ctx.online || undefined}
           aria-describedby={!ctx.online ? reasonId : undefined}
@@ -199,15 +195,14 @@ export default function MetadataResearchActions({
           {metadataResearchLabel(operation, retry.purpose)}
         </Button>
       ) : null}
-      {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite" /> : null}
-      {remedyNeeded && (state === null || state.kind === "Loading") && remedyFailure === null ? <FeedbackBusy pending /> : null}
-      {remedyNeeded && remedyFailure ? <FeedbackFailure scope="Local" occurrence={remedyOccurrence} content={remedyFailure} announcement="Polite"
-        actions={[{label: "retry", busy: state?.kind === "Loading", onClick: () => {
+      {remedyNeeded && remedyFailure ? remedyFailure.error
+        ? <Failed error={remedyFailure.error} noun="source actions" retry={{ busy: state?.kind === "Loading", run: () => {
           const request = remedyRequest.current;
           if (request !== null && !request.signal.aborted) prepare(request.signal);
-        }}]} /> : null}
+        } }} />
+        : <Fact line={TRANSPORT_LINES.Offline.read("source actions")} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
-        <Button reserveIcon
+        <Button
           data-metadata-action=""
           onClick={(event) => {
             const detail = prepareActionSelect(event, event.currentTarget);

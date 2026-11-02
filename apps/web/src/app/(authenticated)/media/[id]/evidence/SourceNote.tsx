@@ -3,12 +3,14 @@
 // Only opened references read their complete targets, in authored order and at
 // the map's publication identity. Source activation/reader.inspect holds the
 // departure; this disclosure neither adopts a reading place nor writes progress.
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice } from "@/components/feedback/Feedback";
+import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
-import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -17,7 +19,7 @@ import { readerLinkTarget } from "@/lib/documentReader/text/linkTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { activateReaderDestination } from "@/lib/documentReader/navigation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -66,7 +68,6 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
   readonly onContentChanged: () => void;
 }) {
   const runtime = usePaneRuntime();
-  const paneActive = usePaneIsActive();
   const item = parseResourceRef(referenceRef);
   if (item?.scheme !== "reader_apparatus_item") throw new Error("Source note needs its apparatus resource");
   const detail = usePaneFreeServerValue({
@@ -84,21 +85,19 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
       }
     },
   });
-  const announcement = paneActive ? "Polite" : "None";
-  const occurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, identity);
-  if (detail.status === "loading") return <FeedbackBusy pending />;
-  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: "reader content changed" }} announcement={announcement}
-    actions={[{ label: "refresh reader items", onClick: onContentChanged }]} />;
-  if (detail.status === "failed") return <FeedbackFailure scope="Local" occurrence={occurrence} content={apiTransportFeedback(detail.error, "couldn’t load source text") ?? { tone: "Danger", title: "couldn’t load source text", requestId: detail.error.requestId }} announcement={announcement}
-    actions={[{ label: "retry", onClick: detail.refetch, busy: detail.retrying }]} />;
-  if (!detail.data.targets.length) return <FeedbackNotice content={{ tone: "Warning", title: "source reference unresolved" }} announcement={announcement} />;
+  const speak = useActiveRegion();
+  if (detail.status === "loading") return <Ruling />;
+  if (detail.error?.code === "E_READER_CONTENT_CHANGED") return <Fact line={{ fact: "the text changed." }} speak={speak}
+    verbs={[{ label: "retry", commandKey: "RereadConnections", run: onContentChanged }]} />;
+  if (detail.status === "failed") return <Failed error={detail.error} noun="note details" retry={{ run: detail.refetch, busy: detail.retrying }} />;
+  if (!detail.data.targets.length) return <Fact line={{ fact: "couldn’t find where this note points." }} speak={speak} />;
   return <ResourceOutlineList scope={`reader-source:${referenceRef}`} ariaLabel="source targets">{detail.data.targets.map((target) => {
     const { content } = target;
     let body: ReactNode;
     switch (content.kind) {
       case "Html": body = <HtmlRenderer htmlSanitized={content.html_sanitized} />; break;
       case "Text": body = <div className={styles.text}>{content.text}</div>; break;
-      case "Unavailable": body = <FeedbackNotice content={{ tone: "Warning", title: "source text unavailable" }} announcement="None" />; break;
+      case "Unavailable": body = <p className={styles.text}>this text isn’t available.</p>; break;
       default: return assertNever(content);
     }
     const { activation } = target.item;
@@ -120,7 +119,7 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
   const runtime = usePaneRuntime();
   const root = useRef<HTMLDivElement>(null);
   const destinations = useRef(new WeakMap<HTMLAnchorElement, { readonly destination: ReaderDestination | null; readonly href: string | null }>());
-  const [failure, setFailure] = useState(false);
+  const { say } = useOutcome();
   useLayoutEffect(() => {
     const bound = destinations.current;
     const changed: { anchor: HTMLAnchorElement; href: string; rich: string | null; role: string | null; tabIndex: string | null }[] = [];
@@ -164,11 +163,10 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
     else if (binding?.href) activateTargetLink({ event, runtime, target: { href: binding.href } });
     else if (binding) {
       const activation = workspaceTargetActivationIntent(event, "activate");
-      if (activation.kind !== "Unowned") { event.preventDefault(); if (activation.kind === "Open") setFailure(true); }
+      if (activation.kind !== "Unowned") { event.preventDefault(); if (activation.kind === "Open") say({ fact: "this link is too long to open." }); }
     } else activateTargetAnchor({ event, runtime, anchor });
   };
   return <div ref={root} data-reader-unit={unit ?? undefined} onClick={activate} onKeyDown={activate}>
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: "this location link is too long" }} announcement="Polite" onDismiss={() => setFailure(false)} /> : null}
     {children}
   </div>;
 }
