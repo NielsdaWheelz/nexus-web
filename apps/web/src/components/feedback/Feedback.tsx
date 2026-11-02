@@ -20,10 +20,11 @@ import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { useThrowLater } from "@/lib/api/serverState";
+import { isAbortError } from "@/lib/errors";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
-import { hasActiveModal, OverlayContext, useInteractionOwner } from "@/lib/ui/overlay";
+import { hasActiveModal, OverlayContext, subscribeOverlayStack, topModal, useInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
 import Slips from "./Slips";
@@ -175,11 +176,24 @@ function useAddress(): Address {
   return useMemo(() => paneId === null ? { kind: "Workspace" } : { kind: "Pane", paneId }, [paneId]);
 }
 
+/** Whether this region may speak now: a modal's while it is topmost; under none, the active pane's,
+ * or any region of a host without panes. In-flow feedback is storeless, so it may sit outside a stage. */
+export function useActiveRegion(): boolean {
+  const stage = useContext(StageContext);
+  const overlay = useContext(OverlayContext);
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  const active = () => {
+    const modal = topModal();
+    return overlay ? overlay === modal : modal === null && (paneId === null || stage?.activePane() === paneId);
+  };
+  return useSyncExternalStore(stage?.subscribe ?? subscribeOverlayStack, active, active);
+}
+
 export interface Outcome {
   say(line: Line, verbs?: Verbs): Retract;
   /** `title` is the command's fact; its reason and verb come from the transport. `verb` is the
    * owner's retry, shown only where the transport offers one, so a stale build gets reload alone.
-   * A defect rethrows through the owner's boundary. */
+   * An abort is no outcome and shows nothing. A defect rethrows through the owner's boundary. */
   fail(error: unknown, title: string, verb?: Verb): Retract;
 }
 
@@ -191,6 +205,7 @@ export function useOutcome(): Outcome {
   const throwLater = useThrowLater();
   const say = useCallback<Outcome["say"]>((line, verbs) => stage.say({ address, line, verbs: verbs ?? null }), [stage, address]);
   const fail = useCallback<Outcome["fail"]>((error, title, verb) => {
+    if (isAbortError(error)) return () => {};
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
       throwLater({ error });
       return () => {};

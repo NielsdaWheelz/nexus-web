@@ -10,7 +10,7 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { Announcement } from "./Feedback";
+import { Announcement, useActiveRegion } from "./Feedback";
 import { ShellContext, transportVerbs, type CommandVerb, type Line, type Verb, type Verbs } from "./stage";
 import styles from "./Fact.module.css";
 
@@ -90,7 +90,8 @@ function FactVerbs({ verbs, contextId }: { verbs?: Verbs; contextId: string }) {
   </div> : null;
 }
 
-/** One sentence, optional detail, at most two verbs. `speak` announces once, politely. */
+/** One sentence, optional detail, at most two verbs. `speak` announces once, politely, and may
+ * come true late: the announcement stays mounted so it cannot speak twice. */
 export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs; speak?: boolean }) {
   const lineId = useId();
   const [occurrence] = useState({});
@@ -98,19 +99,21 @@ export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs
   return <div className={styles.fact}>
     <p id={lineId} className={styles.line}>{text}</p>
     <FactVerbs verbs={verbs} contextId={lineId} />
-    {speak ? <Announcement text={text} level="Polite" occurrence={occurrence} /> : null}
+    <Announcement text={text} level={speak ? "Polite" : "None"} occurrence={occurrence} />
   </div>;
 }
 
-/** A failed read, where its object stood. `retry` keeps its label: a read says `retry`. A
- * same-system defect is not a failed read: it throws here and reaches the boundary. */
+/** A failed read, where its object stood. It speaks from the active region alone, so a restored
+ * workspace says one line. `retry` keeps its label: a read says `retry`. A same-system defect is
+ * not a failed read: it throws here and reaches the boundary. */
 export function Failed({ error, noun, retry }: { error: unknown; noun: string; retry?: Pick<CommandVerb, "run" | "busy" | "disabledReason"> }) {
   const { signIn } = useContext(ShellContext);
+  const speak = useActiveRegion();
   useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   const transport = transportOf(error);
   const verb = retry && { ...retry, label: "retry", commandKey: `retry ${noun}` };
-  return <Fact line={TRANSPORT_LINES[transport].read(noun)} verbs={transportVerbs(transport, { retry: verb, signIn }) ?? undefined} speak />;
+  return <Fact line={TRANSPORT_LINES[transport].read(noun)} verbs={transportVerbs(transport, { retry: verb, signIn }) ?? undefined} speak={speak} />;
 }
 
 /** Beneath its input; the input's owner absorbs the growth. */
