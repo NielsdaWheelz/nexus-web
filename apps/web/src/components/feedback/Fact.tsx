@@ -82,6 +82,14 @@ export function VerbControl({ verb, contextId, onActivated }: { verb: Verb; cont
   </span>;
 }
 
+/** By position: a verb's control outlives a change of verb, so the guard above can hold. */
+function FactVerbs({ verbs, contextId }: { verbs?: Verbs; contextId: string }) {
+  return verbs ? <div className={styles.verbs}>
+    <VerbControl verb={verbs[0]} contextId={contextId} />
+    {verbs[1] ? <VerbControl verb={verbs[1]} contextId={contextId} /> : null}
+  </div> : null;
+}
+
 /** One sentence, optional detail, at most two verbs. `speak` announces once, politely. */
 export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs; speak?: boolean }) {
   const lineId = useId();
@@ -89,7 +97,7 @@ export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs
   const text = line.reason ? `${line.fact} ${line.reason}` : line.fact;
   return <div className={styles.fact}>
     <p id={lineId} className={styles.line}>{text}</p>
-    {verbs ? <div className={styles.verbs}>{verbs.map(verb => <VerbControl key={verb.label} verb={verb} contextId={lineId} />)}</div> : null}
+    <FactVerbs verbs={verbs} contextId={lineId} />
     {speak ? <Announcement text={text} level="Polite" occurrence={occurrence} /> : null}
   </div>;
 }
@@ -109,6 +117,6 @@ export function Failed({ error, noun, retry }: { error: unknown; noun: string; r
 export function Field({ id, line, verbs }: { id: string; line: Line; verbs?: Verbs }) {
   return <div id={id} className={styles.field}>
     {line.reason ? `${line.fact} ${line.reason}` : line.fact}
-    {verbs ? <div className={styles.verbs}>{verbs.map(verb => <VerbControl key={verb.label} verb={verb} contextId={id} />)}</div> : null}
+    <FactVerbs verbs={verbs} contextId={id} />
   </div>;
 }

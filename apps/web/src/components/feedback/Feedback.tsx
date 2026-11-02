@@ -175,12 +175,13 @@ function useAddress(): Address {
 
 export interface Outcome {
   say(line: Line, verbs?: Verbs): Retract;
-  /** `verb` is the owner's retry, shown where the transport offers one. A stale build gets reload
-   * alone, a defect rethrows through the boundary, and neither reads `title`'s reason. */
+  /** `title` is the command's fact; its reason and verb come from the transport. `verb` is the
+   * owner's retry, shown only where the transport offers one, so a stale build gets reload alone.
+   * A defect rethrows through the owner's boundary. */
   fail(error: unknown, title: string, verb?: Verb): Retract;
 }
 
-/** Speak from wherever the owner is: the address follows the pane, the row stays with the stage. */
+/** Any owner, above or below panes: the address follows the pane the owner renders in. */
 export function useOutcome(): Outcome {
   const stage = useStage();
   const address = useAddress();
@@ -208,7 +209,7 @@ export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: strin
   if (held.id !== id) setHeld({ id, key: {} });
   const { key } = held;
   useLayoutEffect(() => { stage.hold({ key, address, risk, line, verbs: verbs ?? null, attempt }); });
-  useLayoutEffect(() => () => stage.release(key), [stage, key]);
+  useLayoutEffect(() => () => stage.dismiss(key), [stage, key]);
   return null;
 }
 
@@ -217,9 +218,8 @@ export function useFeedback(): FeedbackContextValue {
   const { say } = useOutcome();
   return useMemo(() => ({
     receipt(content, action) {
-      const verb = action?.href === undefined && action !== undefined
-        ? { label: action.label, commandKey: action.commandKey ?? action.label, run: action.onClick, busy: action.busy, disabledReason: action.disabledReason, copied: action.copiedOccurrence }
-        : action;
+      const verb = action === undefined || action.href !== undefined ? action
+        : { label: action.label, commandKey: action.commandKey ?? action.label, run: action.onClick, busy: action.busy, disabledReason: action.disabledReason, copied: action.copiedOccurrence };
       const verbs: Verbs | null = content.reload ? transportVerbs("Update", { signIn: null }) : verb ? [verb] : null;
       return say({ fact: content.title, reason: content.message }, verbs ?? undefined);
     },

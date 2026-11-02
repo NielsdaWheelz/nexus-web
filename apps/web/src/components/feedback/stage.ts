@@ -183,11 +183,12 @@ export function createStage() {
       else if (clock.running === null)
         clock.running = { since: performance.now(), timer: setTimeout(() => expire(slip), clock.remaining) };
     }
-    for (const slip of slips) {
-      if (slip.room === null || slip.spoken === slip.row.attempt) continue;
-      slip.spoken = slip.row.attempt;
-      speech = { ...speech, [slip.row.weight === "Risk" ? "Assertive" : "Polite"]: { text: sentence(slip.row.line), occurrence: {} } };
-    }
+    const fresh = slips.filter(slip => slip.room !== null && slip.spoken !== slip.row.attempt);
+    for (const slip of fresh) slip.spoken = slip.row.attempt;
+    const polite = fresh.filter(({ row }) => row.weight !== "Risk").map(({ row }) => sentence(row.line));
+    const assertive = fresh.filter(({ row }) => row.weight === "Risk").map(({ row }) => sentence(row.line));
+    if (polite.length > 0) speech = { ...speech, Polite: { text: polite.join(" "), occurrence: {} } };
+    if (assertive.length > 0) speech = { ...speech, Assertive: { text: assertive.join(" "), occurrence: {} } };
     const speaker = roomOf(modal ? { kind: "Modal", layer: modal } : { kind: "Root" });
     view = {
       typing: typing !== null,
@@ -270,11 +271,8 @@ export function createStage() {
       if (renewed) renewClock(slip);
       settle();
     },
-    release(key: object): void {
-      const slip = slipOf(key);
-      if (slip) leave(slip, "Dismissed");
-    },
-    close(key: object): void {
+    /** A close, or a mounted owner's resolution. */
+    dismiss(key: object): void {
       const slip = slipOf(key);
       if (slip) leave(slip, "Dismissed");
     },

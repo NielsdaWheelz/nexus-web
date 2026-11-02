@@ -67,10 +67,11 @@ export function ControlContents({ icon, busy, children }: {
   children?: ReactNode;
 }) {
   const spinner = busy ? <span className={styles.busy} aria-hidden="true" /> : null;
+  const labelled = !icon && children !== undefined;
   return <>
-    {icon ? <span className={cx(styles.icon, busy && styles.waiting)} aria-hidden="true">{icon}{spinner}</span> : null}
-    {children !== undefined ? <span className={cx(styles.label, busy && !icon && styles.waiting)}>{children}</span> : null}
-    {icon ? null : spinner}
+    {labelled ? null : <span className={cx(styles.icon, busy && styles.waiting)} aria-hidden="true">{icon}{spinner}</span>}
+    {children !== undefined ? <span className={cx(styles.label, busy && labelled && styles.waiting)}>{children}</span> : null}
+    {labelled ? spinner : null}
   </>;
 }
 

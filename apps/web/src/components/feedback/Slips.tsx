@@ -5,7 +5,7 @@
  * nothing about where or when. A frame is a labelled region after its anchor's content in tab
  * order, so it is reachable without ever taking focus. Only the topmost room speaks. */
 import { ChevronDown, X } from "lucide-react";
-import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
@@ -14,7 +14,7 @@ import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { OverlayContext, topModal } from "@/lib/ui/overlay";
 import { VerbControl } from "./Fact";
 import { Announcement } from "./Feedback";
-import { useStage, type Anchor, type RoomView, type SlipView, type Speech } from "./stage";
+import { useStage, type Anchor, type RoomView, type SlipView, type Speech, type Verb } from "./stage";
 import styles from "./Slips.module.css";
 
 const SWIPE_STARTS_PX = 4;
@@ -39,6 +39,44 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
       next.focus({ preventScroll: true });
     });
   }, [owner]);
+}
+
+/** Touch only. The frame follows the finger on `transform`; down past the line, or fast enough,
+ * `sweep` takes it from where it was let go. Everything else settles it back. */
+function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
+  const drag = useRef<{ pointer: number; startY: number; y: number; at: number; speed: number } | null>(null);
+  const follow = (offset: number | null) => {
+    const element = frame.current;
+    if (!element) return;
+    element.toggleAttribute("data-dragging", offset !== null);
+    element.style.transform = offset === null || matchMedia("(prefers-reduced-motion: reduce)").matches ? "" : `translateY(${offset}px)`;
+  };
+  return {
+    onPointerDown(event: PointerEvent) {
+      if (event.pointerType === "touch") drag.current = { pointer: event.pointerId, startY: event.clientY, y: event.clientY, at: event.timeStamp, speed: 0 };
+    },
+    onPointerMove(event: PointerEvent) {
+      const current = drag.current;
+      if (current?.pointer !== event.pointerId) return;
+      current.speed = (event.clientY - current.y) / Math.max(1, event.timeStamp - current.at);
+      current.y = event.clientY;
+      current.at = event.timeStamp;
+      const offset = current.y - current.startY;
+      if (Math.abs(offset) >= SWIPE_STARTS_PX) follow(offset < 0 ? offset * SWIPE_UPWARD_FRICTION : offset);
+    },
+    onPointerUp(event: PointerEvent) {
+      const current = drag.current;
+      if (current?.pointer !== event.pointerId) return;
+      drag.current = null;
+      const offset = current.y - current.startY;
+      if (offset >= SWIPE_STARTS_PX && (offset > SWIPE_DISMISSES_PX || current.speed >= SWIPE_DISMISSES_PX_PER_MS)) sweep();
+      else follow(null);
+    },
+    onPointerCancel() {
+      drag.current = null;
+      follow(null);
+    },
+  };
 }
 
 const ROOT: Anchor = { kind: "Root" };
@@ -103,7 +141,7 @@ export default function Slips() {
   return view.rooms.map(room => createPortal(<Room room={room} typing={view.typing} speech={view.speech} />, room.element, String(room.id)));
 }
 
-type Return = {
+type FocusHome = {
   frame: RefObject<HTMLElement | null>;
   /** Where focus came from when it entered the frame. */
   origin: RefObject<HTMLElement | null>;
@@ -132,18 +170,26 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
   </>;
 }
 
-function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus: Return }) {
+function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus: FocusHome }) {
   const stage = useStage();
   const { frame } = focus;
   const [onset, setOnset] = useState<"Risk" | "Notice" | null>(room.slips.some(({ row }) => row.weight === "Risk") ? "Risk" : "Notice");
   const standing = useRef(false);
-  const swipe = useRef<{ pointer: number; startY: number; y: number; at: number; speed: number } | null>(null);
+  const swipe = useSwipe(frame, () => stage.sweep(room.id));
   useFocusReturn(frame, focus.target);
   // Nothing changes under a hold: a row stacking in cannot widen the frame beneath a pointer.
   useLayoutEffect(() => {
     const element = frame.current;
     if (element) element.style.inlineSize = room.held ? `${element.getBoundingClientRect().width}px` : "";
   }, [frame, room.held]);
+  // Three rows, then internal scroll.
+  useLayoutEffect(() => {
+    const element = frame.current;
+    const third = element?.children[2];
+    if (!element) return;
+    element.style.maxBlockSize = element.children.length > 3 && third instanceof HTMLElement
+      ? `min(${third.offsetTop + third.offsetHeight + 2 * element.clientTop}px, 100% - 24px)` : "";
+  }, [frame, room.slips]);
   useEffect(() => {
     standing.current = true;
     const release = () => stage.holdRoom(room.id, "Press", false);
@@ -155,12 +201,6 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
       stage.releaseRoom(room.id);
     };
   }, [stage, room.id]);
-  const follow = (offset: number | null) => {
-    const element = frame.current;
-    if (!element) return;
-    element.toggleAttribute("data-dragging", offset !== null);
-    element.style.transform = offset === null || matchMedia("(prefers-reduced-motion: reduce)").matches ? "" : `translateY(${offset}px)`;
-  };
   const leaving = room.slips.some(slip => slip.leaving === null) ? null : room.slips[0].leaving;
   return <section
     ref={frame}
@@ -178,28 +218,11 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     }}
     onPointerEnter={event => { if (event.pointerType === "mouse") stage.holdRoom(room.id, "Pointer", true); }}
     onPointerLeave={() => stage.holdRoom(room.id, "Pointer", false)}
+    {...swipe}
     onPointerDown={event => {
       stage.holdRoom(room.id, "Press", true);
-      if (event.pointerType === "touch") swipe.current = { pointer: event.pointerId, startY: event.clientY, y: event.clientY, at: event.timeStamp, speed: 0 };
+      swipe.onPointerDown(event);
     }}
-    onPointerMove={event => {
-      const drag = swipe.current;
-      if (drag?.pointer !== event.pointerId) return;
-      drag.speed = (event.clientY - drag.y) / Math.max(1, event.timeStamp - drag.at);
-      drag.y = event.clientY;
-      drag.at = event.timeStamp;
-      const offset = drag.y - drag.startY;
-      if (Math.abs(offset) >= SWIPE_STARTS_PX) follow(offset < 0 ? offset * SWIPE_UPWARD_FRICTION : offset);
-    }}
-    onPointerUp={event => {
-      const drag = swipe.current;
-      if (drag?.pointer !== event.pointerId) return;
-      swipe.current = null;
-      follow(null);
-      const offset = drag.y - drag.startY;
-      if (offset >= SWIPE_STARTS_PX && (offset > SWIPE_DISMISSES_PX || drag.speed >= SWIPE_DISMISSES_PX_PER_MS)) stage.sweep(room.id);
-    }}
-    onPointerCancel={() => { swipe.current = null; follow(null); }}
     onFocus={event => {
       stage.holdRoom(room.id, "Focus", true);
       const from = event.relatedTarget;
@@ -221,7 +244,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
   </section>;
 }
 
-function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked: boolean; frameLeaving: boolean; focus: Return }) {
+function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked: boolean; frameLeaving: boolean; focus: FocusHome }) {
   const stage = useStage();
   const { row, leaving } = slip;
   const element = useRef<HTMLDivElement>(null);
@@ -230,6 +253,10 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
   const [onset, setOnset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
   useFocusReturn(element, () => firstControl(focus.frame.current) ?? focus.target());
   const plain = row.weight === "Plain";
+  const activated = (verb: Verb) => () => {
+    focus.navigated.current = "href" in verb;
+    if (plain) stage.dismiss(row.key);
+  };
   return <div
     ref={element}
     className={styles.row}
@@ -250,18 +277,16 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
         <span className={styles.fact}>{row.line.fact}</span>{row.line.reason ? <span className={styles.reason}> {row.line.reason}</span> : null}
       </span>
     </p>
-    {row.verbs?.map(verb => <VerbControl key={verb.label} verb={verb} contextId={lineId} onActivated={() => {
-      focus.navigated.current = "href" in verb;
-      if (plain) stage.close(row.key);
-    }} />)}
+    {row.verbs ? <VerbControl verb={row.verbs[0]} contextId={lineId} onActivated={activated(row.verbs[0])} /> : null}
+    {row.verbs?.[1] ? <VerbControl verb={row.verbs[1]} contextId={lineId} onActivated={activated(row.verbs[1])} /> : null}
     {plain
-      ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.close(row.key)} />
+      ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.dismiss(row.key)} />
       : <Button className={styles.close} iconOnly icon={<ChevronDown />} aria-label="tuck notice" tooltip={NO_HINT} onClick={() => stage.tuck(row.key)} />}
   </div>;
 }
 
 /** Tucked rows on the anchor's edge: reachable until their owners resolve, retaining nothing. */
-function Tab({ room, focus }: { room: RoomView; focus: Return }) {
+function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
   const stage = useStage();
   const element = useRef<HTMLButtonElement>(null);
   const count = room.tucked.length;

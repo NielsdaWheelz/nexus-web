@@ -188,14 +188,6 @@
 .Warning { --feedback-tone: var(--warning); }
 .Danger { --feedback-tone: var(--danger); }
 
-@keyframes feedbackIn {
-  from { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .layer { animation: none; }
-}
-
 @media (forced-colors: active) {
   .signal,
   .field { --feedback-tone: currentColor; }
