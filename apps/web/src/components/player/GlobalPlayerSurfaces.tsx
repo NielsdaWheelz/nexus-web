@@ -35,6 +35,7 @@ import PlayerIdentity from "./PlayerIdentity";
 import PlayerTransport from "./PlayerTransport";
 import PlayerSeek, { MiniProgress } from "./PlayerSeek";
 import PlayerUtilities from "./PlayerUtilities";
+import SpeedKey from "./SpeedKey";
 import { PlaybackPanel, usePlaybackSettings } from "./PlaybackSettings";
 import PlayerChapters from "./PlayerChapters";
 import { unavailableMessages } from "./PlayerFailures";
@@ -206,8 +207,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     if (kind === "Playback") { settings.save.reset(); setOpening(value => value + 1); }
     if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
   };
-  const utilities = { picker: shownPicker, playbackId, chaptersId, rateRef, chaptersRef, onToggle: toggle,
-    settings: { status: settings.status, failed: settings.failed, busy: settings.save.busy } };
+  const speedKey = (variant: "Bar" | "Sheet") => <SpeedKey ref={rateRef} variant={variant} expanded={shownPicker === "Playback"} controls={playbackId}
+    status={settings.status} failed={settings.failed} busy={settings.save.busy} onToggle={() => toggle("Playback")} />;
+  const chaptersKeyProps = { chaptersExpanded: shownPicker === "Chapters", chaptersId, chaptersRef, onToggleChapters: () => toggle("Chapters") };
   const openQueue = <Button ref={queueRef} size="comfortable" className={styles.upNext} icon={<Icon.ListMusic />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
     aria-busy={queueBusy || undefined}
@@ -283,7 +285,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         <PlayerIdentity variant="Sheet" loaded={state} label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />
         <PlayerTransport variant="Sheet" />
         <PlayerSeek active={sheetShown} />
-        <PlayerUtilities variant="Sheet" {...utilities} />
+        <PlayerUtilities variant="Sheet" speed={speedKey("Sheet")} {...chaptersKeyProps} />
         {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
           id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
           trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
@@ -312,7 +314,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     <div className={styles.source}>{desktopSource}</div>
     <div className={styles.desktopTransport}><PlayerTransport variant="Bar" /></div>
     <div className={styles.listening}><PlayerSeek active={presentation.visible} /></div>
-    <PlayerUtilities variant="Bar" className={styles.options} upNext={openQueue} {...utilities} />
+    <PlayerUtilities variant="Bar" className={styles.options} upNext={openQueue} speed={speedKey("Bar")} {...chaptersKeyProps} />
   </>;
 
   return <>
