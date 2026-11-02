@@ -164,6 +164,14 @@ export function ownsOverlayFocus(root: Element, target: Element | null): boolean
   return owned.some(element => element.contains(target));
 }
 
+/** A layer that does not contain `element` owns interaction; with no element, any owner. */
+export function interactionOwnedElsewhere(element: Element | null): boolean {
+  const current = owner();
+  if (!current) return false;
+  if (!element) return true;
+  return !current.element?.contains(element) && !current.options.current.inside?.().some((box) => box?.contains(element));
+}
+
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
 }

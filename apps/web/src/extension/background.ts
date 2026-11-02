@@ -1024,7 +1024,7 @@ async function save(signal: AbortSignal): Promise<void> {
         ? { kind: "Recover", generation: answer.generation }
         : { kind: "Acquire", generation: answer.generation,
             expected_removal_revision: submission.removalRevision!,
-            destinations: destinations.map(item => ({ library_id: item.id, expected_order_revision: item.order_revision })) };
+            destinations: destinations.map(item => item.id) };
       setPhase({ kind: "confirming" });
       answer = await client.confirm(id, submission.confirmation, signal);
     }
@@ -1043,7 +1043,7 @@ async function save(signal: AbortSignal): Promise<void> {
       phase: { kind: "saved", openUrl },
       destinations: answer.current_placements?.placements
         .filter(item => item.relation !== "Absent")
-        .map(item => ({ id: item.library_id, name: item.name, order_revision: item.order_revision })) ?? [],
+        .map(item => ({ id: item.library_id, name: item.name })) ?? [],
       bytes: null,
       submission: null,
     });

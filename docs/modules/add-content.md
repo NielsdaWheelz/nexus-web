@@ -49,10 +49,12 @@ and editing; final submission waits for it. task close retains its loss guard.
 
 ## acceptance and leaving
 
-submission revalidates the ready subset, retains the selected libraries' reviewed
-order revisions and reads one removal revision before any provider or storage i/o.
-each row freezes that guard vector and its request id (a url attempt or an upload
-session), then admits two at a time within one mutation slot. invalid and
+submission revalidates the ready subset and reads one removal revision before any
+provider or storage i/o. each row freezes that fence with its selected library ids
+and its request id (a url attempt or an upload session), then admits one row at a
+time within one mutation slot, a file's create, put and confirm whole: the server
+serializes an account's acquisitions (url acceptance and upload confirm), and one
+sent beside another can exhaust its retries into a refusal. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
 neither navigates nor closes it. acceptance proves a past save; upload publication
 proves verified bytes. before
@@ -64,8 +66,8 @@ acceptance nor publication proves completed extraction.
 known refusals stay on their row, including revoked destination access. auth and
 sent defects retain their frozen request before the existing handoff. check save
 replays exactly that intent. an unknown outcome cannot return to an
-editable draft. a known guard refusal requires explicit review, refreshes the
-selected library snapshots and returns to draft. a url then receives a fresh id;
+editable draft. a known fence or authority refusal requires explicit review,
+refreshes the selected library snapshots and returns to draft. a url then receives a fresh id;
 a live upload retains its session, generation and staged bytes for confirmation
 with reviewed choices. stopped unsent rows return to drafts; started requests
 remain unconfirmed under the same memory owner.
@@ -74,11 +76,33 @@ all older callbacks. reload loses browser drafts/files.
 
 the task registers actual populated rows, unresolved acceptance, destination
 creation and its running browser pipeline with the common work guard. empty
-drafts, destination seed changes and settled receipts are clean. normal and
-defect-boundary dismissal use one native confirmation. cancellation keeps the
+drafts, destination seed changes and settled receipts are clean. so is a row
+seeded from the palette query, until its first edit or the visit's first send:
+its text is the palette's, and the palette owns it. the arrow and esc restore it
+as the query; close discards it, as close discards any query. after a send the
+arrow restores no query, so a seeded row is work. normal and defect-boundary
+dismissal use one native confirmation. cancellation keeps the
 transfer running; confirmed leave stops remaining browser work and discards its
-local state. accepted imports remain server-owned. add has no back-to-launcher
-step or reload recovery.
+local state. accepted imports remain server-owned. add has no reload recovery.
+
+the page holds its origin: the palette's mode, control and query, or null when
+opened from outside it (rail, library). sent means a submission moved a row out
+of draft in this visit, palette open to close. the arrow does not end a visit:
+starting or discarding a session keeps sent, and the palette clears it as it
+opens. removing or re-staging a row does not unsend it. both shells' dismissal
+branches on the same table, after the guard:
+
+| | arrow | esc, scrim, android back |
+| --- | --- | --- |
+| palette, nothing sent | root, origin restored | same |
+| palette, sent | root, query cleared | close |
+| outside | root, overview | close to opener |
+
+restored means the query, the mode, the import row selected and focus in the
+combobox. a phone has no row selection: from search, focus lands in the search
+input; from the overview, on the import row, since focusing that input enters
+search. a query is never restored after a send. pickers consume esc first. the
+defect view has no arrow and keeps esc.
 
 ## saved placement
 
@@ -122,7 +146,7 @@ is not evidence of content duplication.
 
 an upload's live owner retains its id, generation, frozen confirmation and whether
 the byte put completed. after a successful put, check save retries only that exact
-confirmation. a known revision refusal permits review and confirmation with the
+confirmation. a known fence or authority refusal permits review and confirmation with the
 same generation and bytes; it neither creates another session generation nor
 repeats the put. an unpublished read does not settle unknown publication. the
 server decides staging expiry. file reselection replaces the expired row in

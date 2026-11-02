@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.db.models import MediaKind
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
@@ -100,7 +101,7 @@ class NamedResourceBodyOut(_Out):
     kind: Literal["named"] = "named"
     title: str
     image_url: str | None
-    media_kind: str | None
+    media_kind: MediaKind | None
     contributors: list[ContributorCreditOut] | None
 
 
@@ -159,7 +160,7 @@ ResourceBodyOut = Annotated[
 class SourceAttributionOut(_Out):
     ref: str | None
     title: str | None
-    media_kind: str | None
+    media_kind: MediaKind | None
     contributors: list[ContributorCreditOut] | None
     location_label: str | None
     activation: ResourceActivationOut | None

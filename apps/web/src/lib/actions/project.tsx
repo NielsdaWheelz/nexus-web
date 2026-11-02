@@ -351,7 +351,10 @@ export function projectPodcastSubscriptionAction({ target, title, facts, disable
   return {
     kind: "command", id, label,
     accessibleLabel: `${facts.kind === "Ready" && subscribed ? `Subscribed. ${label}` : label}: ${title}`,
-    icon: createElement(PodcastSubscriptionIcon, { subscribed: subscribed === true }), hasPopup: "dialog",
+    icon: createElement(PodcastSubscriptionIcon, {
+      key: subscribed === null ? "Unknown" : "Known", // learning is no event: the remount skips the transition
+      subscribed: subscribed === true,
+    }), hasPopup: "dialog",
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, waiting: waiting || undefined,
     restoreFocusOnClose: false,
     onSelect: detail => {

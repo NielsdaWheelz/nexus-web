@@ -1,6 +1,6 @@
 "use client";
 
-/** Guarded web acquisition. Initial submission freezes reviewed library revisions
+/** Guarded web acquisition. Initial submission freezes the chosen library ids
  * and the removal revision before provider/storage work. URL replay retains that
  * exact command; receipts are read for current availability. A live upload owner
  * retains its generation, bytes and confirmation; only a known refusal permits
@@ -146,7 +146,7 @@ export function reviewUploadAttempt(attempt: UploadAttempt): void {
 }
 
 /** A live attempt reuses its staged bytes and exact confirmation after response loss.
- * A revision refusal permits explicit review with the same session/generation.
+ * A fence or authority refusal permits explicit review with the same session/generation.
  * Losing the owner requires file reselection; expired bytes cannot be resumed. */
 export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseChange, onImportRef }: {
   file: File;
@@ -167,7 +167,7 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
     const { data: created } = await call("Create", () => apiFetch<ApiJson<"/media/uploads", "post">>("/api/media/uploads", {
       method: "POST", body: JSON.stringify({ id: attempt.id, kind: kind === "Pdf" ? "pdf" : "epub",
         filename: file.name, content_type: kind === "Pdf" ? "application/pdf" : "application/epub+zip",
-        size_bytes: file.size, library_ids: attempt.guard!.destinations.map(destination => destination.library_id) }), signal,
+        size_bytes: file.size, library_ids: attempt.guard!.destinations }), signal,
     }));
     onImportRef?.(created.import_ref);
     if (created.kind === "Rejected") throw outcome({ kind: "VerificationRejected", code: created.code });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
@@ -29,6 +29,7 @@ import {
   type AddSessionState,
   type DraftDestinationScope,
 } from "./useAddContentSession";
+import nexus from "./Nexus.module.css";
 import styles from "./AddPanel.module.css";
 
 export function resolveAddPanelInitialFocus(
@@ -102,6 +103,7 @@ export default function AddPanel({
   session,
   openingSources,
   mobile,
+  onBack,
   onClose,
   onOpen,
   onDefect,
@@ -109,6 +111,7 @@ export default function AddPanel({
   session: AddContentSessionController;
   openingSources: ReadonlySet<string>;
   mobile: boolean;
+  onBack(): void;
   onClose(): void;
   onOpen(target: NexusTarget, intent: OpenIntent): void;
   onDefect(error: unknown): void;
@@ -603,11 +606,12 @@ export default function AddPanel({
     >
       <header className={styles.header}>
         <div className={styles.headingRow}>
+          <Button iconOnly icon={<ArrowLeft />} className={nexus.iconButton} aria-label="back" tooltip={{ text: "back to palette" }} onClick={onBack} />
           <div className={styles.heading}>
             <h2 ref={headingRef} tabIndex={-1} data-add-heading="true">add content</h2>
             <p id={`${id}-paste-help`}>use line breaks or a comma and space. every item goes to All.</p>
           </div>
-          <Button iconOnly onClick={onClose} aria-label="close add content" icon={<X size={16} aria-hidden="true" />} />
+          <Button iconOnly className={nexus.iconButton} onClick={onClose} aria-label="close add content" icon={<X size={16} aria-hidden="true" />} />
         </div>
         <div className={styles.intakeTools}>
           <input ref={reselectInputRef} type="file" className={styles.fileInput}

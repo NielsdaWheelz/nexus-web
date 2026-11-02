@@ -89,7 +89,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
   const blocked = !facts.can_add_content || unfinished || following;
   const submit = async () => {
     if (source.error !== null || source.refreshing || blocked || pending !== null || sending) return;
-    const guards = { target, expected_order_revision: facts.order_revision, expected_removal_revision: facts.removal_revision };
+    const guards = { target, expected_removal_revision: facts.removal_revision };
     setDispatched(true);
     setSending(true);
     await ctx.podcasts.submit({ subject, title, library: library.is_default ? null : destination, shown: () => live.current, onAccepted: () => {

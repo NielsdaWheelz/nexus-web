@@ -81,7 +81,6 @@ import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIng
 import { UploadSessionError } from "@/lib/imports/api";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import {
-  emptyBody,
   bodyFromNode,
   bodyText,
   docFromBody,
@@ -137,7 +136,6 @@ export interface TextEditorHandle {
   localHistory(command: "undo" | "redo"): {enabled: boolean; execute(): void} | null;
 }
 export interface NoteEditorHandle extends TextEditorHandle {
-  clear(): void;
   setInputMode(mode: "text" | "blocks" | "controls"): void;
   refuse(message: string): void;
 }
@@ -447,6 +445,13 @@ function NoteEditorContent(props: NoteEditorProps) {
       return true;
     } catch { warn(NOT_INSERTED); return false; }
   }, [warn]);
+  const presentBody = (view: EditorView, field: EditingField, value: "prose" | "code") => {
+    latest.current.history?.boundary();
+    const at = fieldSelection(view.state, field);
+    const after = bodyFromNode(field.node.type.create({presentation: value}, field.node.content));
+    reportEdit({before: fieldBody(field), after, selectionBefore: at, selectionAfter: at, source: "format"});
+    latest.current.history?.boundary();
+  };
   const refreshMarks = useCallback((state: EditorState) => {
     const field = editingField(state);
     setPresentation(field?.kind === "title" ? "title" : field?.node.attrs.presentation === "code" ? "code" : "prose");
@@ -615,6 +620,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       // Each failure that holds is a new attempt, so the hold speaks when a retry fails, not when it is pressed.
       const hold = (unconfirmed: Line) => setAttachment({ ...task, pending: false, unconfirmed, attempt: task.attempt + 1 });
       setAttachment(task);
+      // Disabling the view can blur it before the layout effect reports.
+      latest.current.onAttachmentActiveChange?.(true);
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
@@ -825,6 +832,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       if ((!backward && inputType !== "deleteContentForward") || !selection.empty) return false;
       if (body.content.size === 0) {
         if (keys?.emptyDelete) { keys.emptyDelete(backward ? "backward" : "forward"); return true; }
+        if (body.attrs.presentation === "code") { presentBody(current, field, "prose"); return true; }
       }
       if (body.attrs.presentation === "code" || !keys?.join) return false;
       if ((backward && selection.$from.parentOffset === 0) ||
@@ -1335,14 +1343,6 @@ function NoteEditorContent(props: NoteEditorProps) {
           return {anchor: a ? a.index + 1 : selection.anchor, head: b ? b.index + 1 : selection.head};
         };
       },
-      clear() {
-        if (!view.editable || view.composing || !editorHandle.current?.settleNativeInput() || referenceRef.current.getState() !== null || readLink() !== null || readAttachment() !== null) return;
-        const field = editingField(view.state);
-        if (!field || field.kind !== "body") return;
-        latest.current.history?.boundary();
-        reportEdit({before: fieldBody(field), after: emptyBody(), selectionBefore: fieldSelection(view.state, field), selectionAfter: {anchor: 1, head: 1}, source: "format"});
-        latest.current.history?.boundary();
-      },
       focus(selection, preventScroll = false) {
         if (!view.editable || view.composing) return;
         if (typeof selection === "function") {
@@ -1568,10 +1568,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               if(view.state.selection.from<field.from||view.state.selection.to>field.to){
                 warn(ACROSS_FIELDS);return;
               }
-              latest.current.history?.boundary();
-              const block=field.node,before=fieldBody(field);
-              const after=bodyFromNode(block.type.create({presentation:block.attrs.presentation==="code"?"prose":"code"},block.content));
-              reportEdit({before,after,selectionBefore:fieldSelection(view.state,field),selectionAfter:fieldSelection(view.state,field),source:"format"});
+              presentBody(view,field,field.node.attrs.presentation==="code"?"prose":"code");
             }} />
           <Button
             iconOnly

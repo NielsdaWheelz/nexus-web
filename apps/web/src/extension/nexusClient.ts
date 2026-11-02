@@ -32,11 +32,10 @@ function destinations(raw: unknown): Schema<"LibraryDestinationsOut"> {
   return {
     removal_revision: expectOrderRevision(value.removal_revision),
     destinations: expectArray(value.destinations, raw => {
-      const item = expectExactRecord(raw, ["id", "name", "order_revision"], "destination");
+      const item = expectExactRecord(raw, ["id", "name"], "destination");
       return {
         id: expectCanonicalRfcUuid(item.id, "destination.id"),
         name: expectString(item.name, "destination.name"),
-        order_revision: expectOrderRevision(item.order_revision),
       };
     }, "destinations"),
   };

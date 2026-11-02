@@ -107,15 +107,13 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         if head is None:
             return {"status": "Stale"}
         assert head["pending_urls"]
-        started = db.scalar(
+        db.execute(
             text("""
             UPDATE podcast_feed_runs SET started_at=now(),updated_at=now()
-            WHERE id=:id AND started_at IS NULL RETURNING id
+            WHERE id=:id AND started_at IS NULL
         """),
             {"id": run_id},
         )
-        if started is not None:
-            imports.finish_run(db, run_id=run_id)
     page = fetch_page(head["pending_urls"][0])
     aliases = (
         []

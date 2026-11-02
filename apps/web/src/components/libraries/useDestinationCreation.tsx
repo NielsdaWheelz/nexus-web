@@ -99,7 +99,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       refuseLibrary(outcome, result.error, `couldn’t create “${attempt.name}”.`);
       return;
     }
-    try { attempt.onCreated({ id: result.library.id, name: result.library.name, order_revision: result.library.order_revision }); }
+    try { attempt.onCreated({ id: result.library.id, name: result.library.name }); }
     catch (error) { fail({ error }); }
   }
   function project(scope: string | null) {

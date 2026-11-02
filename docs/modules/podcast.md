@@ -32,9 +32,10 @@ invalidate displayed names immediately within the tab.
 
 library podcast sections and the podcast index share the native `browse podcasts`
 plus link. browsing carries no destination context and remains available from
-read-only libraries. all promotes global unsubscribe; named menus retain distinct
-local unsubscribe and global unsubscribe. confirmed rows remain during failed or
-refreshing reads, with shortcuts blocked. ordinary rows have no expanded panel;
+read-only libraries. all has no shortcut; its menus carry global unsubscribe.
+named menus retain distinct local unsubscribe and global unsubscribe. confirmed
+rows remain during failed or refreshing reads; shortcuts block during a strict
+read or failure, never for a passive poll. ordinary rows have no expanded panel;
 coverage warnings and addition progress remain. local removal uses authority from
 the same current section read as its rows.
 
@@ -92,8 +93,9 @@ all physical placement goes through the [library writer](library.md);
 
 admission creates rule plus initial import, or only a finite import; it files known
 episodes in the chosen destination and schedules traversal atomically. exact-id
-replay returns current resources without recopying. fresh admission checks exact
-library/removal guards. an unfinished once addition must finish or be explicitly
+replay returns current resources without recopying. fresh admission checks library
+authority and the removal fence; an addition compares no library order, and only an
+actual insert advances the destination's revision. an unfinished once addition must finish or be explicitly
 cancelled before subscribing; it is never adopted as subscription history. fresh
 once admission refuses an already-subscribed destination.
 
@@ -124,8 +126,8 @@ fence. keep ignores arriving-entry revisions; remove also freezes library revisi
 `PodcastImportOut.subscription_id` derives from the live initial-import binding;
 `can_cancel` is false while bound, and cancellation rechecks it. unsubscribe stops
 that bound work. independent cancellation keeps committed arrivals and changes no
-rule. retry increments the attempt, retains processed identities and resumes the
-cursor; drained-gap repair restarts at the head. old fetched pages/dead letters
+rule. retry compares only the frozen attempt, increments it, retains processed
+identities and resumes the cursor; drained-gap repair restarts at the head. old fetched pages/dead letters
 cannot affect newer work. cancel never waits on queue rows while holding show locks.
 
 individual all-removal uses its own preview/remove routes. the preview includes
@@ -217,16 +219,19 @@ no app data or admission drafts enter browser storage. add modes, scope, counts,
 coverage errors and keep/remove consequences are explicit. global removal remains
 available on show detail after unsubscribing when saved episodes remain.
 
-the subscriptions index, discovery results, live search/context rows and pane
-headers share subscription and library shortcuts with complete menus. the primary
+discovery results, live search/context rows and pane headers share subscription
+and library shortcuts with complete menus. the primary
 rss subscribe action uses the actual default library. the `libraries` card lists
 named rules; its `add to library…` manager includes all, writable named destinations
 and checked read-only subscription rows. checked rows review that subscription;
 new destinations proceed to the shared podcast/episodes mode review.
 
-subscription commands retain the rss glyph and add a monochrome check for an
-observed subscription. the check denotes recurring delivery somewhere, not feed
-health, completed import or permission. native commands open reviews; they are
+subscription commands retain the rss glyph. weight is the observation: heavy
+means last observed subscribed, and it survives dimming, forced colours and
+menus. gold is authority: only an enabled control paints it, and disabled paint
+wins after `--duration-deliberate`; `aria-disabled` itself never lags. the mark
+denotes recurring delivery somewhere, not feed health, completed import or
+permission. native commands open reviews; they are
 not pressed toggles. opening/cancelling a review changes no relationship.
 
 library choice uses the shared search/create picker: anchored and nonmodal on
@@ -259,13 +264,13 @@ never migrate when local resolution becomes canonical.
 only ready action facts carry canonical resolution. resolving/failed facts carry
 only a nullable last-observed subscription boolean from the existing matching
 read; no extra cache or remembered value exists. the containing source's gate
-retains priority over the action-facts read. retained checks stay dimmed and
+retains priority over the action-facts read. retained marks stay dimmed and
 disabled, named `last known subscribed`; descriptions explain checking/failure.
 unknown never means unsubscribed. existing account/read-key/source/admission
 boundaries govern observation lifetime; changed target sets may clear marks.
 observations never settle uncertain commands. the shared subscription projector
 owns glyph, menu/state copy, complete inline names, dialog semantics and the
-activation guard, including the default-library shortcut's direct renderer.
+activation guard.
 failed reads report busy only during an actual retry; an old observation's stale
 stamp cannot keep retry disabled after the request ends.
 

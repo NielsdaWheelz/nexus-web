@@ -104,11 +104,15 @@ export default function WorkspaceHost() {
   const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
-      state.panes.map((pane) => ({
-        pane,
-        route: resolvePaneRouteModel(pane.current_visit.href),
-        label: presentations.forVisit(pane.current_visit).title,
-      })),
+      state.panes.map((pane) => {
+        const presentation = presentations.forVisit(pane.current_visit);
+        return {
+          pane,
+          route: resolvePaneRouteModel(pane.current_visit.href),
+          label: presentation.title,
+          mediaKind: presentation.mediaKind,
+        };
+      }),
     [state.panes, presentations],
   );
   const active = panes.find(({ pane }) => pane.id === activeId)!;
@@ -276,10 +280,11 @@ export default function WorkspaceHost() {
         <WorkspacePaneStrip
           state={state}
           isMaximized={store.desktopMaximized}
-          items={panes.map(({ pane, label }) => ({
+          items={panes.map(({ pane, label, mediaKind }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
+            mediaKind,
             isActive: pane.id === activeId,
             isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",

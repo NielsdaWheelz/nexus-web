@@ -19,12 +19,12 @@
 
 .headingRow {
   display: flex;
-  align-items: start;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: var(--space-3);
 }
 
 .heading {
+  flex: 1;
   min-width: 0;
 }
 

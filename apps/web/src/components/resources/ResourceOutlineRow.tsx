@@ -38,10 +38,11 @@ import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
-import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
+import {parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {resourceMetadata} from "@/lib/resources/metadata";
+import {itemMediaKind, resourceType, resourceTypeName} from "@/lib/resources/type";
 import {classifyOutlineOccurrence, enterOutlineOccurrence} from "@/lib/resources/outlineProjection";
 import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
@@ -138,7 +139,7 @@ function LocalRow(props:Shared&{subject:string}){
   if(read.error!==null&&!isAuthoredStorageFailure(read.error))throw read.error;
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
   if(read.data)return <ReferenceRow {...props}/>;
-  const type=resourceTypeLabel(parseResourceRef(props.subject)!.scheme).toLowerCase();
+  const type=resourceTypeName(resourceType(parseResourceRef(props.subject)!.scheme,null));
   return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,
     status:<AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/>}}/>;
 }
@@ -222,7 +223,7 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
   const source = useAuthoredQuery(!props.inSource && resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const branch = useContext(ResourceBranch);
   const parsed = parseResourceRef(props.subject)!;
-  const type = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const type = resourceTypeName(resourceType(parsed.scheme, null));
   const label = resource ? localResourceLabel(resource) : type;
   const terminal = classifyOutlineOccurrence({branch, targetRef: props.subject, edgeId: null}).kind === "reference";
   const editable = (props.editable ?? true) && !props.historical && !terminal;
@@ -256,8 +257,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
   if (parsed === null) throw new Error(`invalid canonical resource ref: ${ref}`);
-  const identity = resourceTypeLabel(parsed.scheme).toLowerCase();
-  const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={parsed.scheme}/>;
+  const type = resourceType(parsed.scheme, item === null ? null : itemMediaKind(item));
+  const identity = resourceTypeName(type);
+  const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
   const runtime = usePaneRuntime();
   const touch = useTouchCapable();
   const writing = useWritingRuntime();

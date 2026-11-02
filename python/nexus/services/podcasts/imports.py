@@ -1,11 +1,11 @@
 """finite library imports and their processed identities.
 
 a client id identifies one retained operation; duplicate admission never recopies.
-retry compares the frozen attempt and library revision, retaining processed rows;
-cancel compares the attempt and keeps committed entries. publication runs under
-the caller's show/run lock and locks the complete media/library set before filing.
+retry compares the frozen attempt, retaining processed rows; an addition depends on no
+library order. cancel compares the attempt and keeps committed entries. publication
+runs under the caller's show/run lock and locks the complete media/library set before
+filing.
 terminal completion/cancel clears processed identities only after fencing workers.
-module imports stay light because queue dead letters call finish_run.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _ROW_SQL = """
 
 
 def import_from_row(
-    row: RowMapping | Mapping[str, Any], *, can_manage: bool, order_revision: int | str
+    row: RowMapping | Mapping[str, Any], *, can_manage: bool
 ) -> wire.PodcastImportOut:
     from nexus.schemas.podcast import PodcastImportOut
 
@@ -75,7 +75,6 @@ def import_from_row(
         and row["subscription_id"] is None
         and state in ("pending", "running", "failed"),
         can_retry=can_manage and state == "failed",
-        order_revision=str(order_revision),
     )
 
 
@@ -96,11 +95,7 @@ def get_import(
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast import not found")
-    return import_from_row(
-        row,
-        can_manage=library.out(viewer_id).can_add_content,
-        order_revision=library.order_revision,
-    )
+    return import_from_row(row, can_manage=library.out(viewer_id).can_add_content)
 
 
 def mark_processed(db: Session, *, library_ids: Sequence[UUID], media_id: UUID) -> None:
@@ -122,10 +117,12 @@ def mark_processed(db: Session, *, library_ids: Sequence[UUID], media_id: UUID) 
 
 
 def finish_run(db: Session, *, run_id: UUID) -> None:
-    """Publish an import lifecycle change after its run owner fenced the old job."""
+    """Clear a completed or cancelled import's processed identities after its run owner
+    fenced the old job; a failed one keeps them for retry. the lifecycle changes no
+    library order: only an import's insertions advance its destination's revision."""
     row = db.execute(
         text("""
-        SELECT i.id,i.library_id,r.completed_at,r.cancelled_at FROM podcast_library_imports i
+        SELECT i.id,r.completed_at,r.cancelled_at FROM podcast_library_imports i
         JOIN podcast_feed_runs r ON r.id = i.run_id WHERE r.id = :run
     """),
         {"run": run_id},
@@ -137,11 +134,6 @@ def finish_run(db: Session, *, run_id: UUID) -> None:
             text("DELETE FROM podcast_import_processed_episodes WHERE import_id = :id"),
             {"id": row.id},
         )
-    db.execute(
-        text("""UPDATE libraries SET order_revision = nextval('collection_order_revision_seq')
-                       WHERE id = :id"""),
-        {"id": row.library_id},
-    )
 
 
 def publish_episodes(
@@ -297,11 +289,7 @@ def retry(
         libraries.lock_library_rows_in_order(db, [library_id])
         library = libraries.access(db, viewer_id, library_id, lock=False)
         library.require_add_content(viewer_id)
-        if (
-            row["attempt_version"] != body.expected_attempt_version
-            or library.order_revision != int(body.expected_order_revision)
-            or row["failed_at"] is None
-        ):
+        if row["attempt_version"] != body.expected_attempt_version or row["failed_at"] is None:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
         db.execute(
             text("""
@@ -319,7 +307,6 @@ def retry(
             {"id": row["run_id"]},
         )
         traversal.enqueue_step(db, run_id=row["run_id"])
-        libraries.advance_order_revision(db, library_id)
         return get_import(db, viewer_id, library_id, import_id)
 
     return retry_read_committed(db, "retry_podcast_import", attempt)

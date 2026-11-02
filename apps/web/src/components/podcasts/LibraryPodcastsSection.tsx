@@ -1,7 +1,8 @@
 "use client";
 
-/** Library sections promote one removal command: global in all, scoped in named
- * libraries. Current reads gate shortcuts; canonical menus prepare their own facts.
+/** Named libraries promote one scoped removal command; all, which holds only
+ * subscribed shows, promotes none. Current reads gate the shortcut; canonical
+ * menus prepare their own facts.
  */
 import { Fact } from "@/components/feedback/Fact";
 import { useId, useMemo, useRef } from "react";
@@ -11,7 +12,7 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { projectPodcastLibraryRemovalAction, projectPodcastSubscriptionAction } from "@/lib/actions/project";
+import { projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
 import type { ServerValue } from "@/lib/api/serverState";
 import { remoteReady } from "@/lib/native/admission";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
@@ -36,12 +37,12 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
   const busy = data !== null && (data.imports.some(operation => operation.state === "pending" || operation.state === "running") || data.subscriptions.some(show => show.recurring.state !== "idle" || show.imports.some(operation => operation.state === "pending" || operation.state === "running")));
   // justify-polling: imports and recurring publication have no client event stream.
   useIntervalPoll({ enabled: manage && active && visible && busy, pollIntervalMs: 3000, onPoll: () => {
-    if (document.visibilityState === "visible") source.revalidate();
+    if (document.visibilityState === "visible") source.revalidate({ passive: true });
   } });
   const showsById = useMemo(() => new Map((data?.subscriptions ?? []).map(show => [show.podcast.id, show])), [data]);
   const subscriptions = data?.subscriptions;
   const rows = useMemo(() => (subscriptions ?? []).map(show => ({
-    ...presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, recurring: live ? show.recurring : null }),
+    ...presentPodcast({ id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, recurring: live ? show.recurring : null }),
     context: live ? null : { kind: "Text" as const, text: show.recurring.error_code !== null || show.recurring.had_coverage_gaps
       ? "at last catalog save · last episode check incomplete" : "at last catalog save" },
   })), [subscriptions, live]);
@@ -62,30 +63,21 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
           podcastId: row.id, title: row.title.text, libraryId: library.id, libraryName: library.name,
           canRemove: data?.can_add_content === true, blocked, ctx, run, focus,
         });
-        const action = local ?? projectPodcastSubscriptionAction({
-          target: { kind: "Canonical", podcast_id: row.id }, title: row.title.text,
-          facts: source.status === "ready" && source.error !== null
-            ? { kind: "Failed", observedSubscribed: true, error: source.error, retry: source.refetch, retrying: source.refreshing }
-            : blocked !== null ? { kind: "Resolving", observedSubscribed: true }
-            : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: row.id, subscribed: true } },
-          disabledReason: null, ctx, run, focus,
-        });
-        const label = action.accessibleLabel;
         const descriptionId = `${reasonId}-${row.id}`;
         const show = showsById.get(row.id);
         const attention = show?.recurring.error_code !== null && show?.recurring.error_code !== undefined || show?.recurring.had_coverage_gaps
           ? "last episode check incomplete"
           : show?.imports.some(operation => operation.state === "failed") ? "episode addition stopped"
           : show?.imports.some(operation => operation.state === "pending" || operation.state === "running") ? "adding episodes" : undefined;
-        return <CollectionRow {...props} attention={attention} compactPrimaryControl actionFocus={focus}
+        return <CollectionRow {...props} attention={attention} compactPrimaryControl={local !== null} actionFocus={focus}
           occurrenceActions={local === null ? undefined : [local]}
-          primaryControl={<>
-            <Button iconOnly icon={action.icon} aria-label={label} aria-haspopup="dialog"
-              aria-disabled={action.disabled} aria-describedby={action.disabledReason ? descriptionId : undefined}
-              tooltip={{ text: action.disabledReason ? `${label}: ${action.disabledReason}` : label }}
+          primaryControl={local === null ? undefined : <>
+            <Button iconOnly icon={local.icon} aria-label={local.accessibleLabel} aria-haspopup="dialog"
+              aria-disabled={local.disabled} aria-describedby={local.disabledReason ? descriptionId : undefined}
+              tooltip={{ text: local.disabledReason ? `${local.accessibleLabel}: ${local.disabledReason}` : local.accessibleLabel }}
               onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
-              onClick={event => { event.stopPropagation(); const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
-            {action.disabledReason ? <span className="sr-only" id={descriptionId}>{action.disabledReason}</span> : null}
+              onClick={event => { event.stopPropagation(); const detail = prepareActionSelect(event, event.currentTarget); if (detail) local.onSelect(detail); }} />
+            {local.disabledReason ? <span className="sr-only" id={descriptionId}>{local.disabledReason}</span> : null}
           </>} />;
       } : undefined}
       empty={source.status === "ready" && source.error === null ? <Fact line={{ fact: "no subscribed podcasts." }} /> : null} />

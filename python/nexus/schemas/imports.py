@@ -24,7 +24,7 @@ from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.source_issues import SourceIssue
 
-ImportView = Literal["NeedsAttention", "InProgress", "History"]
+ImportView = Literal["NeedsAttention", "InProgress", "History", "Recent"]
 Classification = Literal["Active", "NeedsAttention", "Complete"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff", "AwaitingUploadConfirmation"]
 SourceRecoveryInput = Literal["StoredSource", "RefetchSource"]
@@ -172,7 +172,8 @@ def _instant(value: datetime | None, name: str) -> datetime | None:
 
 class ImportListQuery(_Wire):
     """`GET /imports`, normalized once. A view refuses a filter it cannot correlate:
-    attention and progress match a current obligation, History one recorded event."""
+    attention and progress match a current obligation, History one recorded event, and
+    Recent, the viewer's own imports newest first, neither."""
 
     view: ImportView
     q: str | None = None
@@ -195,14 +196,15 @@ class ImportListQuery(_Wire):
             contradicted = self.failure_code is not None and self.had_failures is False
             refused = ["failure_code with had_failures=false"] if contradicted else []
         else:
-            history_only = {
+            uncorrelated = {
                 "before": self.before,
                 "from": self.matched_from,
                 "had_failures": self.had_failures,
                 "state": self.state,
-                "failure_code": self.failure_code if self.view == "InProgress" else None,
+                "failure_code": None if self.view == "NeedsAttention" else self.failure_code,
+                "stage": self.stage if self.view == "Recent" else None,
             }
-            refused = [name for name, value in history_only.items() if value is not None]
+            refused = [name for name, value in uncorrelated.items() if value is not None]
         if refused:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,

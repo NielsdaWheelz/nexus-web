@@ -57,7 +57,11 @@ from nexus.services.media import MediaFacts, media_facts
 from nexus.services.metadata_operations import metadata_operations_sql
 from nexus.services.source_attempts import web_recovery_eligible_sql
 from nexus.services.source_publication import load_source_progress
-from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES, LATEST_ORDER_SQL
+from nexus.services.source_types import (
+    COUNTED_PROGRESS_SOURCE_TYPES,
+    LATEST_ORDER_SQL,
+    PODCAST_EPISODE_TRANSCRIPT,
+)
 from nexus.services.upload_session_state import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
@@ -75,6 +79,10 @@ _PLANS = {
     ],
     "History": [
         SortKey("matched_at", "desc", KeysetValueKind.DateTime),
+        SortKey("ref_key", "asc", KeysetValueKind.Text),
+    ],
+    "Recent": [
+        SortKey("accepted_at", "desc", KeysetValueKind.DateTime),
         SortKey("ref_key", "asc", KeysetValueKind.Text),
     ],
 }
@@ -338,7 +346,8 @@ def _params(viewer_id: UUID) -> dict[str, object]:
 def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
     """The view's rows (`filtered`), each naming the obligation or the event it matched: a
     current view matches one obligation of the import's classification, History its newest
-    matching event (and whether a newer event follows it)."""
+    matching event (and whether a newer event follows it), Recent every own import under
+    its primary obligation, complete ones included."""
     where: list[str] = []
     if query.q is not None:
         escaped = query.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -386,6 +395,21 @@ def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
             "i.primary_key AS view_key, i.primary_failed_at AS view_failed_at,"
             f" {_rank('i.primary_stage')} AS stage_rank, m.*"
         )
+    elif query.view == "Recent":
+        # own is what the viewer acquired: an upload ref is always the viewer's session, a
+        # media ref needs the viewer's source attempt, live or superseded onto it. shared
+        # media, metadata-only rows and transcript requests are not imports of theirs. no
+        # obligation join: a complete import has no current obligation.
+        params["transcript_source_type"] = PODCAST_EPISODE_TRANSCRIPT
+        where.append(
+            "(i.session_id IS NOT NULL OR EXISTS (SELECT 1 FROM media_source_attempts a"
+            " WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id"
+            " AND a.source_type <> :transcript_source_type) OR EXISTS (SELECT 1"
+            " FROM media_source_supersessions s WHERE s.media_id = i.media_id"
+            " AND s.created_by_user_id = :viewer_id))"
+        )
+        join = ""
+        selection = "i.primary_key AS view_key"
     else:
         params["classification"] = query.view if query.view == "NeedsAttention" else "Active"
         where.append("i.classification = :classification")
@@ -428,13 +452,11 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
 
 
 def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
-    """One page of the view; the count covers the whole filtered set, and the cursor is
-    bound to this viewer, view and filter set."""
+    """One page of the view; the count covers the whole filtered set, except Recent's, a
+    shelf that counts its page and spares a second pass over the set. The cursor is bound
+    to this viewer, view and filter set."""
     params = _params(viewer_id)
     filtered = _CTE + _view_sql(query, params)
-    matched_count = db.execute(
-        text(f"{filtered} SELECT count(*)::integer FROM filtered"), params
-    ).scalar_one()
     rows, next_cursor = keyset_page(
         db,
         binding={"list": f"imports:{query.view}", "viewer": viewer_id, **query.normalized()},
@@ -447,6 +469,12 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
             f" ORDER BY {order} LIMIT :limit"
         ),
     )
+    if query.view == "Recent":
+        matched_count = len(rows)
+    else:
+        matched_count = db.execute(
+            text(f"{filtered} SELECT count(*)::integer FROM filtered"), params
+        ).scalar_one()
     # A History row carries its match only when a newer event follows it (I19).
     narrated = [row for row in rows if row.get("matched_precedes_newest")]
     entries = history_entries(

@@ -16,7 +16,8 @@ import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { assertNever } from "@/lib/assertNever";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { itemMediaKind, resourceType, resourceTypeName } from "@/lib/resources/type";
 import { ExcerptText, ResourceIndexBody, type ResourceMatch } from "./ResourceBody";
 import { FullResourceBody } from "./ExcerptDisclosure";
 import IndexBibliography from "./IndexBibliography";
@@ -72,7 +73,8 @@ export default function ResourceIndexRow({
   const actionFocus = { get trigger() { return moreRef.current; }, returnFocus, afterRemoval: afterRemoval ?? returnFocus };
   const subject = summary !== null ? { kind: "Media" as const, subject: { kind: "Stored" as const, summary }, knownDescriptor: null }
     : podcastSubject !== undefined ? { kind: "Podcast" as const, subject: podcastSubject } : null;
-  const typeLabel = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const type = resourceType(parsed.scheme, itemMediaKind(item));
+  const typeLabel = resourceTypeName(type);
   let title = "";
   let titleProvidesType = false;
   let titleLocation: string | null = null;
@@ -146,7 +148,7 @@ export default function ResourceIndexRow({
       ref: (node) => { titleRef.current = node; if (typeof primaryLinkRef === "function") primaryLinkRef(node); else if (primaryLinkRef) primaryLinkRef.current = node; },
     } : { kind: "static" }}
     leadingVisual={artwork}
-    title={<ResourceIndexTitle scheme={parsed.scheme} hasArtwork={artwork !== undefined}>
+    title={<ResourceIndexTitle type={type} hasArtwork={artwork !== undefined}>
       {status === null && (presentation.kind === "Context" || !item.activation.href && !titleProvidesType) ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
       {status !== null ? status : presentation.kind === "Context" ? <ResourceIndexBody body={body} /> : titleMatch !== null ? <ExcerptText excerpt={titleMatch.excerpt} match={titleMatch} /> : title}
       {status === null && presentation.kind === "Search" && !item.activation.href && titleLocation ? <span className={`sr-only ${styles.accessibleContext}`}>{`, ${titleLocation}`}</span> : null}

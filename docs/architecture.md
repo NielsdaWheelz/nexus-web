@@ -1267,8 +1267,9 @@ lenses and the complete pane aggregate; no DML), and `services/library_members.p
   canonical relations feed search, atlas and suggestions. all's podcast
   commands cascade to affected destinations; [podcasts](modules/podcast.md) owns
   exact preview, preservation and authority contracts.
-- **guarded organization**: destination and placement reads return named rows,
-  exact library revisions and the viewer removal revision from one snapshot.
+- **guarded organization**: destination and placement reads return named rows and
+  the viewer removal revision from one snapshot; placement rows add their exact
+  library revisions, which acquisition, an append, never compares.
   public placement accepts one absolute `included` command with frozen expected
   revision; even accepted no-ops advance it. stale commands conflict before
   desired-state equality. create-and-file is one atomic client-id creation;
@@ -1711,7 +1712,8 @@ and bibliography; detail/catalog capabilities keep their full representations.
 old rows, metadata and targets. same-query refresh retains its accepted snapshot
 until atomic replacement or failure. `fresh` requires live data and the accepted
 invalidation token to match the requested token; commands additionally require
-no running read/failure and their domain authority. strict `refetch()` is
+no running read other than a passive observation, no failure, and their domain
+authority. strict `refetch()` is
 awaitable and supersedes older work; `revalidate()` coalesces one observation
 behind current work without discarding a useful result. failure stops passive
 observation until explicit recovery. podcast work/transcript polling reads the

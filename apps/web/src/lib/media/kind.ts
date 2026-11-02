@@ -1,23 +1,20 @@
+import { AudioLines, BookOpen, FileText, Scroll, Video, type LucideIcon } from "lucide-react";
 import type { Schema } from "@/lib/api/wire";
 
 export type MediaKind = Schema<"MediaKind">;
 
-const MEDIA_KIND_LABELS: Record<MediaKind, string> = {
-  web_article: "article",
-  epub: "book",
-  text_part: "piece",
-  pdf: "pdf",
-  podcast_episode: "episode",
-  video: "video",
+// The medium ingest proved for each kind, as a drawing and a count noun.
+const KINDS: Record<MediaKind, readonly [LucideIcon, string]> = {
+  epub: [BookOpen, "book"],
+  web_article: [Scroll, "article"],
+  pdf: [FileText, "pdf"],
+  text_part: [FileText, "piece"],
+  podcast_episode: [AudioLines, "episode"],
+  video: [Video, "video"],
 };
 
-/** human media identity; unknown structured kinds are contract defects. */
-export function mediaKindLabel(kind: string): string {
-  for (const [knownKind, label] of Object.entries(MEDIA_KIND_LABELS)) {
-    if (kind === knownKind) return label;
-  }
-  throw new Error(`unknown media kind: ${kind}`);
-}
+export const mediaKindGlyph = (kind: MediaKind): LucideIcon => KINDS[kind][0];
+export const mediaKindLabel = (kind: MediaKind): string => KINDS[kind][1];
 
 export const MEDIA_KINDS = [
   "web_article",

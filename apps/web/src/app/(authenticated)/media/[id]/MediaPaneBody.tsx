@@ -285,7 +285,7 @@ function LocalAnnotations({ mediaId }: { readonly mediaId: string }) {
 }
 
 function UnavailableSavedMedia({ error }: { readonly error: { readonly code: string } }) {
-  usePaneChrome({ displayTitle: "media", header: { kind: "Resource", resource: { status: "Unavailable" } } });
+  usePaneChrome({ displayTitle: "source", header: { kind: "Resource", resource: { status: "Unavailable" } } });
   usePaneReturnReady(true);
   const speak = useActiveRegion();
   // L0a's catalog lines, while their code set is open.

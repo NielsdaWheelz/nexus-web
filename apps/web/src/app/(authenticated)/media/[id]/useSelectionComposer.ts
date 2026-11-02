@@ -90,7 +90,7 @@ export function useSelectionComposer(input: {
   const writing = useWritingRuntime();
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
-  const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? catalogRead.revalidate : catalogRead.refetch;
+  const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? () => catalogRead.revalidate() : catalogRead.refetch;
   const [store] = useState(createSelectionDrafts);
   const workScope = usePaneVisitWorkScope();
   const draftOwner = `selection-composer:${visitId}`;

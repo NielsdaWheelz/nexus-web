@@ -211,7 +211,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
   // justify-polling: one visible observation lane owns header and episode publication.
   useIntervalPoll({ enabled: live && remoteReady() && observing && (following || working || provisioning),
-    pollIntervalMs: working || provisioning ? 3000 : HEAD_POLL_INTERVAL_MS, onPoll: episodes.revalidate });
+    pollIntervalMs: working || provisioning ? 3000 : HEAD_POLL_INTERVAL_MS, onPoll: () => episodes.revalidate({ passive: true }) });
   const publicationKey = `${ctx.accountId}:${descriptor.key}`;
   const publicationData = raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh ? raw.data.data : null;
   const publication = useMemo(() => publicationData === null ? null : JSON.stringify([

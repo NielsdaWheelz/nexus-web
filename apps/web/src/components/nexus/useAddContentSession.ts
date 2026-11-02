@@ -2,7 +2,7 @@
 
 /**
  * The Add session (docs/modules/add-content.md): stage links and files with
- * their libraries, send them two at a time and reconcile unknown outcomes, all
+ * their libraries, send them one at a time and reconcile unknown outcomes, all
  * browser-local. What was sent is frozen: an unknown outcome keeps its intent
  * for exact replay; a new attempt gets a key at submission. At most one
  * mutation runs; stop and reset fence every older completion. Accepted items
@@ -76,6 +76,12 @@ export type AddItem =
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
       readonly upload: UploadAttempt | null;
+      /**
+       * The palette query's text, unedited. Until the visit's first send the palette owns it: the arrow
+       * and esc restore it as the query, and close discards it with the query. After a send the arrow
+       * restores no query, so the row is the page's work.
+       */
+      readonly seeded?: true;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
   | {
@@ -129,6 +135,11 @@ export type AddSessionState = Readonly<{
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
+  /**
+   * A row has left Draft this visit. Removing or re-staging it does not unsend it, and
+   * starting or discarding a session keeps it, since the arrow does not end a visit.
+   */
+  sent: boolean;
 }>;
 
 export interface DraftDestinationScope {
@@ -146,6 +157,8 @@ export interface AddContentSessionController {
   readonly state: AddSessionState;
   readonly workOwnerIds: readonly string[];
   start(seed: AddSeed): string;
+  /** Clears `sent`. The palette calls it as it opens. */
+  beginVisit(): void;
   setItemUrl(input: {
     itemId: string;
     text: string;
@@ -192,12 +205,14 @@ function initialState(seed: AddSeed): AddSessionState {
           destinations: [...seed.initialDestinations],
           showFeedback: true,
           upload: null,
+          seeded: true,
         }),
       ),
       { kind: "Insertion", id: createRandomId("add-item") },
     ],
     newItemDestinations: [...seed.initialDestinations],
     mutation: { kind: "Idle" },
+    sent: false,
   };
 }
 
@@ -267,7 +282,12 @@ export function useAddContentSession(): AddContentSessionController {
   function active(signal: AbortSignal) {
     return signal === abort.current.signal && !signal.aborted;
   }
-  /** Runs one mutation's work two at a time; the first failure is rethrown. */
+  /**
+   * Runs one mutation's rows one at a time, a file's create, put and confirm
+   * whole; the first failure is rethrown. The server serializes an account's
+   * acquisitions (url acceptance, upload confirm), and one sent beside another
+   * waits on a stale snapshot and can exhaust its retries into a refusal.
+   */
   async function batch<T>(
     items: readonly T[],
     signal: AbortSignal,
@@ -275,7 +295,7 @@ export function useAddContentSession(): AddContentSessionController {
   ) {
     const outcomes = await runBoundedTasks({
       items,
-      concurrency: 2,
+      concurrency: 1,
       run: async (value) => {
         signal.throwIfAborted();
         await run(value);
@@ -301,7 +321,8 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item),
+        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item)
+            && !(item.kind === "Draft" && item.seeded && !current.current.sent),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
       },
@@ -313,7 +334,7 @@ export function useAddContentSession(): AddContentSessionController {
     const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
-    update(() => next);
+    update((snapshot) => ({ ...next, sent: snapshot.sent }));
     return next.sessionId;
   }
   /**
@@ -603,7 +624,7 @@ export function useAddContentSession(): AddContentSessionController {
       ...next,
       newItemDestinations: scope.includeNewItems ? setDestination(next.newItemDestinations, { destination, included }) : next.newItemDestinations,
       items: next.items.map(row => row.kind === "Draft" && ids.has(row.id)
-        ? { ...row, destinations: setDestination(row.destinations, { destination, included }) } : row),
+        ? { ...row, seeded: undefined, destinations: setDestination(row.destinations, { destination, included }) } : row),
     }));
     return true;
   }
@@ -738,6 +759,7 @@ export function useAddContentSession(): AddContentSessionController {
     });
     update((next) => ({
       ...next,
+      sent: next.sent || rows.length > 0,
       mutation:
         rows.length === 0
           ? { kind: "Idle" }
@@ -763,6 +785,7 @@ export function useAddContentSession(): AddContentSessionController {
     state,
     workOwnerIds,
     start,
+    beginVisit: () => update((snapshot) => ({ ...snapshot, sent: false })),
     setItemUrl,
     revealItemFeedback,
     pasteUrls,

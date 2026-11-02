@@ -60,6 +60,10 @@
   min-block-size: 48px;
 }
 
+.menuItemIcon svg {
+  color: inherit;
+}
+
 /* Late rows wrap to the published width instead of widening the panel, in their own scroller
    capped at publication to the room the published rows leave. They fade in. */
 .lateRegion {

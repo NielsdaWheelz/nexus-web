@@ -16,7 +16,8 @@ import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
-import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
+import {parseResourceRef} from "@/lib/resourceGraph/resourceRef";
+import {resourceType, resourceTypeName} from "@/lib/resources/type";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import styles from "./OutlineEditorRow.module.css";
 
@@ -53,8 +54,9 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     // justify-defect: only uncommitted drafts lack a canonical resource ref.
     if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
     const scheme = parsed === null ? "note_block" : parsed.scheme;
-    const identity = resourceTypeLabel(scheme).toLowerCase();
-    const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
+    const type = resourceType(scheme, null);
+    const identity = resourceTypeName(type);
+    const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
     const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
     if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
     // native keyboard traversal uses the glyph as the row's tab stop.

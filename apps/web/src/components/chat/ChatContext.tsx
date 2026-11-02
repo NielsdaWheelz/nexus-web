@@ -24,7 +24,8 @@ import { mutateConnection } from "@/lib/resourceGraph/links";
 import { MAY_HAVE } from "@/lib/chat/commands";
 import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceType, resourceTypeName } from "@/lib/resources/type";
 import { useContextItem } from "@/lib/chat/contextItems";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
@@ -88,7 +89,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const parsed = parseResourceRef(entry.item.ref);
   // justify-defect: admitted context refs must satisfy the canonical resource grammar.
   if (parsed === null) throw new Error(`Invalid context ref: ${entry.item.ref}`);
-  const type = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const type = resourceTypeName(resourceType(parsed.scheme, null));
   const label = item?.label ?? entry.item.label;
   const retry = { label: "retry", commandKey: `remove ${entry.item.ref}`, busy, run: () => void remove() };
   const remove = async () => {
