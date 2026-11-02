@@ -61,6 +61,9 @@ const clock = (ms: number) => formatClock(ms / 1000);
 const percent = (part: number, whole: number) =>
   `${whole > 0 ? (Math.min(part, whole) / whole) * 100 : 0}%`;
 
+/** A failure needs a look and wears `Warning`; progress (buffering, paused sync) has no sign. */
+type IdentityStatus = { readonly kind: "Failure" | "Progress"; readonly text: string };
+
 /** Artwork, title and subtitle as one button. */
 function Identity({
   state,
@@ -77,7 +80,7 @@ function Identity({
   onOpen: (event: TargetActivationEvent) => void;
   href?: string;
   buttonRef?: Ref<HTMLButtonElement>;
-  status?: string | null;
+  status: IdentityStatus | null;
 }) {
   const statusId = useId();
   const { kind, descriptor } = state.source;
@@ -103,12 +106,12 @@ function Identity({
       ? `preview from ${descriptor.source}`
       : descriptor.subtitle;
   const contents = <span className={styles.identityContent}>
-      <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Warning size={12} /></span> : null}</span>
+      <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status?.kind === "Failure" ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Warning size={12} /></span> : null}</span>
       <span className={styles.identityCopy}>
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
-      {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
+      {status ? <span id={statusId} className={styles.srOnly}>{status.text}</span> : null}
     </span>;
   return href ? <ButtonLink href={href} className={styles.identity} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</ButtonLink>
     : <Button ref={buttonRef} className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
@@ -321,8 +324,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded?.source.kind === "Episode" && loaded.playbackFailed
     && queue.failure?.kind === "Episode" && queue.failure.entry_id === queue.header?.current_entry_id;
-  const status = loaded === null || queuePlaybackFailure ? null : loaded.error ??
-    (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
+  const progress = loaded === null || queuePlaybackFailure ? null
+    : loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused";
   const operation = save.state;
   let settingsStatus: string | null = null;
   let settingsFailed = false;
@@ -348,6 +351,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       default: assertNever(preferences.application);
     }
   }
+  const failure = (queuePlaybackFailure ? null : loaded?.error) ?? settingsStatus;
+  const identityStatus: IdentityStatus | null = failure !== null ? { kind: "Failure", text: failure }
+    : progress === null ? null : { kind: "Progress", text: progress };
   const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
   const sheetShown = !modeChanged && isMobile && sheetOpen;
   const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
@@ -448,7 +454,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       }
       default: assertNever(state);
     }
-  }, [state, identity, title, status, unavailable, settingsStatus, queuePlaybackFailure]);
+  }, [state, identity, title, progress, unavailable, settingsStatus, queuePlaybackFailure]);
 
   const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.UpNext />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
@@ -511,7 +517,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         if (handled === "handled-default" || handled === "handled-new-pane") opened();
       };
       const identityButton = <Identity state={state} size={44}
-        label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={(queuePlaybackFailure ? null : state.error) ?? settingsStatus ?? status} />;
+        label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />;
 
       const stop = <Button size="comfortable" iconOnly icon={<Icon.Stop />} aria-label="stop playback" onClick={commands.stop} />;
       desktopSource = identityButton;
@@ -625,7 +631,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       contents = isMobile ? <>
         <MiniProgress />
         <div className={styles.miniRow}>
-          <Identity state={state} size={44} buttonRef={openerRef} status={(queuePlaybackFailure ? null : state.error) ?? settingsStatus ?? status}
+          <Identity state={state} size={44} buttonRef={openerRef} status={identityStatus}
             label={`open now playing: ${source.descriptor.title}`}
             onOpen={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
           <Transport compact />
