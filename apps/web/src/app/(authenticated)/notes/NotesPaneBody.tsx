@@ -2,7 +2,7 @@
 
 // The local account database owns the index online and offline. Pages use one
 // title/ref ordering; filtering describes only the loaded bounded prefix.
-import { Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useEffect, useId, useMemo, useRef } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
@@ -98,7 +98,7 @@ export default function NotesPaneBody() {
     toolbar={<>
       <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); submit(false); }} onKeyDown={submitGesture}>
         <Input ref={titleInput} value={title.value} onChange={event => title.set(event.currentTarget.value)} onInput={event => title.set(event.currentTarget.value)} placeholder="New page" aria-label="New page title" style={{ flex: 1 }} />
-        <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Plus size={16} aria-hidden="true" />} />
+        <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Icon.Add aria-hidden="true" />} />
       </form>
       <ButtonLink href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
     </>}

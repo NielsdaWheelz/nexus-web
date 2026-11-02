@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
@@ -140,7 +140,7 @@ export default function MobileSheet({
               <div className={styles.titleRow}>
                 <h2 className={styles.title}>{ariaLabel}</h2>
                 <button type="button" className={styles.close} aria-label={`close ${ariaLabel}`} onClick={requestDismiss}>
-                  <X size={16} aria-hidden="true" />
+                  <Icon.Dismiss size={16} aria-hidden="true" />
                 </button>
               </div>
             ) : null}

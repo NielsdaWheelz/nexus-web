@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState, type CompositionEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
-import { SlidersHorizontal, X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -132,7 +132,7 @@ export default function PaneQueryToolbar({
             }}
           />
           {input.value || input.appliedValue ? (
-            <Button className={styles.clear} iconOnly aria-label="Clear text" disabled={input.disabled} onClick={clear} icon={<X size={16} aria-hidden="true" />} />
+            <Button className={styles.clear} iconOnly aria-label="Clear text" disabled={input.disabled} onClick={clear} icon={<Icon.Dismiss aria-hidden="true" />} />
           ) : null}
         </div>
         {submit ? <Button emphasis="strong" type="submit" disabled={submit.disabled || input.disabled}>Search</Button> : null}
@@ -149,7 +149,7 @@ export default function PaneQueryToolbar({
             ref={triggerRef}
             aria-expanded={expanded}
             aria-controls={optionsId}
-            icon={<SlidersHorizontal size={16} aria-hidden="true" />}
+            icon={<Icon.Filter aria-hidden="true" />}
             onClick={() => expanded ? collapse() : setExpanded(true)}
             {...(options.iconOnly ? {
               iconOnly: true,

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler, type RefObject } from "react";
 import { podcastTargetKey } from "@/lib/podcasts/api";
 import ResourceActions from "@/components/resources/ResourceActions";
@@ -174,7 +174,7 @@ export default function SurfaceHeader({
           <div className={styles.navigation}>
             <Button
               iconOnly
-              icon={<ChevronLeft />}
+              icon={<Icon.Left />}
               className={styles.navigationButton}
               onClick={navigation.onBack}
               onKeyDown={navigation.onBack}
@@ -184,7 +184,7 @@ export default function SurfaceHeader({
             />
             <Button
               iconOnly
-              icon={<ChevronRight />}
+              icon={<Icon.Right />}
               className={styles.navigationButton}
               onClick={navigation.onForward}
               onKeyDown={navigation.onForward}

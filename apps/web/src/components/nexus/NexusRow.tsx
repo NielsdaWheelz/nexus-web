@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 // Row parts: resource bodies, menus, and visible search status.
@@ -47,13 +47,13 @@ function RowContent({ body, match }: { body: Body; match: Schema<"SearchMatchOut
 
 /** Mobile rows are one native button, so only phrasing content belongs here; evidence follows it. */
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
-  const Icon = row.icon;
+  const Glyph = row.icon;
   const Content = desktop ? "div" : "span";
   const facts = rowFacts(row);
   return (
     <>
       <span className={`${collection.adornment} ${styles.rowIcon}`} aria-hidden="true">
-        <Icon size={18} aria-hidden="true" />
+        <Glyph size={20} aria-hidden="true" />
       </span>
       <Content className={`${collection.content} ${styles.rowBody}`}>
         {row.item && desktop ? <NexusResourceContent item={row.item} row={row} facts={facts} /> : <>
@@ -144,7 +144,7 @@ function TargetMenu({ row, menuProps, activate, closePane, destinationHref, mobi
   if (row.matchingPassage) {
     const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
     const href = action.kind === "Available" && action.target.kind === "Resource" && (action.target.activation.kind === "route" || (!picker && action.target.activation.kind === "external")) ? action.target.activation.href : null;
-    if (href) ownOptions.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
+    if (href) ownOptions.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href, icon: null,
       onActivate: action.kind === "Available" && action.target.kind === "Resource" && action.target.activation.kind === "external" ? undefined : (event) => {
         const intent = workspaceTargetActivationIntent(event);
         if (intent.kind === "Unowned") return "unhandled";
@@ -155,16 +155,16 @@ function TargetMenu({ row, menuProps, activate, closePane, destinationHref, mobi
         return result && result.kind !== "Cancelled" ? fork ? "handled-new-pane" : "handled-default" : "consumed";
       },
     });
-    else if (action.kind === "Unavailable") ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage", icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
+    else if (action.kind === "Unavailable") ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage", icon: null,
       disabled: true, disabledReason: action.reason, onSelect: () => undefined,
     });
   }
   if (!picker && secondary?.kind === "TargetMenu") for (const pane of secondary.closePanes)
-    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
+    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <Icon.Dismiss aria-hidden="true" />, onSelect: () => closePane(pane.id) });
   const href = destinationHref(row);
   const fork: Extract<ActionDescriptor, { kind: "link" }> | null = mobile && !picker && href ? {
     kind: "link", id: "Nexus.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label.toLowerCase(), href,
-    icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
+    icon: null,
     onActivate: (event) => {
       const intent = workspaceTargetActivationIntent(event);
       if (intent.kind === "Unowned") return "unhandled";

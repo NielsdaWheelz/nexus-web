@@ -2,7 +2,7 @@
 
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
-import { ArrowLeft, Search, X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
@@ -124,7 +124,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const root = (
     <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`} onFocusCapture={event => { if (event.target instanceof HTMLElement && bodyRef.current?.contains(event.target)) focusedControl.current = event.target; }}>
       <header className={styles.header}>
-        {searching && !picker ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
+        {searching && !picker ? <Button iconOnly icon={<Icon.Left />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{picker ? "open in new pane" : searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
           {!searching ? <FeedbackRecoveryControl /> : null}
@@ -144,12 +144,12 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }}
           />
-          <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} /></>}
+          <Button iconOnly icon={<Icon.Dismiss />} className={styles.iconButton} aria-label="close nexus" onClick={controller.close} /></>}
         </div>
       </header>
       <div className={styles.searchInput}>
         <div className={styles.searchField} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
-          <Search size={19} aria-hidden="true" />
+          <Icon.Search size={20} aria-hidden="true" />
           <input
             ref={inputRef}
             type="search"
@@ -184,7 +184,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             }}
           />
           {searching ? <NexusQueryStatus /> : null}
-          {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
+          {controller.query ? <Button iconOnly icon={<Icon.Dismiss />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
       </div>
       <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
@@ -227,7 +227,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       <Button iconOnly className={styles.rowMenu} data-nexus-control={`ClosePane:${row.secondary.paneId}`} aria-label={`close ${paneRowName(controller, row)}`}
                         onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
                         onClick={event => { event.currentTarget.focus({ preventScroll: true }); if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId); }}
-                        icon={<X size={18} aria-hidden="true" />} />
+                        icon={<Icon.Dismiss aria-hidden="true" />} />
                     ) : row.secondary?.kind === "TargetMenu" || (picker && row.matchingPassage) ? (
                       <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} destinationHref={controller.destinationHref} mobile picker={picker} menuProps={{
                         label: `more actions for ${row.label}`,

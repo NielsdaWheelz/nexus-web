@@ -2,7 +2,7 @@
 
 // The query edits text and selects candidates; native secondary buttons own their actions.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
@@ -301,7 +301,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           controller.setActive(row.key);
                           if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId);
                         }}
-                        icon={<X size={18} aria-hidden="true" />} />
+                        icon={<Icon.Dismiss aria-hidden="true" />} />
                     ) : row.secondary?.kind === "TargetMenu" || (controller.rootMode === "NewPane" && row.matchingPassage) ? <NexusRowMenu
                       row={row}
                       activate={controller.activate}

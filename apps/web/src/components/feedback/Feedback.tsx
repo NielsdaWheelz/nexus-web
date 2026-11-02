@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   useContext,
   useEffect,
@@ -121,7 +121,7 @@ function RecoveryControl({ scope, session, className, menu }: {
   useLayoutEffect(() => { scope.control = anchor; return () => { scope.control = null; }; }, [scope, anchor]);
   useLayoutEffect(() => { scope.recovery = open ? layer.current : null; scope.recoveryOpen = open; scope.changed(); return () => { scope.recovery = null; scope.recoveryOpen = false; }; }, [scope, open]);
   return <>
-    <Button ref={setAnchor} className={className} role={menu ? "menuitem" : undefined} tabIndex={menu ? -1 : undefined} iconOnly icon={eligible && failures.length ? <OctagonAlert /> : <span />}
+    <Button ref={setAnchor} className={className} role={menu ? "menuitem" : undefined} tabIndex={menu ? -1 : undefined} iconOnly icon={eligible && failures.length ? <Icon.Warning /> : <span />}
       aria-label="show recovery" tooltip={{ text: eligible && failures.length ? "show recovery" : "" }} aria-expanded={open && failures.length > 0} disabled={!eligible || !failures.length}
       aria-busy={local.pending !== null || undefined} busyKey={local.pending} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
     <FloatingActionSurface open={open && failures.length > 0} disclosure feedback interactionLayer={layer}
@@ -145,7 +145,7 @@ export function FailureAnnouncement({ failure, session }: { failure: Failure; se
       onPublish={() => session.spoken.set(failure.occurrence, occurrence)} /> : null;
 }
 
-const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
+const ICONS = { Neutral: null, Info: null, Success: Icon.Check, Warning: Icon.Warning, Danger: null };
 const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
 
 /** One account's presentation. The geometry provider is above this owner. */
@@ -236,7 +236,7 @@ export function Signal({
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
   }, [overlay, mayRestoreFocus]);
-  const Icon = plain ? null : ICONS[content.tone];
+  const Glyph = plain ? null : ICONS[content.tone];
   const Title = surfaceState ? "h2" : "p";
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
@@ -251,7 +251,7 @@ export function Signal({
     aria-labelledby={titleId}
   >
     <div ref={setSummaryElement} className={styles.summary}>
-      {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
+      {Glyph ? <Glyph className={styles.icon} size={16} aria-hidden="true" /> : null}
       <Title id={titleId} className={styles.title}>{content.title}</Title>
       <div className={styles.controls}>
         {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} contextId={titleId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
@@ -264,12 +264,12 @@ export function Signal({
           onClick={() => changeExpanded(!open)}
         >
           {open ? "show less" : "show more"}
-          <ChevronDown size={14} aria-hidden="true" className={open ? `${styles.chevron} ${styles.expanded}` : styles.chevron} />
+          <Icon.Disclose open={open} size={14} aria-hidden="true" className={styles.chevron} />
         </Button> : null}
         {onDismiss ? <Button
           className={styles.control}
           iconOnly
-          icon={<X />}
+          icon={<Icon.Dismiss />}
           aria-label={dismissLabel ?? `dismiss: ${content.title}`}
           aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
           onClick={() => onDismiss()}
@@ -354,7 +354,7 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
     >{shown.label}</ButtonLink> : <Button
       {...events}
       className={styles.control}
-      icon={shown.href === undefined && shown.copiedOccurrence ? <Check /> : undefined}
+      icon={shown.href === undefined && shown.copiedOccurrence ? <Icon.Check /> : undefined}
       reserveIcon
       busyKey={action.commandKey ?? occurrence}
       aria-busy={shown.busy || undefined}
@@ -437,7 +437,7 @@ function Diagnostics({ requestId }: { requestId: string }) {
   return <div className={styles.diagnostics}>
     <div className={styles.diagnosticsBody}>
       <code ref={text} tabIndex={-1}>request id: {requestId}</code>
-      <Button className={styles.control} icon={copy.copied ? <Check /> : <span />} onClick={onCopy}>copy diagnostics</Button>
+      <Button className={styles.control} icon={copy.copied ? <Icon.Check /> : <span />} onClick={onCopy}>copy diagnostics</Button>
     </div>
     {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
     {failed ? <FeedbackNotice occurrence={failure.occurrence} content={{ tone: "Warning", title: "couldn’t copy diagnostics" }}

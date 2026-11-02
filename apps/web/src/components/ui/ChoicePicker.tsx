@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useListBox, useOption } from "react-aria/useListBox";
 import { Item } from "react-stately/Item";
 import { useListState, type ListState } from "react-stately/useListState";
@@ -110,7 +110,7 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
       }}
     >
       <span className={styles.value}>{text}</span>
-      <ChevronDown size={14} aria-hidden="true" className={styles.chevron} />
+      <Icon.Choose size={14} aria-hidden="true" className={styles.chevron} />
     </button>
     <PickerSurface
       active={open}
@@ -175,6 +175,6 @@ function ChoiceRow({ option, state }: { readonly option: ChoiceOption; readonly 
       <span {...labelProps}>{option.label}</span>
       {detail ? <span {...descriptionProps} className={collection.detail}>{detail}</span> : null}
     </span>
-    {isSelected ? <Check size={15} aria-hidden="true" className={collection.adornment} /> : null}
+    {isSelected ? <Icon.Check size={16} aria-hidden="true" className={collection.adornment} /> : null}
   </li>;
 }

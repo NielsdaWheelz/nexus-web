@@ -2,7 +2,7 @@
 
 // The on-demand account row shows current sync state and its verified local fact.
 // The authored account adapter owns persistent recovery and failure announcements.
-import { Check, CircleAlert, CloudOff, LoaderCircle, LogIn } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { SyncStatus } from "@nexus/authored/types";
 import Button from "@/components/ui/Button";
 import { STATUS_COPY } from "@/lib/authored/status";
@@ -14,9 +14,10 @@ const DETAIL: Record<SyncStatus, string | null> = {
   preparing: null, saving: null, offline: SAVED_ON_DEVICE, syncing: null, current: null,
   sign_in_required: SAVED_ON_DEVICE, update_required: SAVED_ON_DEVICE, local_error: null, sync_error: SAVED_ON_DEVICE,
 };
-const ICONS: Record<SyncStatus, typeof Check> = {
-  preparing: LoaderCircle, saving: LoaderCircle, offline: CloudOff, syncing: LoaderCircle, current: Check,
-  sign_in_required: CircleAlert, update_required: CircleAlert, local_error: CircleAlert, sync_error: CircleAlert,
+// A status with no sign keeps a blank slot, so its text holds still as the state changes.
+const ICONS: Record<SyncStatus, Icon.Glyph | null> = {
+  preparing: null, saving: null, offline: Icon.Offline, syncing: null, current: Icon.Check,
+  sign_in_required: Icon.Warning, update_required: Icon.Warning, local_error: Icon.Warning, sync_error: Icon.Warning,
 };
 const REMOTE_FAILURES: ReadonlySet<SyncStatus> = new Set(["sign_in_required", "update_required", "sync_error"]);
 
@@ -36,13 +37,13 @@ export function syncStatusText(status: SyncStatus, cause: string | null): string
 /** The account menu's fixed status row. Credential repair belongs inside this
  * status, so saving and auth transitions never change the menu's membership. */
 export function syncStatusOption(status: SyncStatus, cause: string | null, auth: { onSignIn: () => void; busy: boolean }): ActionDescriptor {
-  const Icon = ICONS[status];
+  const Glyph = ICONS[status];
   return {
     kind: "custom",
     id: "sync-status",
     label: "sync status",
-    render: ({ closeMenu, presentation }) => <div className={styles.status} data-failed={Icon === CircleAlert || undefined}>
-      <Icon size={16} className={styles.statusIcon} data-busy={Icon === LoaderCircle || undefined} aria-hidden="true" />
+    render: ({ closeMenu, presentation }) => <div className={styles.status} data-failed={Glyph === Icon.Warning || undefined}>
+      {Glyph ? <Glyph size={16} className={styles.statusIcon} aria-hidden="true" /> : <span className={styles.statusIcon} />}
       <span className={styles.statusText}>
         <span>{STATUS_COPY[status]}</span>
         {details(status, cause).map((line, index) => <span key={index} className={styles.statusDetail} data-progress={status === "syncing" || undefined}>{line}</span>)}
@@ -51,7 +52,6 @@ export function syncStatusOption(status: SyncStatus, cause: string | null, auth:
           tabIndex={presentation === "menu" ? -1 : 0}
           disabled={auth.busy}
           onClick={() => { closeMenu(); auth.onSignIn(); }}
-          icon={<LogIn size={16} aria-hidden="true" />}
         >Sign in</Button> : null}
       </span>
     </div>,

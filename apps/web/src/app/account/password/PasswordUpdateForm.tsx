@@ -1,7 +1,7 @@
 "use client";
 // at least 15 characters (the provider's own minimum). an answer that never
 // arrived asks for the same password again.
-import { Eye, EyeOff } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
@@ -151,7 +151,7 @@ export default function PasswordUpdateForm({
               className={authStyles.reveal}
               size="comfortable"
               iconOnly
-              icon={revealed ? <EyeOff /> : <Eye />}
+              icon={revealed ? <Icon.Hide /> : <Icon.Show />}
               aria-label={revealed ? "Hide password" : "Show password"}
               aria-controls="password-update-password"
               onClick={() => setRevealed((value) => !value)}

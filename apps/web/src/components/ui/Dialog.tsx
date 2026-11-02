@@ -3,7 +3,7 @@
 import { useRef, type ReactNode } from "react";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { cx } from "@/lib/ui/cx";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./Dialog.module.css";
@@ -42,7 +42,7 @@ export default function Dialog({
               onClick={requestDismiss}
               aria-label="Close dialog"
             >
-              <X size={16} />
+              <Icon.Dismiss size={16} />
             </button>
           </header>
           <div ref={body} className={styles.body}>{children}</div>
