@@ -87,7 +87,7 @@ def media_unit_build(db: Session, job: JobRow) -> None:
 
 def podcast_feed_run(db: Session, job: JobRow) -> None:
     """Pause only this exact live page, under the queue's fenced terminal execution."""
-    from nexus.services.podcasts import imports, sync
+    from nexus.services.podcasts import sync
 
     assert job.execution_id is not None
     run_id = UUID(job.payload["run_id"])
@@ -122,7 +122,6 @@ def podcast_feed_run(db: Session, job: JobRow) -> None:
     """),
         params,
     )
-    imports.finish_run(db, run_id=run_id)
     sync.settle_recurring(db, run_id=run_id)
 
 

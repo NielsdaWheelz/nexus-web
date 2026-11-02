@@ -6,7 +6,6 @@ library order. cancel compares the attempt and keeps committed entries. publicat
 runs under the caller's show/run lock and locks the complete media/library set before
 filing.
 terminal completion/cancel clears processed identities only after fencing workers.
-module imports stay light because queue dead letters call finish_run.
 """
 
 from __future__ import annotations
@@ -118,10 +117,12 @@ def mark_processed(db: Session, *, library_ids: Sequence[UUID], media_id: UUID) 
 
 
 def finish_run(db: Session, *, run_id: UUID) -> None:
-    """Publish an import lifecycle change after its run owner fenced the old job."""
+    """Clear a completed or cancelled import's processed identities after its run owner
+    fenced the old job; a failed one keeps them for retry. the lifecycle changes no
+    library order: only an import's insertions advance its destination's revision."""
     row = db.execute(
         text("""
-        SELECT i.id,i.library_id,r.completed_at,r.cancelled_at FROM podcast_library_imports i
+        SELECT i.id,r.completed_at,r.cancelled_at FROM podcast_library_imports i
         JOIN podcast_feed_runs r ON r.id = i.run_id WHERE r.id = :run
     """),
         {"run": run_id},
@@ -133,11 +134,6 @@ def finish_run(db: Session, *, run_id: UUID) -> None:
             text("DELETE FROM podcast_import_processed_episodes WHERE import_id = :id"),
             {"id": row.id},
         )
-    db.execute(
-        text("""UPDATE libraries SET order_revision = nextval('collection_order_revision_seq')
-                       WHERE id = :id"""),
-        {"id": row.library_id},
-    )
 
 
 def publish_episodes(
