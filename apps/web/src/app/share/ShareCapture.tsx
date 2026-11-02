@@ -7,22 +7,18 @@
 // note id fixed on first send. Results offer Open (in the shell, through
 // `nexus-share://open`) and Done.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
-import type { Line, Shell, Verbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { transportVerbs, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
+import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
-import {
-  isApiError,
-  outcomeUnknown,
-  isUnauthenticatedApiError,
-} from "@/lib/api/client";
+import { isApiError, outcomeUnknown } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
@@ -36,26 +32,29 @@ import { getWritingRuntime, isAuthoredStorageFailure, LocalCommitError } from "@
 import { AuthoredProvider } from "@/lib/authored/provider";
 import { readBrowserBinding } from "@/lib/authored/binding";
 import { readDeviceStartup } from "@/lib/native/client";
+import { subscribeAdmission, subscribeRepair, updateRemedy } from "@/lib/native/admission";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import { WorkProvider, useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./share.module.css";
 
 type Result =
   | { label: string; ok: true; status: string; path: string; available: boolean }
-  | { label: string; ok: false; retryable: boolean; review: boolean; local_commit: boolean; signIn: boolean; line: Line };
+  /** `transport` is an api refusal's, whose verbs it decides; null is a local note's, whose verb is `retry`. */
+  | { label: string; ok: false; transport: Transport | null; review: boolean; local_commit: boolean; line: Line };
 
 const SAVE_FAILED = "couldn’t save this.";
-/** A refusal as a result row: sign-out is final for this share; an unknown outcome resends the
- * same id; a domain refusal takes L6's domain line; anything else its transport's. */
+/** A refusal as a result row: sign-in is the workspace's; an unknown outcome resends the same id; a
+ * domain refusal takes L6's domain line; anything else its transport's. Its verbs are the
+ * transport's, so a stale build offers reload alone. */
 function failed(label: string, error: unknown): Extract<Result, { ok: false }> {
-  if (isUnauthenticatedApiError(error)) return { label, ok: false, retryable: false, review: false, local_commit: false, signIn: true, line: { fact: "sign in to save this." } };
   if (!isApiError(error)) throw error;
   const transport = transportOf(error);
   const domain = transport === "Refused" ? captureErrorFeedback(error, "SaveSource").message : undefined;
-  const line = outcomeUnknown(error) ? { fact: "not sure that saved. it may have gone through." }
+  const line = transport === "SignIn" ? { fact: "sign in to save this." }
+    : outcomeUnknown(error) ? { fact: "not sure that saved. it may have gone through." }
     : transport !== "Refused" ? TRANSPORT_LINES[transport].command(SAVE_FAILED)
     : domain === undefined ? { fact: SAVE_FAILED } : { fact: SAVE_FAILED, reason: domain };
-  return { label, ok: false, retryable: true, local_commit: false, signIn: false, review: ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), line };
+  return { label, ok: false, transport, local_commit: false, review: ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), line };
 }
 
 /** No local binding yet, or a share made for another account than the one open here. */
@@ -97,12 +96,19 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
     })().catch(error => { if (!active) return; if (error instanceof CaptureAdmissionError || isAuthoredStorageFailure(error) || isApiError(error)) setFailure(error); else setAdmissionDefect({ error }); });
     return () => {active=false;};
   },[plain,attempt,props.isShell]);
+  // A failed read heals: a repair (focus, back online) reads again.
+  useEffect(() => isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   if (admissionDefect !== null) throw admissionDefect.error;
-  const retryAdmission: Verbs = [{ label: "retry", commandKey: "RetryShareAdmission", run: () => retry(value => value + 1) }];
-  if (plain && failure) return failure instanceof CaptureAdmissionError
-    ? failure.kind === "Unbound" ? <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={retryAdmission} speak />
-      : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />
-    : <Fact line={isApiError(failure) ? TRANSPORT_LINES[transportOf(failure)].command(NOT_OPENED) : { fact: NOT_OPENED }} verbs={retryAdmission} speak />;
+  const retryAdmission: CommandVerb = { label: "retry", commandKey: "RetryShareAdmission", run: () => retry(value => value + 1) };
+  if (plain && failure) {
+    if (failure instanceof CaptureAdmissionError) return failure.kind === "Unbound"
+      ? <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={[retryAdmission]} speak />
+      : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />;
+    if (!isApiError(failure)) return <Fact line={{ fact: NOT_OPENED }} verbs={[retryAdmission]} speak />;
+    const transport = transportOf(failure);
+    return <Fact line={TRANSPORT_LINES[transport].command(NOT_OPENED)} verbs={transportVerbs(transport, { retry: retryAdmission, signIn: SHELL.signIn }) ?? undefined} speak />;
+  }
   if (plain && !account) return <Ruling />;
   return <WorkProvider>{plain && account ? <AuthoredProvider accountId={account.user_id} host="share"><ShareCaptureContent {...props} account={account} /></AuthoredProvider> : <ShareCaptureContent {...props} account={null} />}</WorkProvider>;
 }
@@ -202,7 +208,7 @@ function ShareCaptureContent({
         }, () => {});
       } else if (!isAuthoredStorageFailure(error)) { if(active)setDefect({error}); return; }
       // `save` is the retry: it checks a committed note, or saves again.
-      if(active)setResults([{label:trimmed,ok:false,retryable:true,review:false,local_commit:error instanceof LocalCommitError,signIn:false,
+      if(active)setResults([{label:trimmed,ok:false,transport:null,review:false,local_commit:error instanceof LocalCommitError,
         line:{fact:current.committed?"couldn’t confirm this note on this device.":"couldn’t save this note on this device."}}]);
     };
     void current.capture.then(accepted, failed).finally(()=>{if(active)setSaving(false);});
@@ -242,7 +248,8 @@ function ShareCaptureContent({
         for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false });
       }
     } catch (error) {
-      setResults(targets.map(url => failed(url, error)));
+      if (isApiError(error)) setResults(targets.map(url => failed(url, error)));
+      else setDefect({ error });
       setSaving(false);
       return;
     }
@@ -298,7 +305,7 @@ function ShareCaptureContent({
       <h1 className={styles.heading}>save to nexus</h1>
       <p className={styles.body}>{trimmed}</p>
       <div className={styles.actions}>
-        <Button aria-busy={saving || undefined} disabled={saving || result === null || result.ok || !result.retryable}
+        <Button aria-busy={saving || undefined} disabled={saving || result === null || result.ok}
           onClick={() => { if (result !== null) retry(result); }}>save</Button>
         {result?.ok ? <a className={styles.actionPrimary} href={open(result.path)}>open</a> : null}
         <a className={styles.action} href={done}>done</a>
@@ -368,7 +375,7 @@ function ShareCaptureContent({
   }
 
   const anySaved = shown.some((result) => result.ok && result.available);
-  const signedOut = shown.some((result) => !result.ok && result.signIn);
+  const signedOut = shown.some((result) => !result.ok && result.transport === "SignIn");
   return (
     <>
       <h1 className={styles.heading}>
@@ -405,8 +412,8 @@ function ShareCaptureContent({
   );
 }
 
-/** A failed result on its row. `review libraries` opens review; `save` sends. */
+/** A failed result on its row. `review libraries` opens review; `retry` sends. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
-  return <Fact line={result.line} speak verbs={result.signIn ? SHELL.signIn ? [SHELL.signIn] : undefined
-    : result.retryable ? [{ label: result.review ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving }] : undefined} />;
+  const verb: CommandVerb = { label: result.review ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving };
+  return <Fact line={result.line} speak verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb, signIn: SHELL.signIn })) ?? undefined} />;
 }

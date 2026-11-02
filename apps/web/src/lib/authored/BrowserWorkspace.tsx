@@ -1,16 +1,17 @@
 "use client";
 /** Desktop adapter for the shared installed shell. A confirmed local binding
  * opens without credentials; first provisioning requires verified server data. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
+import { subscribeAdmission, subscribeRepair, updateRemedy } from "@/lib/native/admission";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
@@ -76,6 +77,9 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     window.addEventListener("nexus:authored-retired", retired);
     return () => { live = false; window.removeEventListener("nexus:authored-retired", retired); };
   }, [attempt]);
+  // A failed read heals: a repair (focus, back online) reads again.
+  useEffect(() => failure !== null && isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
   const signInVerb: CommandVerb = { label: "sign in", commandKey: "BrowserSignIn", run: signIn };
   const retryVerb: CommandVerb = { label: "retry", commandKey: "RetryBrowserWorkspace", run: () => retry(value => value + 1) };
@@ -86,7 +90,11 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     : retirementPending === "another_tab" ? fact({ fact: "another nexus tab is finishing sign out.", reason: "this page continues when it’s done." })
     : <Fact line={{ fact: "signing out on this device." }} />;
   if (signedOut) return <Fact line={{ fact: "signed out on this device." }} verbs={[signInVerb]} />;
-  if (failure) return fact(isApiError(failure) ? TRANSPORT_LINES[transportOf(failure)].command(OPEN_FAILED) : { fact: OPEN_FAILED }, [retryVerb, signInVerb]);
+  if (failure) {
+    if (!isApiError(failure)) return fact({ fact: OPEN_FAILED }, [retryVerb, signInVerb]);
+    const transport = transportOf(failure);
+    return fact(TRANSPORT_LINES[transport].command(OPEN_FAILED), transportVerbs(transport, { retry: retryVerb, signIn: signInVerb }) ?? undefined);
+  }
   if (!binding) return <Ruling />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
