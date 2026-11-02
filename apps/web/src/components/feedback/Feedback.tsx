@@ -19,7 +19,6 @@ import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { useThrowLater } from "@/lib/api/serverState";
-import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
@@ -29,7 +28,6 @@ import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible,
 import Slips from "./Slips";
 import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
 import styles from "./Feedback.module.css";
-import slipStyles from "./Slips.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
 export type FeedbackAnnouncement = "None" | "Polite" | "Assertive";
@@ -214,51 +212,16 @@ export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: strin
   return null;
 }
 
-/** Where slips land. Root is the host's canvas, Pane sits above its content (the latest for a
- * pane wins, so a composer takes over while it stands), Modal sits in its panel. */
-export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string } | { kind: "Modal" }) {
-  return props.kind === "Modal" ? <ModalAnchor /> : <GroundAnchor paneId={props.kind === "Pane" ? props.paneId : null} />;
-}
-
-function GroundAnchor({ paneId }: { paneId: string | null }) {
-  const stage = useStage();
-  const viewport = useMobileViewport();
-  const element = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const anchor = element.current!;
-    const leave = stage.anchor(paneId === null ? { kind: "Root" } : { kind: "Pane", paneId }, anchor);
-    const unproject = viewport.registerStageAnchor(anchor);
-    return () => { leave(); unproject(); };
-  }, [stage, viewport, paneId]);
-  return <div ref={element} className={slipStyles.anchor} />;
-}
-
-function ModalAnchor() {
-  const stage = useStage();
-  const layer = useContext(OverlayContext);
-  if (!layer) throw new Error("a modal stage anchor requires its ModalFrame");
-  const element = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => stage.anchor({ kind: "Modal", layer }, element.current!), [stage, layer]);
-  return <div ref={element} className={`${slipStyles.anchor} ${slipStyles.modalAnchor}`} />;
-}
-
-/** The workspace's half of the world. Other hosts have no panes and leave it empty. */
-export function useStageWorkspace(workspace: { inView: ReadonlySet<string>; active: string; single: boolean }): void {
-  const stage = useStage();
-  const { inView, active, single } = workspace;
-  useLayoutEffect(() => stage.workspace({ inView, active, single }), [stage, inView, active, single]);
-}
-
 /** Receipts stand on the stage until their sites migrate. */
 export function useFeedback(): FeedbackContextValue {
   const { say } = useOutcome();
   return useMemo(() => ({
     receipt(content, action) {
-      const verb: Verb | undefined = action === undefined || content.reload ? undefined : action.href === undefined
+      const verb = action?.href === undefined && action !== undefined
         ? { label: action.label, commandKey: action.commandKey ?? action.label, run: action.onClick, busy: action.busy, disabledReason: action.disabledReason, copied: action.copiedOccurrence }
         : action;
-      const stale = content.reload ? transportVerbs("Update", { signIn: null }) ?? undefined : undefined;
-      return say({ fact: content.title, reason: content.message }, stale ?? (verb ? [verb] : undefined));
+      const verbs: Verbs | null = content.reload ? transportVerbs("Update", { signIn: null }) : verb ? [verb] : null;
+      return say({ fact: content.title, reason: content.message }, verbs ?? undefined);
     },
   }), [say]);
 }

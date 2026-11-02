@@ -5,15 +5,16 @@
  * nothing about where or when. A frame is a labelled region after its anchor's content in tab
  * order, so it is reachable without ever taking focus. Only the topmost room speaks. */
 import { ChevronDown, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { topModal } from "@/lib/ui/overlay";
+import { OverlayContext, topModal } from "@/lib/ui/overlay";
 import { VerbControl } from "./Fact";
 import { Announcement } from "./Feedback";
-import { useStage, type RoomView, type SlipView, type Speech } from "./stage";
+import { useStage, type Anchor, type RoomView, type SlipView, type Speech } from "./stage";
 import styles from "./Slips.module.css";
 
 const SWIPE_STARTS_PX = 4;
@@ -38,6 +39,46 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
       next.focus({ preventScroll: true });
     });
   }, [owner]);
+}
+
+const ROOT: Anchor = { kind: "Root" };
+
+function useRoom(anchor: Anchor) {
+  const stage = useStage();
+  const element = useRef<HTMLDivElement>(null);
+  // justify-type-assertion: the anchor's own element, committed before this layout effect.
+  useLayoutEffect(() => stage.anchor(anchor, element.current!), [stage, anchor]);
+  return element;
+}
+
+function RootAnchor() {
+  return <div ref={useRoom(ROOT)} className={styles.anchor} />;
+}
+
+/** Its floor can stand above the viewport's, so what covers it is projected onto it. */
+function PaneAnchor({ paneId }: { paneId: string }) {
+  const element = useRoom(useMemo(() => ({ kind: "Pane", paneId }), [paneId]));
+  const viewport = useMobileViewport();
+  // justify-type-assertion: the anchor's own element, committed before this layout effect.
+  useLayoutEffect(() => viewport.registerStageAnchor(element.current!), [viewport, element]);
+  return <div ref={element} className={styles.anchor} />;
+}
+
+function ModalAnchor() {
+  const layer = useContext(OverlayContext);
+  if (!layer) throw new Error("a modal stage anchor requires its ModalFrame");
+  const element = useRoom(useMemo(() => ({ kind: "Modal", layer }), [layer]));
+  return <div ref={element} className={`${styles.anchor} ${styles.modalAnchor}`} />;
+}
+
+/** Where slips land. Root is the host's root element, Pane sits above its content (a pane's
+ * latest wins, so a composer takes over while it stands), Modal sits in its panel. */
+export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string } | { kind: "Modal" }) {
+  switch (props.kind) {
+    case "Root": return <RootAnchor />;
+    case "Pane": return <PaneAnchor paneId={props.paneId} />;
+    case "Modal": return <ModalAnchor />;
+  }
 }
 
 export default function Slips() {
@@ -90,10 +131,15 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
 function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus: Return }) {
   const stage = useStage();
   const { frame } = focus;
-  const [onset] = useState(room.slips.some(({ row }) => row.weight === "Risk") ? "Risk" : "Notice");
+  const [onset, setOnset] = useState<"Risk" | "Notice" | null>(room.slips.some(({ row }) => row.weight === "Risk") ? "Risk" : "Notice");
   const standing = useRef(false);
   const swipe = useRef<{ pointer: number; startY: number; y: number; at: number; speed: number } | null>(null);
   useFocusReturn(frame, focus.target);
+  // Nothing changes under a hold: a row stacking in cannot widen the frame beneath a pointer.
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (element) element.style.inlineSize = room.held ? `${element.getBoundingClientRect().width}px` : "";
+  }, [frame, room.held]);
   useEffect(() => {
     standing.current = true;
     const release = () => stage.holdRoom(room.id, "Press", false);
@@ -117,13 +163,15 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     className={styles.frame}
     aria-label="notices"
     tabIndex={-1}
-    data-onset={onset}
+    data-onset={onset ?? undefined}
     data-leaving={leaving ?? undefined}
     data-typing={typing || undefined}
     data-risk={room.slips.some(({ row }) => row.weight === "Risk") || undefined}
     data-many={room.slips.length > 3 || undefined}
     onAnimationEnd={event => {
-      if (event.target === event.currentTarget && leaving) for (const { row } of room.slips) stage.gone(row.key);
+      if (event.target !== event.currentTarget) return;
+      setOnset(null);
+      if (leaving) for (const { row } of room.slips) stage.gone(row.key);
     }}
     onPointerEnter={event => { if (event.pointerType === "mouse") stage.holdRoom(room.id, "Pointer", true); }}
     onPointerLeave={() => stage.holdRoom(room.id, "Pointer", false)}
@@ -176,7 +224,7 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
   const element = useRef<HTMLDivElement>(null);
   const lineId = useId();
   const [outgoing, setOutgoing] = useState(slip.replaced);
-  const [onset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
+  const [onset, setOnset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
   useFocusReturn(element, () => focus.frame.current ?? focus.target());
   const plain = row.weight === "Plain";
   return <div
@@ -185,7 +233,11 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
     data-weight={row.weight}
     data-onset={onset}
     data-leaving={frameLeaving ? undefined : leaving ?? undefined}
-    onAnimationEnd={event => { if (event.target === event.currentTarget && leaving) stage.gone(row.key); }}
+    onAnimationEnd={event => {
+      if (event.target !== event.currentTarget) return;
+      setOnset(undefined);
+      if (leaving) stage.gone(row.key);
+    }}
   >
     <p id={lineId} className={styles.line}>
       {outgoing ? <span className={styles.outgoing} aria-hidden="true" onAnimationEnd={() => setOutgoing(null)}>

@@ -2,9 +2,9 @@
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { StageAnchor } from "@/components/feedback/Feedback";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { Session } from "@/components/feedback/scope";
+import { StageAnchor } from "@/components/feedback/Slips";
 import { cx } from "@/lib/ui/cx";
 import {
   OverlayContext,

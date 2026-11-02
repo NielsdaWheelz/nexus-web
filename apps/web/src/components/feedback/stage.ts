@@ -6,7 +6,7 @@
  * Invariants: appearance never takes focus. A clock runs only while its row is displayed, unheld,
  * not typing and the document visible. Only Plain rows expire; a Held row tucks itself; Held and
  * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work. */
-import { createContext, useContext } from "react";
+import { createContext, useContext, useLayoutEffect } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -93,7 +93,7 @@ type Slip = {
 type Said = { text: string; occurrence: object };
 export type Speech = { Polite: Said | null; Assertive: Said | null };
 export type SlipView = { id: number; row: Row; leaving: Leaving | null; replaced: Line | null };
-export type RoomView = { id: number; anchor: Anchor; element: HTMLElement; slips: readonly SlipView[]; tucked: readonly Row[]; speaks: boolean };
+export type RoomView = { id: number; anchor: Anchor; element: HTMLElement; slips: readonly SlipView[]; tucked: readonly Row[]; held: boolean; speaks: boolean };
 export type StageView = { rooms: readonly RoomView[]; typing: boolean; speech: Speech };
 
 function lifetime({ weight, verbs }: Row): number | null {
@@ -198,7 +198,7 @@ export function createStage() {
         const tucked = here.filter(slip => slip.row.tucked);
         if (room.anchor.kind === "Pane" && here.length === 0) return [];
         return [{
-          id: room.id, anchor: room.anchor, element: room.element, speaks: room === speaker,
+          id: room.id, anchor: room.anchor, element: room.element, held: room.holds.size > 0, speaks: room === speaker,
           slips: shown.map(({ id, row, leaving, replaced }) => ({ id, row, leaving, replaced })),
           tucked: tucked.map(slip => slip.row),
         }];
@@ -368,4 +368,10 @@ export function useStage(): Stage {
   const stage = useContext(StageContext);
   if (!stage) throw new Error("the stage requires a FeedbackProvider");
   return stage;
+}
+
+/** The workspace's half of the world. Other hosts have no panes and leave it empty. */
+export function useStageWorkspace({ inView, active, single }: { inView: ReadonlySet<string>; active: string; single: boolean }): void {
+  const stage = useStage();
+  useLayoutEffect(() => stage.workspace({ inView, active, single }), [stage, inView, active, single]);
 }
