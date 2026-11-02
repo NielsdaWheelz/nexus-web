@@ -1,18 +1,21 @@
 "use client";
 
 // The mobile Nexus trigger: a tap opens the switchboard inside the gesture; a horizontal
-// touch swipe switches to the adjacent pane instead (left: next, right: previous).
-import { useLayoutEffect, useRef, type PointerEvent, type RefObject } from "react";
+// touch swipe switches to the adjacent pane instead (left: next, right: previous) and names
+// where it landed for 600ms.
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
-import styles from "@/components/nexus/Nexus.module.css";
+import styles from "./Switchboard.module.css";
 
 const SLOP_PX = 8;
 const HORIZONTAL_LOCK_RATIO = 1.5;
 const COMMIT_PX = 20;
+/** How long the swipe's destination stays named; `--duration-deliberate` is zeroed by reduced motion, a notice is not motion. */
+const CHIP_MS = 600;
 
 /** idle, or a press: Tracking until it leaves the slop, then Locked (horizontal) or Yielded. */
 type Press = { readonly phase: "Tracking" | "Locked" | "Yielded"; readonly pointerId: number; readonly x: number; readonly y: number } | null;
@@ -28,12 +31,19 @@ export default function NexusButton({
   paneCount: number;
   open: boolean;
   onOpen(): void;
-  onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): void;
+  /** Switches panes and returns the destination's title, or `first pane` / `last pane` at the clamp. */
+  onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): string;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const press = useRef<Press>(null);
   const suppressClick = useRef(false);
   const mobileViewport = useMobileViewport();
+  const [chip, setChip] = useState<{ readonly text: string } | null>(null);
+  useEffect(() => {
+    if (chip === null) return;
+    const timer = setTimeout(() => setChip(null), CHIP_MS);
+    return () => clearTimeout(timer);
+  }, [chip]);
   // The chrome module owns the button's own inert (retreat); the open switchboard inerts the wrapper.
   useMobileChromeSurface(buttonRef, true);
   useLayoutEffect(() => {
@@ -53,6 +63,7 @@ export default function NexusButton({
   };
 
   return (
+    <>
     <div ref={wrapperRef} className={styles.nexusWrapper} inert={open || undefined}>
       <button
         ref={buttonRef}
@@ -91,7 +102,7 @@ export default function NexusButton({
           const dx = event.clientX - current.x;
           // A button the chrome retreated mid-swipe (module-written inert) never commits.
           if (event.pointerType === "touch" && current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
-            onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
+            setChip({ text: onSwipe({ direction: dx < 0 ? "Next" : "Previous" }) });
           }
         }}
         onPointerCancel={cancel}
@@ -105,12 +116,14 @@ export default function NexusButton({
         }}
       >
         <span className={styles.nexusFace}>
-          <AsterismMark className={styles.nexusMark} size={20} />
+          <AsterismMark className={styles.nexusMark} />
         </span>
         <span className={styles.nexusCount} aria-hidden="true">
           {paneCount}
         </span>
       </button>
     </div>
+    <div className={styles.toast} role="status" aria-live="polite">{chip ? <span>{chip.text}</span> : null}</div>
+    </>
   );
 }

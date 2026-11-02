@@ -6,7 +6,7 @@ import Button from "@/components/ui/Button";
 import { FeedbackFailure, FeedbackRecoveryControl, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import styles from "@/components/nexus/Nexus.module.css";
+import styles from "./Switchboard.module.css";
 
 export default function CreateLibraryPanel({
   name,
@@ -45,7 +45,7 @@ export default function CreateLibraryPanel({
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>
-        <FeedbackRecoveryControl />
+        {mobile ? null : <FeedbackRecoveryControl />}
       </header>
       <form className={styles.form} onSubmit={handleSubmit} onKeyDown={submitGesture}>
         <label>

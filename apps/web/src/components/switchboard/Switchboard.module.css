@@ -1,0 +1,218 @@
+/* The phone's palette: a sheet over MobileSheet whose list reads upward to its field, the disc and its
+   swipe chip, and the page frames both surfaces use. Rows, rail and glyph slots are Nexus.module.css's;
+   this module only reshapes them for the sheet. */
+
+/* Pages: every workflow page, on the card and in the sheet. */
+.page {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.page p { margin: 0; }
+
+.header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  background: var(--surface-canvas);
+}
+
+.header h2 { flex: 1; min-width: 0; margin: 0; font-size: var(--text-lg); letter-spacing: var(--tracking-tight); }
+.heading { flex: 1; min-width: 0; }
+.heading p { color: var(--ink-muted); }
+.iconButton { --control-min-size: 48px; }
+.textPreview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-muted); }
+
+.choices { display: grid; gap: var(--space-2); }
+
+.choices button {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  text-align: start;
+}
+
+.choices button[aria-disabled="true"] { color: var(--ink-muted); }
+.choices span { display: grid; gap: 2px; }
+.choices small { color: var(--danger); font-size: var(--text-sm); }
+.form { display: grid; gap: var(--space-3); }
+.form label { display: grid; gap: var(--space-2); }
+
+.form input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-md);
+}
+
+/* The sheet: MobileSheet's handle strip, then the list, then the field as the last child. */
+.sheet { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+
+/* Dom order is rank order; the list paints bottom-up, so rank 1 touches the field and arrivals grow upward
+   without moving what is shown. A group's head is its last child, so it paints above its rows. */
+.list { display: flex; flex: 1 1 auto; flex-direction: column-reverse; min-height: 0; padding-block: var(--space-2) 0; overflow-y: auto; overscroll-behavior: contain; }
+.grid, .group { display: flex; flex-direction: column-reverse; }
+.sheet .grid .row { grid-template-columns: 40px minmax(0, 1fr) minmax(48px, auto); min-block-size: 48px; }
+.sheet .primary { align-self: stretch; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: start; }
+.sheet .primary:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
+.sheet .trailing > button { --control-min-size: 48px; }
+
+.sheet .rail { position: static; grid-column: 1 / -1; margin: 0 var(--space-3) var(--space-2) 40px; max-inline-size: none; box-shadow: none; translate: none; animation: sheetRailIn 100ms var(--ease-glide); }
+.sheet .rail :is(button, a) { min-block-size: 48px; min-inline-size: 48px; padding: 0 16px; }
+@keyframes sheetRailIn { from { opacity: 0; translate: 0 4px; } }
+
+/* The account row hosts the account menu's own trigger; its menu root is a flex row. */
+.account { min-block-size: 48px; }
+.account button { flex: 1 1 auto; min-block-size: 48px; }
+
+.chips { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-x: auto; }
+
+.chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.chip:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
+
+.field { display: grid; flex: 0 0 auto; grid-template-columns: 40px minmax(0, 1fr) 48px; align-items: center; min-height: 48px; border-top: 1px solid var(--edge-subtle); background: var(--surface-canvas); }
+.field:focus-within { border-top-color: var(--accent); }
+.field input { min-width: 0; min-height: 48px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: var(--text-md); }
+.field input::-webkit-search-cancel-button { display: none; }
+.fieldGutter { color: var(--accent); }
+.clear { --control-min-size: 48px; }
+
+.sheet .page { padding-inline: var(--space-4); }
+.sheet .header { min-height: 64px; gap: var(--space-1); }
+.sheet .header h2 { font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.sheet .header > .iconButton { margin-inline-start: calc(-1 * var(--space-2)); }
+.sheet .choices { gap: var(--space-1); }
+.sheet .choices button { min-height: 64px; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; font-size: var(--text-md); }
+.sheet .choices button + button { border-block-start: 1px solid var(--edge-subtle); }
+.sheet .choices button:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
+.sheet .form { --control-min-size: 48px; }
+
+@media (hover: hover) {
+  .sheet .choices button:hover { background: var(--surface-hover); color: var(--ink); }
+}
+
+/* The disc: a 48px trigger riding above the bottom chrome, with a pane-count badge. */
+.nexusWrapper {
+  --nexus-bottom-gap: 12px;
+  position: fixed;
+  z-index: var(--z-overlay);
+  right: max(16px, var(--viewport-safe-right));
+  bottom: calc(var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap));
+  width: 48px;
+  height: 48px;
+  pointer-events: none;
+}
+
+.nexusButton {
+  --mobile-chrome-offset: var(--space-2);
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink);
+  pointer-events: auto;
+  touch-action: pan-y pinch-zoom;
+}
+
+.nexusFace {
+  position: absolute;
+  inset: 3px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  color: var(--accent);
+}
+
+.nexusMark { display: block; inline-size: 20px; block-size: 20px; color: var(--accent); }
+
+.nexusCount {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 1px;
+  inset-inline-end: 1px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 1.625em;
+  height: 1.625em;
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-sm);
+  background: var(--edge-strong);
+  color: var(--ink);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.nexusButton:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 0; }
+.nexusButton:active .nexusFace { background: var(--surface-active); box-shadow: var(--shadow-1); }
+.nexusButton[data-switchboard-open="true"] { visibility: hidden; transition: none; }
+
+/* A swipe's destination, shown for 600ms: a notice, not motion, so reduced motion keeps it. */
+.toast { position: fixed; z-index: var(--z-overlay); inset-inline: 0; bottom: calc(var(--mobile-nexus-bottom-offset) + 72px); display: grid; justify-content: center; pointer-events: none; }
+.toast > span { padding: var(--space-2) var(--space-3); border: 1px solid var(--edge); border-radius: var(--radius-lg); background: var(--surface-1); color: var(--ink); font-size: var(--text-sm); box-shadow: var(--shadow-3); }
+
+@media (hover: hover) {
+  .nexusButton:hover .nexusFace { background: var(--surface-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet .rail { animation: none; }
+}
+
+@media (forced-colors: active) {
+  .nexusFace { border-color: CanvasText; background: Canvas; box-shadow: none; }
+  .nexusMark { color: CanvasText; }
+  .nexusCount { border-color: Canvas; background: CanvasText; color: Canvas; }
+  .nexusButton:focus-visible { outline-color: Highlight; }
+  .toast > span { border-color: CanvasText; background: Canvas; color: CanvasText; box-shadow: none; }
+}
