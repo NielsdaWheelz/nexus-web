@@ -14,13 +14,13 @@ import { admissionRefusal, isApiError, isRefusal, isSameSystemApiDefect, request
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { admissionReason } from "@/lib/collections/admissionReason";
+import { resendVerbs } from "@/lib/collections/admissionReason";
 import { isAbortError } from "@/lib/errors";
 import { ProgressPreparationError } from "./progressFence";
 import type { ConsumptionUndo, withProgressFence } from "./state";
 import { applyCollectionConsumption, undoCollectionConsumption, type CollectionTarget } from "./api";
 import type { WorkGuard } from "@/lib/unsavedWork";
-import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 
 type Request = Schema<"CollectionConsumptionRequest">;
 type Receipt = Schema<"CollectionConsumptionUndoReceipt">;
@@ -76,9 +76,8 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
       key: entry.key, occurrence: entry, attempt: entry.unconfirmed - 1,
       line: { fact: entry.kind === "Undo" ? `not sure undoing “${entry.title}” saved.` : `not sure marking “${entry.title}” ${verb(entry.target, entry.desiredState)} saved.`,
         reason: "it may have gone through." },
-      verbs: [{ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending" || remoteAdmission() === "Checking",
-        disabledReason: admissionReason() ?? undefined,
-        run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) }],
+      verbs: resendVerbs({ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending",
+        run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) }, remoteReady),
     }]), undoItems: [
       ...[...inverses.values()].map(inverse => ({ commandKey: inverse.key, target: inverse.target, title: inverse.title,
         actionLabel: inverseLabel(inverse.target, inverse.receipt.applied_status, inverse.receipt.items.length, inverse.scopeLabel),

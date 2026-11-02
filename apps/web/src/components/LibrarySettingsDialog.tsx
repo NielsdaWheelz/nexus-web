@@ -3,8 +3,11 @@
 // Library settings, opened by id: rename (sent with the name it replaces) and
 // delete (owner only, confirmed). Deleting a library never deletes media: items
 // filed only there move to the owner's All. Membership lives in the Members tab.
-// A refused command speaks once, an unsent one included; an unknown one holds in this
-// dialog with its resend until it lands or is refused; the draft name survives both.
+// A refused first send speaks once, an unsent one included. An unknown outcome holds in this
+// dialog with its resend; a resend that fails, refused or unsent, holds again, since the first
+// send may have landed. It settles when a send lands, or when the dialog's read finds the
+// library gone: a 404 answers for it over shown settings too, unless this dialog deleted it.
+// The draft name survives all of it.
 
 import { useLayoutEffect } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
@@ -64,7 +67,6 @@ export default function LibrarySettingsDialog({
     load: (signal) => getLibrary(libraryId, signal),
   });
   const library = unstamped(rawLibrary);
-  const current = library.status === "ready" ? library.data : null;
   const guard = useWorkGuard();
   const state = useResourceDraft<SettingsDraft>(`LibrarySettings:${libraryId}`, () => ({
     draft: null,
@@ -81,6 +83,8 @@ export default function LibrarySettingsDialog({
     stopsBrowserWork: false,
   }));
   const { draft, baseline, busy, confirming, deleted, unknown } = state.value;
+  const gone = !deleted && library.status !== "loading" && library.error?.status === 404;
+  const current = library.status === "ready" && !gone ? library.data : null;
   const setBusy = (busy: "Rename" | "Delete" | null) => state.set(value => ({ ...value, busy }));
   const setConfirming = (confirming: boolean) => state.set(value => ({ ...value, confirming }));
   /** Records an unknown outcome; a defect goes to the boundary instead. */
@@ -90,22 +94,22 @@ export default function LibrarySettingsDialog({
   };
   const { read: readSettings, set: writeSettings } = state;
   useLayoutEffect(() => {
-    if (current === null) return;
     const value = readSettings();
-    if (value.request === null && (value.draft === null || value.draft === value.baseline))
+    if (gone) {
+      if (value.request !== null || value.unknown !== null) writeSettings({ ...value, request: null, unknown: null });
+    } else if (current !== null && value.request === null && (value.draft === null || value.draft === value.baseline))
       writeSettings({ ...value, draft: current.name, baseline: current.name });
-  }, [current, readSettings, writeSettings]);
+  }, [gone, current, readSettings, writeSettings]);
   const requestDismiss = () => guard.confirmLoss({ scopes: [], ownerIds: [state.owner] }) ? "accepted" as const : "blocked" as const;
 
   if (current === null) {
     return (
       <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
-        {draft !== null ? <><Input aria-label="unsaved library name" value={draft} readOnly />
+        {draft !== null && draft !== baseline ? <><Input aria-label="unsaved library name" value={draft} readOnly />
           <Fact line={{ fact: "your unsaved name is still here to copy." }} /></> : null}
-        {library.status === "failed" ? library.error.status === 404
-          ? <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
-          : <Failed error={library.error} noun="library settings" retry={{ run: library.refetch, busy: library.retrying }} />
-          : <Ruling />}
+        {gone ? <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
+          : library.status === "failed" ? <Failed error={library.error} noun="library settings" retry={{ run: library.refetch, busy: library.retrying }} />
+            : <Ruling />}
       </Dialog>
     );
   }
@@ -118,7 +122,7 @@ export default function LibrarySettingsDialog({
   const rename = async () => {
     const value = state.read();
     const fact = `couldn’t rename “${current.name}”.`;
-    if (refusedUnsent(outcome, fact)) return;
+    if (value.request === null && refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline, unconfirmed: false };
     state.set({ ...value, request, busy: "Rename" });
@@ -144,7 +148,7 @@ export default function LibrarySettingsDialog({
   };
   const remove = async () => {
     const fact = `couldn’t delete “${current.name}”.`;
-    if (refusedUnsent(outcome, fact)) return;
+    if (state.read().unknown?.command !== "Delete" && refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     setBusy("Delete");
     try {
@@ -167,6 +171,7 @@ export default function LibrarySettingsDialog({
         const next = unconfirmed(error, "Delete");
         state.set(latest => ({ ...latest, busy: null, unknown: next === null ? latest.unknown : next(latest.unknown) }));
       }
+      library.refetch();
     }
   };
   const resend: CommandVerb = unknown?.command === "Delete"

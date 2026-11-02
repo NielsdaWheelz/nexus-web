@@ -13,7 +13,7 @@
 // a move's conflict can come at an unchanged revision (its row went hidden), so it
 // leaves the floor.
 
-import { remoteReady } from "@/lib/native/admission";
+import { remoteAdmission, remoteAttemptAllowed, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import {
   createContext,
   useContext,
@@ -21,6 +21,7 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -43,6 +44,7 @@ import {
 import { admissionRefusal, isApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { resendVerbs } from "@/lib/collections/admissionReason";
 import type { HeldWrite } from "@/lib/consumption/collectionCommands";
 import { refuseLibrary } from "@/lib/libraries/errors";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -92,7 +94,7 @@ export interface LecternCommands {
   readonly collectionPending: { readonly target: Schema<"CollectionLecternRequest">["target"]; readonly title: string; readonly attempt: number; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
   /** The unknown collection append, for the account to hold. `content` and `actions` restate it
    * for the old presenter that still mounts it, and leave with it. */
-  readonly collectionFailure: (HeldWrite & { readonly content: { tone: "Warning"; title: string; message?: string }; readonly actions: readonly [{ label: string; onClick: () => void; busy?: boolean; commandKey: string }] }) | null;
+  readonly collectionFailure: (HeldWrite & { readonly content: { tone: "Warning"; title: string; message?: string }; readonly actions: readonly [{ label: string; onClick: CommandVerb["run"]; busy?: boolean; disabledReason?: string; commandKey: string }] }) | null;
   /** Rejects with the transport's error when the server refuses, or admission does. */
   readonly addCollection: (input: { readonly title: string; readonly request: Schema<"CollectionLecternRequest">; readonly onAcknowledged?: () => void }) => Promise<LecternOutcome | CollectionRefusal>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
@@ -163,6 +165,8 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const consumptionRevision = stamped.status === "ready" ? stamped.data.consumption_revision : null;
   const outcome = useOutcome();
   const guard = useWorkGuard();
+  // Subscribed, so the holds' resends read admission as it stands.
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
   const [lane] = useState<Lane>(() => ({
     requests: new Map(),
     collection: null,
@@ -464,7 +468,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     }),
     // The lane is mutable and `version` is its change; the closures read it live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stamped, revision, readRevision, version, defect],
+    [stamped, revision, readRevision, version, defect, admission],
   );
   const holds = [...lane.requests.values()].filter(request => request.unconfirmed > 0);
   return (
@@ -475,21 +479,22 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         return <Hold key={id} id={id} attempt={request.unconfirmed - 1}
           line={{ fact: request.intent.kind === "Remove" ? `not sure removing “${request.title}” from the lectern saved.` : `not sure adding “${request.title}” to the lectern saved.`,
             reason: "it may have gone through." }}
-          verbs={[{ label: "retry", commandKey: id, busy: request.phase !== "Unconfirmed",
-            run: () => void check(request).catch((error: unknown) => fail({ error })) }]} />;
+          verbs={resendVerbs({ label: "retry", commandKey: id, busy: request.phase !== "Unconfirmed",
+            run: () => void check(request).catch((error: unknown) => fail({ error })) }, remoteAttemptAllowed)} />;
       })}
       {lane.pending !== null && lane.pending.unconfirmed > 0 ? <MoveHold pending={lane.pending} check={value.order.state.check} /> : null}
     </LecternContext.Provider>
   );
 
   function collectionHold(request: CollectionRequest): NonNullable<LecternCommands["collectionFailure"]> {
-    const retry: CommandVerb = { label: "retry", commandKey: "lectern-collection", busy: request.phase !== "Unconfirmed", run: () => {
+    const verbs = resendVerbs({ label: "retry", commandKey: "lectern-collection", busy: request.phase !== "Unconfirmed", run: () => {
       if (lane.collection === request && request.phase === "Unconfirmed") void sendCollection(request, true).catch((error: unknown) => fail({ error }));
-    } };
+    } }, remoteAttemptAllowed);
+    const [verb] = verbs;
     const line = { fact: `not sure adding “${request.title}” to the lectern saved.`, reason: "it may have gone through." };
-    return { key: "lectern-collection", occurrence: request, attempt: Math.max(0, request.unconfirmed - 1), line, verbs: [retry],
+    return { key: "lectern-collection", occurrence: request, attempt: Math.max(0, request.unconfirmed - 1), line, verbs,
       content: { tone: "Warning", title: line.fact, message: line.reason },
-      actions: [{ label: retry.label, onClick: () => retry.run("default"), busy: retry.busy, commandKey: retry.commandKey }] };
+      actions: [{ label: verb.label, onClick: verb.run, busy: verb.busy, disabledReason: verb.disabledReason, commandKey: verb.commandKey }] };
   }
 }
 

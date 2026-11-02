@@ -21,11 +21,13 @@ import {
 } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
-import { isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { admissionRefusal, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { libraryOrder, moveEntry } from "@/lib/libraries/api";
 import { refuseLibrary } from "@/lib/libraries/errors";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 import type { OrderPresentation } from "./types";
 
 export type OrderRevision = string;
@@ -113,8 +115,9 @@ export type Delivery<T> =
 /** One fenced write (a move, or a lectern membership intent) under a 30 s
  * deadline. A check first reads the current revision: past the expected one, the
  * write is settled, since it landed or something else did. A refusal is definite
- * only on a first send: while checking, an earlier send may still land. A lapsed
- * session leaves the outcome unknown; a defect throws. */
+ * only on a first send: while checking, an earlier send may still land. A first
+ * send admission keeps unsent is refused; a check it keeps unsent leaves the outcome
+ * as unknown as it was. A lapsed session leaves the outcome unknown; a defect throws. */
 export async function deliver<T>(input: {
   readonly expected: OrderRevision;
   readonly checking: boolean;
@@ -122,6 +125,8 @@ export async function deliver<T>(input: {
   readonly send: (signal: AbortSignal) => Promise<T>;
   readonly signal: AbortSignal;
 }): Promise<Delivery<T>> {
+  // apiFetch decides the same in this same tick.
+  if (!input.checking && !remoteAttemptAllowed()) return { kind: "Refused", error: admissionRefusal() };
   try {
     return await requestWithDeadline({ signal: input.signal, timeoutMs: WRITE_DEADLINE_MS, request: async signal => {
       if (input.checking && compareRevision(await input.current(signal), input.expected) > 0)
@@ -227,10 +232,11 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
 
 /** An unknown move, held until its retry lands or a read settles it. */
 export function MoveHold({ pending, check }: { readonly pending: PendingMove; readonly check: () => void }) {
+  const resendVerbs = useResendVerbs();
   const id = `collection-move:${pending.command.itemId}:${pending.command.expectedRevision}`;
   return <Hold id={id} attempt={pending.unconfirmed - 1}
     line={{ fact: `not sure moving “${pending.title}” saved.`, reason: "it may have gone through." }}
-    verbs={[{ label: "retry", commandKey: id, busy: pending.phase === "Checking", run: check }]} />;
+    verbs={resendVerbs({ label: "retry", commandKey: id, busy: pending.phase === "Checking", run: check })} />;
 }
 
 // Library moves: one pending move per library for the account, outliving the

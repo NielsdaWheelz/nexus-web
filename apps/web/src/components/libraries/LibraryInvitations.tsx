@@ -68,11 +68,14 @@ export default function LibraryInvitations() {
     }
   };
 
-  if (installedApp && admission !== "Ready") return null;
+  // The hold stands whatever admission does: unmounting it would say the answer resolved.
+  const hold = unknown === null ? null
+    : <Hold id="library-invitation-answer" attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: "it may have gone through." }} />;
+  if (installedApp && admission !== "Ready") return hold;
   const shown = list.items.length > 0;
   return <>
-    {unknown !== null ? <Hold id="library-invitation-answer" attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: "it may have gone through." }} /> : null}
-    {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
+    {hold}
+    {shown ?<section className={styles.inbox} aria-labelledby={headingId}>
       <div>
         <h2 id={headingId}>Library invitations</h2>
         <p>Accept to add the library here, or decline the invitation.</p>

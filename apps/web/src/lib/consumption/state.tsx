@@ -21,13 +21,13 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { admissionReason } from "@/lib/collections/admissionReason";
+import { resendVerbs } from "@/lib/collections/admissionReason";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { createCollectionCommands, type HeldWrite, type StateChange } from "./collectionCommands";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import type { CollectionTarget } from "./api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -128,8 +128,7 @@ function createConsumptionCommands(
       holds: [...entries.values()].flatMap((entry): HeldWrite[] => entry.unconfirmed === 0 ? [] : [{
         key: entry.commandKey, occurrence: entry, attempt: entry.unconfirmed - 1,
         line: { fact: `not sure undoing “${entry.title}” saved.`, reason: "it may have gone through." },
-        verbs: [{ label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending" || remoteAdmission() === "Checking",
-          disabledReason: admissionReason() ?? undefined, run: () => void undo(entry) }],
+        verbs: resendVerbs({ label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending", run: () => void undo(entry) }, remoteReady),
       }]),
     };
     for (const listener of listeners) listener();

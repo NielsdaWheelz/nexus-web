@@ -9,9 +9,9 @@ import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { admissionReason } from "@/lib/collections/admissionReason";
+import { admissionReason, resendVerbs } from "@/lib/collections/admissionReason";
 import { prepareCollectionConsumption, type CollectionSelection } from "@/lib/consumption/api";
-import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
@@ -70,8 +70,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
       {pending?.failed ? <Hold id={pending.commandKey} attempt={pending.attempt}
         line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
         verbs={[
-          { label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending" || checking,
-            disabledReason: admissionReason() ?? undefined, run: () => ctx.consumption.retry(pending.commandKey) },
+          ...resendVerbs({ label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending",
+            run: () => ctx.consumption.retry(pending.commandKey) }, remoteReady),
           { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending", run: () => ctx.consumption.forget(pending.commandKey) },
         ]} /> : null}
       <div className={styles.actions}>

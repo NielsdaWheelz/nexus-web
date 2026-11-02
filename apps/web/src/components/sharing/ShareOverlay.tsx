@@ -22,6 +22,7 @@ import {
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { refusedUnsent } from "@/lib/libraries/errors";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -107,8 +108,10 @@ const SHARE_REASONS: Readonly<Record<string, string>> = { E_USER_NOT_FOUND: "thi
 function SharePanel({ session, onClose }: { session: ShareSession; onClose: () => void }) {
   const { target } = session;
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   // A failed read stands where the options would until a replacement read lands; over a shown
-  // snapshot, a failed reread says nothing. Either reruns on a repair; a defect throws.
+  // snapshot, a failed reread says nothing, except that a held change's `check` that fails holds
+  // it again. Either reruns on a repair; a defect throws.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   /** A change whose outcome is unknown: the snapshot's next read settles it. */
@@ -120,22 +123,25 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const workspace = useWorkspaceStore();
 
+  /** Whether a snapshot landed. */
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal): Promise<boolean> => {
       const currentSignal = signal ?? lifetime.current?.signal;
-      if (target.kind === "Route" || !currentSignal || currentSignal.aborted || (reading.current !== null && !reading.current.aborted)) return;
+      if (target.kind === "Route" || !currentSignal || currentSignal.aborted || (reading.current !== null && !reading.current.aborted)) return false;
       reading.current = currentSignal;
       setLoading(true);
       try {
         const next = (await apiFetch<SharesJson<"get">>(sharesPath(target.ref), { signal: currentSignal })).data;
-        if (currentSignal.aborted) return;
+        if (currentSignal.aborted) return false;
         setSnapshot(next);
         setLoadError(null);
         setUnknown(null);
+        return true;
       } catch (error) {
-        if (currentSignal.aborted || handleUnauthenticatedApiError(error)) return;
+        if (currentSignal.aborted || handleUnauthenticatedApiError(error)) return false;
         if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
         else setLoadError(error);
+        return false;
       } finally {
         if (reading.current === currentSignal) reading.current = null;
         if (!currentSignal.aborted) setLoading(false);
@@ -245,7 +251,9 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       ) : null}
       {unknown !== null ? <Hold id={`share-change:${unknown.key}`} attempt={unknown.attempt}
         line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-        verbs={[{ label: "check", commandKey: "share-check", busy: loading, run: () => void load() }]} /> : null}
+        verbs={resendVerbs({ label: "check", commandKey: "share-check", busy: loading, run: () => void load().then(landed => {
+          if (!landed) setUnknown(current => current === null ? null : { ...current, attempt: current.attempt + 1 });
+        }) })} /> : null}
     </div>
   );
 }

@@ -39,7 +39,8 @@ type Delivery = {
 /** One pane-owned creation attempt; closing its dialog never cancels the write. An unknown
  * outcome holds until it lands or is refused: in the dialog while it shows, where its submit is
  * the resend of the same id, else in the pane with that resend. A refusal speaks once and returns
- * the draft; a press admission refuses is said and sends nothing. */
+ * the draft; a first press admission refuses is said and sends nothing. A resend it refuses holds
+ * again, since the first send may have landed. */
 export function useLibraryCreation() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "library creation");
   const { ctx } = useActionRuntime();
@@ -106,7 +107,7 @@ export function useLibraryCreation() {
     if (result.kind !== "Cancelled") release();
   };
   const deliver = async (attempt: Attempt, unconfirmed: number) => {
-    if (!mounted.current || owner.read().flight || refusedUnsent(outcome, `couldn’t create “${attempt.name}”.`)) return;
+    if (!mounted.current || owner.read().flight || unconfirmed === 0 && refusedUnsent(outcome, `couldn’t create “${attempt.name}”.`)) return;
     const delivery: Delivery = { mayOpen: true };
     owner.set(value => ({ ...value, flight: delivery }));
     transition({ kind: "Sending", attempt, unconfirmed });

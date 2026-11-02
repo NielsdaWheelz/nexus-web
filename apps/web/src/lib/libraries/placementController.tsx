@@ -9,7 +9,8 @@
 // earlier unknown send landed, so the lane rereads first: an intent the reread shows in
 // force retires silently, unacknowledged, so any successor is refused as a conflict; any
 // other intent is refused. A refusal speaks once per lane, counting the successors it
-// refused; an item's own reason speaks only for one item.
+// refused; an item's own reason speaks only for one item. A creation's resend that is
+// refused, unsent or answered, holds again: only its first send's refusal settles it.
 
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -279,7 +280,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     if (outcome.kind === "Created") {
       creations.delete(attempt.id);
       retryRead(attempt.targets);
-    } else if (outcome.kind === "Refused") {
+    } else if (outcome.kind === "Refused" && attempt.unconfirmed === 0) {
       creations.delete(attempt.id);
       signIn(outcome.error);
       refuse({ fact: `couldn’t create “${attempt.name}”.`, error: outcome.error });
