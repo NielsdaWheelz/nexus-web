@@ -17,13 +17,14 @@ export interface SyncFacts {
   failure: SyncFailure; online: boolean; pending: boolean; scope_pending: boolean; cursor: string; head: string | null;
   scope_progress: ScopeProgress | null;
 }
-/** A Retrying failure reads `syncing`: a cursor at the last known head proves nothing while sync cannot answer. */
+/** A Retrying failure reads `syncing`: a cursor at the last known head proves nothing while sync
+ * cannot answer. Admission outranks preparation: only a preparing worker can meet some refusals. */
 export function syncStatus(facts: SyncFacts): SyncStatus {
   if (facts.local_error) return "local_error";
   if (facts.saving) return "saving";
-  if (!facts.ready) return "preparing";
   if (facts.admission === "format") return "update_required";
   if (facts.admission === "auth") return "sign_in_required";
+  if (!facts.ready) return "preparing";
   if (facts.failure?.kind === "Refused") return "sync_error";
   if (!facts.online) return "offline";
   return facts.failure !== null || facts.pending || facts.scope_pending || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
