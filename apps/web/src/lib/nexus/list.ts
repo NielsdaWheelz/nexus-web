@@ -10,13 +10,16 @@ export const EMPTY: NexusList = { identity: "", rows: [], held: 0, armed: null, 
 
 /**
  * Law 1 at the keystroke: every previous row that still matches `identity` by name, or is the latched
- * row, is held; held and the synchronous candidates are ranked once, the latched row first; the best
- * row is armed with latency and the old armed row is remembered while it is still shown.
+ * row, is held at its tier for the new text; held and the synchronous candidates are ranked once, the
+ * latched row first; the best row is armed with latency and the old armed row is remembered while it
+ * is still shown.
  */
 export function keystroke(previous: NexusList, identity: string, sync: readonly NexusRow[], latchedKey: string | null, now: number): NexusList {
-  const held = previous.rows
-    .filter(row => !row.evidence && (row.key === latchedKey || nameTier(identity, row.label, row.keywords ?? []) !== null))
-    .map(row => row.key === latchedKey ? { ...row, rank: { ...row.rank, tier: "Latched" as const } } : row);
+  const held = previous.rows.flatMap(row => {
+    if (row.evidence) return [];
+    const tier = row.key === latchedKey ? "Latched" : nameTier(identity, row.label, row.keywords ?? []);
+    return tier === null ? [] : [{ ...row, rank: { ...row.rank, tier } }];
+  });
   const byKey = new Map(held.map(row => [row.key, row] as const));
   for (const row of sync) byKey.set(row.key, row);
   const rows = [...byKey.values()].sort(compareRank);
