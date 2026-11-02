@@ -5,7 +5,7 @@ the glyph lexicon. files they rewrote still import `lucide-react`, which eslint 
 refuses outside `apps/web/src/lib/ui/icons.tsx`.
 
 on rebase, each conflicted file keeps the branch's body, then, from `apps/web`,
-with the sweep and map from the lexicon pr body:
+with the sweep and map attached to the lexicon pr as its first comments:
 
 1. `bun sweep.ts --rows-since <the lexicon pr's base> --paths <its files>` prints
    fresh rows; paste them into the map and fill each sign from the lexicon table
