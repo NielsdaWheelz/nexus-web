@@ -4,6 +4,8 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, 
 import { createPortal } from "react-dom";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { Session } from "@/components/feedback/scope";
+import { StageAnchor } from "@/components/feedback/Slips";
+import { cx } from "@/lib/ui/cx";
 import {
   OverlayContext,
   focusableElements,
@@ -12,6 +14,7 @@ import {
   type ReturnFocusTarget,
   type Layer,
 } from "@/lib/ui/overlay";
+import styles from "./ModalFrame.module.css";
 
 export interface ModalProps {
   readonly open: boolean;
@@ -129,7 +132,7 @@ export default function ModalFrame({
         <section
           ref={bindPanel}
           id={id}
-          className={className}
+          className={cx(styles.panel, className)}
           role="dialog"
           aria-label={label}
           aria-modal={topmost || undefined}
@@ -140,6 +143,7 @@ export default function ModalFrame({
             protectedTargets={() => panel ? [...panel.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []}
             returnFocus={() => panel}>
             {typeof children === "function" ? children(requestDismiss) : children}
+            <StageAnchor kind="Modal" />
           </FeedbackSurface> : typeof children === "function" ? children(requestDismiss) : children}
         </section>
       </div>

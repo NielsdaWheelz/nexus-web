@@ -26,6 +26,7 @@ const RUNTIME = new Set([
   "--grain-seed",
   "--moon",
   "--pane-refresh-offset",
+  "--stage-bottom-clearance",
 ]);
 const FONTS = [...RUNTIME].filter((name) => name.startsWith("--font-"));
 // pdf.js viewer chrome variables nexus never ships (pdf_viewer.css leftovers).

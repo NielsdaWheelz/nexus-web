@@ -1,9 +1,9 @@
 "use client";
 
-import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ContextType, type Ref } from "react";
+import { useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type ContextType, type Ref } from "react";
 import { useInteractionOwner } from "@/lib/ui/overlay";
 import { readMobileCssLength } from "@/lib/mobileShell/viewport";
-import { Announcement, ControlledSignal, FailureAnnouncement, Signal } from "./Feedback";
+import { ControlledSignal, FailureAnnouncement } from "./Feedback";
 import { Scope, Session } from "./scope";
 import styles from "./Feedback.module.css";
 
@@ -21,26 +21,17 @@ function Layer({ scope, session, layerRef }: {
 }) {
   const local = useSyncExternalStore(scope.subscribe, scope.snapshot, scope.snapshot);
   const account = useSyncExternalStore(session.account.subscribe, session.account.snapshot, session.account.snapshot);
-  const signals = session.transient;
-  const transient = useSyncExternalStore(signals.subscribe, signals.snapshot, () => null);
-  const interaction = useInteractionOwner();
+  useInteractionOwner();
   const eligible = scope.eligible();
   const allFailures = [...new Map([...local.failures, ...account.failures].map(failure => [failure.occurrence, failure])).values()];
   const failures = allFailures.filter(failure => !scope.recoveryOpen && !session.acknowledged.has(failure.occurrence));
   const [placed, setPlaced] = useState(false);
   const pressed = useRef(false);
   const { host } = scope;
-  useLayoutEffect(() => signals.environmentChanged(), [signals, interaction]);
-  useEffect(() => {
-    const changed = () => signals.environmentChanged();
-    document.addEventListener("focusin", changed);
-    document.addEventListener("focusout", changed);
-    return () => { document.removeEventListener("focusin", changed); document.removeEventListener("focusout", changed); };
-  }, [signals]);
   useLayoutEffect(() => {
     const layer = host.layer;
     const bounds = host.bounds;
-    if (!layer || !bounds || !eligible || (!failures.length && !transient)) { setPlaced(false); return; }
+    if (!layer || !bounds || !eligible || !failures.length) { setPlaced(false); return; }
     let frame: number | null = null;
     const measure = () => {
       frame = null;
@@ -71,10 +62,9 @@ function Layer({ scope, session, layerRef }: {
       const fits = right > left && bottom > top && layer.scrollHeight <= bottom - top && !overlaps;
       const visible = engaged || fits;
       setPlaced(visible);
-      if (transient) signals.placement(transient.occurrence, visible);
     };
     const schedule = () => { if (frame !== null) cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
-    const release = () => { pressed.current = false; if (transient) signals.hold(transient.occurrence, "Press", false); schedule(); };
+    const release = () => { pressed.current = false; schedule(); };
     const observer = new ResizeObserver(schedule);
     observer.observe(layer); observer.observe(bounds);
     for (const target of host.protectedTargets()) observer.observe(target);
@@ -94,28 +84,15 @@ function Layer({ scope, session, layerRef }: {
       document.removeEventListener("focusin", schedule); document.removeEventListener("focusout", schedule);
       window.visualViewport?.removeEventListener("resize", schedule); window.visualViewport?.removeEventListener("scroll", schedule);
       window.removeEventListener("pointerup", release); window.removeEventListener("pointercancel", release);
-      if (transient) signals.placement(transient.occurrence, false);
     };
-  }, [scope, host, eligible, local, account, transient, signals, failures.length]);
-  const close = () => { if (transient) signals.closeTransient(transient.occurrence); };
+  }, [scope, host, eligible, local, account, failures.length]);
   return <><div ref={layerRef} className={styles.layer} data-feedback-layer="true" data-placed={eligible && placed || undefined}
-    onPointerDown={() => { pressed.current = true; if (transient) signals.hold(transient.occurrence, "Press", true); }}>
+    onPointerDown={() => { pressed.current = true; }}>
     {eligible ? failures.map(failure => <section className={styles.card} key={session.key(failure.occurrence)}>
       <ControlledSignal failure={failure} onDismiss={() => {
         session.acknowledged.set(failure.occurrence, failure.announcementOccurrence ?? failure.occurrence); failure.onDismiss?.(); scope.changed();
       }} />
     </section>) : null}
-    {eligible && transient ? <section className={styles.card} key="receipt" aria-label="notification"
-      onPointerEnter={event => { if (event.pointerType === "mouse") signals.hold(transient.occurrence, "Pointer", true); }}
-      onPointerLeave={() => signals.hold(transient.occurrence, "Pointer", false)}
-      onFocus={() => signals.hold(transient.occurrence, "Focus", true)}
-      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) signals.hold(transient.occurrence, "Focus", false); }}
-      onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
-      <Signal content={transient.content} announcement="None" plain className={styles.transientSignal} occurrence={transient.occurrence}
-        actions={transient.action === null ? undefined : [transient.action.href === undefined ? { ...transient.action, onClick: intent => { close(); transient.action?.onClick?.(intent); } } : transient.action]}
-        onDismiss={close} dismissLabel="close notification" dismissBlocked={false} onNavigate={close} />
-      {placed && transient.announce ? <Announcement text={transient.content.title} level="Polite" occurrence={transient.occurrence} /> : null}
-    </section> : null}
   </div>
     {eligible ? allFailures.map(failure => <FailureAnnouncement key={session.key(failure.occurrence)} failure={failure} session={session} />) : null}
   </>;

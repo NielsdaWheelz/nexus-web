@@ -1,7 +1,6 @@
 import { createContext } from "react";
 import type { FeedbackNoticeProps } from "./Feedback";
 import { getInteractionOwner, type Layer } from "@/lib/ui/overlay";
-import { createTransientFeedback } from "./transient";
 
 export type FeedbackHost = {
   layer: HTMLElement | null;
@@ -38,7 +37,6 @@ export function createFeedbackSession() {
   let nextKey = 0;
   return {
     key(occurrence: object) { let key = keys.get(occurrence); if (key === undefined) { key = ++nextKey; keys.set(occurrence, key); } return key; },
-    transient: createTransientFeedback(),
     account: createFeedbackSet(),
     acknowledged: new WeakMap<object, object>(),
     spoken: new WeakMap<object, object>(),

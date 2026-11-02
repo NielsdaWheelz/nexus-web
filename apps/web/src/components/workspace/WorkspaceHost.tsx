@@ -15,6 +15,8 @@ import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { FeedbackState } from "@/components/feedback/Feedback";
+import { StageAnchor } from "@/components/feedback/Slips";
+import { useStageWorkspace } from "@/components/feedback/stage";
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { IndexPaneEntry } from "@/lib/panes/indexPaneEntry";
@@ -95,6 +97,7 @@ export default function WorkspaceHost() {
     mode: isMobile ? "Disabled" : maximized ? "Maximized" : "Canvas",
     paneIds: panes.map(({ pane }) => pane.id),
   });
+  useStageWorkspace({ inView: canvas.fullyInViewPaneIds, active: activeId, single: isMobile || maximized });
 
   // ---- focus follows activation; a layout flip only repairs lost focus ----
   const pendingFocus = useRef<string | null>(null);
@@ -350,6 +353,7 @@ export default function WorkspaceHost() {
         {canvas.edges.end ? (
           <div className={styles.edgeFade} data-side="end" />
         ) : null}
+        <StageAnchor kind="Root" />
       </div>
     </section>
   );

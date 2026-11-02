@@ -20,6 +20,7 @@ import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { StageAnchor } from "@/components/feedback/Slips";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import compact from "@/components/ui/CompactChrome.module.css";
@@ -609,6 +610,7 @@ function PaneView({
             {refresh.indicator}
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
+          <StageAnchor kind="Pane" paneId={paneId} floor />
         </div>
         {outlineCommands ? <div className={styles.outlineAccessory} data-pane-outline-accessory="true" style={{marginBottom: commandsBottom}}>
           <OutlineCommands publication={outlineCommands} current={() => {

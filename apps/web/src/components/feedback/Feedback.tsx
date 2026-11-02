@@ -2,10 +2,12 @@
 
 import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
+  useCallback,
   useContext,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,11 +17,18 @@ import Button from "@/components/ui/Button";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { useThrowLater } from "@/lib/api/serverState";
+import { isAbortError } from "@/lib/errors";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
-import { hasActiveModal, OverlayContext, useInteractionOwner } from "@/lib/ui/overlay";
+import { hasActiveModal, OverlayContext, subscribeOverlayStack, topModal, useInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
+import Slips from "./Slips";
+import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
 import styles from "./Feedback.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
@@ -123,7 +132,7 @@ function RecoveryControl({ scope, session, className, menu }: {
   return <>
     <Button ref={setAnchor} className={className} role={menu ? "menuitem" : undefined} tabIndex={menu ? -1 : undefined} iconOnly icon={eligible && failures.length ? <OctagonAlert /> : <span />}
       aria-label="show recovery" tooltip={{ text: eligible && failures.length ? "show recovery" : "" }} aria-expanded={open && failures.length > 0} disabled={!eligible || !failures.length}
-      aria-busy={local.pending !== null || undefined} busyKey={local.pending} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
+      aria-busy={local.pending !== null || undefined} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
     <FloatingActionSurface open={open && failures.length > 0} disclosure feedback interactionLayer={layer}
       anchor={anchor} disclosureTrigger={anchor} align="end" placement="below" flip role="group" label="recovery" skipReturnFocus={() => !scope.eligible()}
       className={styles.recovery} onDismiss={() => setOpen(false)}>
@@ -147,23 +156,91 @@ export function FailureAnnouncement({ failure, session }: { failure: Failure; se
 
 const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
 const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
+const NO_SHELL: Shell = { signIn: null };
 
-/** One account's presentation. The geometry provider is above this owner. */
-export function FeedbackProvider({ children }: { children: ReactNode }) {
+/** One account's presentation, above every owner that speaks. The geometry provider is above
+ * this. `shell` is the host's: the workspace signs in, shelf and capture open the workspace. Its
+ * verb stays one value across renders, because `fail` is stable only while it does. */
+export function FeedbackProvider({ shell = NO_SHELL, children }: { shell?: Shell; children: ReactNode }) {
   const [session] = useState(createFeedbackSession);
-  const signals = session.transient;
-  useLayoutEffect(() => { signals.resume(); return signals.dispose; }, [signals]);
-  useEffect(() => {
-    document.addEventListener("visibilitychange", signals.visibilityChanged);
-    return () => document.removeEventListener("visibilitychange", signals.visibilityChanged);
-  }, [signals]);
-  return <Session value={session}>{children}</Session>;
+  const [stage] = useState(createStage);
+  useEffect(() => stage.connect(), [stage]);
+  return <Session value={session}><StageContext value={stage}><ShellContext value={shell}>
+    {children}
+    <Slips />
+  </ShellContext></StageContext></Session>;
 }
 
+function useAddress(): Address {
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  return useMemo(() => paneId === null ? { kind: "Workspace" } : { kind: "Pane", paneId }, [paneId]);
+}
+
+/** Whether this region may speak now: a modal's while it is topmost; under none, the active pane's,
+ * or any region of a host without panes. In-flow feedback is storeless, so it may sit outside a stage. */
+export function useActiveRegion(): boolean {
+  const stage = useContext(StageContext);
+  const overlay = useContext(OverlayContext);
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  const active = () => {
+    const modal = topModal();
+    return overlay ? overlay === modal : modal === null && (paneId === null || stage?.activePane() === paneId);
+  };
+  return useSyncExternalStore(stage?.subscribe ?? subscribeOverlayStack, active, active);
+}
+
+export interface Outcome {
+  say(line: Line, verbs?: Verbs): Retract;
+  /** `title` is the command's fact; its reason and verb come from the transport. `verb` is the
+   * owner's retry, shown only where the transport offers one, so a stale build gets reload alone.
+   * An abort is no outcome and shows nothing. A defect rethrows through the owner's boundary. */
+  fail(error: unknown, title: string, verb?: Verb): Retract;
+}
+
+/** Any owner, above or below panes: the address follows the pane the owner renders in. */
+export function useOutcome(): Outcome {
+  const stage = useStage();
+  const address = useAddress();
+  const { signIn } = useContext(ShellContext);
+  const throwLater = useThrowLater();
+  const say = useCallback<Outcome["say"]>((line, verbs) => stage.say({ address, line, verbs: verbs ?? null }), [stage, address]);
+  const fail = useCallback<Outcome["fail"]>((error, title, verb) => {
+    if (isAbortError(error)) return () => {};
+    if (!isApiError(error) || isSameSystemApiDefect(error)) {
+      throwLater({ error });
+      return () => {};
+    }
+    const transport = transportOf(error);
+    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
+  }, [stage, address, signIn, throwLater]);
+  return useMemo(() => ({ say, fail }), [say, fail]);
+}
+
+/** A fact that stands while its owner holds it: mounted is present, unmounted is resolved.
+ * `id` keys the tucked bit; `attempt` keys speech, so a failed retry speaks again. */
+export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
+  const stage = useStage();
+  const address = useAddress();
+  const frame = useContext(OverlayContext);
+  const [held, setHeld] = useState({ id, key: {} });
+  if (held.id !== id) setHeld({ id, key: {} });
+  const { key } = held;
+  useLayoutEffect(() => { stage.hold({ key, address, frame, risk, line, verbs: verbs ?? null, attempt }); });
+  useLayoutEffect(() => () => stage.dismiss(key), [stage, key]);
+  return null;
+}
+
+/** Receipts stand on the stage until their sites migrate. */
 export function useFeedback(): FeedbackContextValue {
-  const session = useContext(Session);
-  if (!session) throw new Error("useFeedback must be used within a FeedbackProvider");
-  return session.transient;
+  const { say } = useOutcome();
+  return useMemo(() => ({
+    receipt(content, action) {
+      const verb = action === undefined || action.href !== undefined ? action
+        : { label: action.label, commandKey: action.commandKey ?? action.label, run: action.onClick, busy: action.busy, disabledReason: action.disabledReason, copied: action.copiedOccurrence };
+      const verbs: Verbs | null = content.reload ? transportVerbs("Update", { signIn: null }) : verb ? [verb] : null;
+      return say({ fact: content.title, reason: content.message }, verbs ?? undefined);
+    },
+  }), [say]);
 }
 
 export function FeedbackStatus(props: FeedbackProps) {
@@ -182,19 +259,15 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
   </div> : null;
 }
 
-export function Signal({
+function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, dismissLabel, dismissBlocked, plain = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
+  onDismiss, surfaceState = false, occurrence, announcementOccurrence,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
-  dismissLabel?: string;
-  dismissBlocked?: boolean;
-  plain?: boolean;
   surfaceState?: boolean;
   occurrence?: object;
   announcementOccurrence?: object;
-  onNavigate?: () => void;
 }) {
   const scope = useContext(Scope);
   const overlay = useContext(OverlayContext);
@@ -221,7 +294,7 @@ export function Signal({
     if (next) navigated.current = false;
     setExpanded(next);
   };
-  const onNavigate = () => { navigated.current = true; changeExpanded(false); navigation?.(); };
+  const onNavigate = () => { navigated.current = true; changeExpanded(false); };
   useLayoutEffect(() => () => {
     if (navigated.current) return;
     const focused = document.activeElement;
@@ -236,7 +309,7 @@ export function Signal({
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
   }, [overlay, mayRestoreFocus]);
-  const Icon = plain ? null : ICONS[content.tone];
+  const Icon = ICONS[content.tone];
   const Title = surfaceState ? "h2" : "p";
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
@@ -270,8 +343,8 @@ export function Signal({
           className={styles.control}
           iconOnly
           icon={<X />}
-          aria-label={dismissLabel ?? `dismiss: ${content.title}`}
-          aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
+          aria-label={`dismiss: ${content.title}`}
+          aria-disabled={actions?.some((action) => action.busy) || undefined}
           onClick={() => onDismiss()}
         /> : null}
       </div>
@@ -355,8 +428,6 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
       {...events}
       className={styles.control}
       icon={shown.href === undefined && shown.copiedOccurrence ? <Check /> : undefined}
-      reserveIcon
-      busyKey={action.commandKey ?? occurrence}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
       aria-describedby={reason ? `${contextId} ${reasonId}` : contextId}
