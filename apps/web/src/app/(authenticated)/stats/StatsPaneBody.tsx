@@ -8,7 +8,9 @@ import { CircleMinus } from "lucide-react";
 // returns to the screen and, while active, when Consumption moves. One correction at a time:
 // "Don't count this session" mints the exclusion's id once per session and resends it, so a
 // correction whose answer was lost is held, and its retry sends the same id; the server answers a
-// repeat as success. The held row leaves when it lands, or when a reread shows it landed.
+// repeat as success. The held row leaves when it lands, or when a reread of the view it was raised
+// in shows it landed. A new view keeps the last view's figures, dimmed and inert, until its own land;
+// if its read fails they leave for its `Failed`.
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -21,7 +23,7 @@ import SelectField from "@/components/ui/SelectField";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
 import { transportOf } from "@/lib/api/failure";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
@@ -92,8 +94,9 @@ const SHORT_DATE = {
   hour: "numeric",
   minute: "2-digit",
 } as const;
-/** One correction: its id is the exclusion's, minted once and resent. */
-type Correction = { readonly kind: "Exclude" | "Restore"; readonly id: string; readonly send: () => Promise<void> };
+/** One correction: its id is the exclusion's, minted once and resent; `query` is the view it was
+ * raised in. */
+type Correction = { readonly kind: "Exclude" | "Restore"; readonly id: string; readonly query: string | null; readonly send: () => Promise<void> };
 /** A correction whose answer was lost; `attempt` keys its speech. */
 type Unconfirmed = Correction & { readonly attempt: number };
 const CORRECTION_FACT = {
@@ -825,6 +828,8 @@ export default function StatsPaneBody() {
   const view = readStatsView(usePaneSearchParams());
   const refresh = useRefreshStamp(isActive, 0);
   const consumption = useChangeStamp("Consumption");
+  // One correction at a time. The guard is a ref: a slip's verb keeps the render it was raised in.
+  const running = useRef(false);
   const [correcting, setCorrecting] = useState(false);
   const [unconfirmed, setUnconfirmed] = useState<readonly Unconfirmed[]>([]);
   const exclusionIds = useRef(new Map<string, string>());
@@ -866,20 +871,25 @@ export default function StatsPaneBody() {
       ).data;
     },
   });
-  // A new view keeps the prior one's figures on screen until its own arrive.
-  const shown = useRef<{ view: StatsView; data: Stats } | null>(null);
-  if (stats.status === "ready") shown.current = { view, data: stats.data };
-  const data = shown.current?.data ?? null;
+  // The last view read, by its query. While another view is asked for, its figures stand dimmed
+  // and inert, and leave once that read fails. A failed refresh of the same view changes nothing.
+  const shown = useRef<{ query: string; data: Stats } | null>(null);
+  if (stats.status === "ready" && query !== null) shown.current = { query, data: stats.data };
+  const last = shown.current;
+  const otherView = last !== null && last.query !== query;
+  const data = otherView && stats.status === "failed" ? null : last?.data ?? null;
   const initialLoading = data === null && stats.status === "loading";
   usePaneReturnReady(!initialLoading);
-  // A reread that shows a held correction landed resolves it.
-  const landed = (correction: Correction) => data !== null &&
-    (correction.kind === "Exclude") === data.activity.active_exclusions.some((row) => row.id === correction.id);
+  // A reread of the view a held correction was raised in resolves it once it shows the change;
+  // another view's exclusions say nothing about it.
+  const landed = (correction: Unconfirmed) => last !== null && last.query === correction.query &&
+    (correction.kind === "Exclude") === last.data.activity.active_exclusions.some((row) => row.id === correction.id);
   if (unconfirmed.some(landed)) setUnconfirmed(unconfirmed.filter((correction) => !landed(correction)));
 
   // The refreshed timeline shows a landed correction; only a failure reports.
   const send = async (correction: Correction) => {
-    if (!mounted.current || correcting) return;
+    if (!mounted.current || running.current) return;
+    running.current = true;
     setCorrecting(true);
     const others = (held: readonly Unconfirmed[]) => held.filter((item) => item.id !== correction.id);
     try {
@@ -891,14 +901,15 @@ export default function StatsPaneBody() {
       if (!mounted.current) return;
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) return throwLater({ error });
-      const transport = transportOf(error);
-      if (transport === "Offline" || transport === "Unavailable") {
+      // Refused, or signed out before the handler ran, nothing changed. Anything else may have
+      // landed: a pool timeout answers 503 after a commit too.
+      if (!isRefusal(error) && !isUnauthenticatedApiError(error)) {
         setUnconfirmed((held) => [...others(held), { ...correction, attempt: (held.find((item) => item.id === correction.id)?.attempt ?? -1) + 1 }]);
         return;
       }
       setUnconfirmed(others);
       const fact = CORRECTION_FACT[correction.kind];
-      if (transport !== "Refused") {
+      if (transportOf(error) !== "Refused") {
         outcome.fail(error, fact, { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction) });
       } else if (error.status === 404) {
         outcome.say(correction.kind === "Exclude" ? { fact, reason: "its work isn’t available anymore." } : { fact });
@@ -907,11 +918,12 @@ export default function StatsPaneBody() {
         publishChange("Consumption");
       } else throwLater({ error });
     } finally {
+      running.current = false;
       if (mounted.current) setCorrecting(false);
     }
   };
   const correct = (correction: Correction, confirmation: string) => {
-    if (!correcting && window.confirm(confirmation)) void send(correction);
+    if (!running.current && window.confirm(confirmation)) void send(correction);
   };
   const exclude = (row: Session) => {
     const key = sessionKey(row);
@@ -925,7 +937,7 @@ export default function StatsPaneBody() {
       ended_at: row.ended_at,
     };
     // One id per attempt at this session, resent until it lands.
-    correct({ kind: "Exclude", id, send: async () => {
+    correct({ kind: "Exclude", id, query, send: async () => {
       await apiFetch<void>(`/api/consumption/exclusions/${id}`, {
         method: "PUT",
         body: JSON.stringify(body),
@@ -933,7 +945,7 @@ export default function StatsPaneBody() {
       exclusionIds.current.delete(key);
     } }, `Don’t count this ${duration(row.active_ms)} session?`);
   };
-  const restore = (row: Exclusion) => correct({ kind: "Restore", id: row.id, send: () =>
+  const restore = (row: Exclusion) => correct({ kind: "Restore", id: row.id, query, send: () =>
     apiFetch<void>(`/api/consumption/exclusions/${row.id}`, { method: "DELETE" }),
   }, `Count this ${duration(row.excluded_active_ms)} session again?`);
 
@@ -991,61 +1003,63 @@ export default function StatsPaneBody() {
       {stats.status === "failed" && data === null ? (
         <Failed error={stats.error} noun="statistics" retry={{ run: () => { void stats.refetch().catch(() => {}); }, busy: stats.retrying }} />
       ) : null}
-      {totals?.recorded_active_ms === 0 ? (
-        <Fact line={{ fact: data!.activity.applied_filters.length > 1 ? "no activity matches these filters." : "no activity recorded in this period." }} />
-      ) : null}
       {unconfirmed.map((correction) => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
         line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
         verbs={[{ label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting }]} />)}
-      {data === null || totals === undefined || wholeEmpty ? null : yearView ? (
-        <YearInReading data={data} year={view.year ?? today.slice(0, 4)} />
-      ) : totals.active_ms === 0 ? (
-        <>
-          <Exclusions data={data} correcting={correcting} onRestore={restore} />
-          <Outcomes data={data} />
-        </>
-      ) : (
-        <>
-          <Facts
-            className={styles.summary}
-            label="Activity summary"
-            facts={[
-              ["Observed time", duration(totals.active_ms)],
-              ["Active days", count(totals.active_days)],
-              [
-                live ? "Current streak" : "Ending streak",
-                <>
-                  {count(totals.streak)} days{" "}
-                  <small>best {count(totals.longest_streak)}</small>
-                </>,
-              ],
-              ["Sessions", count(totals.session_count)],
-              [
-                "Forward movement",
-                totals.forward_word_position > 0 ||
-                totals.forward_media_position_ms > 0
-                  ? movement(
-                      totals.forward_word_position,
-                      totals.forward_media_position_ms,
-                    )
-                  : "—",
-              ],
-              ["Completions", count(data.completion.total)],
-            ]}
-          />
-          <Timeline data={data} />
-          <DaysAndHours data={data} />
-          <Breakdowns data={data} onFilter={setFilter} />
-          <Sessions
-            data={data}
-            sessions={sessions}
-            correcting={correcting}
-            onExclude={exclude}
-          />
-          <Exclusions data={data} correcting={correcting} onRestore={restore} />
-          <Outcomes data={data} />
-        </>
-      )}
+      <div className={otherView ? styles.stale : undefined} inert={otherView || undefined}>
+        {totals?.recorded_active_ms === 0 ? (
+          <Fact line={{ fact: data!.activity.applied_filters.length > 1 ? "no activity matches these filters." : "no activity recorded in this period." }} />
+        ) : null}
+        {data === null || totals === undefined || wholeEmpty ? null : yearView ? (
+          <YearInReading data={data} year={view.year ?? today.slice(0, 4)} />
+        ) : totals.active_ms === 0 ? (
+          <>
+            <Exclusions data={data} correcting={correcting} onRestore={restore} />
+            <Outcomes data={data} />
+          </>
+        ) : (
+          <>
+            <Facts
+              className={styles.summary}
+              label="Activity summary"
+              facts={[
+                ["Observed time", duration(totals.active_ms)],
+                ["Active days", count(totals.active_days)],
+                [
+                  live ? "Current streak" : "Ending streak",
+                  <>
+                    {count(totals.streak)} days{" "}
+                    <small>best {count(totals.longest_streak)}</small>
+                  </>,
+                ],
+                ["Sessions", count(totals.session_count)],
+                [
+                  "Forward movement",
+                  totals.forward_word_position > 0 ||
+                  totals.forward_media_position_ms > 0
+                    ? movement(
+                        totals.forward_word_position,
+                        totals.forward_media_position_ms,
+                      )
+                    : "—",
+                ],
+                ["Completions", count(data.completion.total)],
+              ]}
+            />
+            <Timeline data={data} />
+            <DaysAndHours data={data} />
+            <Breakdowns data={data} onFilter={setFilter} />
+            <Sessions
+              data={data}
+              sessions={sessions}
+              correcting={correcting}
+              onExclude={exclude}
+            />
+            <Exclusions data={data} correcting={correcting} onRestore={restore} />
+            <Outcomes data={data} />
+          </>
+        )}
+      </div>
     </main>
   );
 }

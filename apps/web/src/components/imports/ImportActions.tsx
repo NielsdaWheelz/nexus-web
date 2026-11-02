@@ -10,8 +10,7 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
 import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
 import { UPLOAD_COMMAND_FACT, retryUploadRefusal, type UploadCommand } from "@/lib/imports/copy";
 import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
@@ -132,8 +131,9 @@ function useUploadActions(item: ImportItem) {
           if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [again.RetryUpload] : undefined);
           return;
         }
-        const transport = isApiError(error) && !isSameSystemApiDefect(error) ? transportOf(error) : null;
-        if (transport === "Offline" || transport === "Unavailable") {
+        // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
+        // have landed: a pool timeout answers 503 after a commit too.
+        if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error)) {
           setUnsure((current) => ({ command: id, attempt: current?.command === id ? current.attempt + 1 : 0 }));
           return;
         }

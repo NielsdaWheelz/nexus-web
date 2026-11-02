@@ -345,7 +345,8 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
       </ResourceList> : null}
     </div>
     {visit.adopted?.phase === "lexical" && phaseIncidents.hybrid !== null && hybrid.failure?.op !== "More" && (unfixable === undefined || count > 0)
-      ? <Failed error={phaseIncidents.hybrid} noun="related matches" retry={{ run: () => { returning.current = false; retryPhase("hybrid"); }, busy: hybrid.running !== null }} />
+      ? <Failed error={phaseIncidents.hybrid} noun="related matches" retry={UNFIXABLE.includes(phaseIncidents.hybrid.code) ? undefined
+        : { run: () => { returning.current = false; retryPhase("hybrid"); }, busy: hybrid.running !== null }} />
       : null}
     {readFeedback.notice}
     {readFeedback.announcement}

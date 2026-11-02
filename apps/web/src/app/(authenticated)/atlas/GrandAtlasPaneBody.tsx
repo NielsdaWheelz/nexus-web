@@ -5,6 +5,7 @@
 // pane; a folio's first pick traces its concordance, the second enters it.
 import { useMemo, useState } from "react";
 import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import {
   usePaneFreeServerValue,
@@ -117,7 +118,8 @@ export default function GrandAtlasPaneBody() {
 
         <div className={styles.frame}>
           <SkyCanvas scene={scene} onHover={setHovered} onPick={pick} />
-          {atlas.status === "failed" || readings.status === "failed" ? <div className={styles.failures}>
+          {atlas.status !== "ready" || readings.status === "failed" ? <div className={styles.state}>
+            {atlas.status === "loading" ? <Ruling /> : null}
             {atlas.status === "failed" ? <Failed error={atlas.error} noun="stars" retry={{ run: () => { void atlas.refetch().catch(() => {}); }, busy: atlas.retrying }} /> : null}
             {readings.status === "failed" ? <Failed error={readings.error} noun="readings" retry={{ run: () => { void readings.refetch().catch(() => {}); }, busy: readings.retrying }} /> : null}
           </div> : null}

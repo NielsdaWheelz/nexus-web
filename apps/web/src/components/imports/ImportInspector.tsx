@@ -13,8 +13,7 @@ import Button from "@/components/ui/Button";
 import { removeUploadSession } from "@/lib/imports/ingest";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -351,6 +350,8 @@ function PendingCapture({ capture, refresh }: {
 }) {
   const outcome = useOutcome();
   const [busy, setBusy] = useState(false);
+  // The guard is a ref: a slip's `retry` keeps the render it was raised in.
+  const running = useRef(false);
   /** The discard whose answer was lost, by attempt; it resolves when the capture leaves the read. */
   const [unsure, setUnsure] = useState<number | null>(null);
   const label = capture.state === "AwaitingBytes" ? "waiting for the upload."
@@ -358,20 +359,24 @@ function PendingCapture({ capture, refresh }: {
     : capture.failure_code === null ? UPLOAD_REJECTED_LABEL : importFailureCopy(capture.failure_code).reason;
   const retry = { label: "retry", commandKey: `discard ${capture.session_id}`, run: () => void discard(), busy };
   const discard = async () => {
-    if (busy) return;
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     try {
       await removeUploadSession(capture.session_id);
       setUnsure(null);
       refresh();
     } catch (error) {
-      const transport = isApiError(error) && !isSameSystemApiDefect(error) ? transportOf(error) : null;
-      if (transport === "Offline" || transport === "Unavailable") setUnsure((attempt) => attempt === null ? 0 : attempt + 1);
+      // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
+      // have landed: a pool timeout answers 503 after a commit too.
+      if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error))
+        setUnsure((attempt) => attempt === null ? 0 : attempt + 1);
       else {
         setUnsure(null);
         outcome.fail(error, "couldn’t discard this capture.", retry);
       }
     } finally {
+      running.current = false;
       setBusy(false);
     }
   };

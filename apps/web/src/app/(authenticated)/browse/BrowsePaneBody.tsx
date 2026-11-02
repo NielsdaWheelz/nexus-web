@@ -3,12 +3,14 @@
 // Browse fans a query out to independent source sections. Each shared list owns traversal,
 // errors and its pane-visit snapshot, and reports its cold read to the body. The body owns one
 // rule: once every section has failed with one transport, it says so once, and the sections stay
-// mounted, quiet and hidden, because each owns the read that can recover.
+// mounted, quiet and hidden, because each owns the read that can recover. A section the body
+// quieted stays quiet through the reread that may heal it, and speaks only if that fails again.
 
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,6 +46,7 @@ import {
   type BrowseSection,
 } from "@/lib/browse/query";
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -185,6 +188,11 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   useEffect(() => {
     onStatus(sectionKey, { settled, failure, invalid, running, refetch });
   }, [queryKey, onStatus, sectionKey, settled, failure, invalid, running, refetch]);
+  // Quieted by the body, it stays quiet through the reread that may heal it, waiting in its ruling:
+  // the old failure stands until that read settles, and would read meanwhile as a fresh line.
+  const [quieted, setQuieted] = useState(false);
+  const stillQuiet = quiet || (quieted && running);
+  if (stillQuiet !== quieted) setQuieted(stillQuiet);
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
@@ -218,7 +226,7 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
     {list.status === "loading" ? <Ruling />
       : refusal !== null ? <Fact line={{ fact: `couldn’t load ${noun}.`, reason: refusal.reason }}
         verbs={refusal.retry ? [{ label: "retry", commandKey: `retry ${noun}`, run: list.retry, busy: running }] : undefined} />
-      : failure !== null ? quiet ? null : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
+      : failure !== null ? quiet ? null : stillQuiet ? <Ruling /> : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
       : list.complete && rows.length === 0 ? <Fact line={{ fact: "no results." }} />
       : null}
     <CollectionView
@@ -233,6 +241,25 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
     {feedback.notice}
     {feedback.announcement}
   </section>;
+}
+
+/** The body's one sentence for every section. Withdrawn with focus on its verb, it hands focus to
+ * the pane's landmark: withdrawal restores only focus it owned. */
+function SharedFailure({ error, statuses }: { readonly error: ApiError; readonly statuses: readonly SectionStatus[] }) {
+  const region = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = region.current;
+    return () => {
+      if (element?.contains(document.activeElement))
+        findPaneLandmarkFocusTarget(element.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId)?.focus({ preventScroll: true });
+    };
+  }, []);
+  return <div ref={region}>
+    <Failed error={error} noun="results" retry={{
+      run: () => { for (const status of statuses) void status.refetch().catch(() => {}); },
+      busy: statuses.some((status) => status.running),
+    }} />
+  </div>;
 }
 
 export default function BrowsePaneBody() {
@@ -286,10 +313,7 @@ export default function BrowsePaneBody() {
   return <PaneSurface
     brief="Discover beyond Nexus. Preview first; add only when it belongs."
     empty={<p>Search to discover things beyond Nexus.</p>}
-    state={shared === null ? undefined : <Failed error={shared} noun="results" retry={{
-      run: () => { for (const status of statuses) void status.refetch().catch(() => {}); },
-      busy: statuses.some((status) => status.running),
-    }} />}
+    state={shared === null ? undefined : <SharedFailure error={shared} statuses={statuses} />}
   >
     {text ? [...new Set(sections.map((section) => section.kind))].map((kind) => (
       <section key={kind} className={styles.chapter} hidden={shared !== null}>

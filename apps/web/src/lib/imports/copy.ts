@@ -8,8 +8,8 @@
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -944,17 +944,20 @@ function modeled(error: unknown): ApiError {
   return error;
 }
 
-/** Until L7: consumers outside lib/imports still read FeedbackContent. */
-const content = ({ fact, reason }: Line): FeedbackContent => ({ tone: "Warning", title: fact, message: reason });
+/** Until L7, the shape consumers outside lib/imports read: `title` the command's or read's fact,
+ * `message` the domain or transport reason, and `reload` on a stale build, so an old renderer
+ * offers reload alone. */
+const content = ({ fact, reason }: Line, transport: Transport | null = null): FeedbackContent =>
+  ({ tone: "Warning", title: fact, message: reason, ...(transport === "Update" ? { reload: true as const } : {}) });
 
 /** A failed saved-source read: the server has no saved source by that id (services/imports.py),
- * or the transport speaks for the noun `source details`. Until L7, for consumers outside
- * lib/imports; defects rethrow. */
+ * or the transport speaks for the noun `source details`. Defects rethrow. */
 export function savedSourceReadFailure(error: unknown): FeedbackContent {
   const failure = modeled(error);
-  return content(failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST"
-    ? { fact: "this saved source isn’t available." }
-    : TRANSPORT_LINES[transportOf(failure)].read("source details"));
+  if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
+    return content({ fact: "couldn’t load source details.", reason: "this saved source isn’t available." });
+  const transport = transportOf(failure);
+  return content(TRANSPORT_LINES[transport].read("source details"), transport);
 }
 
 /** What verification said about the stored bytes, as a reason. */
@@ -1007,48 +1010,49 @@ const CAPTURE_FACT: Readonly<Record<CaptureOperation, string>> = {
   AddAttachment: "couldn’t attach this file.",
 };
 
-/** A one-file upload's refusal: capture, attachment and Add hold no session row. A malformed
- * intent is a defect. */
-function outcomeLine(error: UploadSessionError, fact: string): Line {
+/** A one-file upload's refusal, as the reason under its operation's fact: capture, attachment and
+ * Add hold no session row. A malformed intent is a defect. */
+function outcomeReason(error: UploadSessionError): string {
   const outcome = error.outcome;
   switch (outcome.kind) {
     case "IntentMalformed": throw error;
-    case "Superseded": return { fact: "this upload changed elsewhere." };
-    case "VerificationRejected": return { fact, reason: verificationReason(outcome) };
-    default: return { fact, reason: OUTCOME_REASON[outcome.kind] };
+    case "Superseded": return "this upload changed elsewhere.";
+    case "VerificationRejected": return verificationReason(outcome);
+    default: return OUTCOME_REASON[outcome.kind];
   }
 }
 
-/** The capture endpoints' domain codes (media_source_ingest.py, x_ingest.py, x_client.py). */
-const CAPTURE_REFUSAL: Readonly<Record<string, (fact: string) => Line>> = {
-  E_RESOURCE_CONFLICT: fact => ({ fact, reason: "its libraries changed since you chose them." }),
-  E_LIBRARY_FORBIDDEN: fact => ({ fact, reason: OUTCOME_REASON.LibraryForbidden }),
-  E_SOURCE_IMPORT_ACTIVE: () => ({ fact: "this source is already importing." }),
-  E_X_IDENTITY_CONFLICT: fact => ({ fact, reason: "it matches more than one thread you saved." }),
-  E_X_SOURCE_CONFLICT: fact => ({ fact }),
-  E_FILE_TOO_LARGE: fact => ({ fact, reason: OUTCOME_REASON.FileTooLarge }),
-  E_CAPTURE_TOO_LARGE: fact => ({ fact, reason: OUTCOME_REASON.FileTooLarge }),
-  E_INVALID_FILE_TYPE: fact => ({ fact, reason: OUTCOME_REASON.UnsupportedFileType }),
-  E_INVALID_REQUEST: () => ({ fact: "this link can’t be saved." }),
-  E_X_ARTICLE_POST_LINK_REQUIRED: fact => ({ fact, reason: "x articles save from their post link." }),
-  E_X_PROVIDER_UNAVAILABLE: fact => ({ fact, reason: "x imports aren’t available." }),
-  E_X_PROVIDER_CREDITS_DEPLETED: fact => ({ fact, reason: "x imports aren’t available." }),
-  E_X_PROVIDER_AUTH_REJECTED: fact => ({ fact, reason: "x imports aren’t available." }),
-  E_X_PROVIDER_RATE_LIMITED: fact => ({ fact, reason: "x is limiting imports." }),
-  E_X_PROVIDER_TIMEOUT: fact => ({ fact, reason: "x didn’t answer in time." }),
+/** The capture endpoints' domain codes, as reasons (media_source_ingest.py, x_ingest.py,
+ * x_client.py). E_X_SOURCE_CONFLICT has none that anything keeps true. */
+const CAPTURE_REFUSAL: Readonly<Record<string, string | null>> = {
+  E_RESOURCE_CONFLICT: "its libraries changed since you chose them.",
+  E_LIBRARY_FORBIDDEN: OUTCOME_REASON.LibraryForbidden,
+  E_SOURCE_IMPORT_ACTIVE: "this source is already importing.",
+  E_X_IDENTITY_CONFLICT: "it matches more than one thread you saved.",
+  E_X_SOURCE_CONFLICT: null,
+  E_FILE_TOO_LARGE: OUTCOME_REASON.FileTooLarge,
+  E_CAPTURE_TOO_LARGE: OUTCOME_REASON.FileTooLarge,
+  E_INVALID_FILE_TYPE: OUTCOME_REASON.UnsupportedFileType,
+  E_INVALID_REQUEST: "this link can’t be saved.",
+  E_X_ARTICLE_POST_LINK_REQUIRED: "x articles save from their post link.",
+  E_X_PROVIDER_UNAVAILABLE: "x imports aren’t available.",
+  E_X_PROVIDER_CREDITS_DEPLETED: "x imports aren’t available.",
+  E_X_PROVIDER_AUTH_REJECTED: "x imports aren’t available.",
+  E_X_PROVIDER_RATE_LIMITED: "x is limiting imports.",
+  E_X_PROVIDER_TIMEOUT: "x didn’t answer in time.",
 };
 
 /**
- * A failed capture or attachment: its domain code or upload outcome, ahead of the transport. A
- * malformed intent and same-system defects rethrow. Until L7, for consumers outside lib/imports.
+ * A failed capture or attachment: the operation's fact, with its domain code or upload outcome as
+ * the reason, ahead of the transport. A malformed intent and same-system defects rethrow.
  */
 export function captureErrorFeedback(error: unknown, operation: CaptureOperation): FeedbackContent {
   const fact = CAPTURE_FACT[operation];
-  if (error instanceof UploadSessionError) return content(outcomeLine(error, fact));
+  if (error instanceof UploadSessionError) return content({ fact, reason: outcomeReason(error) });
   const failure = modeled(error);
-  return content(Object.hasOwn(CAPTURE_REFUSAL, failure.code)
-    ? CAPTURE_REFUSAL[failure.code](fact)
-    : TRANSPORT_LINES[transportOf(failure)].command(fact));
+  if (Object.hasOwn(CAPTURE_REFUSAL, failure.code)) return content({ fact, reason: CAPTURE_REFUSAL[failure.code] ?? undefined });
+  const transport = transportOf(failure);
+  return content(TRANSPORT_LINES[transport].command(fact), transport);
 }
 
 /** Acceptance records a saved source, independently of processing success. */
@@ -1073,8 +1077,9 @@ const ADDED_FILE = "couldn’t save this file.";
 
 /**
  * Why an Add acceptance did not land: refused, unknown (send its id again to find out), or
- * superseded. A transport with no answer leaves the acceptance unknown; defects and a malformed
- * intent rethrow.
+ * superseded. Only a refusal says it did not land (`isRefusal`); anything else sent leaves it
+ * unknown, since a pool timeout answers 503 after a commit too. Defects and a malformed intent
+ * rethrow.
  */
 export function acceptanceFailure(error: unknown): AcceptanceFailure {
   if (error instanceof UploadSessionError) {
@@ -1087,10 +1092,9 @@ export function acceptanceFailure(error: unknown): AcceptanceFailure {
         kind: "AcceptanceUnresolved", reason: outcome.kind === "Unresolved" ? "StatusUnknown" : "UploadIncomplete",
         feedback: content({ fact: ADDED_FILE, reason: OUTCOME_REASON[outcome.kind] }),
       };
-      default: return { kind: "Rejected", feedback: content(outcomeLine(error, ADDED_FILE)) };
+      default: return { kind: "Rejected", feedback: content({ fact: ADDED_FILE, reason: outcomeReason(error) }) };
     }
   }
-  const transport = transportOf(modeled(error));
-  if (transport === "Offline" || transport === "Unavailable") return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", feedback: UNCONFIRMED };
+  if (!isRefusal(modeled(error))) return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", feedback: UNCONFIRMED };
   return { kind: "Rejected", feedback: captureErrorFeedback(error, "SaveSource") };
 }
