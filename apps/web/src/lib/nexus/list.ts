@@ -12,7 +12,8 @@ export const EMPTY: NexusList = { identity: "", rows: [], held: 0, armed: null, 
  * Law 1 at the keystroke: every previous row that still matches `identity` by name, or is the latched
  * row, is held at its tier for the new text; held and the synchronous candidates are ranked once, the
  * latched row first; the best row is armed with latency and the old armed row is remembered while it
- * is still shown.
+ * is still shown. A held row is what the user sees: a synchronous candidate for the same key lends it
+ * only its stream, frecency and recency.
  */
 export function keystroke(previous: NexusList, identity: string, sync: readonly NexusRow[], latchedKey: string | null, now: number): NexusList {
   const held = previous.rows.flatMap(row => {
@@ -21,7 +22,10 @@ export function keystroke(previous: NexusList, identity: string, sync: readonly 
     return tier === null ? [] : [{ ...row, rank: { ...row.rank, tier } }];
   });
   const byKey = new Map(held.map(row => [row.key, row] as const));
-  for (const row of sync) byKey.set(row.key, row);
+  for (const row of sync) {
+    const shown = byKey.get(row.key);
+    byKey.set(row.key, shown ? { ...shown, rank: { ...row.rank, tier: shown.rank.tier }, frecency: row.frecency, recency: row.recency } : row);
+  }
   const rows = [...byKey.values()].sort(compareRank);
   const armed = rows[0]?.key ?? null;
   return {

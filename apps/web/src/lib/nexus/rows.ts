@@ -321,7 +321,7 @@ export function arrivalRows(input: Reference & {
     const previous = owners.get(row.key);
     if (!previous || row.localMatch?.resource.authored_by_viewer && !previous.localMatch) owners.set(row.key, row);
   }
-  const shown = new Set(input.shown.map(row => row.key));
+  const shown = new Map(input.shown.map(row => [row.key, row] as const));
   // An arriving source absorbs its passage; a shown one keeps its lines, so the passage stays its own row.
   for (const passage of passages) {
     const ref = passage.item?.preview.source?.ref;
@@ -332,7 +332,23 @@ export function arrivalRows(input: Reference & {
   }
   const rows = [...owners.values()];
   const fresh = rows.filter(row => !shown.has(row.key)).sort(compareRank).slice(0, Math.max(0, RESULT_CAP - shown.size));
-  return [...rows.filter(row => shown.has(row.key)), ...fresh];
+  return [...rows.flatMap(row => { const before = shown.get(row.key); return before ? [refreshed(before, row)] : []; }), ...fresh];
+}
+
+/**
+ * A shown row keeps its lines for the life of the query (law 1 holds by reflow too): a row painted from a
+ * pane or a recent pick stays as it is, and an arrived row refreshes a window it already shows but never
+ * gains or loses one.
+ */
+function refreshed(shown: NexusRow, update: NexusRow): NexusRow {
+  if (!shown.item) return shown;
+  const window = Boolean(shown.match && update.match);
+  return {
+    ...update,
+    match: window ? update.match : shown.match,
+    matchMethod: window ? update.matchMethod : shown.matchMethod,
+    matchingPassage: shown.matchingPassage && update.matchingPassage ? update.matchingPassage : shown.matchingPassage,
+  };
 }
 
 export function playbackRow(title: string, subtitle: string | undefined): NexusRow {
