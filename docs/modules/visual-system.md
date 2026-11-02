@@ -76,8 +76,8 @@ export is paid for by a bare use. every sign is decorative, paints
 `currentColor` and takes `className` and `size`; the slot owns size
 (`--control-icon-size`, `.menuItemIcon`) and `control.tsx` owns waiting. a glyph
 outside a slot sets `size` on the scale 12, 14, 16, 20, 24. domain
-tables (the action catalog, `SCHEMES`, `ROUTES`, destinations, nexus rows, pane
-controls) choose a sign or `null`; presenters size and paint it.
+tables (the action catalog, `SCHEMES`, media kinds, `ROUTES`, destinations, nexus
+rows, pane controls) choose a sign or `null`; presenters size and paint it.
 
 1. a sign is a drawing plus one gloss. each determines the other.
 2. a gloss reads true at every use, with the object taken from the label or the
