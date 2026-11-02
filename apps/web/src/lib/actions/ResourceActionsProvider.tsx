@@ -395,7 +395,6 @@ export default function ResourceActionsProvider({
         return;
       }
       if (command.tracked) busy.set(key, true);
-      // Only the newest attempt of one verb on one resource reports; a new attempt withdraws the last.
       attempts.get(key)?.retract?.();
       const attempt: { retract: Retract | null } = { retract: null };
       attempts.set(key, attempt);

@@ -245,23 +245,20 @@ export default function SurfaceHeader({
               <MediaHeaderMenu subject={resourceActions} title={header.title} subjectKey={identityId}
                 sections={sections} resourceRef={resourceRef} actionFocus={actionFocus}
                 triggerRef={setMore} triggerAttributes={{ "data-pane-chrome-focus": "true" }}
-                renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={styles.mobileOverflow} /></span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={styles.mobileOverflow} />} />
             ) : resourceActions?.kind === "Podcast" && resourceRef === undefined ? (
               <PodcastMenu subject={resourceActions.subject} metadataSubject={podcastMetadata} actionFocus={actionFocus}
                 subjectKey={identityId} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections} omitResourceActions={narrow ? [...seen] : undefined}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
-                renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />} />
             ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
               <ContextualActionMenu navigation={null} title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}
                 resourceRef={resourceRef} actionFocus={actionFocus} omitResourceActions={narrow ? [...seen] : undefined} triggerRef={setMore}
                 triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
-                renderTrigger={props => <span className={styles.overflow}>
-                  <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />
-                  {actions.some(action => action.indicator?.kind === "Status") ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
-                </span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />} />
             ) : null}
             {companion && companionState ? (
               <Button
