@@ -6,9 +6,9 @@ import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type CommandVerb } from "@/components/feedback/stage";
+import { transportVerbs, type CommandVerb, type Line } from "@/components/feedback/stage";
 import { isApiError } from "@/lib/api/client";
-import { conditionLine, MARK, useCondition, type Condition } from "@/lib/account/condition";
+import { conditionLine, MARK, useCondition, type Condition, type Mark } from "@/lib/account/condition";
 import { installedApp, publishAdmission, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -148,8 +148,11 @@ export default function AccountMenu(props: {
   const refresh_failed = summary.status === "ready" && summary.error !== null;
   const attention = count !== null && count > 0 ? importAttentionDescription(count, refresh_failed) : null;
   const mark = mobile ? null : condition !== null && MARK[condition] === "Solid" || attention !== null ? "Solid" : condition !== null ? "Hollow" : null;
+  // The dot keeps its last shape through its fade out, so a healing mark never reads as another.
+  const [shape, setShape] = useState<Mark>("Solid");
+  if (mark !== null && mark !== shape) setShape(mark);
   const state = condition !== null ? conditionLine(condition, commitFailed).fact : STATUS_COPY[status];
-  const preparation = condition === null && status === "syncing" && detail?.startsWith(SYNCED) ? detail.slice(SYNCED.length) : null;
+  const preparation = status === "syncing" && detail?.startsWith(SYNCED) ? detail.slice(SYNCED.length) : null;
   const live = accountRows(condition, commitFailed, preparation, {
     signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },
     restart: () => { if (guard.confirmDocumentExit()) window.location.reload(); },
@@ -205,7 +208,7 @@ export default function AccountMenu(props: {
     },
   ];
   if (localContentAvailable) {
-    options.splice(options.length - 1, 0, {
+    options.splice(options.length - 2, 0, {
       kind: "link",
       id: "downloads",
       label: "Downloads",
@@ -234,7 +237,7 @@ export default function AccountMenu(props: {
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
         }, <span className={accountStyles.mark} aria-hidden="true">
           <CircleUser size={20} />
-          <span className={accountStyles.attention} data-mark={mark ?? undefined} />
+          <span className={accountStyles.attention} data-shape={shape} data-mark={mark ?? undefined} />
         </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
       />
@@ -243,30 +246,34 @@ export default function AccountMenu(props: {
   );
 }
 
-/** The condition's row and its verbs, else a running preparation's row. A verb row is an
- * ordinary command, so the menu closes before it runs. */
-function accountRows(condition: Condition | null, commitFailed: boolean, preparation: string | null, verbs: {
-  signIn: { busy: boolean; run: () => void }; restart: () => void;
-}): ActionDescriptor[] {
-  const line = condition === null ? preparation === null ? null : { fact: preparation } : conditionLine(condition, commitFailed);
-  if (line === null) return [];
-  const row: ActionDescriptor = { kind: "custom", id: "account-state", label: line.fact, render: () => <p className={accountStyles.status}>
+type RowVerbs = { signIn: { busy: boolean; run: () => void }; restart: () => void };
+
+/** The condition's row and its verb, then a running preparation's row: each holds a row of its own. */
+function accountRows(condition: Condition | null, commitFailed: boolean, preparation: string | null, verbs: RowVerbs): ActionDescriptor[] {
+  const statusRow = (id: string, line: Line): ActionDescriptor => ({ kind: "custom", id, label: line.fact, render: () => <p className={accountStyles.status}>
     {line.fact}{line.reason ? <span className={accountStyles.reason}> {line.reason}</span> : null}
-  </p> };
+  </p> });
+  const prepared = preparation === null ? [] : [statusRow("account-preparation", { fact: preparation })];
+  if (condition === null) return prepared;
+  const verb = conditionVerb(condition, verbs);
+  return [statusRow("account-state", conditionLine(condition, commitFailed)), ...verb === null ? [] : [verb], ...prepared];
+}
+
+/** A condition's verb row is an ordinary command, so the menu closes before it runs. */
+function conditionVerb(condition: Condition, verbs: RowVerbs): ActionDescriptor | null {
   const verb = (id: string, label: string, onSelect: (detail: ActionSelectDetail) => void, busy = false): ActionDescriptor =>
     ({ kind: "command", id, label, icon: null, disabled: busy, onSelect });
   switch (condition) {
     case "Stopped":
-    case "SyncLocal": return [row, verb("restart", "restart nexus", verbs.restart)];
+    case "SyncLocal": return verb("restart", "restart nexus", verbs.restart);
     case "Update": {
       const reload = transportVerbs("Update", { signIn: null })?.[0];
-      return reload && "run" in reload ? [row, verb("reload", reload.label, detail => reload.run(detail.openIntent))] : [row];
+      return reload && "run" in reload ? verb("reload", reload.label, detail => reload.run(detail.openIntent)) : null;
     }
-    case "SignIn": return [row, verb("sign-in", "sign in", verbs.signIn.run, verbs.signIn.busy)];
+    case "SignIn": return verb("sign-in", "sign in", verbs.signIn.run, verbs.signIn.busy);
     case "Refused":
     case "Lagging":
     case "UpdateReady":
-    case "Offline":
-    case null: return [row];
+    case "Offline": return null;
   }
 }

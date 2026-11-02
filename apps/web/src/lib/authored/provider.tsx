@@ -174,7 +174,8 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   const runtime = useMemo(() => getWritingRuntime(accountId), [accountId]);
   const writing = useSyncExternalStore(runtime.subscribe, runtime.snapshot, runtime.snapshot);
   const condition = useCondition();
-  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  // `Update`'s line and verb follow the remedy; under any other condition a remedy change is no onset.
+  const updateRemedyKey = useSyncExternalStore(subscribeAdmission, () => condition === "Update" ? updateRemedy() : null, () => null);
   const [incident, setIncident] = useState<{ occurrence: object | null; serial: number; attempt: number }>({ occurrence: null, serial: 0, attempt: 0 });
   if (incident.occurrence !== writing.error_occurrence) setIncident({ occurrence: writing.error_occurrence, serial: incident.serial + 1, attempt: 0 });
   const [retrying, setRetrying] = useState(false);
@@ -188,7 +189,7 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
     if (condition !== "SyncLocal" && condition !== "Update" && condition !== "SignIn" && condition !== "Refused") return;
     const verbs = condition === "SyncLocal" ? [restart] as const : condition === "Update" ? transportVerbs("Update", { signIn: null }) : condition === "SignIn" ? [signIn] as const : null;
     return say(conditionLine(condition, commitFailed.current), verbs ?? undefined);
-  }, [say, restart, signIn, condition, remedy]);
+  }, [say, restart, signIn, condition, updateRemedyKey]);
   if (defect) throw defect.error;
   if (writing.error === null) return null;
   const stopped = writingStoreStopped(writing.error);

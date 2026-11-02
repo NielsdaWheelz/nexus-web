@@ -10,7 +10,8 @@
   block-size: 20px;
 }
 
-/* The dot keeps the trigger's geometry and focus stable; its weight fades in and out. */
+/* The dot keeps the trigger's geometry and focus stable; its weight fades in and out. `data-mark`
+   shows it; `data-shape` outlives it, so a fading mark keeps the shape it had. */
 .attention {
   position: absolute;
   inset-block-start: 0;
@@ -30,7 +31,7 @@
   opacity: 1;
 }
 
-.attention[data-mark="Hollow"] {
+.attention[data-shape="Hollow"] {
   border: 1.5px solid var(--warning);
   background: var(--surface-2);
 }
@@ -41,7 +42,7 @@
     border-color: Canvas;
     forced-color-adjust: none;
   }
-  .attention[data-mark="Hollow"] {
+  .attention[data-shape="Hollow"] {
     background: Canvas;
     border-color: CanvasText;
   }
