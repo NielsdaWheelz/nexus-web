@@ -195,7 +195,7 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
     {feedback}
     {read.data !== null && !resource && (value || editing) ? <p role="status">this highlight is unavailable. your writing is kept. <Button reserveIcon icon={copied.copied ? <Check/> : undefined} onClick={copyWriting}>copy</Button></p> : null}
     {value ? <>
-      <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} compact history={null}
+      <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} history={null}
         reference={{source_ref: highlightRef, label: "annotation", onActiveChange: reference => draft.set(current => current && {...current, reference}), onSelected: (target, item) => draft.set(current => current && {...current, reference: false, links: [...current.links, {target, label: item.label}], revision: current.revision + 1})}}
         onEditorReady={ready} onSave={() => queueMicrotask(save)} onEdit={edit => {const current = draft.read(); if (!current || current.committing) return; applyDraftBody(current.doc, edit.before, edit.after); draft.set({...current, body: edit.after, revision: current.revision + 1});}}
         onLinkInputActiveChange={hyperlink => draft.set(current => current && {...current, hyperlink})}

@@ -64,8 +64,8 @@
   position: relative;
   max-width: 76ch;
   color: var(--ink);
-  font-size: var(--text-md);
-  line-height: var(--leading-normal);
+  font-size: var(--content-font-size, calc((var(--text-sm) + var(--text-base)) / 2));
+  line-height: var(--content-line-height, var(--leading-normal));
   outline: none;
   white-space: pre-wrap;
 }
@@ -92,7 +92,6 @@
 }
 
 .view :global(p) {
-  min-height: 24px;
   margin: 0;
 }
 
@@ -111,15 +110,6 @@
   background: var(--accent-muted);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-}
-
-.compact {
-  font-size: calc((var(--text-sm) + var(--text-base)) / 2);
-  line-height: var(--leading-normal);
-}
-
-.compact :global(p) {
-  min-height: 0;
 }
 
 .view pre :is(strong, em, u, s, a, code) {
