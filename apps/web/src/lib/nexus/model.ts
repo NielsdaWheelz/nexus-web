@@ -141,12 +141,13 @@ export type SubmitFailure =
   | { readonly kind: "Transport"; readonly fact: string; readonly error: ApiError }
   | { readonly kind: "AtRisk" };
 
-/** A running submit keeps the failure it is retrying, so its report stands until it settles. */
+/** A running submit keeps the failure it is retrying, so its report stands until it settles.
+ * `failures` counts this submit's failed attempts, so a report that stands spoken speaks again. */
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
   | { readonly kind: "Acknowledged" }
-  | { readonly kind: "Running"; readonly unconfirmed: boolean; readonly failure?: SubmitFailure }
-  | { readonly kind: "Retryable"; readonly unconfirmed: boolean; readonly failure: SubmitFailure };
+  | { readonly kind: "Running"; readonly unconfirmed: boolean; readonly failure?: SubmitFailure; readonly failures: number }
+  | { readonly kind: "Retryable"; readonly unconfirmed: boolean; readonly failure: SubmitFailure; readonly failures: number };
 
 export type NexusPage =
   | { readonly kind: "Root" }

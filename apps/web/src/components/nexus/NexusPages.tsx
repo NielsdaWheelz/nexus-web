@@ -115,7 +115,8 @@ function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "
   const { say } = useOutcome();
   const throwLater = useThrowLater();
   const running = page.submit.kind === "Running";
-  const atRisk = (page.submit.kind === "Running" || page.submit.kind === "Retryable") && page.submit.failure?.kind === "AtRisk";
+  const failed = page.submit.kind === "Running" || page.submit.kind === "Retryable" ? page.submit : null;
+  const atRisk = failed?.failure?.kind === "AtRisk";
   const retry = () => controller.retryCapture("default");
   const copyText = () => void copy.copy(page.text).catch((error: unknown) => {
     if (error instanceof ClipboardWriteUnavailableError) say({ fact: "copying isn’t available here.", reason: "select the text and copy it." });
@@ -126,7 +127,7 @@ function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "
       <Header title="add to today" onBack={controller.back} />
       <p>{page.text}</p>
       <Button aria-busy={running || undefined} aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={retry}>retry</Button>
-      {atRisk ? <Hold id={page.noteId} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
+      {atRisk ? <Hold id={page.noteId} attempt={failed?.failures} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
         { label: "retry", commandKey: `retry capture ${page.noteId}`, run: retry, busy: running },
         { label: "copy text", commandKey: `copy capture ${page.noteId}`, run: copyText, copied: copy.occurrence ?? undefined },
       ]} /> : null}

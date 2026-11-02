@@ -30,6 +30,7 @@ import {
   type ChoiceReturn,
   type NexusAction,
   type NexusOpenIntent,
+  type ReplayableSubmitState,
   type SubmitFailure,
   type NexusPage,
   type NexusPane,
@@ -474,7 +475,7 @@ export function useNexusController() {
       if (!guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
       const localDate = dailyDateFor(target.date, calendarTimeZone);
       // Keep the root origin and query for a guarded return.
-      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false } });
+      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false, failures: 0 } });
       setOpen(true);
       return null;
     }
@@ -544,7 +545,7 @@ export function useNexusController() {
 
   /** Quick note with text: one append to the day, then the day at that note (the
    * launcher keeps the text with Retry, under the same note id, when it fails). */
-  function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
+  function capture(running: Extract<NexusPage, { kind: "CaptureToday" }> & { readonly submit: Extract<ReplayableSubmitState, { kind: "Running" }> }) {
     void openCreated(running, async () => {
       if (captureAttempt.current?.noteId !== running.noteId) captureAttempt.current = {noteId:running.noteId,promise:captureToday(getWritingRuntime(accountId),running.localDate,running.noteId,running.text),retry:null};
       else if (captureAttempt.current.retry) { captureAttempt.current.promise=captureAttempt.current.retry().then(()=>"");captureAttempt.current.retry=null; }
@@ -555,13 +556,14 @@ export function useNexusController() {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         if (error instanceof LocalCommitError) {
           if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
-          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",failure:{kind:"AtRisk"},unconfirmed:false}};
+          const failures = running.submit.failures + 1;
+          const retryable: Extract<NexusPage, {kind: "CaptureToday"}> = {...running,submit:{kind:"Retryable",failure:{kind:"AtRisk"},unconfirmed:false,failures}};
           setPage(retryable);
           void error.completion.then(() => {
             if (!visible.current || currentPage.current !== retryable || ctx.sessionSignal().aborted || captureAttempt.current?.noteId !== running.noteId) return;
             captureAttempt.current.promise = Promise.resolve("");
             captureAttempt.current.retry = null;
-            capture({...retryable, submit: {kind: "Running", unconfirmed: false}});
+            capture({...retryable, submit: {kind: "Running", unconfirmed: false, failures}});
           }, () => {});
           return;
         }
@@ -613,14 +615,15 @@ export function useNexusController() {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
     const running = { ...page, name: page.name.trim(), activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } as const : page.activation,
       submit: { kind: "Running", failure: page.submit.kind === "Retryable" ? page.submit.failure : undefined,
-        unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed } } as const;
+        unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed,
+        failures: page.submit.kind === "Retryable" ? page.submit.failures : 0 } } as const;
     void openCreated(running, async () => {
       const library = await createLibrary({ id: running.libraryId, name: running.name, initial_items: [], expected_removal_revision: null });
       return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         const failure = createFailure(error, running.submit.unconfirmed);
-        if (failure) setPage({ ...running, submit: { kind: "Retryable", failure, unconfirmed: running.submit.unconfirmed || outcomeUnknown(error) } });
+        if (failure) setPage({ ...running, submit: { kind: "Retryable", failure, unconfirmed: running.submit.unconfirmed || outcomeUnknown(error), failures: running.submit.failures + 1 } });
       });
   }
 
@@ -977,7 +980,7 @@ export function useNexusController() {
       });
     },
     submitLibrary,
-    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", failure: page.submit.failure, unconfirmed: page.submit.unconfirmed } }),
+    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", failure: page.submit.failure, unconfirmed: page.submit.unconfirmed, failures: page.submit.failures } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });
