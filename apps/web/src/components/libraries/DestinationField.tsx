@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger, type DestinationChange } from "@/components/libraries/DestinationChooser";
 import type { ChooserCreation, ChooserError } from "@/components/libraries/LibraryChooser";
@@ -26,7 +25,5 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
       <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
         create={create} error={error} />
     </PickerSurface>
-    {!open && error ? <FeedbackFailure scope="Local" occurrence={error.occurrence} content={error.content} announcement="Assertive"
-      actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy, commandKey: error.commandKey }] : undefined} /> : null}
   </div>;
 }

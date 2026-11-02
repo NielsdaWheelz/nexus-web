@@ -1,15 +1,13 @@
 "use client";
 
-import { installedApp } from "@/lib/native/admission";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { isApiError, isStaleBuild } from "@/lib/api/client";
-import { modeledApiError } from "@/lib/api/serverState";
+import { isApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
@@ -17,7 +15,9 @@ import { useLecternCommands } from "@/lib/lectern/lectern";
 import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 
-/** The command owner retains uncertain work; only its receipt removes a row. */
+/** The command owner retains uncertain work; only its receipt removes a row. A first read's or
+ * first request's failure stands where the rows would; over a shown pool, failures say nothing
+ * and heal. A stopped job says so above the rows, or in their place. */
 export type SuggestionAccept = (target: SuggestionTarget) => Promise<"Accepted" | "Retained">;
 
 export default function SuggestionsSection({ destination, suggestions, accept, returnScope }: {
@@ -29,11 +29,10 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const lectern = destination.kind === "Lectern";
   const { receipts } = useLecternCommands();
   const previousReceipts = useRef<typeof receipts>(new Map());
-  const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<ReadonlySet<string>>(new Set());
   const [retrying, setRetrying] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; requestId?: string } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const outcome = useOutcome();
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: suggestions.state !== null || suggestions.readFailure !== null || suggestions.withdrawn });
   const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
@@ -67,14 +66,9 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       default: assertNever(work);
     }
   }
-  const readFailure = suggestions.readFailure !== null || suggestions.observationInterrupted;
-  const readFailureText = suggestions.readFailure?.intention === "Initial"
-    ? "couldn’t load suggestions." : "couldn’t refresh suggestions.";
-  const readFailureError = suggestions.readFailure?.error ?? suggestions.observationError;
-  const waiting = suggestions.adopted === null && !readFailure && suggestions.admissionError === null && !needsRepair;
-  const readOccurrence = useFeedbackOccurrence(readFailure, returnScope);
-  const admissionOccurrence = useFeedbackOccurrence(suggestions.admissionError !== null, returnScope);
-  const addOccurrence = useFeedbackOccurrence(notice !== null, returnScope);
+  const coldFailure = suggestions.adopted === null ? suggestions.readFailure?.error ?? null : null;
+  const admissionFailure = suggestions.adopted === null && coldFailure === null && !needsRepair ? suggestions.admissionError?.error ?? null : null;
+  const waiting = suggestions.adopted === null && coldFailure === null && admissionFailure === null && !needsRepair;
 
   async function retry() {
     if (retrying) return;
@@ -96,24 +90,24 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   });
   async function add(item: SuggestionItem) {
     busyWith(item.target.ref, true);
-    setNotice(null);
     try {
       if (await accept(item.target) === "Accepted" && !lectern) acknowledge(item.target.ref);
     } catch (error) {
-      const modeled = modeledApiError(error, setDefect);
-      if (modeled !== null && isStaleBuild(modeled) && !installedApp) setDefect({ error });
-      else if (modeled !== null)
-        setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: modeled.requestId });
+      // Only the lectern's ensure refuses here; an unknown outcome settles `Retained` and holds there.
+      const fact = `couldn’t add “${item.target.kind === "Media" ? item.target.media_summary.title : item.target.title}” to the lectern.`;
+      if (isApiError(error) && error.code === "E_LIMIT") outcome.say({ fact, reason: "the lectern is full." });
+      else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the lectern changed meanwhile." });
+      else outcome.fail(error, fact);
     } finally {
       busyWith(item.target.ref, false);
     }
   }
 
   const sectionVisible = !suggestions.withdrawn && suggestions.state?.capability !== "NotApplicable";
-  // Section visibility and notices can move the eye-line independently of rows.
-  const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, atCapacity, readFailure, readFailureText, readFailureError,
-    admissionError: suggestions.admissionError, notice, summaryError: summaries.error } : null,
-  [sectionVisible, waiting, needsRepair, atCapacity, readFailure, readFailureText, readFailureError, suggestions.admissionError, notice, summaries.error]);
+  // Section visibility and its facts can move the eye-line independently of rows.
+  const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, coldFailure, admissionFailure } : null,
+  [sectionVisible, waiting, needsRepair, coldFailure, admissionFailure]);
+  const repair = needsRepair ? <Fact line={{ fact: "suggestions stopped updating.", reason: "the job that finds them needs a repair." }} /> : null;
   if (defect) throw defect.error;
   const title = lectern ? "suggestions" : "suggested for this library";
   const ariaLabel = lectern ? "suggestions" : `suggestions for ${destination.name}`;
@@ -132,21 +126,12 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         status={waiting ? "loading" : "ready"}
         ariaLabel={ariaLabel}
         surface={false}
-        notice={<>
-          {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
-          {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}
-          {readFailure ? <FeedbackFailure scope="Local" occurrence={readOccurrence}
-            content={{ tone: "Danger", title: readFailureText, requestId: isApiError(readFailureError) ? readFailureError.requestId : undefined }}
-            announcement="Polite" actions={[{ label: "retry", onClick: () => void retry(), busy: retrying || suggestions.reconciling }]} /> : null}
-          {suggestions.admissionError ? <FeedbackFailure scope="Local" occurrence={admissionOccurrence}
-            content={{ tone: "Danger", title: "couldn’t request suggestions.", requestId: suggestions.admissionError.error.requestId }}
-            announcement="Polite" actions={[{ label: "retry", onClick: suggestions.retryAdmission, busy: suggestions.admitting }]} /> : null}
-          {notice ? <FeedbackFailure scope="Local" occurrence={addOccurrence} content={{ tone: "Danger", title: notice.text, requestId: notice.requestId }} announcement="Polite" /> : null}
-          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
-        </>}
-        empty={suggestions.adopted !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "no suggestions right now." }} announcement="None" /> : undefined}
+        notice={rows.length > 0 ? repair : null}
+        empty={coldFailure !== null ? <Failed error={coldFailure} noun="suggestions" retry={{ run: () => void retry(), busy: retrying || suggestions.reconciling }} />
+          : admissionFailure !== null ? <Failed error={admissionFailure} noun="suggestions" retry={{ run: suggestions.retryAdmission, busy: suggestions.admitting }} />
+            : repair ?? (suggestions.adopted !== null ? <Fact line={{ fact: "no suggestions right now." }} /> : undefined)}
         rowControls={Object.fromEntries(rows.flatMap((item) => item.target.kind === "Media" ? [] : [[item.target.ref,
-          <Button reserveIcon busyKey={item.target.ref} key={item.target.ref} aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
+          <Button key={item.target.ref} aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
             aria-disabled={adding.has(item.target.ref) || undefined} aria-busy={adding.has(item.target.ref) || undefined}
             onClick={() => { if (!adding.has(item.target.ref)) void add(item); }}>add</Button>,
         ]]))}

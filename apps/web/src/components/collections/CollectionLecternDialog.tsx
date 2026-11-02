@@ -1,22 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { flushSync } from "react-dom";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { modeledApiError, usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { isApiError } from "@/lib/api/client";
+import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { admissionReason } from "@/lib/collections/admissionReason";
 import type { CollectionTarget } from "@/lib/consumption/api";
 import { prepareCollectionLectern } from "@/lib/lectern/api";
+import { LecternReadFailure } from "@/lib/lectern/lectern";
 import { installedApp } from "@/lib/native/admission";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
-/** One complete, fixed-order append enters the existing account lectern lane. An
- * unconfirmed append stays here with its check; the lane blocks other changes meanwhile. */
+/** One complete, fixed-order append enters the existing account lectern lane. An unknown append
+ * holds here with its retry while the dialog is open; the lane blocks other changes meanwhile. A
+ * refusal says why in this dialog, which rereads both reads and re-arms when they land. A confirm
+ * the reads cannot vouch for stays disabled and says why. */
 export default function CollectionLecternDialog({ target, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly target: CollectionTarget;
   readonly title: string;
@@ -26,64 +31,61 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
 }) {
   const { ctx } = useActionRuntime();
   const fail = useThrowLater();
+  const outcome = useOutcome();
   const pending = ctx.lectern.collectionPending;
-  const connectionRequired = installedApp && !ctx.online;
+  const admitted = !installedApp || ctx.online;
   const lectern = ctx.lectern.read;
   const [sending, setSending] = useState(false);
-  const [refused, setRefused] = useState(false);
+  const gateId = useId();
   const source = usePaneFreeServerValue({ key: `collection-lectern-review:${ctx.accountId}:${JSON.stringify(target)}`, stale: "", load: signal => prepareCollectionLectern(target, signal) });
-  const accountBusy = lectern.status === "loading" || (lectern.status === "ready" ? lectern.refreshing : lectern.retrying);
   const accountReady = lectern.status === "ready" && lectern.error === null && !lectern.refreshing;
-  const selectionBusy = source.status === "loading" || (source.status === "ready" ? source.refreshing : source.retrying);
-  const reviewing = accountBusy || selectionBusy;
-  const accountError = lectern.status === "failed" || lectern.status === "ready" ? lectern.error : null;
-  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
-  const accountOccurrence = useFeedbackOccurrence(accountError !== null);
-  const connectionOccurrence = useFeedbackOccurrence(connectionRequired);
   const prepared = source.status === "ready" ? source.data : null;
   const needed = prepared === null ? 0 : prepared.media_ids.length - prepared.already_present_count;
   const capacity = prepared !== null && needed > prepared.available_slots;
+  const gate = !admitted ? admissionReason()
+    : source.status === "ready" && source.error !== null ? "the selection couldn’t refresh."
+      : lectern.status === "ready" && lectern.error !== null ? "the lectern couldn’t refresh." : null;
   const submit = async () => {
-    if (connectionRequired || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || refused || pending !== null || !accountReady) return;
+    if (!admitted || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || pending !== null || !accountReady) return;
+    const fact = `couldn’t add “${prepared.label}” to the lectern.`;
+    const reread = () => { lectern.refetch(); source.refetch(); };
     setSending(true);
     try {
-      const outcome = await ctx.lectern.addCollection({ title: prepared.label, onAcknowledged: () => flushSync(onClose), request: { target, media_ids: prepared.media_ids, expected_order_revision: prepared.expected_order_revision } });
-      if (outcome === "Superseded") setRefused(true);
+      const result = await ctx.lectern.addCollection({ title: prepared.label, onAcknowledged: () => flushSync(onClose), request: { target, media_ids: prepared.media_ids, expected_order_revision: prepared.expected_order_revision } });
+      if (result === "Busy") { outcome.say({ fact, reason: "another lectern change isn’t settled yet." }); reread(); }
+      else if (result === "Moved") { outcome.say({ fact, reason: "the lectern changed meanwhile." }); reread(); }
     } catch (error) {
-      const modeled = modeledApiError(error, fail);
-      if (modeled !== null) setRefused(true);
+      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the lectern changed meanwhile." });
+      else outcome.fail(error, fact);
+      reread();
     } finally { setSending(false); }
-  };
-  const reviewAgain = () => {
-    if (reviewing || sending || pending !== null) return;
-    setRefused(false);
-    lectern.refetch();
-    source.refetch();
   };
   return <Dialog open title="add unfinished items to lectern" onClose={onClose} returnFocusTo={returnFocusTo} returnFocusFallback={returnFocusFallback}>
     <div className={styles.form}>
-      {source.status === "loading" ? <PaneLoadingState /> : source.status === "failed"
-        ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />
+      {source.status === "loading" ? <Ruling /> : source.status === "failed"
+        ? isApiError(source.error) && source.error.status === 404
+          ? <Fact line={{ fact: target.kind === "Podcast" ? "this podcast is no longer available." : "this library is no longer available." }} />
+          : <Failed error={source.error} noun="selected items" retry={{ run: source.refetch, busy: source.retrying }} />
         : <>
           <p>{source.data.label}</p>
           <p>{source.data.media_ids.length} unfinished item{source.data.media_ids.length === 1 ? "" : "s"} selected, including in-progress items.</p>
           <p>{needed} new · {source.data.already_present_count} already in lectern. existing items keep their positions.</p>
           <p>{target.kind === "Podcast" ? "episodes append oldest publication first." : "contents append in the library’s stored order; all uses newest added first."} this captures the whole accessible collection, ignoring page, sort, text and filters. new arrivals are excluded; future items are not added automatically.</p>
-          {source.data.media_ids.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}
-          {capacity ? <FeedbackNotice content={{ tone: "Warning", title: "not enough lectern space", message: `${needed} slots required; ${source.data.available_slots} available. nothing will be added until the whole selection fits.` }} announcement="Polite" /> : null}
-          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
+          {source.data.media_ids.length === 0 ? <Fact line={{ fact: "no unfinished items to add." }} /> : null}
+          {capacity ? <Fact line={{ fact: source.data.available_slots === 0 ? "the lectern is full." : `the lectern has room for ${source.data.available_slots} of ${needed}.`,
+            reason: "nothing is added until all fit." }} /> : null}
         </>}
-      {accountBusy ? <PaneLoadingState /> : null}
-      {accountError !== null ? <FeedbackFailure scope="Local" occurrence={accountOccurrence} content={podcastErrorMessage(accountError, "couldn’t load lectern.")} announcement="Polite"
-        actions={[{ label: "retry loading lectern", onClick: lectern.refetch, busy: accountBusy, disabledReason: accountBusy ? "checking lectern…" : undefined }]} /> : null}
-      {pending !== null && pending.phase !== "Sending" ? <FeedbackFailure scope="Local" occurrence={pending.occurrence} content={{ tone: "Warning", title: "change not confirmed", message: "the request may have succeeded. checking retains the same reviewed order and items." }} announcement="Polite"
-        actions={[{ label: "check lectern change", busy: pending.phase === "Checking",
-          onClick: () => void pending.check().then(outcome => { if (outcome === "Superseded") setRefused(true); }, error => fail({ error })) }]} /> : null}
-      {refused ? <FeedbackNotice content={{ tone: "Warning", title: "this selection needs another review", message: "the lectern or selected items changed. this confirmation is disarmed." }} announcement="Polite" actions={[{ label: "review selection again", onClick: reviewAgain, busy: reviewing, disabledReason: reviewing ? "checking lectern and selected items…" : sending || pending !== null ? "resolve the pending lectern change first." : undefined }]} /> : null}
-      {connectionRequired ? <FeedbackFailure scope="Local" occurrence={connectionOccurrence} content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
+      {lectern.status === "failed" ? <LecternReadFailure error={lectern.error} retry={{ run: lectern.refetch, busy: lectern.retrying }} /> : null}
+      {pending !== null && pending.phase !== "Sending" ? <Hold id="lectern-collection" attempt={pending.attempt}
+        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
+        verbs={[{ label: "retry", commandKey: "lectern-collection", busy: pending.phase === "Checking",
+          run: () => void pending.check().catch((error: unknown) => fail({ error })) }]} /> : null}
       <div className={styles.actions}>
-        <Button reserveIcon emphasis="strong" aria-busy={sending || reviewing || undefined} disabled={connectionRequired || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || refused || pending !== null || !accountReady} onClick={() => void submit()}>add to lectern</Button>
+        <Button emphasis="strong" aria-busy={sending || undefined} aria-describedby={gate === null ? undefined : gateId}
+          disabled={!admitted || prepared === null || source.status !== "ready" || source.error !== null || source.refreshing || prepared.media_ids.length === 0 || capacity || sending || pending !== null || !accountReady}
+          onClick={() => void submit()}>add to lectern</Button>
         <Button onClick={onClose}>cancel</Button>
+        {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}
       </div>
       {source.status === "loading" ? <span className="sr-only">{title}</span> : null}
     </div>

@@ -4,17 +4,10 @@
 // and "Libraries…" own their attempts' lifetimes; this module decides what an
 // answer means. The name rule is `libraryNameError` (views).
 
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isRefusal, type ApiError } from "@/lib/api/client";
 import { createLibrary, type Library } from "@/lib/libraries/api";
 
 const DEADLINE_MS = 30_000;
-/** An unknown outcome with no transport copy of its own: the deadline passed. */
-export const CREATION_UNCONFIRMED: FeedbackContent = {
-  tone: "Warning",
-  title: "library creation wasn’t confirmed",
-  message: "check your connection, then retry this creation.",
-};
 
 interface CreationAttempt {
   readonly id: string;

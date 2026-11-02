@@ -2,16 +2,19 @@
 
 /** Account-memory collection intents and exact acknowledged inverses. A retry sends
  * the frozen bytes only after remote admission. A locally refused send creates no
- * uncertainty. Refusal after uncertainty cannot establish the earlier outcome.
- * Inverses and unconfirmed sends stay here and appear on their subject: its menu
- * offers the inverse, its mark dialog the unconfirmed apply. Each failed attempt
- * reports once; acknowledged changes speak through the items themselves.
+ * uncertainty. Refusal after uncertainty cannot establish the earlier outcome: it keeps
+ * the hold and speaks again. Inverses and unknown outcomes stay here and appear on their
+ * subject: its menu offers the inverse, its mark dialog the unknown apply, and the account
+ * holds every unknown outcome until it lands or is forgotten. A refusal speaks once;
+ * acknowledged changes speak through the items themselves.
  */
-import type { FeedbackContent, FeedbackContextValue, FeedbackActions } from "@/components/feedback/Feedback";
-import { ApiError, apiTransportFeedback, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import type { Outcome } from "@/components/feedback/Feedback";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
+import { admissionRefusal, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { admissionReason } from "@/lib/collections/admissionReason";
 import { isAbortError } from "@/lib/errors";
 import { ProgressPreparationError } from "./progressFence";
 import type { ConsumptionUndo, withProgressFence } from "./state";
@@ -22,8 +25,10 @@ import { remoteReady } from "@/lib/native/admission";
 type Request = Schema<"CollectionConsumptionRequest">;
 type Receipt = Schema<"CollectionConsumptionUndoReceipt">;
 export interface StateChange { readonly mediaId: string; readonly revision: number }
+/** An account-level write whose outcome is unknown, for the account to hold. `occurrence` is its
+ * identity, for a presenter that keys on one. */
+export interface HeldWrite { readonly key: string; readonly occurrence: object; readonly attempt: number; readonly line: Line; readonly verbs: readonly [CommandVerb] }
 interface Entry {
-  readonly occurrence: object;
   readonly key: string;
   readonly target: CollectionTarget;
   readonly title: string;
@@ -36,10 +41,8 @@ interface Entry {
   readonly observed: Map<string, number>;
   unregister(): void;
   phase: "Sending" | "Unconfirmed";
-  uncertain: boolean;
-  failure: FeedbackContent | null;
-  /** Withdraws this entry's latest failure report once it retries or settles. */
-  retract: (() => void) | null;
+  /** Attempts that left its outcome unconfirmed; past zero it holds until it lands or is forgotten. */
+  unconfirmed: number;
 }
 interface Inverse {
   readonly key: string;
@@ -53,25 +56,30 @@ const targetKey = (target: CollectionTarget) => JSON.stringify(target);
 const verb = (target: CollectionTarget, state: Request["desired_state"]) => target.kind === "Podcast"
   ? state === "finished" ? "played" : "unplayed"
   : state === "finished" ? "finished" : "unread";
+/** What the entry's press would do, as a fact. */
+const commandFact = (entry: Entry) => entry.kind === "Undo"
+  ? `couldn’t undo marking “${entry.title}” ${verb(entry.target, entry.desiredState)}.`
+  : `couldn’t mark “${entry.title}” ${verb(entry.target, entry.desiredState)}.`;
 
-export function createCollectionCommands({ accountId, guard, feedback, fail, supersedeSingle, fence }: {
-  fence: typeof withProgressFence; accountId: string; guard: WorkGuard; feedback: FeedbackContextValue;
+export function createCollectionCommands({ accountId, guard, outcome, fail, supersedeSingle, fence }: {
+  fence: typeof withProgressFence; accountId: string; guard: WorkGuard; outcome: Outcome;
   fail(input: { error: unknown }): void; supersedeSingle(revisions: ReadonlyMap<string, number>): void;
 }) {
   let lifetime: AbortController | null = null;
   const entries = new Map<string, Entry>();
   const inverses = new Map<string, Inverse>();
   const listeners = new Set<() => void>();
-  let snapshot: { undoItems: readonly ConsumptionUndo[]; failures: readonly {key: string; occurrence: object; content: FeedbackContent; actions: FeedbackActions}[] } = { undoItems: [], failures: [] };
+  let snapshot: { undoItems: readonly ConsumptionUndo[]; failures: readonly HeldWrite[] } = { undoItems: [], failures: [] };
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   const emit = () => {
-    snapshot = { failures: [...entries.values()].flatMap(entry => entry.uncertain && entry.failure !== null ? [{
-      key: entry.key, occurrence: entry.occurrence,
-      content: {...entry.failure, title: `${entry.failure.title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${entry.failure.message === undefined ? "" : ` ${entry.failure.message}`}`},
-      actions: [{label: entry.kind === "Undo" ? inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel) : "retry same request",
-        busy: entry.phase === "Sending", disabledReason: remoteReady() ? undefined : "requires a connection",
-        onClick: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key)}] as const,
-    }] : []), undoItems: [
+    snapshot = { failures: [...entries.values()].flatMap((entry): HeldWrite[] => entry.unconfirmed === 0 ? [] : [{
+      key: entry.key, occurrence: entry, attempt: entry.unconfirmed - 1,
+      line: { fact: entry.kind === "Undo" ? `not sure undoing “${entry.title}” saved.` : `not sure marking “${entry.title}” ${verb(entry.target, entry.desiredState)} saved.`,
+        reason: "it may have gone through." },
+      verbs: [{ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending",
+        disabledReason: remoteReady() ? undefined : admissionReason(),
+        run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) }],
+    }]), undoItems: [
       ...[...inverses.values()].map(inverse => ({ commandKey: inverse.key, target: inverse.target, title: inverse.title,
         actionLabel: inverseLabel(inverse.target, inverse.receipt.applied_status, inverse.receipt.items.length, inverse.scopeLabel),
         scopeLabel: inverse.scopeLabel, changedCount: inverse.receipt.items.length, phase: "Available" as const })),
@@ -81,7 +89,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
     ] };
     for (const listener of listeners) listener();
   };
-  const retire = (entry: Entry) => { entries.delete(entry.key); entry.unregister(); entry.retract?.(); emit(); };
+  const retire = (entry: Entry) => { entries.delete(entry.key); entry.unregister(); emit(); };
   const current = (entry: Entry, scope: AbortController) => lifetime === scope && !scope.signal.aborted && entries.get(entry.key) === entry;
   const supersede = (changes: readonly StateChange[]) => {
     const revisions = new Map(changes.map(change => [change.mediaId, change.revision]));
@@ -114,25 +122,15 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
   function undo(inverse: Inverse) {
     if (lifetime === null || inverses.get(inverse.key) !== inverse || !remoteReady()) return;
     inverses.delete(inverse.key);
-    admit({ occurrence: {}, key: inverse.key, target: inverse.target, title: inverse.title, scopeLabel: inverse.scopeLabel,
+    admit({ key: inverse.key, target: inverse.target, title: inverse.title, scopeLabel: inverse.scopeLabel,
       desiredState: inverse.receipt.applied_status, mediaIds: inverse.receipt.items.map(item => item.media_id),
       kind: "Undo", receipt: inverse.receipt, observed: new Map(), body: JSON.stringify(inverse.receipt),
-      unregister: () => {}, phase: "Sending", uncertain: false, failure: null, retract: null });
-  }
-  /** One failed attempt, with its exact retry while the owner still holds it. */
-  function report(entry: Entry, content: FeedbackContent, retry: boolean) {
-    if (entries.get(entry.key) === entry && entry.uncertain) {entry.failure = content; emit(); return;}
-    entry.retract = feedback.receipt({ ...content, title: `${content.title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${content.message === undefined ? "" : ` ${content.message}`}` },
-      retry ? { label: entry.kind === "Undo" ? inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel) : "Retry same request",
-        disabledReason: remoteReady() ? undefined : "requires a connection",
-        onClick: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) } : undefined);
+      unregister: () => {}, phase: "Sending", unconfirmed: 0 });
   }
   async function send(entry: Entry, scope: AbortController) {
     if (!current(entry, scope)) return;
-    entry.phase = "Sending"; entry.retract?.(); entry.retract = null; emit();
+    entry.phase = "Sending"; emit();
     let sent = false;
-    let failure: FeedbackContent | null = null;
-    let admissionLost = false;
     try {
       const result = await fence(entry.mediaIds, () => requestWithDeadline<Schema<"CollectionConsumptionOut"> | Schema<"CollectionConsumptionUndoOut"> | null>({
         signal: scope.signal, timeoutMs: 30_000,
@@ -140,10 +138,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
           if (!current(entry, scope)) return Promise.resolve(null);
           // Preparation may await a progress flush. Admission must still hold
           // at this synchronous boundary before apiFetch can transmit bytes.
-          if (!remoteReady()) {
-            admissionLost = true;
-            throw new ApiError(0, "E_NETWORK", "requires a connection");
-          }
+          if (!remoteReady()) throw admissionRefusal();
           sent = true;
           return entry.kind === "Apply" ? applyCollectionConsumption(entry.body, signal) : undoCollectionConsumption(entry.body, signal);
         },
@@ -169,33 +164,22 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
       if (!current(entry, scope)) return;
       if (sent) invalidateReads("Consumption", "Podcasts");
       const defect = !(error instanceof ProgressPreparationError) && ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error));
-      if (!sent) {
-        failure = admissionLost
-          ? { tone: "Neutral", title: "requires a connection", message: "this attempt sent no state change. review again after reconnecting." }
-          : { tone: "Warning", title: "progress isn’t ready for this change", message: "this attempt sent no state change. resolve the player or reader position before reviewing again." };
-      } else if (isRefusal(error)) {
-        const title = error.code === "E_RESOURCE_CONFLICT"
-          ? entry.kind === "Undo" ? "these items changed; this attempt changed nothing." : "selected items changed; this attempt changed nothing."
-          : error.status === 404 ? "the collection is no longer available; this attempt changed nothing." : "this attempt was refused; it changed nothing.";
-        const transport = apiTransportFeedback(error, title);
-        failure = { ...transport, tone: "Warning", title,
-          message: `${transport?.message ?? ""} ${entry.uncertain ? entry.kind === "Undo" ? "earlier undo outcome remains unconfirmed." : "the original request may have succeeded." : "review the current items before another change."}`.trim(), requestId: error.requestId };
-      } else {
-        entry.uncertain = true;
-        handleUnauthenticatedApiError(error);
-      }
-      if (entry.uncertain) {
+      const refused = !sent || isRefusal(error);
+      if (!refused) handleUnauthenticatedApiError(error);
+      if (!refused || entry.unconfirmed > 0) {
+        entry.unconfirmed += 1;
         entry.phase = "Unconfirmed"; emit();
-        report(entry, { tone: "Warning", title: entry.kind === "Undo" ? "undo not confirmed" : "change not confirmed",
-          message: `the request may have succeeded.${failure === null ? "" : ` ${failure.title} ${failure.message ?? ""}`}`,
-          ...(failure?.reload ? { reload: true as const } : {}), requestId: failure?.requestId }, true);
       } else {
-        const content = failure; retire(entry);
-        if (content !== null) {
-          const retained = !sent && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision);
-          if (retained && entry.receipt !== null) retainUndo(entry, entry.receipt);
-          report(entry, content, retained);
-        }
+        retire(entry);
+        // A retained undo was never sent: its inverse stays offered, and this line can retry it.
+        const retained = !sent && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision);
+        if (retained && entry.receipt !== null) retainUndo(entry, entry.receipt);
+        const verbs: Verbs | undefined = retained ? [{ label: "retry", commandKey: entry.key, run: () => commands.undo(entry.key) }] : undefined;
+        const fact = commandFact(entry);
+        if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, verbs);
+        else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the items changed meanwhile." });
+        else if (isApiError(error) && error.status === 404) outcome.say({ fact, reason: "it’s no longer available." });
+        else if (!defect) outcome.fail(error, fact, verbs?.[0]);
       }
       if (defect) fail({ error });
     }
@@ -206,15 +190,15 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
       if (lifetime === null || lifetime.signal.aborted) return "OwnerGone";
       if (!remoteReady()) return "Unavailable";
       if ([...entries.values()].some(entry => targetKey(entry.target) === targetKey(input.request.target))) return "Pending";
-      admit({ occurrence: {}, key: `collection-state:${accountId}:${crypto.randomUUID()}`, target: input.request.target,
+      admit({ key: `collection-state:${accountId}:${crypto.randomUUID()}`, target: input.request.target,
         title: input.title, scopeLabel: input.scopeLabel, desiredState: input.request.desired_state,
         body: JSON.stringify(input.request), mediaIds: input.request.items.map(item => item.media_id), kind: "Apply", receipt: null, observed: new Map(),
-        unregister: () => {}, phase: "Sending", uncertain: false, failure: null, retract: null });
+        unregister: () => {}, phase: "Sending", unconfirmed: 0 });
       return "Started";
     },
     pendingCollection(target: CollectionTarget) {
       const entry = [...entries.values()].find(value => targetKey(value.target) === targetKey(target));
-      return entry === undefined ? null : { phase: entry.phase, commandKey: entry.key, occurrence: entry.occurrence, failed: entry.uncertain || entry.failure !== null };
+      return entry === undefined ? null : { phase: entry.phase, commandKey: entry.key, attempt: Math.max(0, entry.unconfirmed - 1), failed: entry.unconfirmed > 0 };
     },
     retry(key: string) { const entry = entries.get(key); if (entry?.phase === "Unconfirmed" && lifetime !== null && remoteReady()) void send(entry, lifetime); },
     forget(key: string) { const entry = entries.get(key); if (entry?.phase === "Unconfirmed" && guard.confirmLoss({ scopes: [], ownerIds: [key] })) retire(entry); },

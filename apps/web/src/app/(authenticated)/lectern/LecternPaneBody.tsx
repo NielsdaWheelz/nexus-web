@@ -6,36 +6,27 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
 import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
-import {
-  FeedbackNotice, FeedbackFailure, useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import {
-  apiTransportFeedback,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { catalogLectern } from "@/lib/catalog/selectors";
 import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { Lectern } from "@/lib/lectern/api";
 import { remoteReady } from "@/lib/native/admission";
-import { OrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
+import { orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
+  LecternReadFailure,
   lecternItems,
   useLectern,
   useLecternCommands,
@@ -55,12 +46,10 @@ import {
 import {
   usePaneIsActive,
   usePaneRouter,
-  usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-import styles from "./LecternPaneBody.module.css";
 
 const UNIT = { singular: "item", plural: "items" };
 const SORTS = [
@@ -70,16 +59,6 @@ const SORTS = [
   { value: "title_asc", label: "Title A–Z" },
   { value: "title_desc", label: "Title Z–A" },
 ];
-
-/** Modeled failures become notices; anything else is a defect for the boundary. */
-function failure(error: unknown, title: string): FeedbackContent {
-  const content =
-    isApiError(error) && !isSameSystemApiDefect(error)
-      ? catalogErrorFeedback(error) ?? apiTransportFeedback(error, title)
-      : null;
-  if (content === null) throw error;
-  return content;
-}
 
 export default function LecternPaneBody() {
   const live = useLectern();
@@ -109,17 +88,16 @@ export default function LecternPaneBody() {
   const liveShown = lectern.status === "ready" && source.kind === "live";
   const { ensure } = useLecternCommands();
   const order = useLecternOrder();
-  const runtime = usePaneRuntime();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive && liveShown);
   const { refresh: refreshSuggestionFeed } = suggestions;
+  // The section speaks for itself: success, its wait and its repair stand in it, and a failed
+  // refresh over shown suggestions says nothing.
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const outcome = await refreshSuggestionFeed(signal);
     switch (outcome) {
-      case "Refreshed": return { kind: "Complete", announcement: "suggestions refreshed." };
-      case "Finding": return { kind: "Complete", announcement: "finding suggestions…" };
-      case "Repair": return { kind: "Failed", announcement: "suggestions need repair." };
-      case "Failed": return { kind: "Failed", announcement: "couldn’t refresh suggestions." };
+      case "Refreshed": case "Finding": return { kind: "Complete", announcement: "" };
+      case "Repair": case "Failed": return { kind: "Failed", announcement: "" };
       // justify-defect: the lectern has no authority or applicability gate.
       case "NotApplicable": throw new Error("lectern suggestions cannot be inapplicable");
       default: return assertNever(outcome);
@@ -178,7 +156,8 @@ export default function LecternPaneBody() {
   };
   const ordering = source.kind === "live" ? presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
-    complete: lectern.status === "ready" }) : undefined;
+    complete: lectern.status === "ready",
+    titleOf: itemId => items.find(item => item.media_summary.media_id === itemId)?.media_summary.title ?? "" }) : undefined;
   const orderingStatus = orderStatus(ordering);
   const change = useCallback(
     (changes: ViewChanges) =>
@@ -247,27 +226,18 @@ export default function LecternPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const readOccurrence = useFeedbackOccurrence(lectern.status === "failed");
   return (
-    <PaneSurface
-      state={liveShown ? <OrderNotice order={order.state} active={isActive} paneId={runtime?.paneId ?? null}/> : null}
-    >
+    <PaneSurface>
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (
-          <FeedbackNotice
-            content={{ tone: "Danger", title: "Invalid Lectern view" }}
-            announcement="Assertive"
-            actions={[
-              {
-                label: "Reset view",
-                // The pressed button leaves with the notice: focus stays on the list it reset.
-                onClick: () => {
-                  section.current?.focus({ preventScroll: true });
-                  router.replace("/lectern");
-                },
-              },
-            ]}
-          />
+          <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{
+            label: "reset view", commandKey: "lectern-view-reset",
+            // The pressed button leaves with the fact: focus stays on the list it reset.
+            run: () => {
+              section.current?.focus({ preventScroll: true });
+              router.replace("/lectern");
+            },
+          }]} />
         )}
         {valid ? (
           <PlaybackSourceContext.Provider value={capture}>
@@ -297,29 +267,12 @@ export default function LecternPaneBody() {
                 knownDescriptor: source.kind === "live" && item.activation.kind === "FooterAudio" ? item.activation.descriptor : null,
               }),
             )}
-            notice={
-              <MediaSummaryNotice
-                error={summaries.error}
-                retry={summaries.retry}
-                busy={summaries.retrying}
-              />
-            }
             error={
-              lectern.status === "failed" ? (
-                <FeedbackFailure scope="Local" occurrence={readOccurrence}
-                  content={failure(lectern.error, "Lectern couldn’t be loaded")}
-                  announcement="Assertive"
-                  actions={[{ label: "Retry", onClick: lectern.refetch, busy: lectern.retrying }]}
-                />
-              ) : undefined
+              lectern.status === "failed"
+                ? <LecternReadFailure error={lectern.error} retry={{ run: lectern.refetch, busy: lectern.retrying }} />
+                : undefined
             }
-            empty={
-              <p className={styles.emptyState}>
-                {query
-                  ? "No items match this filter."
-                  : "Nothing on the lectern yet."}
-              </p>
-            }
+            empty={<Fact line={{ fact: query ? "no items match this filter." : "nothing on the lectern yet." }} />}
             anchorKey={query}
             order={ordering}
           />
@@ -342,7 +295,7 @@ export default function LecternPaneBody() {
             ? "Accepted"
             : "Retained"
         }
-      /> : <FeedbackNotice content={{ tone: "Neutral", title: "suggestions require a connection" }} announcement="None" />}
+      /> : null}
     </PaneSurface>
   );
 }

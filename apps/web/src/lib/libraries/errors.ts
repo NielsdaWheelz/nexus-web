@@ -1,44 +1,56 @@
-// The one copy map for library, entry, placement and membership failures. A transport
-// failure gets the shared transport copy; an abort or a handled sign-out shows
-// nothing; any other code is a defect, handed to `fail` (useThrowLater in a
-// handler, a plain throw in render).
+// Library, entry, placement and membership refusals. A domain code names the server rule that
+// refused, as a reason; every other code takes the transport's line and verb. Domain codes come
+// ahead of `transportOf`, so nothing here restates a transport.
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiTransportFeedback } from "@/lib/api/client";
+import type { Outcome } from "@/components/feedback/Feedback";
+import type { Retract } from "@/components/feedback/stage";
+import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError } from "@/lib/api/serverState";
 
-const PERMISSIONS = "Your library permissions changed. Refresh and try again.";
-const GONE = "This item is no longer available.";
-const COPY: Readonly<Record<string, string>> = {
-  E_UNAUTHENTICATED: "Open Nexus, sign in, then try again.",
-  E_LIBRARY_NOT_FOUND: "This library is no longer available.",
+const GONE = "it’s no longer available.";
+const REASONS: Readonly<Record<string, string>> = {
+  E_LIBRARY_NOT_FOUND: "you no longer have this library.",
   E_MEDIA_NOT_FOUND: GONE,
   E_NOT_FOUND: GONE,
-  E_FORBIDDEN: PERMISSIONS,
-  E_LIBRARY_FORBIDDEN: PERMISSIONS,
-  E_OWNER_REQUIRED: PERMISSIONS,
-  E_OWNER_EXIT_FORBIDDEN: PERMISSIONS,
-  E_DEFAULT_LIBRARY_FORBIDDEN: PERMISSIONS,
-  E_NAME_INVALID: "Enter a library name of 1 to 100 characters other than All.",
-  E_RESOURCE_CONFLICT: "library changed. review it and choose again.",
-  E_MEDIA_DELETING: "This item is being removed and can’t be changed now.",
-  E_INVALID_REQUEST: "That change is no longer valid. Refresh and try again.",
-  E_INVALID_CURSOR: "The list changed. Refresh it and try again.",
-  E_INVITE_NOT_PENDING: "This invitation is no longer pending.",
-  E_INVITE_NOT_FOUND: "This invitation is no longer pending.",
-  E_INVITE_ALREADY_EXISTS: "This person already has a pending invitation.",
-  E_INVITE_MEMBER_EXISTS: "This person is already a member.",
-  E_OWNERSHIP_TRANSFER_INVALID: "Only a current member can become the owner.",
-  E_USER_NOT_FOUND: "This person is no longer available.",
+  E_FORBIDDEN: "only its admins can do that.",
+  E_OWNER_REQUIRED: "only its owner can do that.",
+  E_LIBRARY_FORBIDDEN: "nexus manages this library.",
+  E_DEFAULT_LIBRARY_FORBIDDEN: "All can’t be changed this way.",
+  E_OWNER_EXIT_FORBIDDEN: "the owner can’t leave or change role.",
+  E_RESOURCE_CONFLICT: "it changed meanwhile.",
+  E_MEDIA_DELETING: "it’s being deleted.",
+  E_INVITE_NOT_PENDING: "that invitation is no longer pending.",
+  E_INVITE_NOT_FOUND: "that invitation is no longer pending.",
+  E_INVITE_ALREADY_EXISTS: "they already have a pending invitation.",
+  E_INVITE_MEMBER_EXISTS: "they’re already a member.",
+  E_OWNERSHIP_TRANSFER_INVALID: "only a current member can become owner.",
+  E_USER_NOT_FOUND: "this account no longer exists.",
+  /** A dialog with a name input says this beneath it instead. */
+  E_NAME_INVALID: "names need 1 to 100 characters, and can’t be All.",
 };
+
+/** The rule that refused a library command, or null when the transport speaks. */
+export function libraryReason(error: unknown): string | null {
+  return isApiError(error) ? REASONS[error.code] ?? null : null;
+}
+
+/** A refused library command: `fact` with the rule that refused it, else the transport's reason and
+ * verb. `conflict` names what moved, where the site knows better than `it changed meanwhile.` */
+export function refuseLibrary(outcome: Outcome, error: unknown, fact: string, conflict?: string): Retract {
+  const reason = isApiError(error) && error.code === "E_RESOURCE_CONFLICT" && conflict !== undefined ? conflict : libraryReason(error);
+  return reason === null ? outcome.fail(error, fact) : outcome.say({ fact, reason });
+}
 
 type Fail = (defect: { readonly error: unknown }) => void;
 
+/** Only for callers outside this lane until they move to `libraryReason`; L7 deletes it. */
 export const throwDefect: Fail = ({ error }) => {
   throw error;
 };
 
+/** Only for callers outside this lane until they move to `libraryReason`; L7 deletes it. */
 export function libraryErrorFeedback(
   error: unknown,
   title: string,
@@ -51,10 +63,9 @@ export function libraryErrorFeedback(
   if (catalog !== null) return catalog;
   const transport = apiTransportFeedback(modeled, title);
   if (transport !== null) return transport;
-  const message = COPY[modeled.code];
-  if (message === undefined) {
+  if (modeled.status < 400 || modeled.status >= 500) {
     fail({ error: modeled });
     return null;
   }
-  return { tone: "Danger", title, message, requestId: modeled.requestId };
+  return { tone: "Danger", title, message: REASONS[modeled.code], requestId: modeled.requestId };
 }
