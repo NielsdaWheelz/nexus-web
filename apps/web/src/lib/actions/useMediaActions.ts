@@ -13,7 +13,7 @@ import { ApiError, requestWithDeadline } from "@/lib/api/client";
 import { browsePreviewHref, fetchBrowsePreview } from "@/lib/browse/api";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
-import type { MediaSubject } from "@/lib/media/mediaSummary";
+import { mediaSubjectKind, type MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import * as Icon from "@/lib/ui/icons";
 import { continuationRecovery } from "./mediaContinuation";
@@ -27,7 +27,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const admittedId = subject.kind === "External" && operation?.phase === "complete" ? operation.finalMediaId : null;
   const mediaId = subject.kind === "Stored" ? subject.summary.media_id : admittedId;
   const title = subject.kind === "Stored" ? subject.summary.title : subject.title;
-  const kind = subject.kind === "Stored" ? subject.summary.media_kind : subject.media_kind;
+  const kind = mediaSubjectKind(subject);
   if (knownDescriptor !== null && (subject.kind !== "Stored" || knownDescriptor.media_id !== subject.summary.media_id))
     throw new Error("media actions descriptor does not match stored subject");
   const ref = subject.kind === "Stored" ? `media:${subject.summary.media_id}`

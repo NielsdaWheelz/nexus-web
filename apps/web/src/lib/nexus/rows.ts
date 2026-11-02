@@ -12,8 +12,9 @@ import {
   resolvePaneRouteModel,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
-import { parseResourceRef, resourceIconForScheme, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef, resourceIconForScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "@/lib/resources/items";
+import { itemMediaKind, paneGlyph, resourceType, resourceTypeGlyph } from "@/lib/resources/type";
 import type { LocalMatch } from "@/lib/search/localSearch";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { emptySearchQuery } from "@/lib/search/query";
@@ -108,8 +109,7 @@ function paneRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexu
   return {
     key: `Pane:${pane.id}`, localMatch: null,
     label: pane.presentation.title,
-    icon: getPaneRouteIcon(pane.href),
-    type: "pane",
+    icon: paneGlyph(pane.href, pane.presentation.mediaKind),
     detail: pane.presentation.detail ?? undefined,
     state: paneState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
@@ -161,7 +161,7 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
       key: `ImportUrl:${intent.url}`, localMatch: null,
       label: "import",
       icon: Icon.Upload,
-      type: "URL",
+      type: "url",
       detail: intent.url,
       action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url),
       rank: { stream: "Navigation", tier: "ExplicitIntent", score: 0, frecency: 0 },
@@ -184,7 +184,6 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
       key: `Intent:Browse.${intent.browseKind}`, localMatch: null,
       label: intent.query ? `browse ${kind} for “${intent.query}”…` : `browse ${kind}…`,
       icon: Icon.Browse,
-      type: "Browse",
       detail: "explicit kind",
       action: nexusBrowseAction(intent.query, intent.browseKind),
       rank: { stream: "Navigation", tier: "ExplicitIntent", score: 0, frecency: 0 },
@@ -245,7 +244,7 @@ function resourceRow(item: ResourceItem, panes: readonly NexusPane[]): NexusRow 
   const pane = matching.find((pane) => pane.current) ?? matching[0];
   return {
     key: `Resource:${item.ref}`, localMatch: null, label: item.label, item,
-    icon: resourceIconForScheme(ref.scheme), type: resourceTypeLabel(ref.scheme),
+    icon: resourceTypeGlyph(resourceType(ref.scheme, itemMediaKind(item))),
     state: pane ? paneState(pane) : undefined,
     action: resourceAction(item),
     secondary: targetMenu(item.action_ref, matching),
@@ -268,7 +267,7 @@ function localRow(match: LocalMatch, panes: readonly NexusPane[]): NexusRow {
     item: match.resource.kind === "note" && body.kind === "prose" && evidence !== null
       ? { ...item, preview: { ...item.preview, body: { ...body, excerpt: evidence.excerpt } } } : item,
     match: evidence,
-    icon: resourceIconForScheme(parseResourceRef(ref)!.scheme), type: resourceTypeLabel(parseResourceRef(ref)!.scheme),
+    icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
     state: pane ? paneState(pane) : undefined,
     action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
       : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
@@ -284,7 +283,7 @@ export function recentRow(item: RecentItem, panes: readonly NexusPane[], blank: 
   const pane = matching.find(candidate => candidate.current) ?? matching[0];
   return {
     key: blank ? `Recent:${entry.used_revision}` : resourceRef ? `Resource:${resourceRef}` : `Recent:${recentTargetKey(entry.target)}`,
-    localMatch: null, recentEntry: entry, label: presentation.title, icon: getPaneRouteIcon(entry.href),
+    localMatch: null, recentEntry: entry, label: presentation.title, icon: paneGlyph(entry.href, presentation.mediaKind),
     detail: presentation.detail ?? undefined, state: pane ? paneState(pane) : undefined,
     action: { kind: "Available", target: { kind: "InternalHref", href: entry.href, labelHint: presentation.title } },
     ...(resourceRef ? { secondary: targetMenu(resourceRef, matching) } : {}),
@@ -486,7 +485,7 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
     key: "Resource:Playback:Current", localMatch: null,
     label: title,
     icon: Icon.Play,
-    type: "Media",
+    type: "episode",
     detail: subtitle,
     action: { kind: "Available", target: { kind: "ResumeCurrentPlayback" } },
     rank: UNRANKED,
@@ -614,7 +613,6 @@ export function rowName(parts: readonly (string | null | undefined)[]): string {
 export function rowFacts(row: NexusRow): string {
   const state = row.state?.toLowerCase();
   if (row.item) return [resourceMetadataText(row.item, row.matchMethod), state].filter(Boolean).join(" · ");
-  const type = row.type && !["pane", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : null;
-  const facts = [row.detail, type, state];
+  const facts = [row.detail, row.type, state];
   return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
 }

@@ -93,8 +93,9 @@ all physical placement goes through the [library writer](library.md);
 
 admission creates rule plus initial import, or only a finite import; it files known
 episodes in the chosen destination and schedules traversal atomically. exact-id
-replay returns current resources without recopying. fresh admission checks exact
-library/removal guards. an unfinished once addition must finish or be explicitly
+replay returns current resources without recopying. fresh admission checks library
+authority and the removal fence; an addition compares no library order, and only an
+actual insert advances the destination's revision. an unfinished once addition must finish or be explicitly
 cancelled before subscribing; it is never adopted as subscription history. fresh
 once admission refuses an already-subscribed destination.
 
@@ -125,8 +126,8 @@ fence. keep ignores arriving-entry revisions; remove also freezes library revisi
 `PodcastImportOut.subscription_id` derives from the live initial-import binding;
 `can_cancel` is false while bound, and cancellation rechecks it. unsubscribe stops
 that bound work. independent cancellation keeps committed arrivals and changes no
-rule. retry increments the attempt, retains processed identities and resumes the
-cursor; drained-gap repair restarts at the head. old fetched pages/dead letters
+rule. retry compares only the frozen attempt, increments it, retains processed
+identities and resumes the cursor; drained-gap repair restarts at the head. old fetched pages/dead letters
 cannot affect newer work. cancel never waits on queue rows while holding show locks.
 
 individual all-removal uses its own preview/remove routes. the preview includes

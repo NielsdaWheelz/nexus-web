@@ -42,7 +42,8 @@ import { SEARCH_ACTION_LABELS, searchProgress } from "@/lib/search/progress";
 import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { TRANSPORT_CODES } from "@/lib/nexus/useNexusFind";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceType, resourceTypeName } from "@/lib/resources/type";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
 
@@ -371,9 +372,10 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
   const parsed = parseResourceRef(resource.ref);
   // justify-defect: local result identity is an authored canonical resource ref.
   if (parsed === null) throw new Error(`Invalid canonical local search ref: ${resource.ref}`);
-  const typeLabel = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const type = resourceType(parsed.scheme, null);
+  const typeLabel = resourceTypeName(type);
   const titleProvidesType = resource.kind === "highlight" && resource.excerpt?.kind === "content" && !excerptTextParts(resource.excerpt.body).exact.trim();
-  const title = <ResourceIndexTitle scheme={parsed.scheme} hasArtwork={false}>
+  const title = <ResourceIndexTitle type={type} hasArtwork={false}>
     {!href && !titleProvidesType ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
     {titleProvidesType ? typeLabel : label}
   </ResourceIndexTitle>;

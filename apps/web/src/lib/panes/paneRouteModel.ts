@@ -28,7 +28,7 @@ const ROUTES = {
   library: ["libraries/:id", "Library", resourceIconForScheme("library")],
   browse: ["browse", "Browse", Icon.Browse],
   browsePreview: ["browse/preview", "Preview", Icon.Browse],
-  media: ["media/:id", "Media", resourceIconForScheme("media")],
+  media: ["media/:id", "Source", resourceIconForScheme("media")],
   xCapture: ["x/captures/:id", "Post", Icon.WebText],
   conversations: ["conversations", "Chats", Icon.Chat],
   conversationNew: ["conversations/new", "New chat", Icon.NewChat],

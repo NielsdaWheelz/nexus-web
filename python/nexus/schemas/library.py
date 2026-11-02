@@ -101,7 +101,6 @@ class LibraryMetadataOut(BaseModel):
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str
-    order_revision: OrderRevision
 
 
 class LibraryDestinationsOut(BaseModel):

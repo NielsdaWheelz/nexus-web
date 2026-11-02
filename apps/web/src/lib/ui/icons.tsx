@@ -12,7 +12,9 @@ import {
   ALargeSmall,
   ArrowDown,
   ArrowUp,
+  AudioLines,
   Bold as BoldDrawing,
+  BookOpen,
   CalendarDays,
   ChartColumn,
   Check as CheckDrawing,
@@ -85,6 +87,7 @@ import {
   Upload as UploadDrawing,
   User,
   Users,
+  Video as VideoDrawing,
   X,
   ZoomIn as ZoomInDrawing,
   ZoomOut as ZoomOutDrawing,
@@ -149,7 +152,10 @@ export const Strikethrough: Glyph = StrikethroughDrawing; // strike
 export const Code: Glyph = CodeXml;                       // code
 
 // Nouns. A noun on a control means open or start that noun with this subject.
+export const Book: Glyph = BookOpen;                  // a bound work
 export const WebText: Glyph = Scroll;                 // continuous text, no pages
+export const Episode: Glyph = AudioLines;             // a recording you hear
+export const Video: Glyph = VideoDrawing;             // a recording you watch
 export const Page: Glyph = FileText;                  // a page
 export const Note: Glyph = StickyNote;                // your words
 export const Passage: Glyph = Quote;                  // its words
