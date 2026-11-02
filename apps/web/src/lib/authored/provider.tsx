@@ -1,15 +1,17 @@
 "use client";
 /** Account lifetime owns the store. Until it is ready, setup stands where the workspace would:
  * a ruling while it opens, a `Fact` once a failure is a fact. One dropped response is not one:
- * a `Retrying` failure says nothing until it lags. Once open, the account holds words at risk
+ * a `Retrying` failure says nothing until it lags, and being offline is no reason until the store
+ * has said it is not ready, since a provisioned store opens offline. Every setup failure but a
+ * stale build keeps the way out of setup. Once open, the account holds words at risk
  * until they commit and speaks a condition that asks for a person once per onset; its mark and
  * row stay. Mounting another account cannot reuse a retired promise or its subscriptions. */
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AuthoredStore, SyncFailure, SyncStatus } from "@nexus/authored/types";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { localCall } from "@/lib/offline/localContent";
-import { bindApiAccount, isApiError } from "@/lib/api/client";
-import { staleBuild, TRANSPORT_LINES } from "@/lib/api/failure";
+import { bindApiAccount, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { conditionLine, useCondition, useLagging } from "@/lib/account/condition";
 import { bindBrowserAdmission, installedApp, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthoredStorageFailure, writingStoreStopped } from "@/lib/notes/runtime";
@@ -17,7 +19,7 @@ import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { discardFailedAuthoredSetup } from "./signOut";
 import { AuthoredSetupError, openAuthoredStore } from "./client";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { Fact, Failed } from "@/components/feedback/Fact";
+import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
@@ -69,7 +71,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const fail = useCallback((error: unknown) => {
     setOpening(false);
-    if (error instanceof AuthoredSetupError || isAuthoredStorageFailure(error) || isApiError(error)) setFailure(error); else setDefect({ error });
+    if (error instanceof AuthoredSetupError || isAuthoredStorageFailure(error) || isApiError(error) && !isSameSystemApiDefect(error)) setFailure(error); else setDefect({ error });
   }, []);
   const [attempt, retry] = useState(0);
   const guard = useWorkGuard();
@@ -150,15 +152,18 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   } };
   const recover: Verbs = [retryVerb, leaveVerb];
   const signInVerbs: Verbs = host === "workspace" ? [{ ...signInVerb, busy: signingIn || opening }, leaveVerb] : [signInVerb];
+  const updateVerbs = transportVerbs("Update", { signIn: null }) ?? undefined;
+  const transport = failure !== null && isApiError(failure) ? transportOf(failure) : null;
   const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
   return <section className={styles.setup}>{
-    failure !== null ? isApiError(failure) ? <Failed error={failure} noun="your notes" retry={retryVerb} />
-      : fact(failure instanceof AuthoredSetupError ? { fact: NOT_OPENED, reason: failure.reason === "Persistence" ? "this browser hasn’t allowed persistent storage." : "this browser has no shared workers." } : { fact: NOT_OPENED }, recover)
+    transport !== null ? fact(TRANSPORT_LINES[transport].read("your notes"), transport === "Update" ? updateVerbs : transport === "SignIn" ? signInVerbs : recover)
+    : failure !== null ? fact(failure instanceof AuthoredSetupError ? { fact: NOT_OPENED, reason: failure.reason === "Persistence" ? "this browser hasn’t allowed persistent storage." : "this browser has no shared workers." } : { fact: NOT_OPENED }, recover)
     : signInResult !== null ? fact(signInResult, signInVerbs)
     : sync.status === "sign_in_required" ? fact({ fact: "sign in to see your notes." }, signInVerbs)
-    : sync.status === "update_required" ? fact({ fact: staleBuild() }, transportVerbs("Update", { signIn: null }) ?? undefined)
+    : sync.status === "update_required" ? fact({ fact: staleBuild() }, updateVerbs)
     : sync.status === "local_error" ? fact({ fact: NOT_OPENED }, recover)
-    : !online ? <Fact line={TRANSPORT_LINES.Offline.read("your notes")} />
+    // `opening` ends when the store says it is not ready; until then offline is no reason.
+    : !online && !opening ? <Fact line={TRANSPORT_LINES.Offline.read("your notes")} />
     : sync.failure?.kind === "Refused" ? fact({ fact: "couldn’t load your notes." }, recover)
     : lagging ? fact(TRANSPORT_LINES.Unavailable.read("your notes"), recover)
     : <Ruling />
