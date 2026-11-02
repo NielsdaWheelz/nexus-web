@@ -230,6 +230,8 @@ export function createStage() {
   }
 
   function leave(slip: Slip, how: Leaving): void {
+    // The owner has resolved: a tuck would stand its row again with nothing left to end it.
+    if (slip.leaving === "Dismissed" && how === "Tucking") return;
     slip.leaving = how;
     if (slip.row.tucked) conclude(slip);
     settle();
