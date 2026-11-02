@@ -383,11 +383,17 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       closeRef.current(false);
       return;
     }
-    if (active.admission !== null && active.admission.phase !== "Ready") return;
+    // A failure and an unpublished empty answer need no surface, so neither waits for a sheet's admission.
     if (prepared?.kind === "Failed" && active.attempt) {
       fail(active.attempt, "error" in prepared ? prepared.error : null);
       return;
     }
+    if (active.meaning === null && content !== null && !hasOptions) {
+      close(false);
+      session.empty();
+      return;
+    }
+    if (active.admission !== null && active.admission.phase !== "Ready") return;
     if (active.meaning !== null) {
       if (!stable()) { invalidate(); return; }
       if (delayedContent && active.preparedMeaning === null && active.attempt) {
@@ -404,11 +410,6 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     }
     if (prepared?.kind === "Ready" && active.attempt && performance.now() >= active.attempt.expires) {
       fail(active.attempt, null);
-      return;
-    }
-    if (content !== null && !hasOptions) {
-      close(false);
-      session.empty();
       return;
     }
     if (content === null || !candidate || (!sheet && !menu.placed)) return;
