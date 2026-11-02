@@ -9,10 +9,12 @@
  * playing, and with `keepalive` on pagehide. A stale epoch (409) adopts the server's position.
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
- * and retains the sample, with the existing player retry for an explicitly refused write.
- * A refused write stands beside playing audio: it gates neither a seek nor a resume, and raises
- * its line only where admission can send the retry. `retry` sends the sample and leaves the
- * element alone; `play` sends it and plays.
+ * and retains the sample as `Unsaved`, which holds a resume and a timed play until the sample is
+ * stored, by the tick, `online` or a press. A refused write is `Unsaved` too, but stands beside
+ * playing audio: it gates neither a seek nor a resume, and only a press resends it. `retry` sends
+ * the sample, or rereads a fence's place, and leaves the element alone; `play` sends it and plays.
+ * A press over a fence rereads first: a place that still couldn't load is `Unread`, whose own line
+ * answers the press. A failed element is `playbackFailed` alone; `play` reloads it.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -29,6 +31,7 @@
 
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { apiFetch, ApiError, isApiError } from "@/lib/api/client";
+import { QueueCommandError } from "@/lib/player/queue";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { remoteAttemptAllowed } from "@/lib/native/admission";
@@ -41,11 +44,12 @@ import { publishChange } from "@/lib/api/changes";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import {
   IDLE_ENGINE_STATE,
+  PLAYER_CHANGED,
   PLAYER_SKIP_BACK_MS,
   PLAYER_SKIP_FORWARD_MS,
-  PlaybackPreferenceError,
   type Engine,
   type EngineState,
+  type PlaceTrouble,
   type PlayerDescriptor,
   type PlayerCommands,
   type PreviewAudioDescriptor,
@@ -67,13 +71,6 @@ export interface BrowserEngineDeps {
 
 const WRITE_EVERY_MS = 15_000;
 const LAST_WRITE_BOUND_MS = 2_000;
-const PROGRESS_UNSAVED = "Progress couldn’t be saved. Retry to sync progress.";
-const ERRORS: Record<number, string> = {
-  1: "Playback was interrupted.",
-  2: "Network error. Check your connection.",
-  3: "Audio format error.",
-  4: "Audio URL unavailable.",
-};
 
 interface Episode {
   readonly descriptor: PlayerDescriptor;
@@ -104,6 +101,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   let advanceAllowed = false;
   let asked = 0; // the latest play or pause: a resume awaiting the server yields to a newer one
   let positionStateAt = 0;
+  let troubles = 0; // keys each place trouble, so one after a retry is a new one
+  const trouble = (kind: PlaceTrouble["kind"]): PlaceTrouble => ({ kind, attempt: ++troubles });
 
   const set = (patch: Partial<EngineState>) => {
     state = { ...state, ...patch };
@@ -125,9 +124,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       ? episode.descriptor.duration_ms
       : 0);
 
-  /** Playback broke, or a fence needs the player's retry; a refused write is neither. */
-  const playbackHeld = (current: Episode) =>
-    state.playbackFailed || (state.error !== null && !current.stopped);
+  /** A fence's drain left this sample unsent: a resume would move a place the server lacks. */
+  const unsentDrain = (current: Episode) => state.error?.kind === "Unsaved" && !current.stopped;
 
   // ---- listening ----
   /** The attached episode's sample, read from the element. */
@@ -173,7 +171,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             body: JSON.stringify(body),
           });
           current.overrideRevision = data.state.consumption_override_revision;
-          if (current === episode) set({ synced: true });
+          // A drain's unsent place is stored now, so its line goes.
+          if (current === episode) set(unsentDrain(current) ? { synced: true, error: null } : { synced: true });
           publishChange("Consumption");
         } catch (error) {
           current.queued ??= body;
@@ -193,7 +192,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           } else {
             // Standing error keeps the sample for an explicit `retry` or `play`, which sends it.
             current.stopped = true;
-            if (current === episode) set({ error: PROGRESS_UNSAVED });
+            if (current === episode) set({ error: trouble("Unsaved") });
             console.warn("listening_write_refused", { status });
             return;
           }
@@ -398,12 +397,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (subject !== null) void deps.terminal({ mediaId: current.descriptor.media_id, subject, advance: advanceAllowed,
         body: terminalBody(current, listening(current)) }).catch(error => { set({ synced: false }); deps.onFailure(error); });
     },
-    error: () =>
-      set({
-        playbackFailed: true,
-        error:
-          ERRORS[audio.error?.code ?? 0] ?? "Playback failed. Please retry.",
-      }),
+    error: () => set({ playbackFailed: true }),
   };
   for (const name of [
     "progress",
@@ -547,20 +541,18 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const current = episode;
       if (current?.fenced) {
         await engine.reconcileProgressFence(current.descriptor.media_id);
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", current.fenced
-          ? "listening progress is unavailable. retry to synchronize it."
-          : "listening progress synchronized. press play to resume.");
+        if (current.fenced) throw new QueueCommandError("PlaceUnread");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its saved place just changed.");
       }
       const mine = ++asked;
       advanceAllowed = true;
       if (state.source === null)
-        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      if (current !== null && state.error !== null && !playbackHeld(current)) resend(current);
-      if (state.error !== null) {
-        // Explicit retry may resume a refused sample; never replace it with a fresh read.
-        if (current !== null && current.queued !== null) current.stopped = false;
+        throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
+      if (current !== null && state.error !== null) resend(current);
+      if (state.playbackFailed) {
+        // A failed element reloads in place; never replace a kept sample with a fresh read.
         generation += 1;
-        set({ playbackSubject: crypto.randomUUID(), error: null, playbackFailed: false });
+        set({ playbackSubject: crypto.randomUUID(), playbackFailed: false });
         audio.load();
         seekOnceLoaded(state.positionMs);
       } else if (current !== null && !news(current)) {
@@ -579,21 +571,21 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     },
     async retry() {
       const current = episode;
-      if (current === null || current.fenced || state.playbackFailed) return engine.play();
+      if (current === null || state.playbackFailed) return engine.play();
+      if (current.fenced) return engine.reconcileProgressFence(current.descriptor.media_id);
       resend(current);
     },
     async resumeLoaded(expectedSubject) {
       const current = episode;
       if (current === null || state.source?.kind !== "Episode" || state.playbackSubject !== expectedSubject ||
           state.phase === "Ended" || state.playbackFailed)
-        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+        throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
       if (current.fenced) {
         await engine.reconcileProgressFence(current.descriptor.media_id);
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", current.fenced
-          ? "listening progress is unavailable. retry to synchronize it."
-          : "listening progress synchronized. press play to resume.");
+        if (current.fenced) throw new QueueCommandError("PlaceUnread");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its saved place just changed.");
       }
-      if (playbackHeld(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "retry playback in the player before resuming this episode.");
+      if (unsentDrain(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its place isn’t saved yet.");
       const admission = ++asked;
       advanceAllowed = true;
       capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), expectedSubject, generation, admission);
@@ -607,11 +599,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     async seekAndPlay(mediaId, positionMs) {
       const current = episode;
       if (current?.descriptor.media_id !== mediaId || state.playbackSubject === null || audio.ended)
-        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      if (current.fenced)
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
-      if (playbackHeld(current))
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "playback failed. retry in the player, then choose this time again.");
+        throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
+      if (current.fenced) throw new ApiError(409, "E_PLAYBACK_REFUSED",
+        state.error?.kind === "Unread" ? "its saved place couldn’t load." : "its progress is changing.");
+      if (state.playbackFailed) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its playback failed.");
+      if (unsentDrain(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its place isn’t saved yet.");
       const admission = ++asked;
       advanceAllowed = true;
       current.active = true;
@@ -643,7 +635,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
     },
     async setShortenPauses(on) {
-      if (on) throw new PlaybackPreferenceError("silence skipping is not available in this browser.");
+      // justify-defect: a browser never offers silence skipping (`supportsSilenceSkipping` is false).
+      if (on) throw new Error("a browser cannot skip silence");
       set({ shortenPauses: false });
     },
     async prepareProgressFence(mediaId) {
@@ -656,7 +649,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       await draining;
       if (current.queued !== null) {
         current.fenced = false;
-        if (current === episode) set({ error: remoteAttemptAllowed() ? PROGRESS_UNSAVED : state.error, synced: false });
+        if (current === episode) set({ error: remoteAttemptAllowed() ? trouble("Unsaved") : state.error, synced: false });
         throw new ProgressPreparationError();
       }
       current.active = false;
@@ -667,7 +660,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const fresh = await deps.fresh(mediaId);
       if (current !== episode) return;
       if (fresh === null) {
-        set({ error: "Listening position unavailable. Retry to sync progress.", synced: false });
+        set({ error: trouble("Unread"), synced: false });
         return;
       }
       adoptInto(current, fresh);

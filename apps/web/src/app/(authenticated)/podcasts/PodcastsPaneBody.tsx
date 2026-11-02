@@ -6,7 +6,7 @@
 
 import { useCallback, useId, useMemo, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
@@ -18,7 +18,6 @@ import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { getLibrary, librariesIndex, type Library } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
@@ -37,10 +36,7 @@ import { catalogPodcasts, catalogLibraries, catalogLibrary } from "@/lib/catalog
 import { useChangeStamp } from "@/lib/api/changes";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { usePodcastsIndexRead } from "@/lib/panes/indexPaneEntry";
-import {
-  podcastErrorMessage,
-  podcastRefresh,
-} from "@/lib/podcasts/paneState";
+import { podcastRefresh } from "@/lib/podcasts/paneState";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -120,7 +116,6 @@ export default function PodcastsPaneBody() {
   };
   const list = unstamped(snapshot);
   const failure = list.status === "loading" ? null : list.error;
-  const readOccurrence = useFeedbackOccurrence(failure !== null, key);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const libraries = useServerValue({
@@ -129,8 +124,6 @@ export default function PodcastsPaneBody() {
     load: (signal) => librariesIndex(new URLSearchParams(), signal),
   });
   const libraryItems = libraries.status === "ready" ? libraries.data.items : [];
-  const libraryFailure = libraries.status === "loading" ? null : libraries.error;
-  const libraryOccurrence = useFeedbackOccurrence(libraryFailure !== null, "Podcasts.Libraries");
   const retryLibraries = () => { void libraries.refetch().catch(() => {}); };
   const selectedLibraryId = libraryId !== null && !libraryItems.some(library => library.id === libraryId) ? libraryId : null;
   const savedSelectedLibrary = useCatalogRead(value => selectedLibraryId === null ? null : catalogLibrary(value, selectedLibraryId));
@@ -144,10 +137,6 @@ export default function PodcastsPaneBody() {
       return getLibrary(selectedLibraryId, signal).then(read => read.data);
     },
   });
-  const selectedOccurrence = useFeedbackOccurrence(selectedLibrary.status !== "loading" && selectedLibrary.error !== null);
-  const selectedLibraryFailure = selectedLibrary.status !== "loading" && selectedLibrary.error !== null
-    ? libraryErrorFeedback(selectedLibrary.error, "selected library couldn’t be loaded", throwDefect)
-    : null;
   const rows = list.status === "ready" ? list.data.items : null;
   const complete = list.status === "ready";
   const getRowStatus = useCallback(
@@ -174,7 +163,7 @@ export default function PodcastsPaneBody() {
   const visible = (rows ?? []).filter((row) => matchesPaneFilterQuery(text, fields(row)));
   const filtered = filter !== "all" || libraryId !== null;
   const emptyTitle = text
-    ? "no shows match this filter." : filtered ? "no podcasts match the current filters." : "no followed podcasts yet.";
+    ? "no podcasts match this filter." : filtered ? "no podcasts match these filters." : "no subscribed podcasts.";
   const readFeedback = useIndexReadFeedback({
     value: list, requestedKey: descriptor.key, active, unit: UNIT, waiting: list.status === "loading",
     outcome: visible.length > 0 ? "results updated." : emptyTitle,
@@ -211,6 +200,7 @@ export default function PodcastsPaneBody() {
         content: <>
           <RadioGroup label="Show" value={filter} choices={showChoices} onChange={(value) => replaceView({ filter: value === "all" ? null : value })} />
           <RadioGroup label="Library" value={libraryId ?? ""} choices={libraryChoices} disabled={libraries.status === "loading"} onChange={(value) => replaceView({ library_id: value || null })} />
+          {libraries.status === "failed" ? <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} /> : null}
         </>,
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
@@ -241,25 +231,13 @@ export default function PodcastsPaneBody() {
   usePaneReturnReady(list.status !== "loading");
 
   if (list.status === "failed" && failure !== null) {
-    const invalidView = failure.code === "E_INVALID_REQUEST";
     return (
       <>
         {readFeedback.announcement}
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={podcastErrorMessage(
-            failure,
-            "couldn’t load shows",
-          )}
-          announcement="Polite"
-          actions={[
-            invalidView
-              ? {
-                  label: "Reset view",
-                  onClick: () => router.replace("/podcasts"),
-                }
-              : { label: "try again", onClick: retry, busy },
-          ]}
-        />
+        {failure.code === "E_INVALID_REQUEST"
+          ? <Fact line={{ fact: "couldn’t load podcasts for this view." }}
+            verbs={[{ label: "reset view", commandKey: "reset podcasts view", run: () => router.replace("/podcasts") }]} />
+          : <Failed error={failure} noun="podcasts" retry={{ run: retry, busy }} />}
       </>
     );
   }
@@ -286,60 +264,9 @@ export default function PodcastsPaneBody() {
         status={list.status === "loading" ? "loading" : "ready"}
         ariaLabel="Followed podcasts"
         anchorKey={text}
-        notice={<>
-          {list.status === "ready" && failure !== null ? (
-            <FeedbackFailure scope="Local" occurrence={readOccurrence}
-              content={podcastErrorMessage(
-                failure,
-                "couldn’t refresh shows",
-              )}
-              announcement="None"
-              actions={[{ label: "try again", onClick: retry, busy }]}
-            />
-          ) : selectedLibraryFailure !== null ? (
-            <FeedbackFailure scope="Local" occurrence={selectedOccurrence}
-              content={selectedLibraryFailure}
-              announcement={selectedLibrary.status === "ready" ? "None" : "Polite"}
-              actions={[{ label: "retry library", onClick: selectedLibrary.refetch, busy: selectedLibrary.status === "failed" ? selectedLibrary.retrying : selectedLibrary.status === "ready" && selectedLibrary.refreshing }]}
-              returnFocus={() => inputRef.current}
-            />
-          ) : libraryFailure !== null ? (
-            <FeedbackFailure scope="Local" occurrence={libraryOccurrence}
-              content={podcastErrorMessage(
-                libraryFailure,
-                libraries.status === "ready" ? "couldn’t refresh libraries" : "couldn’t load libraries",
-              )}
-              announcement={libraries.status === "ready" ? "None" : "Polite"}
-              actions={[{ label: "try again", onClick: retryLibraries, busy: indexReading(libraries) }]}
-            />
-          ) : null}
-        </>}
-        empty={
-          text ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: emptyTitle,
-              }}
-              announcement="None"
-            />
-          ) : filtered ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: emptyTitle,
-              }}
-              announcement="None"
-              actions={[{ label: "clear filters", onClick: () => replaceView({ filter: null, library_id: null }) }]}
-            />
-          ) : (
-            <FeedbackNotice
-              content={{ tone: "Neutral", title: emptyTitle }}
-              announcement="None"
-              actions={[{ label: "browse podcasts", href: "/browse?kind=Podcast" }]}
-            />
-          )
-        }
+        empty={<Fact line={{ fact: emptyTitle }} verbs={text ? undefined
+          : filtered ? [{ label: "clear filters", commandKey: "clear podcast filters", run: () => replaceView({ filter: null, library_id: null }) }]
+          : [{ label: "browse podcasts", href: "/browse?kind=Podcast" }]} />}
       />
     </>
   );

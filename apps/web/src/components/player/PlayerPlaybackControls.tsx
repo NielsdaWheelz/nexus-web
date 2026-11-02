@@ -4,12 +4,12 @@ import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
-import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { readerDocument, transcriptUnitAtTime } from "@/lib/documentReader/model";
@@ -160,10 +160,9 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
 }) {
   const commands = usePlayerCommands();
   const { ctx } = useActionRuntime();
+  const { say, fail } = useOutcome();
   const [preparation, setPreparation] = useState<PreparationState>(null);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const [opening, setOpening] = useState(false);
-  const occurrence = useFeedbackOccurrence(failure !== null || opening, expectedSubject);
   const resolve = async (signal: AbortSignal): Promise<OpenResult | null> => {
     try {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(`/api/media/${mediaId}/reader`, { signal });
@@ -171,7 +170,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       const doc = readerDocument(data);
       if (doc.kind !== "text" || doc.format !== "transcript" || !transcriptUnitAtTime(doc.units, chapter.start_ms)) return null;
       const href = readerDestinationHref(mediaId, { source_identity: doc.identity, target: { kind: "time", ms: chapter.start_ms } });
-      return href ? { target: { href, labelHint: title }, title: "chapter transcript ready", openLabel: "open chapter" } : null;
+      return href ? { target: { href, labelHint: title }, title: `the transcript for “${chapter.title}” is ready.`, openLabel: "open" } : null;
     } catch (error) {
       if (isApiError(error) && ["E_MEDIA_NOT_READY", "E_MEDIA_NOT_FOUND", "E_INVALID_KIND"].includes(error.code)) return null;
       throw error;
@@ -179,8 +178,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   };
   const report = (error: unknown) => {
     if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
-    if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-    setFailure(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
+    fail(error, `couldn’t open the transcript for “${chapter.title}”.`);
   };
   const activate = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -198,13 +196,12 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       onOpened,
       create: async () => {
         const result = await resolve(ctx.sessionSignal());
-        if (!ctx.sessionSignal().aborted) setFailure(result ? null : {tone: "Warning", title: "no transcript at this time", message: chapter.title});
+        if (!ctx.sessionSignal().aborted && result === null) say({ fact: `no transcript for “${chapter.title}”.` });
         return result;
       },
     }).catch(report).finally(() => setOpening(false));
   };
   return <li className={styles.chapterRow}>
-    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> : null}
     <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current ? "true" : undefined}
       aria-busy={opening} disabled={expectedSubject === null} onClick={activate} onKeyDown={activate}>
       <span>{chapter.title}</span>
@@ -220,7 +217,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
           setPreparation({ kind: "Ready", request: signal, content: { sections: [{ id: "Open", label: null, options: [{
             kind: "link", id: "OpenInPane", label: ACTION_CATALOG.OpenInNewPane.label, icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
             ...(href === null ? { href: null, disabled: true as const } : { href }),
-            disabledReason: href === null ? "no transcript at this time" : undefined,
+            disabledReason: href === null ? "no transcript for this chapter." : undefined,
             onActivate(event) {
               const activation = workspaceTargetActivationIntent(event);
               if (activation.kind === "Unowned") return "unhandled";
@@ -236,7 +233,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
         }).catch((error: unknown) => {
           if (signal.aborted || handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-          setPreparation({ kind: "Failed", request: signal, feedback: apiTransportFeedback(error, "couldn’t load chapter transcript") ?? { tone: "Warning", title: "couldn’t load chapter transcript", requestId: error.requestId } });
+          setPreparation({ kind: "Failed", request: signal, feedback: { tone: "Warning", title: "actions couldn’t load." } });
         });
       },
     }} />

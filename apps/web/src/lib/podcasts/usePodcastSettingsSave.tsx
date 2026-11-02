@@ -2,12 +2,14 @@
 
 /** Independent playback defaults belong to the account, never a subscription or
  * dialog lifetime. Commands freeze row identity, exact version and desired pair.
- * The settings dialog and the player present every save state; a failed or
- * unconfirmed save also reports once, since the dialog may have closed.
+ * The settings dialog and the player's panel show the save's state as Facts, so the owner
+ * says an outcome once, as a slip, only while the surface that saved is gone (`shown`). A
+ * refused save has no Fact and always slips. An unconfirmed save is held in `feedback` until
+ * a read settles it. Mount `feedback` once.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
-import { podcastErrorMessage } from "./paneState";
+import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { type ApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
@@ -29,23 +31,33 @@ type SettingsSave =
   | { readonly kind: "ReadFailed"; readonly command: Command; readonly reason: Reason; readonly error: ApiError }
   | { readonly kind: "Absent"; readonly command: Command }
   | { readonly kind: "Replaced"; readonly command: Command };
-interface Entry { readonly podcastId: string; readonly ownerId: string; unregister: () => void; state: SettingsSave; busy: boolean; failure: Extract<SettingsSave, {kind: "Unknown" | "ReadFailed" | "Rejected"}> | null }
+interface Entry {
+  readonly podcastId: string;
+  /** The podcast's own title. */
+  readonly title: string;
+  readonly ownerId: string;
+  /** The surface that saved still stands and shows this save's Facts. */
+  readonly shown: () => boolean;
+  unregister: () => void;
+  state: SettingsSave;
+  busy: boolean;
+  /** Bumps per failed check of an unconfirmed save, so its held line speaks again. */
+  attempt: number;
+}
 const EMPTY: readonly Entry[] = [];
-function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error: unknown }) => void) {
+/** The save may have landed until a read says otherwise. */
+const unconfirmed = (state: SettingsSave) =>
+  state.kind === "Unknown" || (state.kind === "Reading" || state.kind === "ReadFailed") && state.reason === "Unknown";
+const unsaved = (entry: Entry) => `couldn’t save the defaults for “${entry.title}”.`;
+function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error: unknown }) => void, outcome: Outcome) {
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
   let snapshot = EMPTY;
   let lifetime: AbortController | null = null;
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-  const emit = () => {
-    for (const entry of entries.values()) {
-      const state = entry.state;
-      if (state.kind === "Unknown" || state.kind === "ReadFailed" || state.kind === "Rejected") entry.failure = state;
-      else if (state.kind !== "Saving" && state.kind !== "Reading") entry.failure = null;
-    }
-    snapshot = [...entries.values()]; for (const listener of listeners) listener();
-  };
+  const emit = () => { snapshot = [...entries.values()]; for (const listener of listeners) listener(); };
   const current = (entry: Entry, scope: AbortController) => lifetime === scope && !scope.signal.aborted && entries.get(entry.podcastId) === entry;
+  const tell = (entry: Entry, line: Line, verbs?: Verbs) => { if (!entry.shown()) outcome.say(line, verbs); };
   async function read(entry: Entry, reason: Reason, scope: AbortController): Promise<PodcastSettings | null> {
     const command = entry.state.command;
     entry.state = { kind: "Reading", command, reason }; emit();
@@ -53,16 +65,32 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
     try {
       const value = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => requestWithRetry(s => getPodcastSettings(entry.podcastId, s), signal) });
       if (!current(entry, scope)) return null;
-      if (value.id !== null && value.id !== command.patch.id) { entry.state = { kind: "Replaced", command }; emit(); return null; }
+      if (value.id !== null && value.id !== command.patch.id) {
+        entry.state = { kind: "Replaced", command }; emit();
+        tell(entry, { fact: unsaved(entry), reason: "they were replaced elsewhere." });
+        return null;
+      }
       if (reason === "Unknown" && value.id === command.patch.id && value.default_playback_speed === command.patch.default_playback_speed && value.pause_shortening_mode === command.patch.pause_shortening_mode) {
         entry.state = { kind: "Accepted", command, current: value }; emit(); publishChange("Podcasts"); return value;
       }
       entry.state = { kind: "Review", command, reason, current: value }; emit();
+      // An unanswered save that reads back otherwise may never have landed: nothing says who changed them.
+      tell(entry, reason === "Conflict" ? { fact: unsaved(entry), reason: "they changed elsewhere." }
+        : { fact: `the saved defaults for “${entry.title}” differ from this change.` });
     } catch (caught) {
       if (!current(entry, scope)) return null;
       const error = modeledApiError(caught, fail);
-      if (error !== null) entry.state = error.code === "E_NOT_FOUND" ? { kind: "Absent", command } : { kind: "ReadFailed", command, reason, error };
+      if (error === null) { emit(); return null; }
+      if (error.code === "E_NOT_FOUND") {
+        entry.state = { kind: "Absent", command }; emit();
+        tell(entry, { fact: unsaved(entry), reason: "it isn’t available anymore." });
+        return null;
+      }
+      entry.state = { kind: "ReadFailed", command, reason, error };
+      if (reason === "Unknown") entry.attempt += 1;
       emit();
+      if (reason === "Conflict") tell(entry, { fact: unsaved(entry), reason: "they changed elsewhere." },
+        [{ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId) }]);
     }
     return null;
   }
@@ -80,21 +108,23 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
       const error = modeledApiError(caught, fail);
       if (error?.status === 409) return await read(entry, "Conflict", scope);
       if (error !== null) entry.state = error.code === "E_NOT_FOUND" ? { kind: "Absent", command } : { kind: outcomeUnknown(error) ? "Unknown" : "Rejected", command, error };
-      invalidateReads("Podcasts"); emit(); return null;
+      invalidateReads("Podcasts"); emit();
+      if (entry.state.kind === "Absent") tell(entry, { fact: unsaved(entry), reason: "it isn’t available anymore." });
+      if (entry.state.kind === "Rejected") outcome.fail(entry.state.error, unsaved(entry),
+        { label: "retry", commandKey: `retry ${entry.ownerId}`, run: () => void commands.retry(entry.podcastId) });
+      return null;
     } finally { if (current(entry, scope)) { entry.busy = false; emit(); } }
   }
   const commands = {
     state: (id: string | null) => id === null ? null : entries.get(id)?.state ?? null,
-    failure: (id: string | null) => id === null ? null : entries.get(id)?.failure ?? null,
-    ownerId: (id: string | null) => `podcast-settings:${accountId}:${id}`,
-    save(id: string, patch: Patch) {
+    save(id: string, title: string, patch: Patch, shown: () => boolean) {
       const old = entries.get(id);
       if (old?.busy || old?.state.kind === "Unknown" || old?.state.kind === "ReadFailed") return Promise.resolve(null);
       old?.unregister();
       const ownerId = `podcast-settings:${accountId}:${id}`;
-      const entry: Entry = { podcastId: id, ownerId, state: { kind: "Saving", command: { patch: { ...patch } } }, busy: false,
-        unregister: () => {}, failure: null };
-      entry.unregister = guard.register({ id: ownerId, scope: { kind: "account" }, subscribe, read: () => ({ changed: false, unconfirmed: entry.state.kind === "Saving" || entry.state.kind === "Unknown" || ((entry.state.kind === "Reading" || entry.state.kind === "ReadFailed") && entry.state.reason === "Unknown"), stopsBrowserWork: false }) });
+      const entry: Entry = { podcastId: id, title, ownerId, shown, state: { kind: "Saving", command: { patch: { ...patch } } }, busy: false,
+        attempt: 0, unregister: () => {} };
+      entry.unregister = guard.register({ id: ownerId, scope: { kind: "account" }, subscribe, read: () => ({ changed: false, unconfirmed: entry.state.kind === "Saving" || unconfirmed(entry.state), stopsBrowserWork: false }) });
       entries.set(id, entry); return send(entry);
     },
     reset(id: string) { const entry = entries.get(id); if (entry === undefined || entry.busy || entry.state.kind === "Unknown" || entry.state.kind === "ReadFailed" || entry.state.kind === "Rejected") return; entries.delete(id); entry.unregister(); emit(); },
@@ -113,35 +143,27 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
 }
 export function usePodcastSettingsOwner(accountId: string, fail: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
-  const owner = useMemo(() => createOwner(accountId, guard, fail), [accountId, guard, fail]);
+  const outcome = useOutcome();
+  const owner = useMemo(() => createOwner(accountId, guard, fail, outcome), [accountId, guard, fail, outcome]);
   useLayoutEffect(() => owner.start(), [owner]);
   // Its dialog and the player read `state`; a fresh command object re-renders them.
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
-  return { commands: { ...owner.commands }, feedback: entries.map(entry => <PodcastSettingsFailure key={entry.ownerId} podcastId={entry.podcastId} />) };
+  const commands = { ...owner.commands };
+  return { commands, feedback: entries.filter(entry => unconfirmed(entry.state)).map(entry =>
+    <Hold key={entry.ownerId} id={entry.ownerId} attempt={entry.attempt}
+      line={{ fact: `not sure the defaults for “${entry.title}” saved.`, reason: "it may have gone through." }}
+      verbs={[{ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId), busy: entry.state.kind === "Reading" }]} />) };
 }
 
-function PodcastSettingsFailure({podcastId}: {podcastId: string}) {
-  const {ctx} = useActionRuntime();
-  const commands = ctx.podcastSettings;
-  const failure = commands.failure(podcastId);
-  const state = commands.state(podcastId);
-  if (failure === null) return null;
-  const check = failure.kind !== "Rejected";
-  return <FeedbackFailure scope="Local" occurrence={failure.command} announcementOccurrence={failure}
-    content={failure.kind === "Unknown" ? {tone: "Warning", title: "change not confirmed", message: "the request may have succeeded.", requestId: failure.error.requestId}
-      : podcastErrorMessage(failure.error, check ? "couldn’t check saved playback defaults" : "couldn’t save playback defaults")}
-    announcement="Polite" actions={[{label: check ? "check saved settings" : "try again", busy: state?.kind === "Saving" || state?.kind === "Reading",
-      onClick: () => {void (check ? commands.check(podcastId) : commands.retry(podcastId));}}]} />;
-}
-
-export function usePodcastSettingsSave(podcastId: string | null, subject: string | null) {
+/** `shown` is true while the calling surface stands to show the save's Facts. */
+export function usePodcastSettingsSave(podcastId: string | null, title: string, subject: string | null, shown: () => boolean) {
   const { ctx } = useActionRuntime();
   const commands = ctx.podcastSettings;
   const state = commands.state(podcastId);
-  return { ownerId: commands.ownerId(podcastId), state, feedback: podcastId === null ? null : <PodcastSettingsFailure podcastId={podcastId} />, failure: commands.failure(podcastId), busy: state?.kind === "Saving" || state?.kind === "Reading",
+  return { state, busy: state?.kind === "Saving" || state?.kind === "Reading",
     reset: () => { if (podcastId !== null) commands.reset(podcastId); },
-    save: (patch: Patch) => podcastId !== null && subject !== null ? commands.save(podcastId, patch) : Promise.resolve(null),
-    retry: () => podcastId === null ? Promise.resolve(null) : commands.retry(podcastId),
-    check: () => podcastId === null ? Promise.resolve(null) : commands.check(podcastId),
+    save: (patch: Patch) => podcastId !== null && subject !== null ? commands.save(podcastId, title, patch, shown) : Promise.resolve(null),
+    /** Reads the saved defaults again; never resends. */
+    check: () => { if (podcastId !== null) void commands.check(podcastId); },
   };
 }
