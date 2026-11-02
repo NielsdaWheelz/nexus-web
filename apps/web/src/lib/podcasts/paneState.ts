@@ -50,10 +50,6 @@ export function podcastRefusalReason(error: ApiError): string | undefined {
   }
 }
 
-/** A podcast read that found nothing to show: absent or forbidden alike. */
-export const podcastAbsent = (error: ApiError) =>
-  error.code === "E_NOT_FOUND" || error.code === "E_PODCAST_NOT_FOUND" || error.code === "E_FORBIDDEN";
-
 /** Coexistence until L7: collections, the metadata overlay and the browse preview still read
  * this shape. Throws defects. */
 /** Failure copy for podcast reads and commands; throws defects. */

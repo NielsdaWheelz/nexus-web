@@ -71,7 +71,7 @@ import { modeledApiError, useServerValue, useThrowLater, type Visit, type Server
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { usePodcastEpisodesRead } from "@/lib/panes/indexPaneEntry";
 import { LIVE_SOURCE } from "@/lib/catalog/types";
-import { podcastAbsent, podcastRefresh } from "@/lib/podcasts/paneState";
+import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
@@ -447,7 +447,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             episodeFailure.code === "E_INVALID_REQUEST"
               ? <Fact line={{ fact: "couldn’t load episodes for this view." }}
                 verbs={[{ label: "reset view", commandKey: "reset episodes view", run: () => replaceView({ state: null, sort: null }) }]} />
-              : podcastAbsent(episodeFailure) ? <Fact line={{ fact: "this podcast isn’t available." }} />
+              : episodeFailure.status === 403 || episodeFailure.status === 404 ? <Fact line={{ fact: "this podcast isn’t available." }} />
               : <Failed error={episodeFailure} noun="episodes" retry={{ run: retry, busy }} />
           ) : known === undefined || ready === null ? null : (
             <PlaybackSourceContext.Provider value={async selected_media_id => {
