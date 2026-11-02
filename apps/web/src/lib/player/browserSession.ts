@@ -3,9 +3,11 @@
  * exact revision. A lost answer retains the identical request and blocks later
  * edits; check resends it, including terminal consumption, without rebasing.
  * Knowledge begins with a successful read or acknowledged save; failed reads
- * retain the last confirmed state. Only the account's Web Lock holder may call this owner.
+ * retain the last confirmed state, and the first one's error stands as `unread`
+ * until a read lands. A refused write throws its refusal and keeps nothing.
+ * Only the account's Web Lock holder may call this owner.
  */
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, requestWithDeadline } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { readSharedValue } from "@/lib/api/serverState";
@@ -24,25 +26,25 @@ export function createBrowserSession(accountId: string, changed: () => void) {
   let frozenBody: string | null = null;
   let pendingPrevious: QueueState | null = null;
   let phase: QueueSavePhase = "Ready";
-  let error: string | null = null;
+  let unread: ApiError | null = null;
   let previous: QueueState | null = null;
   const publish = () => changed();
   const read = async () => {
-    if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
+    if (pending !== null) throw new QueueCommandError("Unsettled");
     try {
       const response = await readSharedValue({ accountId, key: "/me/playback-session", signal: new AbortController().signal, timeoutMs: 5_000, invalidate: true,
         load: signal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal, cache: "no-store" }) });
       if (saved?.state.queue_id !== response.data?.state.queue_id || saved?.revision !== response.data?.revision) previous = null;
       saved = response.data;
       known = true;
-      error = null;
+      unread = null;
       phase = "Ready";
       publish();
       return saved;
     } catch (cause) {
       handleUnauthenticatedApiError(cause);
-      if (!known) {
-        error = "couldn’t load queue";
+      if (!known && isApiError(cause) && !isSameSystemApiDefect(cause)) {
+        unread = cause;
         publish();
       }
       throw cause;
@@ -52,7 +54,6 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     const request = pending;
     if (request === null) return saved;
     phase = "Saving";
-    error = null;
     publish();
     try {
       const response = await requestWithDeadline({ signal: new AbortController().signal, timeoutMs: 5_000,
@@ -73,31 +74,33 @@ export function createBrowserSession(accountId: string, changed: () => void) {
         handleUnauthenticatedApiError(cause);
         throw cause;
       }
-      if (isRefusal(cause)) {
-        pending = null;
-        frozenBody = null;
-        pendingPrevious = null;
-        phase = "Ready";
-        error = isApiError(cause) && cause.code === "E_LIMIT" ? "too many episodes; narrow this view" : "queue changed; check before trying again";
-        if (isApiError(cause) && cause.status === 409) {
-          // Refresh reports the other writer's result. The refused command is never reapplied.
-          await read();
-          error = "queue changed; try again";
-        }
-      } else {
+      if (isSameSystemApiDefect(cause) || (!isApiError(cause) && !isAbortError(cause))) {
         phase = "Uncertain";
-        error = "couldn’t confirm queue change";
+        publish();
+        throw cause;
       }
+      if (!isRefusal(cause)) {
+        phase = "Uncertain";
+        publish();
+        throw new QueueCommandError("Unsettled");
+      }
+      pending = null;
+      frozenBody = null;
+      pendingPrevious = null;
+      phase = "Ready";
       publish();
-      if (isSameSystemApiDefect(cause) || (!isApiError(cause) && !isAbortError(cause))) throw cause;
-      throw new QueueCommandError(error ?? "couldn’t save queue change");
+      if (cause.code === "E_LIMIT") throw new QueueCommandError("TooMany");
+      if (cause.status !== 409) throw new QueueCommandError("Refused");
+      // Refresh reports the other writer's result. The refused command is never reapplied.
+      await read();
+      throw new QueueCommandError("Changed");
     }
   };
   return {
-    snapshot: () => ({ saved, known, phase, error, canRestore: previous !== null }),
+    snapshot: () => ({ saved, known, phase, unread, canRestore: previous !== null }),
     read,
     async save(state: QueueState, terminal: QueueTerminal | null = null, replacement = false) {
-      if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
+      if (pending !== null) throw new QueueCommandError("Unsettled");
       const before = saved?.state ?? null;
       pendingPrevious = replacement && before !== null && before.entries.length > 0 ? before : null;
       pending = { id: saved?.id ?? crypto.randomUUID(), expected_revision: saved?.revision ?? null, state, terminal };
@@ -108,16 +111,16 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     },
     check: () => pending === null ? read() : send(),
     async restore(request: QueueRequest) {
-      if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
+      if (pending !== null) throw new QueueCommandError("Unsettled");
       if (saved?.state.queue_id !== request.queue_id || saved.revision !== request.expected_revision || previous === null)
-        throw new QueueCommandError("queue changed; try again");
+        throw new QueueCommandError("Changed");
       const state = { ...previous, queue_id: crypto.randomUUID() };
       pendingPrevious = null;
       pending = { id: saved?.id ?? crypto.randomUUID(), expected_revision: saved?.revision ?? null, state, terminal: null };
       frozenBody = JSON.stringify(pending);
       return send();
     },
-    preparing(on: boolean) { phase = on ? "Preparing" : pending === null ? "Ready" : "Saving"; if (known) error = null; publish(); },
+    preparing(on: boolean) { phase = on ? "Preparing" : pending === null ? "Ready" : "Saving"; publish(); },
     uncertain: () => pending !== null,
   };
 }
