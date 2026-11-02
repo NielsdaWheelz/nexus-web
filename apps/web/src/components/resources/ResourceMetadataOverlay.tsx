@@ -32,7 +32,7 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
   const key = open ? `metadata:podcast:${podcastId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
   if (source.status === "loading") return <Ruling />;
-  if (source.status === "failed") return <Failed error={source.error} noun="podcast details" retry={{ run: () => void source.refetch().catch(() => undefined), busy: source.retrying }} />;
+  if (source.status === "failed") return <Failed error={source.error} noun="podcast details" retry={{ run: source.refetch, busy: source.retrying }} />;
   const { podcast, episode_counts: counts } = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
@@ -57,7 +57,7 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
   const key = open ? `metadata:library:${libraryId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
   if (source.status === "loading") return <Ruling />;
-  if (source.status === "failed") return <Failed error={source.error} noun="library details" retry={{ run: () => void source.refetch().catch(() => undefined), busy: source.retrying }} />;
+  if (source.status === "failed") return <Failed error={source.error} noun="library details" retry={{ run: source.refetch, busy: source.retrying }} />;
   const metadata = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>

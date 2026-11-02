@@ -209,8 +209,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
     ref: props.subject, label,
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
     primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
-    status: remote.status === "failed" ? <Failed error={remote.error} noun="this item’s details"
-      retry={{run: () => void remote.refetch().catch(() => undefined), busy: remote.retrying}}/> : null,
+    status: remote.status === "failed" ? <Failed error={remote.error} noun="this item’s details" retry={{run: remote.refetch, busy: remote.retrying}}/> : null,
   }}/>;
 }
 

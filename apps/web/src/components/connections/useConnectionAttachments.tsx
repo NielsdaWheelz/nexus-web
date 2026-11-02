@@ -82,7 +82,7 @@ export function useConnectionAttachments(selfRef: string) {
   };
 
   /** The files from the current one on weren't added: the task ends, and the slip's verb resumes it. */
-  function refuse(task: Task, error: unknown) {
+  function endWithRefusal(task: Task, error: unknown) {
     const names = task.files.slice(task.index).map(({ file }) => file.name);
     const upload = task.files[task.index]!.upload;
     owner.set({ task: null, defect: null });
@@ -167,7 +167,7 @@ export function useConnectionAttachments(selfRef: string) {
       if (handleUnauthenticatedApiError(error)) return;
       if (task.mediaId !== null) owe(task, "Unlinked");
       else if (error instanceof UploadSessionError && error.outcome.kind === "Unresolved") owe(task, "AddUnsure");
-      else try { refuse(task, error); }
+      else try { endWithRefusal(task, error); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {
       stop();
