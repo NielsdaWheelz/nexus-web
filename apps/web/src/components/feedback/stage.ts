@@ -7,7 +7,8 @@
  * not typing and the document visible. Only Plain rows expire; a Held row tucks itself; Held and
  * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work.
  * Rows that have stood keep their places: only a row's first showing replaces, and only the plain
- * row directly beneath it, once that row has stood there. Rows that land together stack. */
+ * row directly beneath it, once that row has stood there. Rows that land together stack. A line
+ * is heard once: a region keeps what it carried, and the next room takes only what none has. */
 import { createContext, useContext, useLayoutEffect } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
@@ -137,6 +138,7 @@ export function createStage() {
   let speech: Speech = { Polite: null, Assertive: null };
   /** What no live region has carried: a new occurrence cancels the one before it, so it takes these on. */
   const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
+  let speaker: Room | null = null;
   let view: StageView = { rooms: [], typing: false, speech };
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
@@ -204,7 +206,11 @@ export function createStage() {
       unsaid[level].add(sentence(slip.row.line));
       speech = { ...speech, [level]: { text: [...unsaid[level]].join(" "), occurrence: {} } };
     }
-    const speaker = roomOf(modal ? { kind: "Modal", layer: modal } : { kind: "Root" });
+    const voice = roomOf(modal ? { kind: "Modal", layer: modal } : { kind: "Root" });
+    if (voice !== speaker) {
+      speaker = voice;
+      speech = { Polite: unsaid.Polite.size > 0 ? speech.Polite : null, Assertive: unsaid.Assertive.size > 0 ? speech.Assertive : null };
+    }
     view = {
       typing: typing !== null,
       speech,
