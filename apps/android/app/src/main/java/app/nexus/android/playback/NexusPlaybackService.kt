@@ -110,6 +110,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var loadId: String? = null // a fresh occurrence, including same-media reloads and service restarts
     private var installingSource = false // suppress reentrant listener snapshots, including same-media installs
     private var leased: EpisodeLease? = null
+    /**
+     * A paused seek reached the end, and no seek, play or install has moved it since. It is an
+     * ordinary seek, not a natural end, and the next play replays from the start. Media3 cannot
+     * report it: STATE_ENDED needs the clock to pass the duration and media3 clamps a seek 1 µs
+     * short of it. Position cannot stand in, because an estimated duration can fall short of the
+     * audio, and a pause in that tail is no rest.
+     */
+    private var restsAtEnd = false
     private data class Activation(val descriptor: JSONObject, val lease: EpisodeLease?, val localRepair: LocalStateError? = null)
     private data class RemoteActivation(val mediaId: UUID, val accountId: UUID, val generation: Long, val response: JSONObject?, val refused: Boolean, val localRepair: LocalStateError?)
     private var savingFailed = false
@@ -536,7 +544,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     "seekAndPlay" -> {
                         val position = request.getDouble("position_ms")
                         if (!position.isFinite() || position < 0) return failure("Invalid")
-                        if (player.playbackState == Player.STATE_ENDED || loadedEntryId != store?.queue?.nullableString("current_entry_id")) return failure("Stale")
+                        if (atEnd() || loadedEntryId != store?.queue?.nullableString("current_entry_id")) return failure("Stale")
                         if (recorder.fenced()) return failure("Fenced")
                         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
                         player.seekTo(minOf(position.toLong(), duration ?: Long.MAX_VALUE))
@@ -545,10 +553,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         checkpoint()
                     }
                     "seek", "skip" -> if (!recorder.fenced()) {
-                        val position = if (op == "seek") request.getLong("position_ms")
-                            else player.currentPosition + request.getLong("delta_ms")
-                        restoreEndedSelection()
-                        player.seekTo(maxOf(0, position))
+                        seek(if (op == "seek") request.getLong("position_ms") else player.currentPosition + request.getLong("delta_ms"))
                         checkpoint()
                     }
                     "play" -> {
@@ -584,10 +589,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val mine = retireActivation()
         scope.launch { loads.withLock {
             if (mine != activationGeneration || loadId != loaded || recorder.fenced()) return@withLock
-            restoreEndedSelection()
-            player.seekTo(maxOf(0, positionMs))
+            seek(positionMs)
             saveCheckpoint()
         } }
+    }
+
+    /** Every seek but an adopted position's and a timed play's. Paused, one to or past the end
+     * rests there: see [restsAtEnd]. */
+    private fun seek(positionMs: Long) {
+        restoreEndedSelection()
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+        // Before the seek, whose discontinuity publishes.
+        restsAtEnd = !player.playWhenReady && duration != null && positionMs >= duration
+        player.seekTo(maxOf(0, positionMs))
     }
 
     /** Called under [loads]; only a fully installed source may publish its occurrence. */
@@ -631,6 +645,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             loadId = UUID.randomUUID().toString()
             loadedEntryId = occurrenceId
             pendingEnd = null
+            restsAtEnd = false
             recorder.start(mediaId, descriptor.getLong("reset_epoch"), descriptor.nullableLong("consumption_override_revision"))
             player.prepare()
             if (play) player.play()
@@ -704,6 +719,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         installingPosition = true
         try {
             player.pause()
+            restsAtEnd = false
             player.seekTo(state.nullableLong("position_ms") ?: 0L)
         } finally { installingPosition = false }
         descriptor()?.put("reset_epoch", state.getLong("reset_epoch"))
@@ -716,19 +732,13 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     private fun playHere() {
-        if (atEnd()) player.seekTo(0)
+        if (atEnd()) seek(0)
         preparePlayback()
         player.play()
     }
 
-    /**
-     * Ended, or resting at the end. STATE_ENDED needs the clock to pass the duration and media3 clamps
-     * a seek 1 µs short of it, so a paused seek to the end never gets there. That seek is an ordinary
-     * seek, not a natural end, and the next play replays from the start. Both reads floor to ms, so
-     * 1 µs short can read 1 ms short.
-     */
-    private fun atEnd(): Boolean = player.playbackState == Player.STATE_ENDED ||
-        (!player.playWhenReady && player.duration != C.TIME_UNSET && player.currentPosition >= player.duration - 1)
+    /** Ended, or resting at the end. */
+    private fun atEnd(): Boolean = player.playbackState == Player.STATE_ENDED || restsAtEnd
 
     /** Preparing after stop/error reloads the media, including through a media-session controller. */
     private fun preparePlayback() {
@@ -943,7 +953,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             "next", "previous" -> {
                 if (!exact) return failure("Stale")
                 if (kind == "previous" && current != null && player.currentPosition > 3_000 && loadedEntryId == current) {
-                    retireActivation(); player.seekTo(0); checkpoint(); if (player.playWhenReady) recordRecentPlayback(); return ok()
+                    retireActivation(); seek(0); checkpoint(); if (player.playWhenReady) recordRecentPlayback(); return ok()
                 }
                 moveCursor(next, if (kind == "next") 1 else -1)
                 if (current == null) play = false
