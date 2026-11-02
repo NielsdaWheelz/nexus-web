@@ -317,16 +317,17 @@ followed-show and library-show outputs always include stored `image_url`
 (string or null), selected in their existing list queries. `presentPodcast`
 projects it into an artwork capability; suggestions omit that capability.
 rows never fetch show details or provider metadata for artwork.
-`PodcastRowArtwork` owns presentation for each source through `MediaImage` and
-the authenticated image proxy. null, pending and failed sources show initials:
-the first grapheme of each of the first two uppercased words, or `P` for an
-empty title. success hides initials even for transparent images. image and
-initials nodes stay mounted across completion, changing opacity only; source
-changes remount the artwork child while preserving the row. artwork is passive
-with empty alt text and no duplicate accessible name. image delivery retains
-original bytes and the existing private one-day cache.
-next can report cached failures through `onLoad`; readiness requires positive
-`naturalWidth`.
+`components/ui/Artwork.tsx` owns presentation for every show tile (rows, overview,
+metadata overlay, downloaded episode) through `MediaImage`: publisher urls through
+the authenticated image proxy, a downloaded episode's saved image as a local blob.
+absent, pending and failed sources show initials in one box: the
+first grapheme of each of the first two uppercased words; an empty title paints
+an empty tile. success hides initials even for transparent images. image and
+initials nodes stay mounted across completion, changing visibility only; a source
+change remounts both layers inside the same box. artwork is passive with empty
+alt text and no duplicate accessible name. image delivery retains original bytes
+and the existing private one-day cache. next can report cached failures through
+`onLoad`; readiness requires positive `naturalWidth`.
 
 ## Android Offline Downloads
 

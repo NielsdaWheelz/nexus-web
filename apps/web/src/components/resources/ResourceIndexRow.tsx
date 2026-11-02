@@ -2,7 +2,7 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
-import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceRow from "@/components/ui/ResourceRow";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
@@ -111,7 +111,7 @@ export default function ResourceIndexRow({
       : needsKind ? [{ kind: "text", key: "identity", text: metadata.identity, href: null, date: null }, ...metadata.parts.filter(part => part.key !== "identity")] : metadata.parts;
   }
   const artwork = status === null && parsed.scheme === "podcast" && body.kind === "named" && !item.missing
-    ? <PodcastRowArtwork title={item.label} imageUrl={body.image_url} /> : undefined;
+    ? <Artwork title={item.label} source={remoteArtwork(body.image_url)} size={44} /> : undefined;
   const contributors = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
   const unavailable = item.missing || item.activation.kind === "none";
   const attention = suppliedAttention ?? (status === null && summary?.processing_status === "failed" ? "processing failed; open metadata for details and recovery" : null);

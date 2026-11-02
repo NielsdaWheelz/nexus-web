@@ -21,7 +21,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
-import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -376,7 +376,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           {ready && podcast ? (
             <PaneSection className={styles.overview}>
               <div className={styles.identity}>
-                <PodcastArtwork title={podcast.title} image={podcast.image_url !== null ? { kind: "Remote", url: podcast.image_url } : { kind: "Absent" }} size={56} className={styles.artwork} />
+                <Artwork title={podcast.title} source={remoteArtwork(podcast.image_url)} size={56} />
                 <div className={styles.identityCopy}>
                   <ContributorCreditList credits={selectMediaAuthors(podcast.contributors)} />
                   <p className={styles.counts}>
