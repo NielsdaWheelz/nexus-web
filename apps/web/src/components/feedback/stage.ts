@@ -133,6 +133,8 @@ export function createStage() {
   let nextRoom = 0;
   let nextSlip = 0;
   let speech: Speech = { Polite: null, Assertive: null };
+  /** What no live region has carried: a new occurrence cancels the one before it, so it takes these on. */
+  const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
   let view: StageView = { rooms: [], typing: false, speech };
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
@@ -149,6 +151,12 @@ export function createStage() {
     slip.clock = null;
     leave(slip, slip.row.weight === "Plain" ? "Expired" : "Tucking");
   };
+  const conclude = (slip: Slip) => {
+    if (slip.leaving === "Tucking") {
+      slip.row = { ...slip.row, tucked: true };
+      slip.leaving = null;
+    } else remove(slip);
+  };
 
   function settle(): void {
     modal = topModal();
@@ -163,6 +171,8 @@ export function createStage() {
       slip.room = next;
       slip.shown ||= next !== null;
     }
+    // An exit needs a frame to play in; without one it ends here, or the row would outlive it.
+    for (const slip of slips.filter(slip => slip.leaving !== null && slip.room === null)) conclude(slip);
     // Raise order: an arrival takes the place of the plain row before it, unless a hold keeps it.
     const standing = new Map<Room, Slip>();
     for (const slip of slips) {
@@ -183,12 +193,13 @@ export function createStage() {
       else if (clock.running === null)
         clock.running = { since: performance.now(), timer: setTimeout(() => expire(slip), clock.remaining) };
     }
-    const fresh = slips.filter(slip => slip.room !== null && slip.spoken !== slip.row.attempt);
-    for (const slip of fresh) slip.spoken = slip.row.attempt;
-    const polite = fresh.filter(({ row }) => row.weight !== "Risk").map(({ row }) => sentence(row.line));
-    const assertive = fresh.filter(({ row }) => row.weight === "Risk").map(({ row }) => sentence(row.line));
-    if (polite.length > 0) speech = { ...speech, Polite: { text: polite.join(" "), occurrence: {} } };
-    if (assertive.length > 0) speech = { ...speech, Assertive: { text: assertive.join(" "), occurrence: {} } };
+    for (const slip of slips) {
+      if (slip.room === null || slip.spoken === slip.row.attempt) continue;
+      slip.spoken = slip.row.attempt;
+      const level = slip.row.weight === "Risk" ? "Assertive" : "Polite";
+      unsaid[level].add(sentence(slip.row.line));
+      speech = { ...speech, [level]: { text: [...unsaid[level]].join(" "), occurrence: {} } };
+    }
     const speaker = roomOf(modal ? { kind: "Modal", layer: modal } : { kind: "Root" });
     view = {
       typing: typing !== null,
@@ -210,14 +221,7 @@ export function createStage() {
 
   function leave(slip: Slip, how: Leaving): void {
     slip.leaving = how;
-    if (slip.room === null || slip.row.tucked) finish(slip);
-    else settle();
-  }
-  function finish(slip: Slip): void {
-    if (slip.leaving === "Tucking") {
-      slip.row = { ...slip.row, tucked: true };
-      slip.leaving = null;
-    } else remove(slip);
+    if (slip.row.tucked) conclude(slip);
     settle();
   }
   const slipOf = (key: object) => slips.find(slip => slip.row.key === key);
@@ -269,6 +273,8 @@ export function createStage() {
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
       slip.row = { ...slip.row, address, weight, line, verbs, attempt };
       if (renewed) renewClock(slip);
+      // Effect replay dismisses a mounted owner's key and holds it again; the owner stands.
+      if (slip.leaving === "Dismissed") slip.leaving = null;
       settle();
     },
     /** A close, or a mounted owner's resolution. */
@@ -296,7 +302,9 @@ export function createStage() {
     /** The row's exit has played. */
     gone(key: object): void {
       const slip = slipOf(key);
-      if (slip?.leaving) finish(slip);
+      if (!slip?.leaving) return;
+      conclude(slip);
+      settle();
     },
     holdRoom(room: number, hold: HoldKind, held: boolean): void {
       const holds = rooms.find(({ id }) => id === room)?.holds;
@@ -325,6 +333,10 @@ export function createStage() {
       workspace = next;
       if (moved) pause();
       settle();
+    },
+    /** A live region now carries everything it was given. */
+    delivered(level: keyof Speech): void {
+      unsaid[level].clear();
     },
     activePane: () => workspace.active,
     /** The room `mod+.` reaches: the modal's, then the active pane's, then any. */

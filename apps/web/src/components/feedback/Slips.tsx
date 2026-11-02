@@ -5,7 +5,7 @@
  * nothing about where or when. A frame is a labelled region after its anchor's content in tab
  * order, so it is reachable without ever taking focus. Only the topmost room speaks. */
 import { ChevronDown, X } from "lucide-react";
-import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type RefObject } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FocusEvent, type PointerEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
@@ -22,21 +22,23 @@ const SWIPE_DISMISSES_PX = 32;
 const SWIPE_DISMISSES_PX_PER_MS = 0.11;
 const SWIPE_UPWARD_FRICTION = 0.3;
 
+const takeFocus = (element: HTMLElement) => element.focus({ preventScroll: true });
+
 /** Withdrawal restores only owned focus: what `owner` held passes to `target`, unless a command
  * already handed it elsewhere, or a modal now owns it. */
-function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTMLElement | null) {
-  const latest = useRef(target);
-  latest.current = target;
+function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTMLElement | null, give = takeFocus) {
+  const latest = useRef({ target, give });
+  latest.current = { target, give };
   useLayoutEffect(() => () => {
     const focused = document.activeElement;
     if (!owner.current?.contains(focused)) return;
     queueMicrotask(() => {
       const current = document.activeElement;
       if (current !== focused && current !== document.body && current?.isConnected) return;
-      const next = latest.current();
+      const next = latest.current.target();
       const modal = topModal();
       if (!next?.isConnected || next.closest("[hidden], [inert]") || modal && !modal.element?.contains(next)) return;
-      next.focus({ preventScroll: true });
+      latest.current.give(next);
     });
   }, [owner]);
 }
@@ -134,7 +136,7 @@ export default function Slips() {
       const target = firstControl(stage.reachable());
       if (!target) return;
       event.preventDefault();
-      target.focus({ preventScroll: true });
+      takeFocus(target);
     };
     document.addEventListener("keydown", reach);
     return () => document.removeEventListener("keydown", reach);
@@ -144,27 +146,48 @@ export default function Slips() {
 
 type FocusHome = {
   frame: RefObject<HTMLElement | null>;
-  /** Where focus came from when it entered the frame. */
-  origin: RefObject<HTMLElement | null>;
   /** A verb that navigated took focus with it. */
   navigated: RefObject<boolean>;
+  /** Where focus goes when the room gives it up. */
   target(): HTMLElement | null;
+  /** Where focus goes when one of the room's own controls withdraws. */
+  stay(): HTMLElement | null;
+  /** Focus arrived on a frame or a tab; from outside the room, that is where it came from. */
+  entered(event: FocusEvent): void;
+  /** Focus moves between the room's own controls, so its origin stands, whatever the event says. */
+  pass(next: HTMLElement): void;
 };
 
 function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speech: Speech }) {
+  const stage = useStage();
   const frame = useRef<HTMLElement>(null);
   const origin = useRef<HTMLElement>(null);
   const navigated = useRef(false);
   const target = () => navigated.current ? null
     : origin.current?.isConnected ? origin.current
     : room.element.closest<HTMLElement>("[data-pane-focus-landmark], [role='dialog']");
-  const focus = { frame, origin, navigated, target };
+  const focus: FocusHome = {
+    frame,
+    navigated,
+    target,
+    stay: () => firstControl(frame.current) ?? target(),
+    entered({ relatedTarget: from }) {
+      if (from instanceof Node && room.element.contains(from)) return;
+      origin.current = from instanceof HTMLElement ? from : null;
+      navigated.current = false;
+    },
+    pass(next) {
+      const from = origin.current;
+      takeFocus(next);
+      origin.current = from;
+    },
+  };
   const polite = room.speaks ? speech.Polite : null;
   const assertive = room.speaks ? speech.Assertive : null;
   return <>
     {room.anchor.kind === "Pane" ? null : <>
-      <Announcement text={polite?.text ?? ""} level="Polite" occurrence={polite?.occurrence} />
-      <Announcement text={assertive?.text ?? ""} level="Assertive" occurrence={assertive?.occurrence} />
+      <Announcement text={polite?.text ?? ""} level="Polite" occurrence={polite?.occurrence} onPublish={() => stage.delivered("Polite")} />
+      <Announcement text={assertive?.text ?? ""} level="Assertive" occurrence={assertive?.occurrence} onPublish={() => stage.delivered("Assertive")} />
     </>}
     {room.slips.length > 0 ? <Frame room={room} typing={typing} focus={focus} /> : null}
     {room.tucked.length > 0 ? <Tab room={room} focus={focus} /> : null}
@@ -226,10 +249,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     }}
     onFocus={event => {
       stage.holdRoom(room.id, "Focus", true);
-      const from = event.relatedTarget;
-      if (from instanceof Node && event.currentTarget.contains(from)) return;
-      focus.origin.current = from instanceof HTMLElement ? from : null;
-      focus.navigated.current = false;
+      focus.entered(event);
     }}
     onBlur={event => {
       if (!event.currentTarget.contains(event.relatedTarget)) stage.holdRoom(room.id, "Focus", false);
@@ -252,7 +272,7 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
   const lineId = useId();
   const [outgoing, setOutgoing] = useState(slip.replaced);
   const [onset, setOnset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
-  useFocusReturn(element, () => firstControl(focus.frame.current) ?? focus.target());
+  useFocusReturn(element, focus.stay, focus.pass);
   const plain = row.weight === "Plain";
   const activated = (verb: Verb) => () => {
     focus.navigated.current = "href" in verb;
@@ -291,13 +311,14 @@ function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
   const stage = useStage();
   const element = useRef<HTMLButtonElement>(null);
   const count = room.tucked.length;
-  useFocusReturn(element, () => firstControl(focus.frame.current) ?? focus.target());
+  useFocusReturn(element, focus.stay, focus.pass);
   return <button
     ref={element}
     type="button"
     className={styles.tab}
     data-weight={room.tucked.some(row => row.weight === "Risk") ? "Risk" : "Held"}
     aria-label={count > 1 ? `show ${count} notices` : "show notice"}
+    onFocus={focus.entered}
     onClick={() => stage.restore(room.id)}
   >{count > 1 ? <span aria-hidden="true">{count}</span> : null}</button>;
 }
