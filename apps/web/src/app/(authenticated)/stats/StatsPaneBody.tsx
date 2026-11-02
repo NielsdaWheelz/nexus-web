@@ -12,7 +12,7 @@ import { CircleMinus } from "lucide-react";
 // in shows it landed. A new view keeps the last view's figures, dimmed and inert, until its own land;
 // if its read fails they leave for its `Failed`.
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import AppliedFilters from "@/components/ui/AppliedFilters";
@@ -686,9 +686,10 @@ function Controls(props: {
   update: (next: Partial<StatsView>) => void;
   onFilter: OnFilter;
   chipLabel: (key: "media" | "contributor" | "device", value: string) => string;
+  /** The filters' one stable control, where filter changes leave focus. */
+  modalitySelect: RefObject<HTMLSelectElement | null>;
 }) {
-  const { view, update, onFilter } = props;
-  const modalitySelect = useRef<HTMLSelectElement>(null);
+  const { view, update, onFilter, modalitySelect } = props;
   const today = browserToday();
   const thisYear = Number(today.slice(0, 4));
   const year = view.year ?? thisYear;
@@ -957,6 +958,13 @@ export default function StatsPaneBody() {
       periodStart(today, view.period);
   const setFilter = (key: FilterKey, value: string) =>
     update({ filters: { ...view.filters, [key]: value || undefined } });
+  // A row's Filter sits in the figures the new view makes inert, which would drop its focus to the
+  // document: focus moves first to the filters, where removing the chip returns it too.
+  const modalitySelect = useRef<HTMLSelectElement>(null);
+  const filterRow = (key: FilterKey, value: string) => {
+    modalitySelect.current?.focus({ preventScroll: true });
+    setFilter(key, value);
+  };
   const chipLabel = (
     key: "media" | "contributor" | "device",
     value: string,
@@ -996,6 +1004,7 @@ export default function StatsPaneBody() {
           update={update}
           onFilter={setFilter}
           chipLabel={chipLabel}
+          modalitySelect={modalitySelect}
         />
       </header>
 
@@ -1048,7 +1057,7 @@ export default function StatsPaneBody() {
             />
             <Timeline data={data} />
             <DaysAndHours data={data} />
-            <Breakdowns data={data} onFilter={setFilter} />
+            <Breakdowns data={data} onFilter={filterRow} />
             <Sessions
               data={data}
               sessions={sessions}

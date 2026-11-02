@@ -28,6 +28,7 @@ import {
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
 import type { AcceptedIngest } from "@/lib/imports/ingest";
+import { updateRemedy } from "@/lib/native/admission";
 import {
   METADATA_FAILURE_COPY,
   metadataOperationName,
@@ -945,10 +946,10 @@ function modeled(error: unknown): ApiError {
 }
 
 /** Until L7, the shape consumers outside lib/imports read: `title` the command's or read's fact,
- * `message` the domain or transport reason, and `reload` on a stale build, so an old renderer
- * offers reload alone. */
+ * `message` the domain or transport reason, and `reload` on a stale build only where reload can
+ * work, as `transportVerbs` decides: an old renderer then offers reload alone. */
 const content = ({ fact, reason }: Line, transport: Transport | null = null): FeedbackContent =>
-  ({ tone: "Warning", title: fact, message: reason, ...(transport === "Update" ? { reload: true as const } : {}) });
+  ({ tone: "Warning", title: fact, message: reason, ...(transport === "Update" && updateRemedy() === "Reload" ? { reload: true as const } : {}) });
 
 /** A failed saved-source read: the server has no saved source by that id (services/imports.py),
  * or the transport speaks for the noun `source details`. Defects rethrow. */
@@ -1078,8 +1079,9 @@ const ADDED_FILE = "couldn’t save this file.";
 /**
  * Why an Add acceptance did not land: refused, unknown (send its id again to find out), or
  * superseded. Only a refusal says it did not land (`isRefusal`); anything else sent leaves it
- * unknown, since a pool timeout answers 503 after a commit too. Defects and a malformed intent
- * rethrow.
+ * unknown, since a pool timeout answers 503 after a commit too. A 401 ran nothing, yet stays
+ * unknown here, unlike other writes: Add freezes its intent through sign-in and replays the same
+ * id (components/nexus/useAddContentSession.ts). Defects and a malformed intent rethrow.
  */
 export function acceptanceFailure(error: unknown): AcceptanceFailure {
   if (error instanceof UploadSessionError) {

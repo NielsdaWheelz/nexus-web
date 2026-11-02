@@ -4,7 +4,8 @@
 // errors and its pane-visit snapshot, and reports its cold read to the body. The body owns one
 // rule: once every section has failed with one transport, it says so once, and the sections stay
 // mounted, quiet and hidden, because each owns the read that can recover. A section the body
-// quieted stays quiet through the reread that may heal it, and speaks only if that fails again.
+// quieted stays quiet through the reread that may heal it, and speaks only if that fails again. The
+// body's own sentence, said offline, waits in a ruling through the reread that reconnecting starts.
 
 import {
   useCallback,
@@ -290,6 +291,12 @@ export default function BrowsePaneBody() {
   const failures = statuses.flatMap((status) => status.failure ?? []);
   const shared = failures.length > 0 && failures.length === sections.length
     && failures.every((failure) => transportOf(failure) === transportOf(failures[0])) ? failures[0] : null;
+  // A transport is read at render, so back online a failure seen offline would read `nexus isn’t
+  // answering.` before nexus was asked again. Until a reread replaces it, the body waits.
+  const [seenOffline, setSeenOffline] = useState<ApiError | null>(null);
+  const offline = shared !== null && transportOf(shared) === "Offline";
+  if (offline && shared !== seenOffline) setSeenOffline(shared);
+  const reconnecting = !offline && shared !== null && shared === seenOffline;
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
   const onQuery = useCallback(
     (next: BrowseQuery | null) => {
@@ -313,7 +320,7 @@ export default function BrowsePaneBody() {
   return <PaneSurface
     brief="Discover beyond Nexus. Preview first; add only when it belongs."
     empty={<p>Search to discover things beyond Nexus.</p>}
-    state={shared === null ? undefined : <SharedFailure error={shared} statuses={statuses} />}
+    state={shared === null ? undefined : reconnecting ? <Ruling /> : <SharedFailure error={shared} statuses={statuses} />}
   >
     {text ? [...new Set(sections.map((section) => section.kind))].map((kind) => (
       <section key={kind} className={styles.chapter} hidden={shared !== null}>
