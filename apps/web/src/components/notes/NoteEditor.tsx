@@ -78,6 +78,8 @@ import { Failed, Field } from "@/components/feedback/Fact";
 import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
+import { UploadSessionError } from "@/lib/imports/api";
+import { captureErrorFeedback } from "@/lib/imports/copy";
 import {
   emptyBody,
   bodyFromNode,
@@ -624,12 +626,19 @@ function NoteEditorContent(props: NoteEditorProps) {
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
-        // Unknown: the same attempt replays idempotently. Review: a resend re-reads the guard.
-        // Expired: the attempt is gone. Anything else the transport says.
-        if (outcomeUnknown(error)) { setAttachment({ ...task, pending: false, unconfirmed: UNKNOWN }); handleUnauthenticated(error); }
+        // Unresolved holds and its retry replays the same attempt: an unknown outcome, or bytes
+        // that never landed. Review: a resend re-reads the guard. A final refusal clears, saying
+        // its upload outcome's reason, else the transport's. A malformed intent is a defect.
+        if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") setAttachment({ ...task, pending: false, unconfirmed: UNKNOWN });
         else if (task.upload.review_required) setAttachment({ ...task, pending: false, unconfirmed: { fact: NOT_ADDED } });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
-        else { setAttachment(null); fail(error, NOT_ADDED); }
+        else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
+          const line = { fact: NOT_ADDED, reason: captureErrorFeedback(error, "AddAttachment").message };
+          if (error.outcome.kind === "Unresolved") setAttachment({ ...task, pending: false, unconfirmed: UNKNOWN });
+          else if (error.outcome.kind === "BytesMissing") setAttachment({ ...task, pending: false, unconfirmed: line });
+          else { setAttachment(null); say(line); }
+        }
+        else { setAttachment(null); if (!handleUnauthenticated(error)) fail(error, NOT_ADDED); }
       } finally {
         unsubscribe();
         signal.removeEventListener("abort", abort);
