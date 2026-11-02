@@ -949,7 +949,7 @@ export function useNexusController() {
         rootFocus.current = null;
         if (key !== null) arm(key);
         if (!viewport.isMobile) return container.querySelector<HTMLElement>('[role="combobox"]');
-        return control(key) ?? container.querySelector<HTMLElement>("[data-mobile-nexus-search]");
+        return control(key) ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
       }
       if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading], [data-add-heading], [data-mobile-nexus-search]");
       if (page.kind === "Add") {
@@ -965,8 +965,8 @@ export function useNexusController() {
       }
       if (page.kind === "CreateLibrary") return container.querySelector<HTMLElement>("[data-switchboard-library-name]");
       if (page.kind !== "Root") return container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      // The sheet opens keyboard-down: the armed row takes focus, never the field (owner decision 6).
-      if (viewport.isMobile) return control(armed) ?? container.querySelector<HTMLElement>("[data-mobile-nexus-search]");
+      // The sheet opens keyboard-down: the armed row takes focus, else the heading, never the field (owner decision 6).
+      if (viewport.isMobile) return control(armed) ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
       return container.querySelector<HTMLElement>('[role="combobox"]');
     },
     setLibraryName(name: string) {
