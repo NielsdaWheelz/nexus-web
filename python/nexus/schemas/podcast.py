@@ -171,7 +171,6 @@ class PodcastImportOut(BaseModel):
     updated_at: datetime
     can_cancel: bool
     can_retry: bool
-    order_revision: OrderRevision
 
     model_config = _CLOSED
 
@@ -190,7 +189,6 @@ class PodcastSubscriptionCreateRequest(BaseModel):
     id: UUID
     import_id: UUID
     target: PodcastCommitTarget
-    expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision
 
     model_config = _CLOSED
@@ -199,7 +197,6 @@ class PodcastSubscriptionCreateRequest(BaseModel):
 class PodcastImportCreateRequest(BaseModel):
     id: UUID
     target: PodcastCommitTarget
-    expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision
 
     model_config = _CLOSED
@@ -212,7 +209,7 @@ class PodcastImportCancelRequest(BaseModel):
 
 
 class PodcastImportRetryRequest(PodcastImportCancelRequest):
-    expected_order_revision: OrderRevision
+    """Retry compares only the frozen attempt: an addition depends on no library order."""
 
 
 class PodcastAdmissionOut(BaseModel):
@@ -291,7 +288,6 @@ class LibraryPodcastOut(BaseModel):
     subscription: PodcastSubscriptionOut | None
     import_: PodcastImportOut | None = Field(alias="import")
     episode_count: int = Field(ge=0)
-    order_revision: OrderRevision
     removal_revision: OrderRevision
     can_add_content: bool
 

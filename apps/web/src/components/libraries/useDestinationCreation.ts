@@ -94,7 +94,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       return;
     }
     state.publish();
-    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name, order_revision: outcome.library.order_revision }); }
+    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name }); }
     catch (error) { fail({ error }); }
   }
   function project(scope: string | null) {

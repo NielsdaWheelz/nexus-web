@@ -35,7 +35,7 @@ export default function PodcastImportProgress({ operation, title }: {
     {commandFailure}
     <div className={styles.actions}>
       {operation.can_cancel ? <Button aria-label={`cancel addition of ${title} to ${destination}`} disabled={pending !== null} aria-busy={pending?.phase === "Sending" || undefined} onClick={() => void ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, command: { kind: "Import", libraryId: operation.library_id, importId: operation.id, action: "cancel", body: { expected_attempt_version: operation.attempt_version } } })}>cancel addition</Button> : null}
-      {operation.can_retry ? <Button aria-label={`retry addition of ${title} to ${destination}`} disabled={pending !== null} aria-busy={pending?.phase === "Sending" || undefined} onClick={() => void ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, command: { kind: "Import", libraryId: operation.library_id, importId: operation.id, action: "retry", body: { expected_attempt_version: operation.attempt_version, expected_order_revision: operation.order_revision } } })}>retry addition</Button> : null}
+      {operation.can_retry ? <Button aria-label={`retry addition of ${title} to ${destination}`} disabled={pending !== null} aria-busy={pending?.phase === "Sending" || undefined} onClick={() => void ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, command: { kind: "Import", libraryId: operation.library_id, importId: operation.id, action: "retry", body: { expected_attempt_version: operation.attempt_version } } })}>retry addition</Button> : null}
     </div>
   </div>;
 }

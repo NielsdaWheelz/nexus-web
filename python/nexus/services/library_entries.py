@@ -27,7 +27,6 @@ from nexus.auth.permissions import (
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
-from nexus.schemas.acquisition import DestinationGuard
 from nexus.schemas.library import (
     LibraryAllMembershipOut,
     LibraryOrderOut,
@@ -802,39 +801,22 @@ def validate_acquisition_destinations(
     *,
     viewer_id: UUID,
     expected_removal_revision: int,
-    destinations: Sequence[DestinationGuard],
-) -> list[UUID]:
+    library_ids: Sequence[UUID],
+) -> None:
     """Fence an atomic acquisition after its viewer, identity, podcast and media locks.
 
-    locks the complete default and named library set; effects belong to the caller.
+    locks the complete default and named library set and requires admin authority over
+    each named library. an append depends on no library's order, so only the viewer's
+    removal fence is compared. effects belong to the caller.
     """
-    ids = [guard.library_id for guard in destinations]
-    if len(set(ids)) != len(ids):
-        raise InvalidRequestError(message="Duplicate library ids")
-    libraries.lock_library_rows_in_order(db, [libraries.default_library_id(db, viewer_id), *ids])
-    held = {}
-    for library_id in ids:
+    libraries.lock_library_rows_in_order(
+        db, [libraries.default_library_id(db, viewer_id), *library_ids]
+    )
+    for library_id in library_ids:
         library = libraries.access(db, viewer_id, library_id, lock=False)
         library.require_mutable()
         library.require_admin()
-        held[library_id] = library.order_revision
     users.require_removal_revision(db, viewer_id, expected_removal_revision)
-    for guard in destinations:
-        if held[guard.library_id] != int(guard.expected_order_revision):
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
-    return ids
-
-
-def finish_acquisition_destinations(
-    db: Session, *, destinations: Sequence[DestinationGuard]
-) -> None:
-    """Every accepted named intent advances, including already-present no-ops."""
-    for guard in destinations:
-        current = db.execute(
-            text("SELECT order_revision FROM libraries WHERE id = :id"), {"id": guard.library_id}
-        ).scalar_one()
-        if current == int(guard.expected_order_revision):
-            libraries.advance_order_revision(db, guard.library_id)
 
 
 # Media filing and removal.

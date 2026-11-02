@@ -5,9 +5,9 @@ One lifecycle for local PDF/EPUB uploads and browser captures (PDF, EPUB,
 article packets). The client mints the session id. A session's intent never
 changes (I5); each create of an unpublished, unrejected session advances its
 generation, so a new staging path fences abandoned bytes and the signed url is
-fresh. The initial destinations are a draft; confirmation freezes the winning
-removal/destination guards and persists its final destination ids. A guard refusal
-keeps the same generation and staged bytes reusable before its upload expiry.
+fresh. The initial destinations are a draft; confirmation freezes the removal fence
+and the final destination ids, and persists those ids. A guard refusal keeps the
+same generation and staged bytes reusable before its upload expiry.
 Confirm copies the current generation's staged object to a fresh
 candidate, verifies that candidate, and publishes it exactly once: publication
 is the ``published_at`` write under the session row lock. A capture whose exact
@@ -53,7 +53,6 @@ from nexus.db.session import get_repeatable_read_db, transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
-from nexus.schemas.acquisition import DestinationGuard
 from nexus.schemas.extension_capture import (
     ARTICLE_PACKET_MAX_BYTES,
     ArticlePacket,
@@ -668,7 +667,7 @@ def confirm_session(
     session_id: UUID,
     generation: int,
     expected_removal_revision: int | None,
-    destinations: list[DestinationGuard] | None,
+    destinations: list[UUID] | None,
     request_id: str | None,
     recovery: bool = False,
 ) -> Published:
@@ -740,12 +739,13 @@ def confirm_session(
         destination_ids: list[UUID] = []
         if not recovery:
             assert expected_removal_revision is not None and destinations is not None
-            destination_ids = library_entries.validate_acquisition_destinations(
+            library_entries.validate_acquisition_destinations(
                 db,
                 viewer_id=viewer_id,
                 expected_removal_revision=expected_removal_revision,
-                destinations=destinations,
+                library_ids=destinations,
             )
+            destination_ids = destinations
         if media is None or targeted_capture:
             if media is None:
                 media = _new_media(db, session, current, candidate, now)
@@ -789,11 +789,9 @@ def confirm_session(
             assert latest is not None  # every published media was accepted through an attempt
             published_attempt_id = latest.id
         if not recovery:
-            assert destinations is not None
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, viewer_id, media.id, destination_ids
             )
-            library_entries.finish_acquisition_destinations(db, destinations=destinations)
         db.execute(
             delete(MediaUploadSessionDestination).where(
                 MediaUploadSessionDestination.upload_session_id == session.id
