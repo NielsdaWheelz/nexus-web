@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 17;
+export const WIRE_REVISION = 18;
 
 export interface paths {
     "/assistant-writes": {
@@ -7970,6 +7970,7 @@ export interface components {
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
+            show: components["schemas"]["MediaShowOut"] | null;
             /** Text Search Ready */
             text_search_ready: boolean;
             /** Title */
@@ -8035,6 +8036,22 @@ export interface components {
             kind: "media";
             media_summary: components["schemas"]["MediaSummaryOut"];
         };
+        /**
+         * MediaShowOut
+         * @description The show an episode belongs to. ``MediaSummaryOut.show`` is null exactly when the media
+         *     has no ``podcast_episodes`` row, which is every media that is not an episode.
+         */
+        MediaShowOut: {
+            /** Image Url */
+            image_url: string | null;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Title */
+            title: string;
+        };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
             /** Href */
@@ -8070,6 +8087,7 @@ export interface components {
              * @enum {string}
              */
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            show: components["schemas"]["MediaShowOut"] | null;
             /** Title */
             title: string;
             x_article_content: components["schemas"]["XArticleContent"] | null;
