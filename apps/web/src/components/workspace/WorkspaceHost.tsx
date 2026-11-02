@@ -19,9 +19,10 @@ import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { useStageWorkspace } from "@/components/feedback/stage";
 import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
-import { admissionRefusal } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import { checkSession, installedApp, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
+import type { RemoteAdmission } from "@/lib/native/contracts";
 import { IndexPaneEntry } from "@/lib/panes/indexPaneEntry";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
@@ -44,6 +45,19 @@ import {
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
+/** What admission refuses a cold body with. Rendering asks native nothing, so this reads
+ * admission itself: `admissionRefusal` would also demand a session check, which only `retry` makes. */
+function refusalOf(admission: RemoteAdmission): ApiError {
+  switch (admission) {
+    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", "remote work is unavailable");
+    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", "remote work is unavailable");
+    case "Checking":
+    case "Unavailable":
+    case "Ready":
+      return new ApiError(0, "E_NETWORK", "remote work is unavailable");
+  }
+}
+
 /** cold bodies wait for presentation; admitted bodies retain their mounted work.
  * the existing body key owns replacement, and primitive props avoid unrelated renders.
  * a browser admits while unavailable, so the body's own read probes; a refusal names what
@@ -53,7 +67,7 @@ const PaneContent = memo(function PaneContent(props: {
   readonly pathname: string;
   readonly isPresented: boolean;
 }) {
-  useRemoteAdmission();
+  const admission = useRemoteAdmission();
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneContent");
   const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings",
     "notes", "pageNew", "page", "dailyDate", "note", "highlight", "search"].includes(props.routeId);
@@ -66,7 +80,7 @@ const PaneContent = memo(function PaneContent(props: {
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
   if (!admitted && !canAdmit) return <div className={styles.paneFailure}>
-    <Failed error={admissionRefusal()} noun="this pane’s contents" retry={installedApp ? { run: checkSession } : undefined} />
+    <Failed error={refusalOf(admission)} noun="this pane’s contents" retry={installedApp ? { run: checkSession } : undefined} />
   </div>;
   if (props.routeId !== "unsupported") return <IndexPaneEntry routeId={props.routeId} params={runtime.pathParams} query={runtime.searchParams}>{renderPane(props.routeId)}</IndexPaneEntry>;
   return <div className={styles.paneFailure}><Fact line={{ fact: "nexus has no view for this address." }} speak /></div>;
