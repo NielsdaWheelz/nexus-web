@@ -375,6 +375,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     <>
       {readFeedback.announcement}
       <PaneSurface>
+        {members?.held}
         <LibraryPodcastsSection library={library} active={active} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"

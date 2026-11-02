@@ -2,22 +2,24 @@
 
 // Invitations waiting for the viewer, above the libraries index: each names the
 // library, the role and who sent it; Accept, or Decline after a confirm. Every
-// page is read (no cap); an answer rereads the list.
+// page is read (no cap); an answer rereads the list. This is auxiliary to the
+// index: its own read failure and a missing connection show nothing here. A refused
+// answer speaks once; an unknown one holds until the reread lands.
 
-import { useId, useState } from "react";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useEffect, useId, useState } from "react";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
+import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useThrowLater } from "@/lib/api/serverState";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import {
   respondToInvitation,
   viewerInvitationsPage,
   type ViewerInvitation,
 } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { refuseLibrary } from "@/lib/libraries/errors";
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
@@ -26,12 +28,10 @@ import styles from "./LibraryInvitations.module.css";
 
 const VISIT = definePaneVisitDataKey<ListSnapshot<ViewerInvitation>>("Libraries.Invitations");
 
-export default function LibraryInvitations({ returnFocus }: {
-  readonly returnFocus: () => HTMLElement | null;
-}) {
+export default function LibraryInvitations() {
   const headingId = useId();
   const admission = useRemoteAdmission();
-  const fail = useThrowLater();
+  const outcome = useOutcome();
   const [answered, setAnswered] = useState(0);
   const list = useServerList<ViewerInvitation>({
     key: "invitations",
@@ -43,50 +43,34 @@ export default function LibraryInvitations({ returnFocus }: {
     fetchPage: viewerInvitationsPage,
   });
   const readFeedback = useCollectionReadFeedback({
-    list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null, returnFocus,
+    list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null, returnFocus: () => null,
   });
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  /** An answer whose outcome is unknown, until the reread it started lands. */
+  const [unknown, setUnknown] = useState<{ attempt: number } | null>(null);
+  useEffect(() => { if (unknown !== null && list.fresh) setUnknown(null); }, [unknown, list.fresh]);
 
-  const answer = async (id: string, accept: boolean) => {
+  const answer = async (invitation: ViewerInvitation, accept: boolean) => {
     if (installedApp && !remoteReady()) return;
-    setBusy(id);
+    setBusy(invitation.id);
     try {
-      await respondToInvitation(id, accept);
-      setFeedback(null);
+      await respondToInvitation(invitation.id, accept);
       setDeclining(null);
     } catch (error) {
-      const title = accept ? "Invitation couldn’t be accepted" : "Invitation couldn’t be declined";
-      setFeedback(libraryErrorFeedback(error, title, fail));
+      if (isRefusal(error) || !isApiError(error) || isSameSystemApiDefect(error))
+        refuseLibrary(outcome, error, `couldn’t ${accept ? "accept" : "decline"} the invitation to “${invitation.library_name}”.`);
+      else setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
     } finally {
       setAnswered((n) => n + 1);
       setBusy(null);
     }
   };
 
-  const readOccurrence = useFeedbackOccurrence(list.failure !== null, list.requestedKey);
-  const commandOccurrence = useFeedbackOccurrence(feedback !== null);
-  if (installedApp && admission !== "Ready") return <FeedbackNotice announcement="Polite" content={{
-    tone: "Neutral", title: "library invitations require a connection",
-  }} />;
-
-  const failure =
-    list.failure && list.failure.op !== "More" &&
-    (libraryErrorFeedback(list.failure.error, "Library invitations couldn’t be loaded", throwDefect) ?? {
-      tone: "Danger",
-      title: "Library invitations couldn’t be loaded",
-    });
+  if (installedApp && admission !== "Ready") return null;
   const shown = list.items.length > 0;
   return <>
-      {failure ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={failure}
-          announcement="Assertive"
-          actions={[{ label: "Retry invitations", onClick: list.retry, busy: list.running !== null }]}
-        />
-      ) : null}
-      {feedback ? <FeedbackFailure scope="Local" occurrence={commandOccurrence} content={feedback} announcement="Assertive" /> : null}
+    {unknown !== null ? <Hold id="library-invitation-answer" attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: "it may have gone through." }} /> : null}
     {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
       <div>
         <h2 id={headingId}>Library invitations</h2>
@@ -110,7 +94,7 @@ export default function LibraryInvitations({ returnFocus }: {
                     emphasis="strong" tone="danger"
                     aria-label={`Decline invitation to ${invitation.library_name}`}
                     disabled={busy !== null}
-                    onClick={() => void answer(invitation.id, false)}
+                    onClick={() => void answer(invitation, false)}
                     aria-busy={busy === invitation.id}
                   >
                     Decline
@@ -127,7 +111,7 @@ export default function LibraryInvitations({ returnFocus }: {
                   <Button
                     emphasis="strong"
                     disabled={busy !== null}
-                    onClick={() => void answer(invitation.id, true)}
+                    onClick={() => void answer(invitation, true)}
                     aria-busy={busy === invitation.id}
                   >
                     Accept

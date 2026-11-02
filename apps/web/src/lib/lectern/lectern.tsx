@@ -469,7 +469,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     <LecternContext.Provider value={value}>
       {children}
       {holds.map(request => {
-        const id = `lectern-membership:${request.mediaId}`;
+        const id = `lectern-membership:${request.mediaId}:${request.expected}`;
         return <Hold key={id} id={id} attempt={request.unconfirmed - 1}
           line={{ fact: request.intent.kind === "Remove" ? `not sure removing “${request.title}” from the lectern saved.` : `not sure adding “${request.title}” to the lectern saved.`,
             reason: "it may have gone through." }}

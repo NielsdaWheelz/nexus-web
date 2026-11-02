@@ -10,6 +10,8 @@ import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError } from "@/lib/api/serverState";
 
 const GONE = "it’s no longer available.";
+/** The server's name rule, where a refused name is said. */
+export const NAME_REFUSED = "names need 1 to 100 characters, and can’t be All.";
 const REASONS: Readonly<Record<string, string>> = {
   E_LIBRARY_NOT_FOUND: "you no longer have this library.",
   E_MEDIA_NOT_FOUND: GONE,
@@ -28,7 +30,7 @@ const REASONS: Readonly<Record<string, string>> = {
   E_OWNERSHIP_TRANSFER_INVALID: "only a current member can become owner.",
   E_USER_NOT_FOUND: "this account no longer exists.",
   /** A dialog with a name input says this beneath it instead. */
-  E_NAME_INVALID: "names need 1 to 100 characters, and can’t be All.",
+  E_NAME_INVALID: NAME_REFUSED,
 };
 
 /** The rule that refused a library command, or null when the transport speaks. */
