@@ -9,7 +9,7 @@ import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useStat
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { useEvidenceWindow } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import { useOutcome } from "@/components/feedback/Feedback";
+import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import ChoiceField from "@/components/ui/ChoiceField";
 import choiceStyles from "@/components/ui/ChoiceField.module.css";
@@ -19,7 +19,6 @@ import { useCompanionPresentation } from "@/components/workspace/companionPresen
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteLink } from "@/lib/resourceGraph/links";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
@@ -74,7 +73,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   readonly onRetry: () => void;
   readonly sourceAbsent: boolean;
 }) {
-  const paneActive = usePaneIsActive();
+  const speak = useActiveRegion();
   const capture = useRef<ConnectionsView | null>(null);
   const saved = usePaneVisitData(CONNECTIONS_VIEW, () => capture.current);
   const writeView = usePaneVisitDataWriter(CONNECTIONS_VIEW);
@@ -418,8 +417,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
 
   const retry = { label: "retry", commandKey: "RetryConnections", run: onRetry };
   const failures = <>
-    {state.local.status === "failed" ? <Fact line={{ fact: "couldn’t load your highlights on this device." }} verbs={[retry]} speak={paneActive} /> : null}
-    {state.links.status === "failed" ? <Fact line={{ fact: "couldn’t load your links on this device." }} verbs={[retry]} speak={paneActive} /> : null}
+    {state.local.status === "failed" ? <Fact line={{ fact: "couldn’t load your highlights on this device." }} verbs={[retry]} speak={speak} /> : null}
+    {state.links.status === "failed" ? <Fact line={{ fact: "couldn’t load your links on this device." }} verbs={[retry]} speak={speak} /> : null}
     {state.remote.status === "failed" ? <Failed error={state.remote.error} noun="other connections" retry={{ run: onRetry, busy: state.remote.retrying }} /> : null}
     {remote?.status === "partial" ? <Fact line={{ fact: "some connections couldn’t be loaded." }} /> : null}
   </>;

@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { candidateDetail, decidePart } from "@/lib/media/parts";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/client";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -16,7 +16,6 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import PartPreview, { usePartPreview } from "./PartPreview";
 import { partBlockMessage, partFailure, UNSURE } from "./PartEditor";
-import { isAbortError } from "@/lib/errors";
 import styles from "./parts.module.css";
 
 type Draft = { detail: Schema<"CandidateDetail"> | null; partId: string;
@@ -61,8 +60,7 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
       await loaded.refetch();
       draft.set(value => ({ ...value, detail: null, conflict: false }));
     } catch (failure) {
-      if (isAbortError(failure)) return;
-      if (!isApiError(failure) || isSameSystemApiDefect(failure)) throw failure;
+      outcome.fail(failure, "couldn’t load the current suggestion.", { label: "retry", commandKey: "ReviewCurrentProposal", run: () => void reviewCurrent() });
     }
   };
   const blocking = busy || request !== null;

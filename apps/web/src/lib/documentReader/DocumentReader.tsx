@@ -17,6 +17,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -33,7 +34,7 @@ import {
   type ReaderState,
 } from "./runtime";
 import TextSurface from "./text/TextSurface";
-import { unresolvedPosition } from "./progress";
+import { unresolvedPosition, type SaveFailure } from "./progress";
 import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
@@ -160,7 +161,7 @@ export interface DocumentReaderViewProps {
   readonly failure?: (error: unknown, retry: { readonly run: () => void; readonly busy: boolean }) => ReactNode;
   /** The host's words for a failed position save, which only its port can classify; absent, the
    * reader says the position isn't saving. `retry` is the reader's own. */
-  readonly saveFailure?: (error: unknown, retry: Verb) => { readonly line: Line; readonly verbs: Verbs | null };
+  readonly saveFailure?: (failure: SaveFailure, retry: Verb) => { readonly line: Line; readonly verbs: Verbs | null };
   /** The host's durable facts about this reading, in the reader's status lane beside its own.
    * The reader re-anchors when the lane changes height, so the text under the eye stays put. */
   readonly lane?: ReactNode;
@@ -284,7 +285,7 @@ export default function DocumentReaderView(
       data-hyphenation={props.profile.hyphenation}
     >
       <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
-        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} /> : null}
+        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} returnFocus={returnFocus} /> : null}
         {props.lane}
       </div>
       {body}
@@ -319,7 +320,12 @@ function originLabel(state: ReaderState): string | null {
 }
 
 /** The reading position's lane: at most one fact per condition, each with the verbs that settle it. */
-function StatusStrip({ reader, speak, saveFailure }: { readonly reader: Reader; readonly speak: boolean; readonly saveFailure: DocumentReaderViewProps["saveFailure"] }) {
+function StatusStrip({ reader, speak, saveFailure, returnFocus }: {
+  readonly reader: Reader;
+  readonly speak: boolean;
+  readonly saveFailure: DocumentReaderViewProps["saveFailure"];
+  readonly returnFocus: () => HTMLElement | null;
+}) {
   const navigation = useReaderState(reader, (state) => state.navigation);
   const progress = useReaderState(reader, (state) => state.progress);
   const documentReady = useReaderState(reader, (state) => state.document.status === "ready");
@@ -334,7 +340,7 @@ function StatusStrip({ reader, speak, saveFailure }: { readonly reader: Reader; 
   if (!unresolved && !exploring && !handoff && !ready?.saveFailure && !unavailable && !loadFailed) return null;
   const readFromHere = (busy: boolean): Verb => ({ label: "read from here", commandKey: "ReadFromHere", run: reader.continueHere, busy });
   const retrySave: Verb = { label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: !!ready && (ready.saving || ready.retrying) };
-  const saveFailed = ready?.saveFailure ? saveFailure?.(ready.saveFailure.error, retrySave)
+  const saveFailed = ready?.saveFailure ? saveFailure?.(ready.saveFailure, retrySave)
     ?? { line: { fact: "your reading position isn’t saving.", reason: "this tab still holds it." }, verbs: [retrySave] } : null;
   return (
     <div className={styles.status} role="group" aria-label="reading position">
@@ -349,7 +355,7 @@ function StatusStrip({ reader, speak, saveFailure }: { readonly reader: Reader; 
           { label: "return", commandKey: "ReturnToPlace", run: () => void reader.returnToSpot(), busy: navigation.positioning },
           readFromHere(navigation.positioning),
         ]} />
-      ) : exploring ? <ReadingOptions reader={reader} speak={speak} /> : null}
+      ) : exploring ? <ReadingOptions reader={reader} speak={speak} returnFocus={returnFocus} /> : null}
       {handoff ? (
         <Fact line={{ fact: "your reading position changed elsewhere." }} speak={speak} verbs={[
           { label: "go there", commandKey: "AdoptCanonicalPosition", run: () => void reader.resolveHandoff("Canonical"), busy: !!ready?.saving },
@@ -376,7 +382,7 @@ export function ReaderRuling({ profile }: { readonly profile: Schema<"ReaderProf
 }
 
 /** A first deep link has no earlier cursor to return to. Adoption remains explicit. */
-function ReadingOptions({ reader, speak }: { readonly reader: Reader; readonly speak: boolean }) {
+function ReadingOptions({ reader, speak, returnFocus }: { readonly reader: Reader; readonly speak: boolean; readonly returnFocus: () => HTMLElement | null }) {
   const id = useId();
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const positioning = useReaderState(reader, (state) => state.navigation.positioning);
@@ -387,7 +393,14 @@ function ReadingOptions({ reader, speak }: { readonly reader: Reader; readonly s
         reading options
       </Button>
       <FloatingActionSurface open={anchor !== null} anchor={anchor} id={id} disclosure role="group" label="reading options" align="start" placement="below" flip onDismiss={() => setAnchor(null)}>
-        <Button aria-busy={positioning || undefined} aria-disabled={positioning || undefined} onClick={() => { if (!positioning) reader.continueHere(); }}>
+        <Button aria-busy={positioning || undefined} aria-disabled={positioning || undefined} onClick={(event) => {
+          if (positioning) return;
+          // reading from here ends exploring, which takes this popover and its trigger: focus
+          // they held goes to the text. the popover is portaled, so the frame's recovery can't see it.
+          const held = document.activeElement === event.currentTarget;
+          flushSync(reader.continueHere);
+          if (held && document.activeElement === document.body) returnFocus()?.focus({ preventScroll: true });
+        }}>
           read from here
         </Button>
       </FloatingActionSurface>

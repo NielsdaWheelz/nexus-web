@@ -21,6 +21,8 @@ export type Handoff =
       readonly canonical: CursorSnapshot;
       readonly device: Locator;
     };
+/** `offline`: the device was offline when it failed, so nothing left it. */
+export type SaveFailure = { readonly error: unknown; readonly offline: boolean };
 export type ProgressState =
   | { readonly kind: "Loading" }
   | {
@@ -36,7 +38,7 @@ export type ProgressState =
       readonly retrying: boolean;
       /** A save that failed twice running, or a failed resolution; a landed save, a newer read or a
        * new binding clears it. Movement does not: the position still isn't saved. */
-      readonly saveFailure: { readonly error: unknown } | null;
+      readonly saveFailure: SaveFailure | null;
       readonly handoff: Handoff | null;
     };
 
@@ -110,9 +112,10 @@ export function createProgressSync(
   let handoff: Handoff | null = null;
   let unsaved: Locator | null = null;
   let adopting = false;
-  let failure: { readonly error: unknown } | null = null;
-  /** Saves that failed since the last answer; the first is sent again before it is said. */
-  let misses = 0;
+  /** Since the last settlement: one lost save, sent once more unsaid, or a failure said. Whatever
+   * clears it restarts the count, so the next lost save has its resend too. */
+  let failure: { readonly kind: "Resending" } | ({ readonly kind: "Said" } & SaveFailure) | null = null;
+  const said = (error: unknown) => ({ kind: "Said" as const, error, offline: navigator.onLine === false });
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
   let inFlight: Promise<void> | null = null;
@@ -149,7 +152,7 @@ export function createProgressSync(
             view,
             saving: inFlight !== null,
             retrying: revalidating,
-            saveFailure: failure,
+            saveFailure: failure?.kind === "Said" ? failure : null,
             handoff,
           };
     hooks.changed();
@@ -205,14 +208,13 @@ export function createProgressSync(
           expectedReaderGeneration: hooks.generation(),
           adoptUnresolved: adopting,
         });
-        misses = 0;
+        failure = null;
         if (needsSourceBinding()) return;
         if (result.kind === "ContentChanged") {
           unsaved = null;
           requireSourceReload();
           return;
         }
-        failure = null;
         if (result.kind === "Stale") {
           if (result.canonical.state === "Unresolved") {
             view = { kind: "Canonical", snapshot: result.canonical };
@@ -249,13 +251,12 @@ export function createProgressSync(
         cutOff = keepalive || leaving;
         if (!cutOff) {
           console.error("reader_cursor_save_failed", error);
-          misses += 1;
-          if (misses > 1) failure = { error };
+          failure = failure === null ? { kind: "Resending" } : said(error);
         }
       } finally {
         inFlight = null;
         publish();
-        if (!failure && !cutOff) schedule();
+        if (failure?.kind !== "Said" && !cutOff) schedule();
       }
     };
     inFlight = run();
@@ -266,7 +267,7 @@ export function createProgressSync(
   async function revalidate() {
     if (state.kind === "LoadFailed" && state.retrying) return;
     if (fenced) {
-      if (failure) await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+      if (failure?.kind === "Said") await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
       return;
     }
     if (view === null || revalidating) return;
@@ -346,7 +347,7 @@ export function createProgressSync(
     } catch (error) {
       if (mine === generation) {
         // Reconciliation reads own load failures; the fence keeps saves paused.
-        failure = { error };
+        failure = said(error);
         state = { kind: "LoadFailed", recovery: "RetryPosition", retrying: false, error };
       }
       throw error;
@@ -365,7 +366,6 @@ export function createProgressSync(
       unsaved = null;
       adopting = false;
       failure = null;
-      misses = 0;
       handoff = null;
       state = state.kind === "LoadFailed"
         ? { ...state, recovery: "ReloadDocument", retrying: true }
@@ -388,7 +388,7 @@ export function createProgressSync(
         return loaded;
       } catch (error) {
         if (mine === generation) {
-          failure = signal.aborted ? null : { error };
+          failure = signal.aborted ? null : said(error);
           state = {
             kind: "LoadFailed",
             recovery: signal.aborted ? "ReloadDocument" : "RetryPosition",
@@ -453,7 +453,6 @@ export function createProgressSync(
       unsaved = null;
       adopting = false;
       failure = null;
-      misses = 0;
       activitySaved = false;
       publish();
     },
@@ -496,7 +495,7 @@ export function createProgressSync(
           if (choice === "Canonical") hooks.remote(current.canonical, true);
         } catch (error) {
           console.error("reader_cursor_resolve_failed", error);
-          failure = { error };
+          failure = said(error);
         } finally {
           inFlight = null;
           publish();
@@ -509,11 +508,11 @@ export function createProgressSync(
     },
     retry() {
       if (fenced) {
-        if (failure) void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+        if (failure?.kind === "Said") void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
         return;
       }
       void revalidate().then(() => {
-        if (failure && handoff?.kind !== "Newer") void save(false);
+        if (failure?.kind === "Said" && handoff?.kind !== "Newer") void save(false);
       });
     },
     stop() {

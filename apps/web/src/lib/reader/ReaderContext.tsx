@@ -3,7 +3,7 @@
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
 // flight, latest wins; a failed save keeps the change and holds a slip until a save
-// lands, with the verb its transport allows.
+// lands, with the verb its transport allows. Nothing resends it on reconnect.
 import {
   createContext,
   useCallback,
@@ -19,10 +19,10 @@ import { remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
-import { apiFetch, outcomeUnknown, isApiError, isSameSystemApiDefect, isUnauthenticatedApiError, type ApiError } from "@/lib/api/client";
-import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { unadmitted } from "@/lib/media/admissions";
+import type { Verb } from "@/components/feedback/stage";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { staleBuild } from "@/lib/api/failure";
+import { heldSaveFailure, unadmitted } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -32,7 +32,8 @@ export interface ReaderProfileCapability {
   readonly profile: ReaderProfile;
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
-    | { readonly state: "SaveFailed"; readonly failure: ApiError; readonly attempt: number };
+    /** `offline`: the device was offline when the save failed. */
+    | { readonly state: "SaveFailed"; readonly failure: ApiError; readonly offline: boolean; readonly attempt: number };
   readonly editable: boolean;
   readonly saving: boolean;
   /** Kept for the settings pane's old mount until L7. */
@@ -110,7 +111,7 @@ export function ReaderProvider({
       unsent.current = { ...patch, ...unsent.current };
       handleUnauthenticatedApiError(failure);
       if (!isApiError(failure) || isSameSystemApiDefect(failure)) return setDefect({ error: failure });
-      setPersistence((current) => ({ state: "SaveFailed", failure, attempt: current.state === "SaveFailed" ? current.attempt + 1 : 0 }));
+      setPersistence((current) => ({ state: "SaveFailed", failure, offline: navigator.onLine === false, attempt: current.state === "SaveFailed" ? current.attempt + 1 : 0 }));
     }
   }, [refreshSettings]);
 
@@ -162,7 +163,8 @@ export function ReaderProvider({
   );
   if (defect) throw defect.error;
   const retry: Verb = { label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving };
-  const failed = persistence.state === "SaveFailed" ? { attempt: persistence.attempt, ...saveFailure(persistence.failure, retry) } : null;
+  const failed = persistence.state === "SaveFailed"
+    ? { attempt: persistence.attempt, ...heldSaveFailure(persistence.failure, persistence.offline, retry, SAVE_COPY) } : null;
   return (
     <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>
       {children}
@@ -178,15 +180,12 @@ export function useReaderContext(): ReaderProfileCapability {
   return context;
 }
 
-/** A failed save, unsure when its outcome is unknown: the change applies here either way. Its
- * transport chooses the verbs, so a stale build offers reload alone and sign-in offers none here. */
-function saveFailure(failure: ApiError, retry: Verb): { line: Line; verbs: Verbs | null } {
-  if (outcomeUnknown(failure) && !isUnauthenticatedApiError(failure))
-    return { line: { fact: "not sure reader settings saved.", reason: "they may have gone through." }, verbs: [retry] };
-  const transport = transportOf(failure);
-  return transport === "Refused" ? { line: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." }, verbs: [retry] }
-    : { line: TRANSPORT_LINES[transport].command("couldn’t save reader settings."), verbs: transportVerbs(transport, { retry, signIn: null }) };
-}
+/** The change applies here whatever its save met. */
+const SAVE_COPY = {
+  fact: "couldn’t save reader settings.",
+  unsure: { fact: "not sure reader settings saved.", reason: "they may have gone through." },
+  kept: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." },
+};
 
 /** The provider's held slip is this failure's one home; the settings pane's mount says nothing
  * more. The export stands until L7 removes that mount. */

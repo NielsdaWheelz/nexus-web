@@ -102,14 +102,17 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     void run().then(finish, (error: unknown) => {
       failed = true;
       if (error instanceof LocalCommitError) {setIssue(current => current === recovery ? null : current); void error.completion.then(finish, () => {}); return;}
-      if (error instanceof CommandTooLargeError) {setIssue({kind: "TooLarge"}); return;}
+      // a dialog closed while its commit ran leaves no input to stand beneath: its refusal is said.
+      const closed = currentInput.current.open !== submitted.open;
+      if (error instanceof CommandTooLargeError) {if (closed) say({fact: "this passage is too long to save."}); else setIssue({kind: "TooLarge"}); return;}
       if (!isAuthoredStorageFailure(error)) {setDefect({error}); return;}
       if (op === "Delete") {
         say({fact: "couldn’t delete the highlight."}, [{label: "retry", commandKey: "RetryHighlightDelete", run: () => commit(run, done, "Delete")}]);
         return;
       }
       const failure: Issue = {kind: "Unsaved", retry: () => commit(run, done, "Save", failure)};
-      setIssue(failure);
+      if (closed) say({fact: "couldn’t save the highlight."}, [{label: "retry", commandKey: "RetryAnnotationSave", run: failure.retry}]);
+      else setIssue(failure);
     }).finally(() => {if (currentInput.current.mounted) setBusy(false);});
   };
   const sourceChanged = open?.kind === "selection" && (doc === null || open.identity !== doc.identity);
@@ -142,7 +145,6 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     <Dialog open={manualCopy !== null} title="copy unsaved writing" onClose={() => setManualCopy(null)} initialFocus={panel => panel.querySelector("textarea")}>
       <textarea aria-label="unsaved writing" readOnly value={manualCopy ?? ""} onFocus={event => event.currentTarget.select()} />
     </Dialog>
-    {open === null ? issueNotice : null}
     <Dialog open={open?.kind === "selection"} title="annotate passage" onClose={close}>
       {open?.kind === "selection" ? <div className={styles.compactAnnotation}>
         <ReaderExcerpt excerpt={excerptView(open.capture.selection.excerpt, "full", { kind: "capture" })} color="yellow" full />

@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { Hold, useOutcome, type FeedbackContent } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
 import { remoteAdmission, remoteReady } from "@/lib/native/admission";
 import type { RemoteAdmission } from "@/lib/native/contracts";
 import {
@@ -111,6 +111,30 @@ export function unadmitted(fact: string): { line: Line; verbs: Verbs | null } {
     : { line: TRANSPORT_LINES[transport].command(fact), verbs: transportVerbs(transport, { signIn: null }) };
 }
 
+/** A sent request whose answer never came, or that failed upstream: the server may have taken it.
+ * A lapsed session was answered, and offline nothing left the device. `offline` is the device's
+ * state when the request failed. An installed client's admission refusal is unsent too, but wears a
+ * sent request's code, so it reads as unsure until it has its own. */
+export function mayHaveLanded(error: unknown, offline = navigator.onLine === false): error is ApiError {
+  return outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED" && !(offline && error.status === 0);
+}
+
+/** A failed save of state this tab still holds, by what it met; `offline` is the device's state
+ * when it failed. One the device never sent has no verb while it stays offline, and `retry` once
+ * back: nothing resends it on its own. One the server may have taken is `unsure`, one it refused
+ * is `kept`, and the transport says the rest, so a stale build offers reload alone. Its owner
+ * renders it again on reconnect, so the verb returns with the connection. */
+export function heldSaveFailure(error: ApiError, offline: boolean, retry: Verb, copy: {
+  readonly fact: string; readonly unsure: Line; readonly kept: Line;
+}): { line: Line; verbs: Verbs | null } {
+  if (offline && error.status === 0) return navigator.onLine === false
+    ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null } : { line: copy.kept, verbs: [retry] };
+  if (mayHaveLanded(error, offline)) return { line: copy.unsure, verbs: [retry] };
+  const transport = transportOf(error);
+  return transport === "Refused" ? { line: copy.kept, verbs: [retry] }
+    : { line: TRANSPORT_LINES[transport].command(copy.fact), verbs: transportVerbs(transport, { retry, signIn: null }) };
+}
+
 function localFailure(line: Line, verbs: Verbs | null, error: ApiError | null): AdmissionResult {
   return { kind: "LocalFailure", line, verbs, error, content: { tone: "Warning", title: line.fact, message: line.reason } };
 }
@@ -177,8 +201,9 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
         handleUnauthenticatedApiError(error);
         return { kind: "Pending", key: entry.key };
       }
-      if (isAbortError(error) || outcomeUnknown(error)) return { kind: "Pending", key: entry.key };
-      if (isApiError(error) && (definiteRefusal(intent, error) || isStaleBuild(error) || error.code === "E_RATE_LIMITED")) {
+      if (isAbortError(error) || mayHaveLanded(error)) return { kind: "Pending", key: entry.key };
+      // what is left at status 0 never left the device: offline, nothing started.
+      if (isApiError(error) && (definiteRefusal(intent, error) || isStaleBuild(error) || error.code === "E_RATE_LIMITED" || error.status === 0)) {
         if (!fresh) return { kind: "Pending", key: entry.key };
         retire(entry);
         return definiteRefusal(intent, error) ? localFailure({ fact: FACT[intent.kind], reason: refusalReason(error) }, null, null)

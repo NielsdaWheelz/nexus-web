@@ -13,6 +13,7 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import type { Reader } from "@/lib/documentReader/DocumentReader";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { mayHaveLanded } from "@/lib/media/admissions";
 import { invalidateReads, publishChange, useChangeStamp } from "@/lib/api/changes";
 import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
@@ -181,8 +182,10 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   async function save() {
     if (busy) return;
     setBusy(true);
+    let sent = false;
     try {
       guard.current ??= await readAcquisitionGuard([]);
+      sent = true;
       await apiFetch<ApiJson<"/media/from-x-capture", "post">>("/api/media/from-x-capture", {
         method: "POST", body: JSON.stringify({ id: requestId, capture_id: captureId, ...guard.current }),
       });
@@ -192,9 +195,12 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
       if (isApiError(failure) && failure.code === "E_X_CAPTURE_DIFFERENT" && typeof failure.details?.media_id === "string" && typeof failure.details.reader_generation === "number") {
         setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false);
         setConflict({ mediaId: failure.details.media_id, generation: failure.details.reader_generation, stamp });
-      } else if (isApiError(failure) && outcomeUnknown(failure)) {
+      } else if (sent && mayHaveLanded(failure)) {
         // the kept request id makes the resend the same save.
         setSaveUnconfirmed(true); invalidateReads("Entries");
+      } else if (!sent || outcomeUnknown(failure)) {
+        // unsent, signed out or offline: nothing was decided, so the same save is kept to send again.
+        fail(failure, "couldn’t save the post.");
       } else {
         setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false);
         fail(failure, "couldn’t save the post.");
@@ -215,14 +221,17 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   async function saveThread() {
     if (busy) return;
     setBusy(true);
+    let sent = false;
     try {
       threadGuard.current ??= await readAcquisitionGuard([]);
+      sent = true;
       const accepted = await addMediaFromUrl({ id: threadId, url: post.source_url, guard: threadGuard.current });
       setThreadHref(accepted.href);
       setThreadUnconfirmed(false);
     } catch (failure) {
       // only a definite refusal renews the id; an unknown outcome resends the same save.
-      if (isApiError(failure) && outcomeUnknown(failure)) setThreadUnconfirmed(true);
+      if (sent && mayHaveLanded(failure)) setThreadUnconfirmed(true);
+      else if (!sent || outcomeUnknown(failure)) fail(failure, "couldn’t save the thread.");
       else { setThreadId(createRandomId()); threadGuard.current = null; setThreadUnconfirmed(false); fail(failure, "couldn’t save the thread."); }
     } finally { setBusy(false); }
   }

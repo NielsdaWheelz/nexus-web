@@ -4,16 +4,17 @@
 // per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { apiFetch, isApiError, isUnauthenticatedApiError, outcomeUnknown } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
-import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
+import type { Line, Verb, Verbs } from "@/components/feedback/stage";
+import { heldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
 import { readerDocument, transcriptUnitAtTime, localPoint, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
+import type { SaveFailure } from "@/lib/documentReader/progress";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -107,18 +108,13 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
   };
 }
 
-/** A failed save of the server cursor, said in the reader's lane. Unsure only where the server may
- * have taken it; otherwise it isn't saving, and the transport says why and offers its verb, so a
- * stale build offers reload alone. A same-system defect throws to the boundary. */
-export function positionSaveFailure(error: unknown, retry: Verb): { readonly line: Line; readonly verbs: Verbs | null } {
+/** A failed save of the server cursor, said in the reader's lane by what it met. A same-system
+ * defect throws to the boundary. */
+export function positionSaveFailure({ error, offline }: SaveFailure, retry: Verb): { readonly line: Line; readonly verbs: Verbs | null } {
   const fact = "your reading position isn’t saving.";
-  const held = "this tab still holds it.";
-  if (!isApiError(error)) return { line: { fact, reason: held }, verbs: [retry] };
-  if (outcomeUnknown(error) && !isUnauthenticatedApiError(error))
-    return { line: { fact: "not sure your reading position saved.", reason: held }, verbs: [retry] };
-  const transport = transportOf(error);
-  return transport === "Refused" ? { line: { fact, reason: held }, verbs: [retry] }
-    : { line: TRANSPORT_LINES[transport].command(fact), verbs: transportVerbs(transport, { retry, signIn: null }) };
+  const held = { fact, reason: "this tab still holds it." };
+  if (!isApiError(error)) return { line: held, verbs: [retry] };
+  return heldSaveFailure(error, offline, retry, { fact, unsure: { fact: "not sure your reading position saved.", reason: held.reason }, kept: held });
 }
 
 /** An exact resource root's own place in the document map. */

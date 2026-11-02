@@ -11,12 +11,13 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
-import { captureApiAccount, isCurrentApiAccount, isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { captureApiAccount, isCurrentApiAccount, isApiError, type ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { prepareParts, savePart } from "@/lib/media/parts";
+import { mayHaveLanded } from "@/lib/media/admissions";
 import PartPreview, { usePartPreview } from "./PartPreview";
 import styles from "./parts.module.css";
 
@@ -27,13 +28,13 @@ type Draft = {
   baseline: string; version: number | null; baselineSelection: Schema<"SectionSelection"> | null; request: Request | null;
   busy: boolean; failed: boolean; conflict: boolean; retired: boolean;
 };
-/** A part command that didn't land says so once, by `fact`. An unknown outcome says nothing
- * here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
+/** A part command that didn't land says so once, by `fact`. One the server may have taken says
+ * nothing here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
 export function partFailure(outcome: Outcome, error: unknown, fact: string): "Said" | "Unknown" {
   if (isApiError(error) && error.status === 409) outcome.say({ fact, reason: "this work or its source changed." });
   else if (isApiError(error) && (error.status === 403 || error.status === 404)) outcome.say({ fact, reason: "this work isn’t available to change." });
-  else if (!isApiError(error) || isSameSystemApiDefect(error) || isRefusal(error)) outcome.fail(error, fact);
-  else return "Unknown";
+  else if (mayHaveLanded(error)) return "Unknown";
+  else outcome.fail(error, fact);
   return "Said";
 }
 /** An unknown outcome, by what the command does: `saved`, `started`. */

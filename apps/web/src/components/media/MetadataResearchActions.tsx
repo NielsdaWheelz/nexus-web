@@ -11,14 +11,14 @@ import {
   useActionRuntime,
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import { isApiError, isStaleBuild, isUnauthenticatedApiError, outcomeUnknown } from "@/lib/api/client";
+import { isApiError, isStaleBuild } from "@/lib/api/client";
 import { staleBuild, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
-import { admissionTransport, unadmitted, useMediaAdmissions } from "@/lib/media/admissions";
+import { admissionTransport, mayHaveLanded, unadmitted, useMediaAdmissions } from "@/lib/media/admissions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
@@ -71,7 +71,7 @@ export function MetadataReviewButton({
       handleUnauthenticatedApiError(error);
       if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) say({ fact, reason: "this result isn’t available." });
       else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") say({ fact, reason: "this result changed." });
-      else if (outcomeUnknown(error) && !isUnauthenticatedApiError(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else if (mayHaveLanded(error)) setUnknown(attempt => (attempt ?? -1) + 1);
       else fail(error, fact);
     } finally {
       setPending(false);

@@ -50,13 +50,19 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     () => ({ request: null, busy: false }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   const mounted = useReaderState(reader, state => state.document);
   const viewport = useReaderState(reader, state => state.viewport);
-  const matched = navigation !== null && navigation.media_id === source && mounted.status === "ready" && mounted.doc.kind === "text" && mounted.doc.generation === navigation.generation;
-  const requestedGeneration = useRef<number | null>(null);
+  const shown = navigation !== null && navigation.media_id === source && mounted.status === "ready" && mounted.doc.kind === "text" ? mounted.doc.generation : null;
+  const matched = shown !== null && shown === navigation?.generation;
+  const behind = shown !== null && navigation !== null && shown < navigation.generation;
+  /** The contents' and the reader's generations this panel last acted on. */
+  const acted = useRef<string | null>(null);
+  const pair = navigation === null || shown === null ? null : `${navigation.generation}:${shown}`;
   useEffect(() => {
-    if (!navigation || navigation.media_id !== source || matched || requestedGeneration.current === navigation.generation) return;
-    requestedGeneration.current = navigation.generation;
-    reader.reload(navigation.generation);
-  }, [matched, navigation, reader, source]);
+    if (navigation === null || pair === null || matched || acted.current === pair) return;
+    acted.current = pair;
+    // the reader behind these contents loads their text; ahead of them, they are stale and read again.
+    if (behind) reader.reload(navigation.generation);
+    else contents.revalidate();
+  }, [behind, contents, matched, navigation, pair, reader]);
   const snapshot = useMemo(() => {
     if (navigation === null) return null;
     const offsets = new Map<string, number>();
@@ -194,8 +200,8 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
       {/* a job's progress stays quiet; its death speaks, once per line. */}
       {operationText ? <Fact key={operationText} line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
-        {/* the contents stay inert until the reader shows their version; a load that ended without it says so */}
-        {!matched && mounted.status === "ready" && !mounted.refreshing && requestedGeneration.current === navigation.generation
+        {/* the contents stay inert until the reader shows their version; a load that ended behind it says so */}
+        {behind && mounted.status === "ready" && !mounted.refreshing && acted.current === pair
           ? <Fact line={{ fact: "couldn’t load the current text.", reason: "contents open once it loads." }}
             verbs={[{ label: "retry", commandKey: "ReloadSourceText", run: () => reader.reload() }]} /> : null}
         <nav aria-label="Contents"><ContentsList reader={reader} nodes={snapshot.nodes} current={current} disabled={!matched} onNavigate={onNavigate}

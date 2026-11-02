@@ -10,7 +10,7 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
@@ -19,6 +19,7 @@ import { transcriptUnitAtTime } from "@/lib/documentReader/model";
 import { activateReaderDestination } from "@/lib/documentReader/navigation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
+import { mayHaveLanded } from "@/lib/media/admissions";
 import { usePlayerSession, usePlayerTimeline } from "@/lib/player/playerRuntime";
 import styles from "./media.module.css";
 
@@ -58,8 +59,8 @@ export function TranscriptState({ media, holdFocus }: {
       if (handleUnauthenticatedApiError(error)) return;
       if (isApiError(error) && error.code === "E_TRANSCRIPT_UNAVAILABLE") setNoCaptions(true);
       else if (isRefusal(error)) { setUnknown(null); fail(error, "couldn’t start transcription.", retry); }
-      else if (isApiError(error) && !isSameSystemApiDefect(error)) setUnknown(attempt => (attempt ?? -1) + 1);
-      else fail(error, "couldn’t start transcription.");
+      else if (mayHaveLanded(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else fail(error, "couldn’t start transcription.", retry);
     } finally {
       setBusy(false);
     }
