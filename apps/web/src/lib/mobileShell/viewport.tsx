@@ -8,10 +8,12 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
+import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 
 export type MobileTopSurfaceId = "Header" | "Controls";
 export type MobileBottomSurfaceId = "Nexus" | "Player";
@@ -25,6 +27,8 @@ export interface MobileViewport {
   refreshGeometry(): void;
   /** The newest report wins; releasing it restores the one before. */
   reportMobileOverlayKeyboardInset(px: number): () => void;
+  /** The element's own `--stage-bottom-clearance`: what covers its floor, projected into it. */
+  registerStageAnchor(element: HTMLElement): () => void;
   /** Called after every pass, with current visible obstruction published. */
   subscribeContentBottomClearance(listener: () => void): () => void;
 }
@@ -80,11 +84,13 @@ function envelope(boxes: DOMRect[], port: DOMRect, edge: "Top" | "Bottom"): numb
 function createMobileViewport() {
   const surfaces = new Map<MobileTopSurfaceId | MobileBottomSurfaceId, Surface>();
   const contents = new Set<HTMLElement>();
+  const stageAnchors = new Set<HTMLElement>();
   const readers = new Map<HTMLElement, {
     geometryChanged: (reason: GeometryChange) => void;
     geometry: ReaderGeometry | null;
   }>();
   const keyboard: { px: number }[] = [];
+  let stageKeyboardPx = 0;
   const listeners = new Set<() => void>();
   let frame = 0;
   let observer: ResizeObserver | null = null; // created on first use: never on the server
@@ -104,8 +110,6 @@ function createMobileViewport() {
       const origin = controls.frame.offsetParent?.getBoundingClientRect().top ?? 0;
       controls.frame.style.setProperty("--mobile-controls-top", `${Math.max(0, (headerBox?.bottom ?? origin) - origin)}px`);
     }
-    const controlsBox = surfaceBox(controls);
-    root.setProperty("--mobile-feedback-top", `${Math.max(headerBox?.bottom ?? 0, controlsBox?.bottom ?? 0) + 12}px`);
     const playerBox = surfaceBox(surfaces.get("Player"));
     const nexusOffset = Math.max(safe, envelope(playerBox ? [playerBox] : [], viewport, "Bottom"));
     root.setProperty("--mobile-nexus-bottom-offset", `${nexusOffset}px`);
@@ -131,6 +135,13 @@ function createMobileViewport() {
       const box = element.getBoundingClientRect();
       element.style.setProperty("--mobile-pane-content-offset", `${envelope(shownTop, box, "Top")}px`);
       element.style.setProperty("--mobile-content-bottom-clearance", `${envelope(visibleBottom, box, "Bottom")}px`);
+    }
+    // the shown envelope, so retreating chrome never moves a slip. the keyboard stays out of
+    // platformBand: there it would change content clearance.
+    const stageBottom = [...shownBottom, new DOMRect(0, viewport.height - stageKeyboardPx, viewport.width, stageKeyboardPx)];
+    root.setProperty("--stage-bottom-clearance", `${envelope(stageBottom, viewport, "Bottom")}px`);
+    for (const element of stageAnchors) {
+      element.style.setProperty("--stage-bottom-clearance", `${envelope(stageBottom, element.getBoundingClientRect(), "Bottom")}px`);
     }
 
     const changed: { notify: (reason: GeometryChange) => void; reason: GeometryChange }[] = [];
@@ -238,6 +249,19 @@ function createMobileViewport() {
         refreshGeometry();
       };
     },
+    registerStageAnchor(element: HTMLElement) {
+      stageAnchors.add(element);
+      observe(element);
+      refreshGeometry();
+      return () => {
+        stageAnchors.delete(element);
+        observer?.unobserve(element);
+      };
+    },
+    reportStageKeyboardInset(px: number) {
+      stageKeyboardPx = Math.ceil(px);
+      refreshGeometry();
+    },
     subscribeContentBottomClearance(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -271,7 +295,9 @@ const MobileViewportContext = createContext<MobileViewport | null>(null);
 
 export function MobileViewportProvider({ children }: { children: ReactNode }) {
   const [viewport] = useState(createMobileViewport);
+  const { keyboardBottomInsetPx } = useKeyboardInset();
   useEffect(() => viewport.listen(), [viewport]);
+  useLayoutEffect(() => viewport.reportStageKeyboardInset(keyboardBottomInsetPx), [viewport, keyboardBottomInsetPx]);
   return <MobileViewportContext value={viewport}>{children}</MobileViewportContext>;
 }
 

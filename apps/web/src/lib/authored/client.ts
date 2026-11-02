@@ -4,8 +4,8 @@
  * holds the account WebLock through preparation, uncertain commit and exact retry;
  * the worker independently fences its clientId and ephemeral lease. Closing a tab
  * never retires the account or discards committed pending changes. */
-import { observeRemoteFailure } from "@/lib/native/admission";
-import { prepareShell } from "./shell";
+import { observeShellWaiting, observeWorkerUpdate } from "@/lib/native/admission";
+import { observeShellUpdate, prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
 import { uploadStall } from "./status";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
@@ -48,11 +48,13 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
 }
 /** A 426 the sync transport met is this document's update state too. It never reloads:
  * a reload cannot replace a shared worker another tab holds. */
-function observeSyncUpdate(status: SyncStatus) { if (status === "update_required") observeRemoteFailure(426); }
+function observeSyncUpdate(status: SyncStatus) { if (status === "update_required") observeWorkerUpdate(); }
+let shellObserved = false;
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
   if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new AuthoredSetupError("Persistence");
   await prepareShell();
+  if (!shellObserved) { shellObserved = true; observeShellUpdate(observeShellWaiting); }
   if (retiredAccounts.has(accountId)) throw new Error("authored account retired before opening storage");
   if (typeof SharedWorker === "undefined") throw new AuthoredSetupError("SharedWorker");
   const worker = new SharedWorker("/_nexus/authored/worker.js", { type: "module", name: `nexus-authored-${accountId}-format-${FORMAT_REVISION}` });

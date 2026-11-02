@@ -2,6 +2,7 @@
 // native alone verifies admission; explicit Ready transitions wake reads, never writes.
 // A browser response can restore reachability without waking every read; a repair
 // wakes only the owners holding a failed read, whichever way reachability returned.
+import { androidShellDocument } from "@/lib/androidShell";
 import type { RemoteAdmission } from "./contracts";
 
 export const installedApp = typeof window !== "undefined" && "nexusApp" in window;
@@ -16,6 +17,8 @@ let admission: RemoteAdmission = installedApp ? "Checking" : "Ready";
 let generation = 0;
 let repairs = 0;
 let check: (() => Promise<unknown>) | null = null;
+let workerStale = false;
+let shellWaiting = false;
 const listeners = new Set<() => void>();
 const repairListeners = new Set<() => void>();
 export const remoteReady = () => admission === "Ready";
@@ -41,6 +44,24 @@ export function subscribeRepair(listener: () => void): () => void {
     repairListeners.delete(listener);
     if (repairListeners.size === 0) { window.removeEventListener("focus", repair); window.removeEventListener("online", repair); }
   };
+}
+/** What can replace a stale build. Reload replaces this document alone: it cannot replace a
+ * shared worker another tab holds, nor an installed shell. */
+export type UpdateRemedy = "Reload" | "CloseTabs" | "Reinstall";
+export const updateRemedy = (): UpdateRemedy =>
+  installedApp || androidShellDocument ? "Reinstall" : workerStale || shellWaiting ? "CloseTabs" : "Reload";
+/** A 426 the sync transport met: the worker is stale, whatever this document is. */
+export function observeWorkerUpdate(): void {
+  if (!workerStale) {
+    workerStale = true;
+    for (const listener of listeners) listener();
+  }
+  observeRemoteFailure(426);
+}
+export function observeShellWaiting(waiting: boolean): void {
+  if (waiting === shellWaiting) return;
+  shellWaiting = waiting;
+  for (const listener of listeners) listener();
 }
 function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
   if (next === admission) return;

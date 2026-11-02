@@ -95,6 +95,7 @@
 }
 
 .icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -115,14 +116,30 @@
 }
 
 .busy {
-  display: block;
+  position: absolute;
+  inset: 0;
   box-sizing: border-box;
-  inline-size: 100%;
-  block-size: 100%;
+  inline-size: var(--control-icon-size, 20px);
+  block-size: var(--control-icon-size, 20px);
+  margin: auto;
   border: 1.5px solid currentColor;
   border-top-color: transparent;
   border-radius: var(--radius-full);
-  animation: spin var(--duration-deliberate) linear infinite;
+  opacity: 0;
+  animation:
+    busy-in 200ms var(--ease-glide) 200ms forwards,
+    spin 1s linear infinite;
+}
+
+.icon.waiting > :not(.busy),
+.label.waiting { animation: busy-out 200ms var(--ease-glide) 200ms forwards; }
+
+@keyframes busy-in {
+  to { opacity: 1; }
+}
+
+@keyframes busy-out {
+  to { opacity: 0; }
 }
 
 @keyframes spin {
@@ -138,7 +155,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .control { transition: none; }
-  .busy { animation: none; }
+  .busy { animation: busy-in 1ms 200ms forwards; }
 }
 
 @media (forced-colors: active) {

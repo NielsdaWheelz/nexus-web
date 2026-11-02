@@ -1,0 +1,43 @@
+/* A region sets --ruling-pitch to its row or reader line pitch. */
+.ruling {
+  --pitch: var(--ruling-pitch, var(--size-xl));
+  position: relative;
+  block-size: calc(6 * var(--pitch));
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--pitch) - 1px),
+    var(--edge) calc(var(--pitch) - 1px) var(--pitch)
+  );
+  mask-image: linear-gradient(to bottom, black, transparent);
+  opacity: 0;
+  animation: ruling-in var(--duration-deliberate) var(--ease-glide) 200ms forwards;
+}
+
+@keyframes ruling-in {
+  to { opacity: 1; }
+}
+
+.still {
+  display: block;
+  block-size: var(--pitch);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--pitch);
+  visibility: hidden;
+  animation: still-opening 1ms 8s forwards;
+}
+
+@keyframes still-opening {
+  to { visibility: visible; }
+}
+
+@media (forced-colors: active) {
+  .ruling {
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0 calc(var(--pitch) - 1px),
+      CanvasText calc(var(--pitch) - 1px) var(--pitch)
+    );
+  }
+  .still { color: CanvasText; }
+}

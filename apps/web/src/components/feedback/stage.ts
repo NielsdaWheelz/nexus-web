@@ -1,0 +1,371 @@
+/** The session's one stage. A row is a fact an owner raised; the stage decides where and when
+ * it stands. Rows live here, above every pane, because their owners do; each carries the address
+ * it was raised from. `anchorOf` is the whole of placement. Every change passes through `settle`,
+ * so succession, clocks and speech cannot disagree with where a row stands.
+ *
+ * Invariants: appearance never takes focus. A clock runs only while its row is displayed, unheld,
+ * not typing and the document visible. Only Plain rows expire; a Held row tucks itself; Held and
+ * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work. */
+import { createContext, useContext } from "react";
+import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
+import { updateRemedy } from "@/lib/native/admission";
+import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
+import { isTextEntryTarget } from "@/lib/ui/eventTarget";
+import { subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
+import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
+
+export type Address = { kind: "Pane"; paneId: string } | { kind: "Workspace" };
+export type Line = { fact: string; reason?: string };
+export type LinkActivation = (event: TargetActivationEvent) => TargetLinkActivationResult;
+export type CommandVerb = { label: string; commandKey: string; run(intent: OpenIntent): void; busy?: boolean; disabledReason?: string; copied?: object };
+export type LinkVerb = { label: string; href: string; target?: "_blank"; onActivate?: LinkActivation; busy?: boolean; disabledReason?: string };
+export type Verb = CommandVerb | LinkVerb;
+export type Verbs = readonly [Verb] | readonly [Verb, Verb];
+export type Weight = "Plain" | "Held" | "Risk";
+export type Row = {
+  key: object; address: Address; modal: Layer | null;
+  weight: Weight; line: Line; verbs: Verbs | null;
+  /** Keys speech. */
+  attempt: number;
+  /** Held and Risk only. */
+  tucked: boolean;
+};
+export type Anchor = { kind: "Root" } | { kind: "Pane"; paneId: string } | { kind: "Modal"; layer: Layer };
+export type World = {
+  /** The topmost open modal. */
+  modal: Layer | null;
+  /** Panes fully in view. */
+  inView: ReadonlySet<string>;
+  /** Panes with a registered anchor. */
+  panes: ReadonlySet<string>;
+  active: string | null;
+  /** Phone or maximized. */
+  single: boolean;
+};
+export type Retract = () => void;
+export type Shell = { signIn: Verb | null };
+export type HoldKind = "Pointer" | "Focus" | "Press";
+export type Leaving = "Expired" | "Dismissed" | "Tucking";
+
+export function anchorOf(row: Row, world: World): Anchor | null {
+  if (world.modal) return row.weight === "Risk" || row.modal === world.modal
+    ? { kind: "Modal", layer: world.modal } : null;           // null: wait, clock stopped
+  const paneId = world.single ? world.active
+    : row.address.kind === "Pane" && world.inView.has(row.address.paneId) ? row.address.paneId : null;
+  return paneId !== null && world.panes.has(paneId) ? { kind: "Pane", paneId } : { kind: "Root" };
+}
+
+const RELOAD: Verb = { label: "reload", commandKey: "Reload", run: () => window.location.reload() };
+
+/** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work. */
+export function transportVerbs(transport: Transport, { retry, signIn }: { retry?: Verb; signIn: Verb | null }): Verbs | null {
+  const kind = TRANSPORT_LINES[transport].verb;
+  switch (kind) {
+    case null: return null;
+    case "Retry": return retry ? [retry] : null;
+    case "SignIn": return signIn ? [signIn] : null;
+    case "Update": return updateRemedy() === "Reload" ? [RELOAD] : null;
+  }
+}
+
+const PLAIN_MS = 5000;
+const VERB_MS = 8000;
+const HELD_MS = 8000;
+const TYPING_PAUSE_MS = 1200;
+const TYPING_WAIT_MS = 8000;
+
+type Clock = { remaining: number; running: { since: number; timer: ReturnType<typeof setTimeout> } | null };
+type Room = { id: number; anchor: Anchor; element: HTMLElement; holds: Set<HoldKind> };
+type Slip = {
+  id: number;
+  row: Row;
+  raised: number;
+  room: Room | null;
+  /** Once true, typing no longer holds it back. */
+  shown: boolean;
+  leaving: Leaving | null;
+  clock: Clock | null;
+  /** The line this row replaced in its frame, for the crossfade. */
+  replaced: Line | null;
+  /** The attempt last sent to speech. */
+  spoken: number | null;
+};
+type Said = { text: string; occurrence: object };
+export type Speech = { Polite: Said | null; Assertive: Said | null };
+export type SlipView = { id: number; row: Row; leaving: Leaving | null; replaced: Line | null };
+export type RoomView = { id: number; anchor: Anchor; element: HTMLElement; slips: readonly SlipView[]; tucked: readonly Row[]; speaks: boolean };
+export type StageView = { rooms: readonly RoomView[]; typing: boolean; speech: Speech };
+
+function lifetime({ weight, verbs }: Row): number | null {
+  switch (weight) {
+    case "Plain": return verbs ? VERB_MS : PLAIN_MS;
+    case "Held": return HELD_MS;
+    case "Risk": return null;
+  }
+}
+
+function sameAnchor(a: Anchor, b: Anchor): boolean {
+  switch (a.kind) {
+    case "Root": return b.kind === "Root";
+    case "Pane": return b.kind === "Pane" && b.paneId === a.paneId;
+    case "Modal": return b.kind === "Modal" && b.layer === a.layer;
+  }
+}
+
+const sameAddress = (a: Address, b: Address) => a.kind === "Pane" ? b.kind === "Pane" && a.paneId === b.paneId : b.kind === "Workspace";
+const sentence = ({ fact, reason }: Line) => reason ? `${fact} ${reason}` : fact;
+
+function stopClock(clock: Clock | null): void {
+  if (clock?.running == null) return;
+  clearTimeout(clock.running.timer);
+  clock.remaining = Math.max(0, clock.remaining - (performance.now() - clock.running.since));
+  clock.running = null;
+}
+
+export function createStage() {
+  const rooms: Room[] = [];
+  const listeners = new Set<() => void>();
+  let slips: Slip[] = [];
+  let workspace: { inView: ReadonlySet<string>; active: string | null; single: boolean } = { inView: new Set(), active: null, single: false };
+  let modal: Layer | null = null;
+  let typing: ReturnType<typeof setTimeout> | null = null;
+  let connected = false;
+  let nextRoom = 0;
+  let nextSlip = 0;
+  let speech: Speech = { Polite: null, Assertive: null };
+  let view: StageView = { rooms: [], typing: false, speech };
+
+  const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
+  const renewClock = (slip: Slip) => {
+    stopClock(slip.clock);
+    const remaining = lifetime(slip.row);
+    slip.clock = remaining === null ? null : { remaining, running: null };
+  };
+  const remove = (slip: Slip) => {
+    stopClock(slip.clock);
+    slips = slips.filter(other => other !== slip);
+  };
+  const expire = (slip: Slip) => {
+    slip.clock = null;
+    leave(slip, slip.row.weight === "Plain" ? "Expired" : "Tucking");
+  };
+
+  function settle(): void {
+    modal = topModal();
+    const world: World = { modal, ...workspace, panes: new Set(rooms.flatMap(({ anchor }) => anchor.kind === "Pane" ? [anchor.paneId] : [])) };
+    const arrived = new Set<Slip>();
+    for (const slip of slips) {
+      const anchor = anchorOf(slip.row, world);
+      const room = anchor === null ? null : roomOf(anchor);
+      const yields = !slip.shown && typing !== null && slip.row.weight !== "Risk" && performance.now() - slip.raised < TYPING_WAIT_MS;
+      const next = yields ? null : room;
+      if (next !== null && next !== slip.room) { arrived.add(slip); slip.replaced = null; }
+      slip.room = next;
+      slip.shown ||= next !== null;
+    }
+    // Raise order: an arrival takes the place of the plain row before it, unless a hold keeps it.
+    const standing = new Map<Room, Slip>();
+    for (const slip of slips) {
+      if (slip.room === null || slip.row.weight !== "Plain") continue;
+      const under = standing.get(slip.room);
+      if (under !== undefined && arrived.has(slip) && slip.room.holds.size === 0) {
+        remove(under);
+        slip.replaced = under.row.line;
+      }
+      standing.set(slip.room, slip);
+    }
+    for (const slip of slips) {
+      const clock = slip.clock;
+      if (clock === null) continue;
+      const runs = connected && slip.room !== null && slip.leaving === null && !slip.row.tucked
+        && slip.room.holds.size === 0 && typing === null && !document.hidden;
+      if (!runs) stopClock(clock);
+      else if (clock.running === null)
+        clock.running = { since: performance.now(), timer: setTimeout(() => expire(slip), clock.remaining) };
+    }
+    for (const slip of slips) {
+      if (slip.room === null || slip.spoken === slip.row.attempt) continue;
+      slip.spoken = slip.row.attempt;
+      speech = { ...speech, [slip.row.weight === "Risk" ? "Assertive" : "Polite"]: { text: sentence(slip.row.line), occurrence: {} } };
+    }
+    const speaker = roomOf(modal ? { kind: "Modal", layer: modal } : { kind: "Root" });
+    view = {
+      typing: typing !== null,
+      speech,
+      rooms: rooms.flatMap(room => {
+        const here = slips.filter(slip => slip.room === room);
+        const shown = here.filter(slip => !slip.row.tucked);
+        const tucked = here.filter(slip => slip.row.tucked);
+        if (room.anchor.kind === "Pane" && here.length === 0) return [];
+        return [{
+          id: room.id, anchor: room.anchor, element: room.element, speaks: room === speaker,
+          slips: shown.map(({ id, row, leaving, replaced }) => ({ id, row, leaving, replaced })),
+          tucked: tucked.map(slip => slip.row),
+        }];
+      }),
+    };
+    for (const listener of listeners) listener();
+  }
+
+  function leave(slip: Slip, how: Leaving): void {
+    slip.leaving = how;
+    if (slip.room === null || slip.row.tucked) finish(slip);
+    else settle();
+  }
+  function finish(slip: Slip): void {
+    if (slip.leaving === "Tucking") {
+      slip.row = { ...slip.row, tucked: true };
+      slip.leaving = null;
+    } else remove(slip);
+    settle();
+  }
+  const slipOf = (key: object) => slips.find(slip => slip.row.key === key);
+  const pause = () => {
+    if (typing === null) return;
+    clearTimeout(typing);
+    typing = null;
+    settle();
+  };
+  const typed = () => {
+    const began = typing === null;
+    if (typing !== null) clearTimeout(typing);
+    typing = setTimeout(pause, TYPING_PAUSE_MS);
+    if (began || slips.some(slip => !slip.shown)) settle();
+  };
+  const raise = (fields: Pick<Row, "key" | "address" | "weight" | "line" | "verbs" | "attempt">) => {
+    const row: Row = { ...fields, modal: topModal(), tucked: false };
+    const slip: Slip = { id: ++nextSlip, row, raised: performance.now(), room: null, shown: false, leaving: null, clock: null, replaced: null, spoken: null };
+    renewClock(slip);
+    slips = [...slips, slip];
+    return slip;
+  };
+
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    snapshot: () => view,
+    /** A plain row. The same fact from the same place restarts and speaks again. */
+    say({ address, line, verbs }: { address: Address; line: Line; verbs: Verbs | null }): Retract {
+      const raisedIn = topModal();
+      const repeat = slips.find(({ row }) => row.weight === "Plain" && row.modal === raisedIn && sameAddress(row.address, address)
+        && row.line.fact === line.fact && row.line.reason === line.reason);
+      const slip = repeat ?? raise({ key: {}, address, weight: "Plain", line, verbs, attempt: 0 });
+      if (repeat) {
+        repeat.row = { ...repeat.row, verbs, attempt: repeat.row.attempt + 1 };
+        repeat.leaving = null;
+        renewClock(repeat);
+      }
+      const { attempt } = slip.row;
+      settle();
+      return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
+    },
+    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. */
+    hold({ key, address, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { risk: boolean }): void {
+      const weight = risk ? "Risk" : "Held";
+      const slip = slipOf(key) ?? raise({ key, address, weight, line, verbs, attempt });
+      const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
+      slip.row = { ...slip.row, address, weight, line, verbs, attempt };
+      if (renewed) renewClock(slip);
+      settle();
+    },
+    release(key: object): void {
+      const slip = slipOf(key);
+      if (slip) leave(slip, "Dismissed");
+    },
+    close(key: object): void {
+      const slip = slipOf(key);
+      if (slip) leave(slip, "Dismissed");
+    },
+    tuck(key: object): void {
+      const slip = slipOf(key);
+      if (slip) leave(slip, "Tucking");
+    },
+    /** Esc and swipe: every row in the frame closes or tucks by its weight. */
+    sweep(room: number): void {
+      for (const slip of slips.filter(slip => slip.room?.id === room && !slip.row.tucked))
+        leave(slip, slip.row.weight === "Plain" ? "Dismissed" : "Tucking");
+    },
+    restore(room: number): void {
+      for (const slip of slips) {
+        if (slip.room?.id !== room || !slip.row.tucked) continue;
+        slip.row = { ...slip.row, tucked: false };
+        renewClock(slip);
+      }
+      settle();
+    },
+    /** The row's exit has played. */
+    gone(key: object): void {
+      const slip = slipOf(key);
+      if (slip?.leaving) finish(slip);
+    },
+    holdRoom(room: number, hold: HoldKind, held: boolean): void {
+      const holds = rooms.find(({ id }) => id === room)?.holds;
+      if (!holds || holds.has(hold) === held) return;
+      if (held) holds.add(hold); else holds.delete(hold);
+      settle();
+    },
+    releaseRoom(room: number): void {
+      const holds = rooms.find(({ id }) => id === room)?.holds;
+      if (!holds || holds.size === 0) return;
+      holds.clear();
+      settle();
+    },
+    anchor(anchor: Anchor, element: HTMLElement): () => void {
+      const room: Room = { id: ++nextRoom, anchor, element, holds: new Set() };
+      rooms.push(room);
+      settle();
+      return () => {
+        rooms.splice(rooms.indexOf(room), 1);
+        settle();
+      };
+    },
+    workspace(next: typeof workspace): void {
+      const moved = next.active !== workspace.active;
+      workspace = next;
+      if (moved) pause();
+      settle();
+    },
+    activePane: () => workspace.active,
+    /** The room `mod+.` reaches: the modal's, then the active pane's, then any. */
+    reachable(): HTMLElement | null {
+      const standing = view.rooms.filter(room => room.slips.length > 0 || room.tucked.length > 0);
+      const room = standing.find(({ anchor }) => anchor.kind === "Modal")
+        ?? standing.find(({ anchor }) => anchor.kind === "Pane" && anchor.paneId === workspace.active)
+        ?? standing[0];
+      return room?.element ?? null;
+    },
+    connect(): () => void {
+      const input = (event: Event) => { if (isTextEntryTarget(event.target)) typed(); };
+      const blur = (event: Event) => { if (isTextEntryTarget(event.target)) pause(); };
+      const overlays = () => { if (topModal() !== modal) settle(); };
+      document.addEventListener("input", input, true);
+      document.addEventListener("focusout", blur, true);
+      document.addEventListener("visibilitychange", settle);
+      const unsubscribe = subscribeOverlayStack(overlays);
+      connected = true;
+      settle();
+      return () => {
+        connected = false;
+        document.removeEventListener("input", input, true);
+        document.removeEventListener("focusout", blur, true);
+        document.removeEventListener("visibilitychange", settle);
+        unsubscribe();
+        if (typing !== null) clearTimeout(typing);
+        typing = null;
+        for (const slip of slips) stopClock(slip.clock);
+      };
+    },
+  };
+}
+export type Stage = ReturnType<typeof createStage>;
+
+export const StageContext = createContext<Stage | null>(null);
+export const ShellContext = createContext<Shell>({ signIn: null });
+
+export function useStage(): Stage {
+  const stage = useContext(StageContext);
+  if (!stage) throw new Error("the stage requires a FeedbackProvider");
+  return stage;
+}

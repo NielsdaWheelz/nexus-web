@@ -99,7 +99,10 @@ const listeners = new Set<() => void>();
 let interactionGeneration = 0;
 
 const isModal = (layer: Layer) => layer.options.current.kind === "modal";
-const topModal = () => layers.findLast(isModal) ?? null;
+/** The topmost open modal; the stage reads it at raise and on every stack change. */
+export function topModal(): Layer | null {
+  return layers.findLast(isModal) ?? null;
+}
 function topmost(layer: Layer): boolean {
   if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
   const options = layer.options.current;
@@ -139,7 +142,7 @@ export function hasActiveModal(): boolean {
 
 /** Observe the existing stack; feedback never owns modal state. */
 export function useModalActive(): boolean {
-  return useSyncExternalStore(subscribe, hasActiveModal, () => false);
+  return useSyncExternalStore(subscribeOverlayStack, hasActiveModal, () => false);
 }
 
 /** Portaled controls keep the editing interaction of their real opener. */
@@ -173,7 +176,7 @@ export function getInteractionOwnerBelow(layer: Layer): Layer | null {
 
 /** Pending destination focus resumes when the existing overlay owner leaves. */
 export function useInteractionOwner(): Layer | null {
-  return useSyncExternalStore(subscribe, getInteractionOwner, () => null);
+  return useSyncExternalStore(subscribeOverlayStack, getInteractionOwner, () => null);
 }
 
 export function isTopmostInteractionOwner(scope: string): boolean {
@@ -187,7 +190,7 @@ export function getInteractionGeneration(): number {
 
 export function useInteractionBlocked(scope: string): boolean {
   return useSyncExternalStore(
-    subscribe,
+    subscribeOverlayStack,
     () => {
       const current = owner();
       return current !== undefined && current.options.current.scope !== scope;
@@ -522,7 +525,8 @@ function changed(): void {
   });
 }
 
-function subscribe(listener: () => void): () => void {
+/** Every change to the stack, and to focus within it. */
+export function subscribeOverlayStack(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -607,7 +611,7 @@ export function useOverlay(
   // A host re-renders when its own layer is pushed or popped, covered or
   // exposed, or moves in depth: not on every change to the stack.
   useSyncExternalStore(
-    subscribe,
+    subscribeOverlayStack,
     () => (layers.includes(layer) ? `${topmost(layer)}:${depth(layer)}` : ""),
     () => "",
   );

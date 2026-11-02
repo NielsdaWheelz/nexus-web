@@ -1,0 +1,4 @@
+/* Zero specificity: a panel's own position wins. The stage's modal anchor needs a positioned box. */
+:where(.panel) {
+  position: relative;
+}

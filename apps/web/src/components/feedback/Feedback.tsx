@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,12 +16,20 @@ import Button from "@/components/ui/Button";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { useThrowLater } from "@/lib/api/serverState";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { hasActiveModal, OverlayContext, useInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
+import Slips from "./Slips";
+import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
 import styles from "./Feedback.module.css";
+import slipStyles from "./Slips.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
 export type FeedbackAnnouncement = "None" | "Polite" | "Assertive";
@@ -123,7 +132,7 @@ function RecoveryControl({ scope, session, className, menu }: {
   return <>
     <Button ref={setAnchor} className={className} role={menu ? "menuitem" : undefined} tabIndex={menu ? -1 : undefined} iconOnly icon={eligible && failures.length ? <OctagonAlert /> : <span />}
       aria-label="show recovery" tooltip={{ text: eligible && failures.length ? "show recovery" : "" }} aria-expanded={open && failures.length > 0} disabled={!eligible || !failures.length}
-      aria-busy={local.pending !== null || undefined} busyKey={local.pending} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
+      aria-busy={local.pending !== null || undefined} onClick={() => setOpen(value => !value)} data-feedback-recovery="true" />
     <FloatingActionSurface open={open && failures.length > 0} disclosure feedback interactionLayer={layer}
       anchor={anchor} disclosureTrigger={anchor} align="end" placement="below" flip role="group" label="recovery" skipReturnFocus={() => !scope.eligible()}
       className={styles.recovery} onDismiss={() => setOpen(false)}>
@@ -147,23 +156,111 @@ export function FailureAnnouncement({ failure, session }: { failure: Failure; se
 
 const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
 const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
+const NO_SHELL: Shell = { signIn: null };
 
-/** One account's presentation. The geometry provider is above this owner. */
-export function FeedbackProvider({ children }: { children: ReactNode }) {
+/** One account's presentation, above every owner that speaks. The geometry provider is above
+ * this. `shell` is the host's: the workspace signs in, shelf and capture open the workspace. */
+export function FeedbackProvider({ shell = NO_SHELL, children }: { shell?: Shell; children: ReactNode }) {
   const [session] = useState(createFeedbackSession);
-  const signals = session.transient;
-  useLayoutEffect(() => { signals.resume(); return signals.dispose; }, [signals]);
-  useEffect(() => {
-    document.addEventListener("visibilitychange", signals.visibilityChanged);
-    return () => document.removeEventListener("visibilitychange", signals.visibilityChanged);
-  }, [signals]);
-  return <Session value={session}>{children}</Session>;
+  const [stage] = useState(createStage);
+  useEffect(() => stage.connect(), [stage]);
+  return <Session value={session}><StageContext value={stage}><ShellContext value={shell}>
+    {children}
+    <Slips />
+  </ShellContext></StageContext></Session>;
 }
 
+function useAddress(): Address {
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  return useMemo(() => paneId === null ? { kind: "Workspace" } : { kind: "Pane", paneId }, [paneId]);
+}
+
+export interface Outcome {
+  say(line: Line, verbs?: Verbs): Retract;
+  /** `verb` is the owner's retry, shown where the transport offers one. A stale build gets reload
+   * alone, a defect rethrows through the boundary, and neither reads `title`'s reason. */
+  fail(error: unknown, title: string, verb?: Verb): Retract;
+}
+
+/** Speak from wherever the owner is: the address follows the pane, the row stays with the stage. */
+export function useOutcome(): Outcome {
+  const stage = useStage();
+  const address = useAddress();
+  const { signIn } = useContext(ShellContext);
+  const throwLater = useThrowLater();
+  return useMemo(() => ({
+    say: (line, verbs) => stage.say({ address, line, verbs: verbs ?? null }),
+    fail: (error, title, verb) => {
+      if (!isApiError(error) || isSameSystemApiDefect(error)) {
+        throwLater({ error });
+        return () => {};
+      }
+      const transport = transportOf(error);
+      return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
+    },
+  }), [stage, address, signIn, throwLater]);
+}
+
+/** A fact that stands while its owner holds it: mounted is present, unmounted is resolved.
+ * `id` keys the tucked bit; `attempt` keys speech, so a failed retry speaks again. */
+export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
+  const stage = useStage();
+  const address = useAddress();
+  const [held, setHeld] = useState({ id, key: {} });
+  if (held.id !== id) setHeld({ id, key: {} });
+  const { key } = held;
+  useLayoutEffect(() => { stage.hold({ key, address, risk, line, verbs: verbs ?? null, attempt }); });
+  useLayoutEffect(() => () => stage.release(key), [stage, key]);
+  return null;
+}
+
+/** Where slips land. Root is the host's canvas, Pane sits above its content (the latest for a
+ * pane wins, so a composer takes over while it stands), Modal sits in its panel. */
+export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string } | { kind: "Modal" }) {
+  return props.kind === "Modal" ? <ModalAnchor /> : <GroundAnchor paneId={props.kind === "Pane" ? props.paneId : null} />;
+}
+
+function GroundAnchor({ paneId }: { paneId: string | null }) {
+  const stage = useStage();
+  const viewport = useMobileViewport();
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const anchor = element.current!;
+    const leave = stage.anchor(paneId === null ? { kind: "Root" } : { kind: "Pane", paneId }, anchor);
+    const unproject = viewport.registerStageAnchor(anchor);
+    return () => { leave(); unproject(); };
+  }, [stage, viewport, paneId]);
+  return <div ref={element} className={slipStyles.anchor} />;
+}
+
+function ModalAnchor() {
+  const stage = useStage();
+  const layer = useContext(OverlayContext);
+  if (!layer) throw new Error("a modal stage anchor requires its ModalFrame");
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => stage.anchor({ kind: "Modal", layer }, element.current!), [stage, layer]);
+  return <div ref={element} className={`${slipStyles.anchor} ${slipStyles.modalAnchor}`} />;
+}
+
+/** The workspace's half of the world. Other hosts have no panes and leave it empty. */
+export function useStageWorkspace(workspace: { inView: ReadonlySet<string>; active: string; single: boolean }): void {
+  const stage = useStage();
+  const { inView, active, single } = workspace;
+  useLayoutEffect(() => stage.workspace({ inView, active, single }), [stage, inView, active, single]);
+}
+
+/** Receipts stand on the stage until their sites migrate. */
 export function useFeedback(): FeedbackContextValue {
-  const session = useContext(Session);
-  if (!session) throw new Error("useFeedback must be used within a FeedbackProvider");
-  return session.transient;
+  const { say } = useOutcome();
+  return useMemo(() => ({
+    receipt(content, action) {
+      const verb: Verb | undefined = action === undefined || content.reload ? undefined : action.href === undefined
+        ? { label: action.label, commandKey: action.commandKey ?? action.label, run: action.onClick, busy: action.busy, disabledReason: action.disabledReason, copied: action.copiedOccurrence }
+        : action;
+      const stale = content.reload ? transportVerbs("Update", { signIn: null }) ?? undefined : undefined;
+      return say({ fact: content.title, reason: content.message }, stale ?? (verb ? [verb] : undefined));
+    },
+  }), [say]);
 }
 
 export function FeedbackStatus(props: FeedbackProps) {
@@ -182,19 +279,15 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
   </div> : null;
 }
 
-export function Signal({
+function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, dismissLabel, dismissBlocked, plain = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
+  onDismiss, surfaceState = false, occurrence, announcementOccurrence,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
-  dismissLabel?: string;
-  dismissBlocked?: boolean;
-  plain?: boolean;
   surfaceState?: boolean;
   occurrence?: object;
   announcementOccurrence?: object;
-  onNavigate?: () => void;
 }) {
   const scope = useContext(Scope);
   const overlay = useContext(OverlayContext);
@@ -221,7 +314,7 @@ export function Signal({
     if (next) navigated.current = false;
     setExpanded(next);
   };
-  const onNavigate = () => { navigated.current = true; changeExpanded(false); navigation?.(); };
+  const onNavigate = () => { navigated.current = true; changeExpanded(false); };
   useLayoutEffect(() => () => {
     if (navigated.current) return;
     const focused = document.activeElement;
@@ -236,7 +329,7 @@ export function Signal({
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
   }, [overlay, mayRestoreFocus]);
-  const Icon = plain ? null : ICONS[content.tone];
+  const Icon = ICONS[content.tone];
   const Title = surfaceState ? "h2" : "p";
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
@@ -270,8 +363,8 @@ export function Signal({
           className={styles.control}
           iconOnly
           icon={<X />}
-          aria-label={dismissLabel ?? `dismiss: ${content.title}`}
-          aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
+          aria-label={`dismiss: ${content.title}`}
+          aria-disabled={actions?.some((action) => action.busy) || undefined}
           onClick={() => onDismiss()}
         /> : null}
       </div>
@@ -355,8 +448,6 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
       {...events}
       className={styles.control}
       icon={shown.href === undefined && shown.copiedOccurrence ? <Check /> : undefined}
-      reserveIcon
-      busyKey={action.commandKey ?? occurrence}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
       aria-describedby={reason ? `${contextId} ${reasonId}` : contextId}
