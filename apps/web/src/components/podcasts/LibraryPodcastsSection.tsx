@@ -40,7 +40,7 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
   const showsById = useMemo(() => new Map((data?.subscriptions ?? []).map(show => [show.podcast.id, show])), [data]);
   const subscriptions = data?.subscriptions;
   const rows = useMemo(() => (subscriptions ?? []).map(show => ({
-    ...presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: live ? show.recurring : null }),
+    ...presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, recurring: live ? show.recurring : null }),
     context: live ? null : { kind: "Text" as const, text: show.recurring.error_code !== null || show.recurring.had_coverage_gaps
       ? "at last catalog save · last episode check incomplete" : "at last catalog save" },
   })), [subscriptions, live]);

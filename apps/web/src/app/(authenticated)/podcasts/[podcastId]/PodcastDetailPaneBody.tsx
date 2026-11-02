@@ -478,7 +478,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               }))}
               status={episodes.status === "loading" ? "loading" : "ready"}
               ariaLabel="Episodes"
-              rowActionsAvailable={(episodes.status === "ready")}
               collectionBusy={busy}
               anchorKey={text}
               notice={<>

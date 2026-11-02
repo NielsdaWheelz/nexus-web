@@ -7,7 +7,7 @@ import ResourceRow from "@/components/ui/ResourceRow";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
-import MediaIdentity from "@/components/media/MediaIdentity";
+import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
@@ -138,7 +138,7 @@ export default function ResourceIndexRow({
   let content: ComponentProps<typeof ResourceRow>["content"];
   switch (presentation.kind) {
     case "Context": content = { kind: "Index", metadata: contextMetadata, supportingContent: <>{body.kind === "passage" && status === null ? <FullResourceBody item={item} /> : null}{presentation.supportingContent}</> }; break;
-    case "Search": content = { kind: "Search", metadata: rowMetadata, excerpt: presentation.excerpt }; break;
+    case "Search": content = { kind: "Search", metadata: rowMetadata, facts: summary ? <MediaFacts summary={summary} /> : null, excerpt: presentation.excerpt }; break;
     default: assertNever(presentation);
   }
   return <ResourceRow

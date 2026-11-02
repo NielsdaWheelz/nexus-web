@@ -280,7 +280,6 @@ export default function PodcastsPaneBody() {
             title: row.title,
             imageUrl: row.image_url,
             contributors: row.contributors,
-            unplayedCount: null,
             recurring: null,
           }),
         )}
