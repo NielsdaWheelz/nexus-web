@@ -656,7 +656,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       await draining;
       if (current.queued !== null) {
         current.fenced = false;
-        if (current === episode) set({ error: PROGRESS_UNSAVED, synced: false });
+        if (current === episode) set({ error: remoteAttemptAllowed() ? PROGRESS_UNSAVED : state.error, synced: false });
         throw new ProgressPreparationError();
       }
       current.active = false;
