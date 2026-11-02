@@ -42,6 +42,8 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
 }
 
 const ROOT: Anchor = { kind: "Root" };
+/** Every row carries a control, so a frame is reached through its first one. */
+const firstControl = (room: HTMLElement | null) => room?.querySelector<HTMLElement>("button, a") ?? null;
 
 function useRoom(anchor: Anchor) {
   const stage = useStage();
@@ -88,7 +90,7 @@ export default function Slips() {
   useEffect(() => {
     const reach = (event: KeyboardEvent) => {
       if (!matchesShortcut(SHORTCUTS["Stage.Reach"], event, platform)) return;
-      const target = stage.reachable()?.querySelector<HTMLElement>("section, button");
+      const target = firstControl(stage.reachable());
       if (!target) return;
       event.preventDefault();
       target.focus({ preventScroll: true });
@@ -162,7 +164,6 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     ref={frame}
     className={styles.frame}
     aria-label="notices"
-    tabIndex={-1}
     data-onset={onset ?? undefined}
     data-leaving={leaving ?? undefined}
     data-typing={typing || undefined}
@@ -225,7 +226,7 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
   const lineId = useId();
   const [outgoing, setOutgoing] = useState(slip.replaced);
   const [onset, setOnset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
-  useFocusReturn(element, () => focus.frame.current ?? focus.target());
+  useFocusReturn(element, () => firstControl(focus.frame.current) ?? focus.target());
   const plain = row.weight === "Plain";
   return <div
     ref={element}
@@ -262,7 +263,7 @@ function Tab({ room, focus }: { room: RoomView; focus: Return }) {
   const stage = useStage();
   const element = useRef<HTMLButtonElement>(null);
   const count = room.tucked.length;
-  useFocusReturn(element, () => focus.frame.current ?? focus.target());
+  useFocusReturn(element, () => firstControl(focus.frame.current) ?? focus.target());
   return <button
     ref={element}
     type="button"
