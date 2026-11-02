@@ -774,8 +774,7 @@ explicit acquisition action, but no
 canonical resource target before acquisition. Open/reload/play/leave Preview
 writes no Media, subscription, Library entry, job, progress, completion, or
 activity fact. Successful Add or Subscribe replaces Preview with the canonical
-owned pane after any eligible one-shot position transfer; failure leaves Preview
-and its staged destination choices intact.
+owned pane; failure leaves Preview and its staged destination choices intact.
 
 browse publishes its submitted query and inline facets as stationary query controls. its form
 retains draft/commit semantics; the shared list owns section continuation.

@@ -20,8 +20,7 @@ reader completion can select the next readable lectern row. audio previous,
 next and natural end follow the device queue. `lecternNext` serves readers
 only. natural completion records the real terminal sample, marks played and
 removes lectern intent regardless of playback origin. every activation resolves
-current consumption authority; finished media starts over. external previews
-pause and preserve the queue, then end without advancing or resuming it.
+current consumption authority; finished media starts over.
 
 [playback sessions](playback-sessions.md) owns queue schemas, source capture,
 conditional browser persistence, retry postconditions and account cleanup.
@@ -119,16 +118,16 @@ inverses. inert collection choices preserve still-valid earlier offers.
   checked under the viewer lock before actor/successor validation.
 - `state.py` — sole DML owner of `consumption_overrides`,
   `reader_engagement_states` and `consumption_completion_facts`: the player
-  read, the reader cursor composition, listening and preview writes, finish,
-  undo, unread, reset, the natural-end settle, the collection batch state and
-  media teardown. `settle_natural_end_in_txn` composes completion/removal with
-  browser cursor persistence; `natural_end_is_settled` inspects the full retry
-  postcondition without reapplying it.
+  read, the reader cursor composition, listening writes, finish, undo, unread,
+  reset, the natural-end settle, the collection batch state and media teardown.
+  `settle_natural_end_in_txn` composes completion/removal with browser cursor
+  persistence; `natural_end_is_settled` inspects the full retry postcondition
+  without reapplying it.
 - `listening.py` — sole DML owner of `podcast_listening_states` (position,
   duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
   `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
   positions are clamped only to positive duration; an absent rate or duration
-  keeps the stored one. `install_preview` writes only when there is no row.
+  keeps the stored one.
 - `projection.py` — the read model other slices compose: the one read-state
   ladder in SQL (`engagement_fact_rows_sql`, `episode_state_*_sql`), read
   states (`Unread | InProgress | Finished`), engagement recency and anchors,
@@ -161,7 +160,6 @@ POST   /media/{id}/progress/reset     -> {override_revision}
 POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> EpisodeConsumptionObservation
 GET    /media/{id}/player             -> PlayerActivationOut{descriptor, observation} (404 when not playable)
 PUT    /media/{id}/listening-state    ListeningIn -> EpisodeConsumptionObservation
-POST   /media/{id}/preview-position   {position_ms, duration_ms} -> 204
 GET    /lectern/suggestions, /lectern/quick-reads   (suggestions)
 ```
 
@@ -181,7 +179,7 @@ these authenticated reads are private/no-store and write no download archive.
 
 `api/routes/consumption.py` owns the Lectern, its suggestions and the
 read-state writes; `api/routes/playback.py` the player read, the listening
-write, preview hand-off and queue snapshot/session routes (both registered
+write and queue snapshot/session routes (both registered
 before the `media` router). queue wire and persistence contracts live in
 [playback sessions](playback-sessions.md).
 
@@ -286,7 +284,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
-  public explicit play, preview, resume and playing queue selection notify
+  public explicit play, resume and playing queue selection notify
   `onExplicitPlay` once at admission, before asynchronous work. internal loads,
   natural advancement and passive observations never notify presentation.
   pending intent covers source/descriptor preparation as well as installation,
@@ -411,7 +409,6 @@ finish, undo, unread, reset and settle publish `Consumption`.
   beneath silence as `approx. time saved on this device`: the existing device
   estimate, with no episode, precise or cross-device claim. episode up-next
   lives inside playback; chapter context lives in chapters.
-  preview exposes rate only, with no queue advancement, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
   work uses control markers and shared app feedback. preparing and saving mark
   up next busy; other pending activation marks transport busy independently of
@@ -445,8 +442,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
 `readonly supportsSilenceSkipping: boolean`. it is immutable per engine: browser
 false, native true. the session exposes that engine fact, or false before an
 engine exists. it describes capability, not availability or enabled state, and
-belongs to neither `EngineState` nor the native/http wire.
-only `source.kind === "Episode"` is eligible for silence controls. the browser's
+belongs to neither `EngineState` nor the native/http wire. the browser's
 observed silence remains false; a saved android default cannot create an
 inherited application failure. an explicit unsupported on command still refuses
 at the browser engine boundary.
