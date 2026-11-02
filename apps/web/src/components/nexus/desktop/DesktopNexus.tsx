@@ -1,7 +1,7 @@
 "use client";
 
 // The query edits text and selects candidates; native secondary buttons own their actions.
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -40,24 +40,19 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const surfaceRef = useRef<HTMLElement | null>(null);
   useCollectionLayout(surfaceRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
-  const markSearchInteraction = controller.interact;
-  const refreshRevision = useRef(controller.searchRefreshRevision);
-  useLayoutEffect(() => {
-    if (refreshRevision.current === controller.searchRefreshRevision) return;
-    refreshRevision.current = controller.searchRefreshRevision;
-    if (gridRef.current) gridRef.current.scrollTop = 0;
-  }, [controller.searchRefreshRevision]);
   useLayoutEffect(() => {
     const port = gridRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !port) return;
-    port.scrollTop = controller.rootScroll.current.Search;
+    const positions = controller.rootScroll.current;
+    port.scrollTop = positions.Typed;
+    return () => { positions.Typed = port.scrollTop; };
   }, [controller.open, controller.page.kind, controller.query, controller.rootScroll]);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
   const focusedNative = useRef<HTMLElement | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
   const rows = controller.groups.filter(group => controller.reorder.placement === null || group.id === "Open").flatMap((group) => group.rows);
-  const index = rows.findIndex((row) => row.key === controller.activeKey);
+  const index = rows.findIndex((row) => row.key === controller.armed);
   const active = rows[index];
 
   useLayoutEffect(() => {
@@ -69,20 +64,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     if (focus instanceof HTMLElement && focus !== document.body && focus.isConnected && !focus.closest("[hidden], [inert]")) return;
     if (isTopmostInteractionOwner("Nexus")) inputRef.current?.focus({ preventScroll: true });
   });
-  useEffect(() => {
-    if (!controller.open || controller.page.kind !== "Root") return;
-    const selected = () => {
-      const selection = window.getSelection();
-      if (selection !== null && !selection.isCollapsed && (gridRef.current?.contains(selection.anchorNode) || gridRef.current?.contains(selection.focusNode))) markSearchInteraction();
-    };
-    document.addEventListener("selectionchange", selected);
-    return () => document.removeEventListener("selectionchange", selected);
-  }, [controller.open, controller.page.kind, markSearchInteraction]);
   useLayoutEffect(() => {
     const grid = gridRef.current;
-    const item = controller.activeKey === null ? null : document.getElementById(candidateId(controller.activeKey));
+    const item = controller.armed === null ? null : document.getElementById(candidateId(controller.armed));
     if (grid && item) revealCollectionItem(grid, item);
-  }, [controller.open, controller.page.kind, controller.activeKey, index]);
+  }, [controller.open, controller.page.kind, controller.armed, index]);
 
   const paneFocusRevision = useRef(controller.paneFocusRevision);
   useLayoutEffect(() => {
@@ -102,8 +88,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     : `${count(rows.length, "item")} in ${count(controller.groups.length, "section")}`;
   const root = (
     <>
-      {controller.rootMode === "NewPane" ? <header className={styles.header}><h2 tabIndex={-1} data-switchboard-heading>open in new pane</h2><Button onClick={controller.escape}>cancel</Button></header> : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>}
-      <div className={styles.inputRow} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
+      <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
+      <div className={styles.inputRow} data-feedback-controls="true">
         <span className="sr-only">Find anything…</span>
         <Input
           ref={inputRef}
@@ -140,7 +126,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               return;
             }
             if (event.defaultPrevented || !isTopmostInteractionOwner("Nexus")) return;
-            controller.interact();
             const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
             if (event.key === "Tab" && plain && active) {
               const secondary = document.getElementById(candidateId(active.key))?.querySelector<HTMLButtonElement>("[data-nexus-secondary]");
@@ -152,8 +137,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               event.preventDefault();
               const down = event.key === "ArrowDown";
               const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
-              controller.setActive(next.key);
-              if (next.key === controller.activeKey) {
+              controller.arm(next.key);
+              if (next.key === controller.armed) {
                 const grid = gridRef.current;
                 const item = document.getElementById(candidateId(next.key));
                 if (grid && item) revealCollectionItem(grid, item);
@@ -168,7 +153,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               if (activation.kind === "Unowned") return;
               event.preventDefault();
               if (activation.kind === "Consume") return;
-              controller.submitInput({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
+              controller.submit({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
             } else if (event.key === "Escape") {
               event.preventDefault();
               controller.escape();
@@ -179,8 +164,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </div>
       <span id={HELP_ID} className="sr-only">
         {controller.reorder.placement !== null ? controller.reorder.placement.kind === "ChoosePane" ? "choose a pane to move. arrows select; enter chooses." : `choose a position for “${controller.reorder.sourceName}”. arrows select; enter places.`
-          : controller.rootMode === "NewPane" ? "arrows select results. enter opens in a new pane. tab reaches selected options."
-            : "arrows select results. enter activates; shift plus enter opens in a new pane. tab reaches selected options."}
+          : "arrows select results. enter activates; shift plus enter opens in a new pane. tab reaches selected options."}
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
@@ -190,12 +174,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         aria-busy={controller.busy || undefined}
         className={`${collection.fillViewport} ${styles.resultScroll}`}
         data-collection-viewport=""
-        onScroll={event => { controller.rootScroll.current.Search = event.currentTarget.scrollTop; }}
-        onPointerDownCapture={controller.interact}
-        onFocusCapture={event => { if (event.target instanceof HTMLElement && gridRef.current?.contains(event.target)) focusedNative.current = event.target; controller.interact(); }}
-        onWheelCapture={controller.interact}
-        onTouchMoveCapture={controller.interact}
-        onKeyDownCapture={controller.interact}
+        onFocusCapture={event => { if (event.target instanceof HTMLElement && gridRef.current?.contains(event.target)) focusedNative.current = event.target; }}
       >
         <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} className={styles.grid}>
         {controller.groups.map((group) => (
@@ -208,7 +187,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             </div> : null}
             <div id={group.id === "Open" && controller.paneListPresented ? "desktop-nexus-open-panes" : undefined} role="presentation">
             {group.rows.map((row, rowIndex) => {
-              const selected = row.key === controller.activeKey;
+              const selected = row.key === controller.armed;
               const snippet = nexusRowEvidenceText(row);
               const passageFacts = row.matchingPassage
                 ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method)
@@ -233,10 +212,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     onPointerMove={event => {
                       const press = pointerPress.current;
                       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
-                      if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)) {
-                        controller.interact();
-                        if (document.activeElement === inputRef.current) controller.setActive(row.key);
-                      }
+                      if (event.pointerType !== "touch" && event.buttons === 0 && press?.moved && document.activeElement === inputRef.current) controller.arm(row.key);
                     }}
                   >
                     <div
@@ -260,14 +236,14 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         if (event.detail !== 0 && (!press || press.key !== row.key || press.moved)) return;
                         if (controller.reorder.placement !== null) {
                           event.preventDefault();
-                          if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { controller.setActive(row.key); controller.activate(row.action, { disposition: { kind: "Follow" } }, row); }
+                          if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { controller.arm(row.key); controller.activate(row.action, { disposition: { kind: "Follow" } }, row); }
                           return;
                         }
                         const activation = workspaceTargetActivationIntent(event);
                         if (activation.kind === "Unowned") return;
                         event.preventDefault();
                         if (activation.kind === "Consume") return;
-                        controller.setActive(row.key);
+                        controller.arm(row.key);
                         controller.activate(
                           row.action,
                           { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } },
@@ -290,7 +266,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
 
                         onFocus={(event) => {
                           focusedSecondary.current = event.currentTarget;
-                          controller.setActive(row.key);
+                          controller.arm(row.key);
                         }}
                         onBlur={() => { focusedSecondary.current = null; }}
                         onKeyDown={(event) => {
@@ -298,17 +274,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         }}
                         onClick={event => {
                           event.currentTarget.focus({ preventScroll: true });
-                          controller.setActive(row.key);
+                          controller.arm(row.key);
                           if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId);
                         }}
                         icon={<X size={18} aria-hidden="true" />} />
-                    ) : row.secondary?.kind === "TargetMenu" || (controller.rootMode === "NewPane" && row.matchingPassage) ? <NexusRowMenu
+                    ) : row.secondary?.kind === "TargetMenu" ? <NexusRowMenu
                       row={row}
                       activate={controller.activate}
                       closePane={controller.closePane}
                       destinationHref={controller.destinationHref}
                       mobile={false}
-                      picker={controller.rootMode === "NewPane"}
+                      picker={false}
                       menuProps={{
                         label: `options for ${row.label}`,
                         align: "end",
@@ -323,11 +299,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                             className={styles.actionsButton}
                             onFocus={(event) => {
                               focusedSecondary.current = event.currentTarget;
-                              controller.setActive(row.key);
+                              controller.arm(row.key);
                             }}
                             onBlur={() => { focusedSecondary.current = null; }}
                             onClick={(event) => {
-                              controller.setActive(row.key);
+                              controller.arm(row.key);
                               trigger.onClick(event);
                             }}
                           />
@@ -337,7 +313,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{
                       tabIndex: selected ? 0 : -1,
                       "aria-label": nexusRowExcerptName(row),
-                      onFocus: event => { focusedSecondary.current = event.currentTarget; controller.setActive(row.key); },
+                      onFocus: event => { focusedSecondary.current = event.currentTarget; controller.arm(row.key); },
                       onBlur: () => { focusedSecondary.current = null; },
                     }} />
                   </div>
@@ -350,7 +326,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           </Fragment>
         ))}
         </div>
-        {controller.rootMode === "NewPane" && controller.announcement ? <p className={styles.empty}>{controller.announcement}</p> : null}
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       </div>
       </NexusPaneDrag>

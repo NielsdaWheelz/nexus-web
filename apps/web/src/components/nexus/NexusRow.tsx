@@ -227,13 +227,10 @@ export function NexusNotices({ controller, returnFocus, id }: {
       {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
       {kind === "Notice" ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
         actions={action === null ? undefined : [{label: SEARCH_ACTION_LABELS[action], onClick: () => {
-          if (action === "refresh") controller.refreshResults();
-          else if (action === "related") controller.retryRelated();
+          if (action === "related") controller.retryRelated();
           else controller.retrySearch();
           returnFocus()?.focus({preventScroll: true});
         }, busy: controller.retrying.size > 0}]} /> : null}
-      {controller.resultsHeld ? <FeedbackNotice content={{tone: "Info", title: "search update ready"}} announcement="None"
-        actions={[{label: SEARCH_ACTION_LABELS.refresh, onClick: () => { controller.refreshResults(); returnFocus()?.focus({preventScroll: true}); }}]} /> : null}
       {blank ? <>
         {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} returnFocus={returnFocus} />
           : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />

@@ -32,27 +32,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   useCollectionLayout(bodyRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
   const placementPress = useRef<string | null>(null);
-  const markSearchInteraction = controller.interact;
-  const refreshRevision = useRef(controller.searchRefreshRevision);
-  useLayoutEffect(() => {
-    if (refreshRevision.current === controller.searchRefreshRevision) return;
-    refreshRevision.current = controller.searchRefreshRevision;
-    if (listRef.current) listRef.current.scrollTop = 0;
-  }, [controller.searchRefreshRevision]);
   const taskPointerId = useRef<number | null>(null);
-  useEffect(() => {
-    if (!controller.open || controller.page.kind !== "Root") return;
-    const selected = () => {
-      const selection = window.getSelection();
-      if (selection !== null && !selection.isCollapsed && (listRef.current?.contains(selection.anchorNode) || listRef.current?.contains(selection.focusNode))) markSearchInteraction();
-    };
-    document.addEventListener("selectionchange", selected);
-    return () => document.removeEventListener("selectionchange", selected);
-  }, [controller.open, controller.page.kind, markSearchInteraction]);
   const previousQuery = useRef(controller.query);
-  const picker = controller.rootMode === "NewPane";
-  const searching = controller.rootMode !== "Overview";
-  useLayoutEffect(() => { if (picker && controller.page.kind === "Root") inputRef.current?.select(); }, [picker, controller.page.kind]);
+  const picker = false;
+  const searching = controller.rootMode === "Typed";
   useLayoutEffect(() => { taskPointerId.current = null; placementPress.current = null; }, [controller.open]);
   useEffect(() => {
     const release = () => { placementPress.current = null; };
@@ -66,7 +49,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     const list = listRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !list || !composed) return;
     const positions = controller.rootScroll.current;
-    if (previousQuery.current !== controller.query) positions.Search = 0;
+    if (previousQuery.current !== controller.query) positions.Typed = 0;
     previousQuery.current = controller.query;
     list.scrollTop = positions[controller.rootMode];
     positions[controller.rootMode] = list.scrollTop;
@@ -100,7 +83,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       event.preventDefault();
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || ("key" in event && (event.repeat || event.nativeEvent?.isComposing || event.keyCode === 229))) return;
       if ("key" in event) placementPress.current = event.key;
-      controller.setActive(row.key);
+      controller.arm(row.key);
       controller.activate(row.action, { disposition: { kind: "Follow" } }, row);
       return;
     }
@@ -108,7 +91,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     if (activation.kind === "Unowned") return;
     event.preventDefault();
     if (activation.kind === "Consume") return;
-    controller.setActive(row.key);
+    controller.arm(row.key);
     controller.activate(row.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, row);
   };
   // Admit only gestures begun inside this task; the opening pointer-up is not a row click.
@@ -148,7 +131,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         </div>
       </header>
       <div className={styles.searchInput}>
-        <div className={styles.searchField} data-feedback-controls="true" onPointerDownCapture={controller.interact}>
+        <div className={styles.searchField} data-feedback-controls="true">
           <Search size={19} aria-hidden="true" />
           <input
             ref={inputRef}
@@ -161,7 +144,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             enterKeyHint={controller.explicitIntent ? "go" : "search"}
             data-mobile-nexus-search
             data-nexus-control="Search"
-            onFocus={controller.enterSearch}
             onChange={(event) => controller.setQuery(event.currentTarget.value)}
             onCompositionStart={() => { composing.current = true; controller.setComposing(true); }}
             onCompositionEnd={() => { composing.current = false; controller.setComposing(false); }}
@@ -170,7 +152,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 event.stopPropagation();
                 return;
               }
-              controller.interact();
               if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -179,7 +160,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const activation = workspaceTargetActivationIntent(event, "activate");
                 if (activation.kind === "Unowned") return;
                 event.preventDefault();
-                if (activation.kind === "Open") controller.submitInput({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
+                if (activation.kind === "Open") controller.submit({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
               }
             }}
           />
@@ -188,7 +169,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         </div>
       </div>
       <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
-      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onScroll={event => { controller.rootScroll.current[controller.rootMode] = event.currentTarget.scrollTop; }} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
+      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
 
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
@@ -199,7 +180,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const name = rowName([nexusRowPrimaryText(row), rowFacts(row), unavailable]);
                 const hasEvidence = nexusRowEvidenceText(row) !== null;
                 return (
-                  <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <li ref={drag.setNodeRef} style={paneDragStyle(drag)} data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined} data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined} className={styles.row} data-current={row.state === "Current" || undefined} onPointerDown={() => controller.setActive(row.key)}>
+                  <NexusPaneSortable key={row.key} controller={controller} row={row}>{drag => <li ref={drag.setNodeRef} style={paneDragStyle(drag)} data-move-source={controller.reorder.placement?.kind === "ChoosePosition" && row.key === `Pane:${controller.reorder.placement.paneId}` || undefined} data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (row.secondary?.kind === "ClosePane" ? row.secondary.paneId : row.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined} className={styles.row} data-current={row.state === "Current" || undefined} onPointerDown={() => controller.arm(row.key)}>
                     <button
                       type="button"
                       ref={drag.setActivatorNodeRef}
@@ -215,7 +196,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       aria-disabled={unavailable !== null || undefined}
                       aria-label={group.id === "Open" && controller.paneListPresented ? paneCandidateName(controller, row, rowIndex) : name}
                       aria-describedby={hasEvidence ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
-                      onFocus={() => controller.setActive(row.key)}
+                      onFocus={() => controller.arm(row.key)}
                       onClick={(event) => activate(row, event)}
                       onKeyDown={(event) => activate(row, event)}
                       onKeyUp={event => { if (placementPress.current === event.key) { placementPress.current = null; event.preventDefault(); } }}
@@ -232,7 +213,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} destinationHref={controller.destinationHref} mobile picker={picker} menuProps={{
                         label: `more actions for ${row.label}`,
                         align: "end",
-                        onOpenChange: (open) => { if (open) controller.setActive(row.key); },
+                        onOpenChange: (open) => { if (open) controller.arm(row.key); },
                         renderTrigger: (trigger) => <OverflowMenuButton {...trigger} className={styles.rowMenu} />,
                       }} />
                     ) : null}
