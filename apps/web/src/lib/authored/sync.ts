@@ -296,7 +296,7 @@ export class Sync {
       if (this.retired) return;
       const cursor = header.head_cursor;
       await this.local(() => this.persistence.finishProvisioning(cursor, counts, header!.lamport));
-      this.facts.ready = true; this.facts.cursor = cursor;
+      this.facts.ready = true; this.facts.cursor = cursor; this.last_error = null;
       this.changed(true);
     } finally { await reader.cancel(); reader.releaseLock(); }
   }
