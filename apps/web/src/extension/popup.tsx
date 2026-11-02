@@ -9,7 +9,7 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { FeedbackProvider, Hold, useFeedbackOccurrence, useOutcome } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
@@ -53,8 +53,11 @@ async function command(sent: Command): Promise<CommandResult> {
   }
 }
 
-/** The popup's sign-in asks the background, which owns the flow. */
-const SIGN_IN: CommandVerb = { label: "sign in", commandKey: "CaptureSignIn", run: () => { void command({ kind: "login" }); } };
+/** The popup's one sign-in, wherever it shows: the account row's press, which asks firefox for
+ * the origins login waits on and says a failed login. One value, so a slip's verb outlives the
+ * render that raised it; the popup binds it to its latest state. */
+const signIn = { current: () => {} };
+const SIGN_IN: CommandVerb = { label: "sign in", commandKey: "CaptureSignIn", run: () => signIn.current() };
 const SHELL: Shell = { signIn: SIGN_IN };
 /** Refusals that a sign-in answers carry it. */
 const SIGN_IN_CODES = new Set(["E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
@@ -172,6 +175,12 @@ function Popup() {
     );
   };
 
+  useLayoutEffect(() => { signIn.current = () => sendWithOrigins({ kind: "login" }); });
+  // Each failure onset counts: a failed retry of an unknown outcome speaks again.
+  const failedNow = state?.draft?.phase.kind === "failed";
+  const [failures, setFailures] = useState({ failed: false, attempt: 0 });
+  if (failedNow !== failures.failed) setFailures({ failed: failedNow, attempt: failedNow ? failures.attempt + 1 : failures.attempt });
+
   const disconnection = disconnected ? <Hold id="capture-disconnected" line={{ fact: "capture disconnected.", reason: "reopen this popup to continue." }} /> : null;
   if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<div className={styles.body}><Ruling /></div></main>;
 
@@ -225,7 +234,7 @@ function Popup() {
           verbs={[{ label: "retry", commandKey: "RetryDisconnect", run: () => sendWithOrigins({ kind: "disconnect" }) }]} />
       ) : null}
       {account === null ? (
-        <Fact line={{ fact: "not signed in." }} verbs={[{ label: "sign in", commandKey: "CaptureSignIn", run: () => sendWithOrigins({ kind: "login" }) }]} />
+        <Fact line={{ fact: "not signed in." }} verbs={[SIGN_IN]} />
       ) : (
         <div className={styles.account}>
           <span className={styles.accountName}>
@@ -266,7 +275,7 @@ function Popup() {
         <p>{recovery.candidate.summary.source_label} · {new Date(recovery.candidate.summary.accepted_at).toLocaleDateString()}</p>
         {recovery.candidate.binding.source_relation === "AlternativeCopy" ? <p>this page has a different address. use its captured text to finish “{recovery.candidate.summary.title}”.</p> : null}
       </section> : null}
-      {captureFailure ? <CaptureFailureFact failure={captureFailure} account={account !== null} recapture={recaptureFailure} retrying={retrying}
+      {captureFailure ? <CaptureFailureFact failure={captureFailure} attempt={failures.attempt} account={account !== null} recapture={recaptureFailure} retrying={retrying}
         send={send} sendWithOrigins={sendWithOrigins} /> : null}
 
       {draft === null ||
@@ -472,15 +481,15 @@ function Destinations({
 
 /** A failed save, by what can recover it. An unknown outcome holds; `retry` resends, `forget` drops
  * the local draft. A recapture or review names why; the others say the transport's reason. */
-function CaptureFailureFact({ failure, account, recapture, retrying, send, sendWithOrigins }: {
-  failure: Extract<CapturePhase, { kind: "failed" }>; account: boolean; recapture: boolean; retrying: boolean;
+function CaptureFailureFact({ failure, attempt, account, recapture, retrying, send, sendWithOrigins }: {
+  failure: Extract<CapturePhase, { kind: "failed" }>; attempt: number; account: boolean; recapture: boolean; retrying: boolean;
   send(command: Command): void; sendWithOrigins(command: Command): void;
 }) {
   const verb = (label: string, run: () => void, busy = false): CommandVerb => ({ label, commandKey: `Capture.${label}`, run, busy });
   const discard = verb("discard", () => send({ kind: "discard" }));
   if (failure.recovery === "Check") {
     const forget = verb("forget", () => send({ kind: "stop_checking" }));
-    return <Hold id="capture-unconfirmed" line={{ fact: "not sure that saved. it may have gone through." }}
+    return <Hold id="capture-unconfirmed" attempt={attempt} line={{ fact: "not sure that saved. it may have gone through." }}
       verbs={account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), forget] : [forget]} />;
   }
   if (recapture && account) return <Fact speak line={{ fact: RECAPTURE[failure.failure.code] ?? "this capture changed.", reason: "capture the page again." }}

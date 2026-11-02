@@ -29,7 +29,8 @@ function ShelfContent() {
   const [hash, setHash] = useState(() => window.location.hash);
   const [opened, setOpened] = useState<LocalItem | null>(null);
   const [confirmRemoval, setConfirmRemoval] = useState(false);
-  const [openFailed, setOpenFailed] = useState(false);
+  /** The copy whose open failed: a failure belongs to its own copy, not to the next hash. */
+  const [openFailed, setOpenFailed] = useState<string | null>(null);
   const [removal, setRemoval] = useState<{ attempt: number } | null>(null);
   const mediaId = /^#open=([0-9a-f-]{36})$/.exec(hash)?.[1] ?? null;
   const candidate = index?.items.find(item => item.media_id === mediaId && item.kind !== "podcast_episode" && item.state === "Ready") ?? null;
@@ -46,8 +47,8 @@ function ShelfContent() {
     let active = true;
     setOpening(true);
     void localCall("open", { media_id: availableId }).then(() => {
-      if (active) { setOpened(currentCandidate.current); setOpenFailed(false); setOpening(false); }
-    }, () => { if (active) { setOpenFailed(true); setOpening(false); } });
+      if (active) { setOpened(currentCandidate.current); setOpenFailed(null); setOpening(false); }
+    }, () => { if (active) { setOpenFailed(availableId); setOpening(false); } });
     return () => {
       active = false;
       setOpened(null);
@@ -82,7 +83,7 @@ function ShelfContent() {
     {removal === null ? null : <Hold id="shelf-removal" attempt={removal.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
       verbs={[{ label: "open downloads", commandKey: "OpenDownloads", run: back }]} />}
     {item !== null ? <ShelfReader key={item.media_id} item={item} onRemove={() => { if (item.progress !== null && item.progress.kind !== "Canonical") setConfirmRemoval(true); else remove(); }} />
-      : openFailed ? <Fact line={{ fact: "couldn’t open this downloaded copy." }} verbs={[{ label: "retry", commandKey: "RetryOpenCopy", busy: opening, run: () => retryOpen(value => value + 1) }]} speak />
+      : openFailed !== null && openFailed === availableId ? <Fact line={{ fact: "couldn’t open this downloaded copy." }} verbs={[{ label: "retry", commandKey: "RetryOpenCopy", busy: opening, run: () => retryOpen(value => value + 1) }]} speak />
       : error === null && (index === null || availableId !== null) ? <Ruling />
       : <Fact line={{ fact: "this downloaded copy isn’t available." }} speak />}
     {confirmRemoval ? <Dialog open title="remove downloaded copy?" onClose={() => setConfirmRemoval(false)}>
