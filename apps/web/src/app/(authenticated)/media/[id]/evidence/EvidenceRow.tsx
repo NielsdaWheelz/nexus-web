@@ -6,6 +6,7 @@
 import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import type { ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -23,10 +24,12 @@ export interface EvidenceOpenRequest {
 }
 
 export interface EvidenceActions {
+  /** The media can mount a reader, so a row's placement is still coming until it has. */
+  readonly readable: boolean;
   readonly sourceContext: boolean;
   /** The media every whole-document link attaches to. */
   readonly mediaLabel: string;
-  readonly verbs: Pick<AnnotationVerbs, "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "relocate">;
+  readonly verbs: Pick<AnnotationVerbs, "noteEdit" | "annotate" | "hovered" | "hover" | "closeNoteEdit" | "relocate">;
   readonly refresh: () => void;
 }
 
@@ -41,7 +44,7 @@ export function sourceTextKey(entry: EvidenceEntry): string | null {
     ? JSON.stringify([entry.root.source.media_id, entry.root.source.identity, `evidence/${entry.key}`]) : null;
 }
 
-export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout, position, count }: {
+export default function EvidenceRow({ entry, actions, active, visible, placed, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, onSourceLayout, position, count }: {
   readonly position: number | null;
   readonly count: number;
   readonly sourceText: ReadonlySet<string>;
@@ -51,6 +54,8 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   readonly actions: EvidenceActions;
   readonly active: boolean;
   readonly visible: boolean;
+  /** This entry has an extent in the mounted publication. */
+  readonly placed: boolean;
   readonly unresolvedText: boolean;
   readonly openRequest: EvidenceOpenRequest | null;
   readonly reader: Reader;
@@ -85,8 +90,10 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   if (entry.kind === "highlight") {
     const { annotation } = entry;
     const placement = annotation.placement.kind;
-    return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
-      omitResourceActions={!actions.sourceContext ? ["Share"] : undefined}
+    return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed}
+      omitResourceActions={actions.sourceContext ? ["EditHighlightAnnotation"] : ["EditHighlightAnnotation", "Share"]}
+      rowActions={[{ kind: "command", id: "EditHighlightAnnotation", label: annotation.body === null ? "annotate" : "edit annotation",
+        icon: <ACTION_CATALOG.EditHighlightAnnotation.icon size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
       annotationFocusRequest={verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
       resourceDetails={<>
@@ -105,7 +112,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   const { root } = entry;
   const content = root.content;
   const disclosureKey = sourceTextKey(entry);
-  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
+  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
     sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} onLayout={onSourceLayout} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}

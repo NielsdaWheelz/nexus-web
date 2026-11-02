@@ -791,15 +791,16 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   findRef.current = find;
 
   // ---- evidence and chrome ----
-  const { noteEdit, hovered, hover, closeNoteEdit, relocate } = verbs;
+  const { noteEdit, annotate, hovered, hover, closeNoteEdit, relocate } = verbs;
   const actions = useMemo<EvidenceActions>(
     () => ({
-      verbs: { noteEdit, hovered, hover, closeNoteEdit, relocate },
+      verbs: { noteEdit, annotate, hovered, hover, closeNoteEdit, relocate },
+      readable,
       sourceContext: media?.kind !== "text_part",
       mediaLabel: media?.title ?? "this document",
       refresh: store.refresh,
     }),
-    [closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, relocate, store],
+    [annotate, closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, readable, relocate, store],
   );
   const evidence = useMemo(
     () => (

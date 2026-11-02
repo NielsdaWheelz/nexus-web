@@ -89,15 +89,18 @@ and server reads withhold those tables; fully admitted tables remain available.
 
 the frozen tree owns display and existing copy commands. unknown historical
 structure preserves saved strings exactly and says `original formatting wasn’t
-saved`; pdf/plain evidence retains its existing text behavior. source links in
+saved` wherever context shows; pdf/plain evidence retains its existing text behavior.
+an empty unknown or plain selection says `selected region`. source links in
 excerpts are inert. literal text projection excludes interface labels and omissions.
 
 compact projections retain 600 selected codepoints and 48 per side; tables that
 cannot fit disclose as a whole. annotation paint uses compact projections;
-visible quotation bodies and the active copy command load full evidence.
-full queries read the exact canonical capture and
-its revision together. revisions hash source identity and the complete capture,
-independently of scope and mutable metadata. reading scope may remove context,
+visible quotation bodies and the active copy command load full evidence. a reader
+row placed in its open source narrows that body to the selected words, keeping
+whole tables, and links them to the passage; the page already shows their context.
+captures keep their context for re-anchoring. full queries read the exact
+canonical capture and its revision together. revisions hash source identity and
+the complete capture, independently of scope and mutable metadata. reading scope may remove context,
 never replace it with current source words. uncaptured discovery uses bounded
 admitted preview text, reports clipping and exposes no capture revision; full
 matching and capture authority remain separate. historical evidence owns its frozen
@@ -108,7 +111,9 @@ capture and never loads a live authored resource to replace it.
 
 reader, compact/downloaded reader, outline and detail surfaces share one annotation
 editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`
-and `clear annotation`. related resources remain separate. copy-passage and
+and `clear annotation`. a blank row placed in its open source shows neither `annotate`
+nor a linked-items field: its menu opens the annotation in place, and its branch opens
+at its first link. related resources remain separate. copy-passage and
 frozen message quotations contain only source words. a question draft has separate
 ownership; submission neither copies nor clears the saved annotation. authorized
 context assembly can read annotation explicitly.

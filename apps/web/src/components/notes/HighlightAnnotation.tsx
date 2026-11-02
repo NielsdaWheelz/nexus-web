@@ -27,9 +27,9 @@ import NoteEditor, {type NoteEditorHandle, type NoteInspection} from "./NoteEdit
 
 type Draft = {committing: boolean; doc: Y.Doc; vector: Uint8Array; body: NoteBody; revision: number; reference: boolean; hyperlink: boolean; attachment: boolean; links: {target: LinkTarget; label: string}[]};
 const risk = (value: Draft | null) => ({changed: value !== null && (bodyHasContent(value.body) || value.reference || value.hyperlink || value.links.length > 0), unconfirmed: false, stopsBrowserWork: value?.attachment === true});
-export default function HighlightAnnotation({highlightRef, occurrenceKey, editable = true, focusRequest = null, onFocused, inspection = null, onEditorReady, mayFocus, onWorkOwners}: {
+export default function HighlightAnnotation({highlightRef, occurrenceKey, editable = true, offerBlank = true, focusRequest = null, onFocused, inspection = null, onEditorReady, mayFocus, onWorkOwners}: {
   onWorkOwners?: (owners: readonly string[]) => void;
-  highlightRef: string; occurrenceKey: string; editable?: boolean; focusRequest?: number | null; onFocused?: () => void;
+  highlightRef: string; occurrenceKey: string; editable?: boolean; offerBlank?: boolean; focusRequest?: number | null; onFocused?: () => void;
   mayFocus?: () => boolean; inspection?: NoteInspection | null; onEditorReady?: (handle: NoteEditorHandle | null) => void;
 }) {
   const read = useAuthoredQuery({kind: "resource", ref: highlightRef});
@@ -168,6 +168,7 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
     {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence}/> : null}
   </>;
   if ((!resource?.authored_by_viewer || resource.kind !== "highlight") && value === null && !editing) return feedback;
+  if (!offerBlank && !hasBody && !editing && value === null) return feedback;
   if (!editable) return <>{feedback}{resource?.body_pm_json ? <NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}} revision={0} label="annotation" editable={false} history={null} onEdit={() => {}} atomicEmbeds/> : null}</>;
   return <section aria-label="annotation" data-highlight-annotation={highlightRef}>
     {feedback}

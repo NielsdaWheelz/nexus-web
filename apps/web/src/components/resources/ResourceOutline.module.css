@@ -12,6 +12,7 @@
 .row[data-selected="true"] > .head {background: var(--accent-muted);}
 .row:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset);}
 .reference {display: inline; white-space: normal;}
+.quotation {display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1);}
 .separator {color: var(--ink-muted);}
 @media (any-pointer: coarse) {
   .outline {--outline-control-inline-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1))); --outline-control-block-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
@@ -91,6 +92,8 @@
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
+.quote {display: block;}
+.quote:hover {text-decoration: none;}
 .metadata {
   display: flex;
   flex-wrap: wrap;
@@ -135,8 +138,4 @@
   .arrow {
     transition: none;
   }
-}
-
-.row[data-writing="true"] > .head .bullet {
-  color: var(--ink-muted);
 }
