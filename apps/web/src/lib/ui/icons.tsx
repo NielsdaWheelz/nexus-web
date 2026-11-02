@@ -1,5 +1,7 @@
 /** meaning to drawing, total and reviewable in this file. a name states meaning; one drawing may
- * carry several names, and each share is a claim. the slot owns size; --icon-stroke owns weight. */
+ * carry several names, and each share is a claim. the slot owns size, and a standalone glyph,
+ * parametric or not, takes `size`; --icon-stroke owns weight. */
+import type { CSSProperties } from "react";
 import {
   createLucideIcon,
   Ellipsis,
@@ -66,36 +68,37 @@ const PLAY_POSE: IconNode = [
 
 /** `playing` draws pause, the act a press takes. both poses are two four-point paths, so css `d`
  * interpolates between them; the stroke rounds corners and scales with the shape. */
-export function PlayPause({ playing }: { playing: boolean }) {
-  return <LucideGlyph iconNode={playing ? PAUSE_POSE : PLAY_POSE} className={cx("lucide-play-pause", styles.playPause)} />;
+export function PlayPause({ playing, size }: { playing: boolean; size?: number }) {
+  return <LucideGlyph iconNode={playing ? PAUSE_POSE : PLAY_POSE} size={size} className={styles.playPause} />;
 }
 
-const RIM: IconNode[number] = ["path", { d: "M6.84 19.87A9 9 0 1 1 17.16 19.87", key: "rim" }];
-const TICKS: IconNode[number] = ["path", { d: "M12 3.5v2M3 12.5h2M19 12.5h2", key: "ticks" }];
-const HUB: IconNode[number] = ["circle", { cx: "12", cy: "12.5", r: "1.25", fill: "currentColor", stroke: "none", className: styles.hub, key: "hub" }];
-
-/** the needle at θ degrees clockwise from twelve, about the pivot (12, 12.5). */
-function needle(theta: number): IconNode[number] {
-  return ["path", { d: "M12 12.5V6", transform: `rotate(${theta.toFixed(2)} 12 12.5)`, className: styles.needle, key: "needle" }];
-}
+/** about the pivot (12, 12.5): the rim, r 9 and open ±145° at the foot; the sweep on the rim's
+ * circle; ticks at twelve, nine and three; the needle; the hub. */
+const SPEED_DIAL: IconNode = [
+  ["path", { d: "M6.84 19.87A9 9 0 1 1 17.16 19.87", key: "rim" }],
+  ["circle", { cx: "12", cy: "12.5", r: "9", pathLength: "360", strokeLinecap: "butt", className: styles.sweep, key: "sweep" }],
+  ["path", { d: "M12 3.5v2M3 12.5h2M19 12.5h2", key: "ticks" }],
+  ["path", { d: "M12 12.5V6", className: styles.needle, key: "needle" }],
+  ["circle", { cx: "12", cy: "12.5", r: "1.25", fill: "currentColor", stroke: "none", className: styles.hub, key: "hub" }],
+];
 
 /** θ = 90·log2(rate): ½× at nine, 1× at twelve, 2× at three. the caller passes the rate its control
- * prints, so needle and figure agree; playbackRate.ts owns rounding. the sweep is a dash on a
- * 360-unit circle, so the dial scales its stroke. */
-export function Speed({ rate }: { rate: number }) {
-  const theta = 90 * Math.log2(rate);
-  const sweep: IconNode[number] = ["circle", {
-    cx: "12", cy: "12.5", r: "9", pathLength: "360", strokeLinecap: "butt",
-    strokeDasharray: `${Math.abs(theta).toFixed(2)} 360`,
-    transform: `rotate(${(Math.min(theta, 0) - 90).toFixed(2)} 12 12.5)`,
-    className: styles.sweep, key: "sweep",
-  }];
-  return <LucideGlyph iconNode={[RIM, sweep, TICKS, needle(theta), HUB]}
-    className={cx("lucide-speed", styles.speed, rate !== 1 && styles.altered)} />;
+ * prints, so needle and figure agree; playbackRate.ts owns rounding. the glyph sets θ alone, and
+ * its module turns the needle and lays the sweep from it on every frame of a glide. the sweep is a
+ * dash on a 360-unit circle, so the dial scales its stroke. */
+export function Speed({ rate, size }: { rate: number; size?: number }) {
+  return <LucideGlyph iconNode={SPEED_DIAL} size={size} className={cx(styles.speed, rate !== 1 && styles.altered)}
+    style={{ "--dial-angle": (90 * Math.log2(rate)).toFixed(2) } as CSSProperties} />;
 }
 
-/** the speed dial's drawing; the needle spans nine to three across the choices. */
-export function Effort({ position }: { position: number | null }) {
-  return <LucideGlyph iconNode={position === null ? [RIM, TICKS, HUB] : [RIM, TICKS, needle(-90 + 180 * position), HUB]}
-    className="lucide-effort" />;
+const EFFORT_RIM: IconNode[number] = ["path", { d: "M4 15.5a8 8 0 0 1 16 0", key: "rim" }];
+const EFFORT_HUB: IconNode[number] = ["circle", { cx: "12", cy: "15.5", r: "1.5", fill: "currentColor", stroke: "none", key: "hub" }];
+
+/** the effort picker's own dial on the 24 grid: a half rim from nine to three over the pivot
+ * (12, 15.5). the needle spans nine to three across the choices; null draws none. */
+export function Effort({ position, size }: { position: number | null; size?: number }) {
+  const needle: IconNode = position === null ? [] : [["path", {
+    d: "M12 15.5V8.5", transform: `rotate(${(-90 + 180 * position).toFixed(2)} 12 15.5)`, className: styles.needle, key: "needle",
+  }]];
+  return <LucideGlyph iconNode={[EFFORT_RIM, ...needle, EFFORT_HUB]} size={size} className={styles.effort} />;
 }

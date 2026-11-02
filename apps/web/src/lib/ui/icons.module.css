@@ -9,8 +9,13 @@
   transition: d var(--duration-fast) var(--ease-snap);
 }
 
-.needle {
-  transition: transform var(--duration-fast) var(--ease-glide);
+/* the speed dial draws one number: degrees clockwise from twelve. the number glides, and needle and
+   sweep are computed from it on every frame, so the sweep spans twelve to the needle throughout a
+   glide, across 1× too. registered, because only a typed custom property interpolates. */
+@property --dial-angle {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
 }
 
 /* away from 1× the needle inks and the sweep gilds. a disabled key and forced colours keep the
@@ -18,6 +23,7 @@
 .speed {
   --dial-ink: currentColor;
   --dial-sweep: var(--accent);
+  transition: --dial-angle var(--duration-fast) var(--ease-glide);
 }
 
 .altered {
@@ -36,17 +42,27 @@
   }
 }
 
+.speed > .needle,
+.speed > .sweep {
+  transform-origin: 12px 12.5px;
+}
+
 .speed > .needle {
   stroke: var(--dial-ink);
+  transform: rotate(calc(var(--dial-angle) * 1deg));
 }
 
 .speed > .hub {
   fill: var(--dial-ink);
 }
 
+/* a dash |θ| units long, turned to start at twelve, or at the needle when θ < 0. */
 .speed > .sweep {
   stroke: var(--dial-sweep);
-  transition:
-    stroke-dasharray var(--duration-fast) var(--ease-glide),
-    transform var(--duration-fast) var(--ease-glide);
+  stroke-dasharray: calc(max(var(--dial-angle), -1 * var(--dial-angle)) * 1px) 360px;
+  transform: rotate(calc((min(var(--dial-angle), 0) - 90) * 1deg));
+}
+
+.effort > .needle {
+  transition: transform var(--duration-fast) var(--ease-glide);
 }
