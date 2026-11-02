@@ -1,15 +1,20 @@
 "use client";
 
-// Source and cursor ports, source-locator geometry and per-visit reader state.
+// Source and cursor ports and what a failed cursor save says, source-locator geometry and
+// per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/serverState";
+import type { Line, Verb, Verbs } from "@/components/feedback/stage";
+import { heldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
 import { readerDocument, transcriptUnitAtTime, localPoint, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
+import type { SaveFailure } from "@/lib/documentReader/progress";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -46,13 +51,14 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   return target;
 }
 
+/** Reads go through the read layer's retry, so one lost response is no failed read. */
 export function hostedSource(mediaId: string): ReaderSource {
   return {
     async load(signal) {
-      const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
+      const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
         `/api/media/${mediaId}/reader`,
-        { signal },
-      );
+        { signal: attempt },
+      ), signal);
       return readerDocument(data);
     },
     async refreshPdf(signal) {
@@ -65,14 +71,15 @@ export function hostedSource(mediaId: string): ReaderSource {
   };
 }
 
-/** The server cursor: compare-and-set on the revision; a refused save names the newer one. */
+/** The server cursor: compare-and-set on the revision; a refused save names the newer one. Its
+ * read retries as the source's does. */
 export function hostedProgress(mediaId: string): ReaderProgressPort {
   const path = `/api/media/${mediaId}/reader-state` as const;
   return {
-    async load(signal) {
-      const { data } = await apiFetch<
+    async load(signal = new AbortController().signal) {
+      const { data } = await requestWithRetry(attempt => apiFetch<
         ApiJson<"/media/{media_id}/reader-state", "get">
-      >(path, { signal, cache: "no-store" });
+      >(path, { signal: attempt, cache: "no-store" }), signal);
       return { kind: "Canonical", snapshot: data };
     },
     async save(locator, base) {
@@ -99,6 +106,15 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
       throw new Error("the server cursor has no conflict view to resolve");
     },
   };
+}
+
+/** A failed save of the server cursor, said in the reader's lane by what it met. A same-system
+ * defect throws to the boundary. */
+export function positionSaveFailure({ error, offline }: SaveFailure, retry: Verb): { readonly line: Line; readonly verbs: Verbs | null } {
+  const fact = "your reading position isn’t saving.";
+  const held = { fact, reason: "this tab still holds it." };
+  if (!isApiError(error)) return { line: held, verbs: [retry] };
+  return heldSaveFailure(error, offline, retry, { fact, unsure: { fact: "not sure your reading position saved.", reason: held.reason }, kept: held });
 }
 
 /** An exact resource root's own place in the document map. */

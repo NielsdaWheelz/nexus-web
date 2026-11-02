@@ -2,7 +2,8 @@
 
 // Exact-selector query and bounded rendering shared by manual and proposal review.
 import HtmlRenderer from "@/components/HtmlRenderer";
-import Button from "@/components/ui/Button";
+import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import type { Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { previewPart } from "@/lib/media/parts";
@@ -15,10 +16,8 @@ export function usePartPreview(source: string, selection: Schema<"SectionSelecti
 }
 
 export default function PartPreview({ preview }: { readonly preview: ReturnType<typeof usePartPreview> }) {
-  if (preview.status === "failed" || preview.status === "ready" && preview.error !== null) return <>
-    <p role="alert">couldn’t load the included text</p><Button onClick={() => void preview.refetch()}>try again</Button>
-  </>;
-  if (preview.status !== "ready") return <p role="status">loading included text…</p>;
+  if (preview.status === "failed") return <Failed error={preview.error} noun="included sections" retry={{ run: () => void preview.refetch(), busy: preview.retrying }} />;
+  if (preview.status !== "ready") return <Ruling />;
   return <section aria-label="included text" className={styles.preview} onClickCapture={event => {
     if (event.target instanceof Element && event.target.closest("a")) event.preventDefault();
   }}>{preview.data.document.units.map(unit => <HtmlRenderer key={unit.id} htmlSanitized={unit.html_sanitized} headingLevelOffset={2} />)}</section>;

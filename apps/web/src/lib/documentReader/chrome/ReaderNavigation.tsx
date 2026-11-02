@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
-import { FieldFeedback } from "@/components/feedback/Feedback";
+import { Field } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
@@ -56,7 +56,7 @@ function Sections({ reader }: { readonly reader: Reader }) {
     const to = target(at);
     const location = section.id === current ? "location" as const : undefined;
     if (to === null) return { kind: "command", id: section.id, label: section.label, icon: null, current: location,
-      disabled: true, disabledReason: "no transcript at this time", onSelect: () => {} };
+      disabled: true, disabledReason: "no transcript at this time.", onSelect: () => {} };
     const portable=sourceTarget(ready!.doc,to);
     if (portable===null) throw new Error("section point is outside its reading body");
     const destination = { source_identity: ready!.doc.identity, target: portable };
@@ -119,7 +119,7 @@ function Pages({ reader }: { readonly reader: Reader }) {
     const value = current?.value ?? String(pdf.page);
     const page = Number(value);
     if (!/^\d+$/.test(value) || !Number.isInteger(page) || page < 1 || page > pdf.pages) {
-      setDraft({ page: pdf.page, value, error: `Enter a page from 1 to ${pdf.pages}.` });
+      setDraft({ page: pdf.page, value, error: `pages run from 1 to ${pdf.pages}.` });
       return;
     }
     setDraft(null);
@@ -184,7 +184,7 @@ function Pages({ reader }: { readonly reader: Reader }) {
           <Button iconOnly icon={<Plus />} aria-label="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)} />
         </div>
       </div>
-      {current?.error ? <FieldFeedback id={errorId} content={{ tone: "Danger", title: current.error }} /> : null}
+      {current?.error ? <Field id={errorId} line={{ fact: current.error }} /> : null}
     </div>
   );
 }

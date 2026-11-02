@@ -2,21 +2,25 @@
 
 import { FullResourceBody } from "@/components/resources/ExcerptDisclosure";
 import { authoredItem } from "@/lib/notes/presentation";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import type { ReaderAnnotation } from "../annotations";
 import styles from "./chrome.module.css";
 
 export const PLACEMENT_COPY: Record<Exclude<ReaderAnnotation["placement"]["kind"], "placed">, string> = {
-  unlocated: "passage couldn’t be located in this version",
-  unavailable: "source isn’t available on this device",
+  unlocated: "couldn’t find this passage in this version.",
+  unavailable: "this source can’t be shown here.",
 };
+
+/** Where a highlight stands against the version shown, as row text beside it. */
+export function PlacementNote({ kind }: { readonly kind: keyof typeof PLACEMENT_COPY }) {
+  return <p className={styles.placement}>{PLACEMENT_COPY[kind]}</p>;
+}
 
 /** The literal captured quote, never the current source text. */
 export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnnotation }) {
   return <>
     <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef)} />
-    {annotation.placement.kind === "unlocated" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unlocated }} announcement="None" /> : null}
+    {annotation.placement.kind === "unlocated" ? <PlacementNote kind="unlocated" /> : null}
   </>;
 }
 

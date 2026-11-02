@@ -1,5 +1,6 @@
 "use client";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
+import type { Line, Verb, Verbs } from "@/components/feedback/stage";
 import type { ExcerptBody } from "@nexus/authored/excerpt";
 
 // The reader primitive. A host builds a source (and optionally a progress
@@ -16,19 +17,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import {
-  FeedbackNotice,
-  FeedbackFailure,
-  FeedbackBusy,
-  useFeedbackOccurrence,
-  FeedbackState,
-  FeedbackStatus,
-  type FeedbackAnnouncement,
-} from "@/components/feedback/Feedback";
+import { flushSync } from "react-dom";
+import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
-import { targetOfLocator, type HighlightColor, type PdfQuad, type TextUnit } from "./model";
+import { targetOfLocator, type HighlightColor, type PdfQuad, type ReaderDocument, type TextUnit } from "./model";
 import PdfSurface from "./pdf/PdfSurface";
 import {
   createReaderRuntime,
@@ -38,12 +34,12 @@ import {
   type ReaderState,
 } from "./runtime";
 import TextSurface from "./text/TextSurface";
-import { unresolvedPosition } from "./progress";
+import { unresolvedPosition, type SaveFailure } from "./progress";
 import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import { navigationFailureContent } from "./navigationFeedback";
+import { navigationFailureLine } from "./navigationFeedback";
 
 export type {
   Reader,
@@ -103,6 +99,14 @@ export interface Inspection {
 export type SelectionCandidate =
   | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
   | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
+/** Why a selection can't become a highlight here: one line per rejection, for every reader host. */
+export function rejectedSelectionFact(reason: Extract<SelectionCandidate, { kind: "Rejected" }>["reason"], doc: ReaderDocument | null): string {
+  switch (reason) {
+    case "UnsupportedExcerpt": return "nexus can’t capture some text in this passage.";
+    case "CrossPage": return "highlights can’t cross pages.";
+    case "CrossUnit": return doc?.kind === "text" && doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections.";
+  }
+}
 export type SelectionEvent = SelectionCandidate & {
   readonly identity: string;
   readonly input: "pointer" | "keyboard" | "touch";
@@ -131,8 +135,6 @@ export interface DocumentReaderViewProps {
   readonly isMobile: boolean;
   /** Passive source position; never a reader navigation command. */
   readonly playback: { readonly identity: string; readonly unit: string } | null;
-  /** Hosts silence a reader while its pane is inactive. */
-  readonly announcement?: FeedbackAnnouncement;
   readonly decorations?: Decorations;
   /** The composing passage, independent of the saved decoration map. */
   readonly activePassage?: Passage | null;
@@ -152,8 +154,17 @@ export interface DocumentReaderViewProps {
   readonly renderPostActions?: (unit: TextUnit) => ReactNode;
   /** false when the host already presents the source title; capture facts remain. */
   readonly showCaptureTitle?: boolean;
-  /** Host content preceding publication content, including loading/failure feedback. */
+  /** Host content preceding publication content. */
   readonly before?: ReactNode;
+  /** The host's own words for its publication's failed read, which only it can classify; null,
+   * or absent, and the reader says it couldn't open the document. */
+  readonly failure?: (error: unknown, retry: { readonly run: () => void; readonly busy: boolean }) => ReactNode;
+  /** The host's words for a failed position save, which only its port can classify; absent, the
+   * reader says the position isn't saving. `retry` is the reader's own. */
+  readonly saveFailure?: (failure: SaveFailure, retry: Verb) => { readonly line: Line; readonly verbs: Verbs | null };
+  /** The host's durable facts about this reading, in the reader's status lane beside its own.
+   * The reader re-anchors when the lane changes height, so the text under the eye stays put. */
+  readonly lane?: ReactNode;
   readonly end?: ReactNode;
 }
 
@@ -212,9 +223,7 @@ export default function DocumentReaderView(
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
   const navigationFailure = useReaderState(runtime, (state) => state.navigation.failure);
-  const refreshOccurrence = useFeedbackOccurrence(publication.status === "ready" && publication.refreshFailure !== null, runtime);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
-  const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
   const frame = useRef<HTMLDivElement>(null);
   const scrollIndicator = useRef<HTMLDivElement>(null);
   const feedback = useRef<HTMLDivElement>(null);
@@ -223,25 +232,25 @@ export default function DocumentReaderView(
     [],
   );
   useActionFocusRecovery(frame, returnFocus);
-  const announcement = props.announcement ?? "Polite";
+  const speak = useActiveRegion();
+  const { say } = useOutcome();
+  // A failed navigation is a one-off miss; a later attempt retires it, and so its slip.
+  useEffect(() => navigationFailure ? say(navigationFailureLine(navigationFailure)) : undefined, [navigationFailure, say]);
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
-      <div className={`${styles.feedback} ${styles.readerState}`}>
+      <div className={`${styles.feedback} ${styles.readerState} ${styles.readerPitch}`}>
         {props.before}
-        <FeedbackBusy pending />
+        <Ruling />
       </div>
     );
   } else if (publication.status === "failed") {
+    const retry = { run: runtime.retryLoad, busy: publication.retrying };
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
         {props.before}
-        <FeedbackState
-          content={{ tone: "Danger", title: "couldn’t open this document" }}
-          announcement={announcement}
-          actions={[{ label: "retry", onClick: runtime.retryLoad, busy: publication.retrying }]}
-          returnFocus={returnFocus}
-        />
+        {props.failure?.(publication.error, retry)
+          ?? <Fact line={{ fact: "couldn’t open this document." }} verbs={[{ ...retry, label: "retry", commandKey: "RetryDocument" }]} speak={speak} />}
       </div>
     );
   } else if (publication.doc.kind === "pdf") {
@@ -275,30 +284,9 @@ export default function DocumentReaderView(
       data-theme={props.profile.theme}
       data-hyphenation={props.profile.hyphenation}
     >
-      <div ref={feedback} className={styles.statusStack}>
-        {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
-        {navigationFailure ? (
-          <>
-            <FeedbackFailure scope="Local"
-              content={navigationFailureContent(navigationFailure)}
-              occurrence={navigationFailure}
-              onDismiss={() => runtime.dismissNavigationFailure(navigationFailure)}
-              announcement={announcement}
-              returnFocus={returnFocus}
-            />
-          </>
-        ) : null}
-        {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
-          <>
-            <FeedbackFailure scope="Local" occurrence={refreshOccurrence}
-              content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
-              announcement={announcement}
-              actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
-              disclosure="Anchored"
-              returnFocus={returnFocus}
-            />
-          </>
-        ) : null}
+      <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
+        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} returnFocus={returnFocus} /> : null}
+        {props.lane}
       </div>
       {body}
       <div
@@ -331,134 +319,90 @@ function originLabel(state: ReaderState): string | null {
   );
 }
 
-function StatusStrip({ reader, announcement, returnFocus }: {
+/** The reading position's lane: at most one fact per condition, each with the verbs that settle it. */
+function StatusStrip({ reader, speak, saveFailure, returnFocus }: {
   readonly reader: Reader;
-  readonly announcement: FeedbackAnnouncement;
+  readonly speak: boolean;
+  readonly saveFailure: DocumentReaderViewProps["saveFailure"];
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const navigation = useReaderState(reader, (state) => state.navigation);
   const progress = useReaderState(reader, (state) => state.progress);
   const documentReady = useReaderState(reader, (state) => state.document.status === "ready");
   const documentRefreshing = useReaderState(reader, (state) => state.document.status === "ready" && state.document.refreshing);
-  const unavailable = useReaderState(
-    reader,
-    (state) => state.savedSpotUnavailable,
-  );
+  const unavailable = useReaderState(reader, (state) => state.savedSpotUnavailable);
   const label = useReaderState(reader, originLabel);
   const exploring = navigation.mode === "Exploring";
   const ready = progress?.kind === "Ready" ? progress : null;
   const unresolved = ready ? unresolvedPosition(ready.view) : null;
   const handoff = unresolved ? null : ready?.handoff ?? null;
-  const title = !exploring
-    ? null
-    : navigation.originUnavailable
-      ? "held place unavailable in this version"
-      : navigation.origin
-        ? `place held${label ? ` · ${label}` : ""}`
-        : "inspecting this passage";
-  const resolve = async (choice: "Canonical" | "Device", trigger: HTMLButtonElement) => {
-    if (ready?.saving) return;
-    const heldFocus = document.activeElement === trigger;
-    await reader.resolveHandoff(choice);
-    if (heldFocus && !trigger.isConnected && document.activeElement === document.body)
-      returnFocus()?.focus({ preventScroll: true });
-  };
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
-  const saveOccurrence = useFeedbackOccurrence(!!ready?.saveFailed || !!ready?.retrying, reader);
-  const loadOccurrence = useFeedbackOccurrence(loadFailed !== null, reader);
-  const unavailableOccurrence = useFeedbackOccurrence(unavailable && !exploring, reader);
-  if (!unresolved && !title && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
+  if (!unresolved && !exploring && !handoff && !ready?.saveFailure && !unavailable && !loadFailed) return null;
+  const readFromHere = (busy: boolean): Verb => ({ label: "read from here", commandKey: "ReadFromHere", run: reader.continueHere, busy });
+  const retrySave: Verb = { label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: !!ready && (ready.saving || ready.retrying) };
+  const saveFailed = ready?.saveFailure ? saveFailure?.(ready.saveFailure, retrySave)
+    ?? { line: { fact: "your reading position isn’t saving.", reason: "this tab still holds it." }, verbs: [retrySave] } : null;
   return (
-    <div className={unresolved || title || handoff ? `${styles.status} ${styles.feedback}` : undefined} role="group" aria-label="reading position">
+    <div className={styles.status} role="group" aria-label="reading position">
       {unresolved ? <>
-        <FeedbackNotice content={{ tone: "Warning", title: "your saved reading position no longer matches this version." }}
-          announcement={announcement} actions={[{ label: "read from here", onClick: reader.continueHere, busy: documentRefreshing || ready?.saving || navigation.positioning }]} />
+        <Fact line={{ fact: "your saved reading position no longer matches this version." }} speak={speak}
+          verbs={[readFromHere(documentRefreshing || !!ready?.saving || navigation.positioning)]} />
         <details><summary>show previous passage</summary><p className={styles.previousPassage}>{unresolved.excerpt}</p></details>
-      </> : null}
-      {!unresolved && title && navigation.origin ? (
-        <FeedbackStatus
-          content={{ tone: "Neutral", title }}
-          announcement={announcement}
-          disclosure="Anchored"
-          returnFocus={returnFocus}
-          actions={[
-            {
-              label: "return",
-              onClick: () => void reader.returnToSpot(),
-              busy: navigation.positioning,
-              disabledReason: navigation.originUnavailable ? "this version no longer contains the held place" : undefined,
-            },
-            { label: "read from here", onClick: reader.continueHere, busy: navigation.positioning },
-          ]}
-        />
-      ) : !unresolved && title ? <ReadingOptions reader={reader} title={title} announcement={announcement} returnFocus={returnFocus} /> : null}
+      </> : exploring && navigation.originUnavailable ? (
+        <Fact line={{ fact: "your held place isn’t in this version." }} speak={speak} verbs={[readFromHere(navigation.positioning)]} />
+      ) : exploring && navigation.origin ? (
+        <Fact line={{ fact: "you’re away from your place.", reason: label ? `it’s held at ${label}.` : "it’s held." }} speak={speak} verbs={[
+          { label: "return", commandKey: "ReturnToPlace", run: () => void reader.returnToSpot(), busy: navigation.positioning },
+          readFromHere(navigation.positioning),
+        ]} />
+      ) : exploring ? <ReadingOptions reader={reader} speak={speak} returnFocus={returnFocus} /> : null}
       {handoff ? (
-        <div className={styles.choice}>
-          <FeedbackNotice content={{ tone: "Warning", title: "a newer reading place is available" }} announcement={announcement} returnFocus={returnFocus} />
-          <Button aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Canonical", event.currentTarget)}>
-            use newer place
-          </Button>
-          <Button aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Device", event.currentTarget)}>
-            keep my place
-          </Button>
-        </div>
+        <Fact line={{ fact: "your reading position changed elsewhere." }} speak={speak} verbs={[
+          { label: "go there", commandKey: "AdoptCanonicalPosition", run: () => void reader.resolveHandoff("Canonical"), busy: !!ready?.saving },
+          { label: "stay here", commandKey: "KeepDevicePosition", run: () => void reader.resolveHandoff("Device"), busy: !!ready?.saving },
+        ]} />
       ) : null}
-      {ready?.saveFailed ? (
-        <FeedbackFailure scope="Local" occurrence={saveOccurrence}
-          content={{ tone: "Warning", title: "reading position not synced", message: "your place is still held in this tab. retry to sync it." }}
-          announcement={announcement}
-          actions={[{ label: "retry", onClick: reader.retrySave, busy: ready.saving || ready.retrying }]}
-          disclosure="Anchored"
-          returnFocus={returnFocus}
-        />
+      {saveFailed ? <Fact key={`${saveFailed.line.fact}${saveFailed.line.reason ?? ""}`} line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
+      {unavailable && !exploring && !unresolved ? (
+        <Fact line={{ fact: "your saved reading position no longer matches this version." }} speak={speak} />
       ) : null}
-      {unavailable && !exploring ? (
-        <FeedbackFailure scope="Local" occurrence={unavailableOccurrence} content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
-      ) : null}
-      {loadFailed ? (
-        <FeedbackFailure scope="Local" occurrence={loadOccurrence}
-          content={{
-            tone: "Warning",
-            title: loadFailed.recovery === "RetryPosition" ? "couldn’t load your reading position" : "reading position needs a document reload",
-            message: "you can keep reading. position saving is paused until recovery succeeds.",
-          }}
-          announcement={announcement}
-          actions={[{
-            label: loadFailed.recovery === "RetryPosition" ? "retry position" : "reload document",
-            onClick: loadFailed.recovery === "RetryPosition" ? reader.revalidate : reader.retryLoad,
-            busy: loadFailed.retrying || documentRefreshing,
-          }]}
-          disclosure="Anchored"
-          returnFocus={returnFocus}
-        />
-      ) : null}
+      {loadFailed ? loadFailed.recovery === "RetryPosition"
+        ? <Fact line={{ fact: "couldn’t load your reading position.", reason: "it won’t save until it loads." }} speak={speak}
+          verbs={[{ label: "retry", commandKey: "RetryPositionLoad", run: reader.revalidate, busy: loadFailed.retrying || documentRefreshing }]} />
+        : <Fact line={{ fact: "your reading position isn’t saving." }} speak={speak}
+          verbs={[{ label: "reload document", commandKey: "ReloadDocument", run: reader.retryLoad, busy: loadFailed.retrying || documentRefreshing }]} />
+        : null}
     </div>
   );
 }
 
+/** A host's cold region before its reader mounts: the ruling at the reader's line pitch. */
+export function ReaderRuling({ profile }: { readonly profile: Schema<"ReaderProfileOut"> }) {
+  return <div className={styles.readerPitch} style={readerSurfaceStyle(profile)}><Ruling /></div>;
+}
+
 /** A first deep link has no earlier cursor to return to. Adoption remains explicit. */
-function ReadingOptions({ reader, title, announcement, returnFocus }: {
-  readonly reader: Reader;
-  readonly title: string;
-  readonly announcement: FeedbackAnnouncement;
-  readonly returnFocus: () => HTMLElement | null;
-}) {
+function ReadingOptions({ reader, speak, returnFocus }: { readonly reader: Reader; readonly speak: boolean; readonly returnFocus: () => HTMLElement | null }) {
   const id = useId();
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const positioning = useReaderState(reader, (state) => state.navigation.positioning);
   return (
     <div className={styles.choice}>
-      <FeedbackStatus content={{ tone: "Neutral", title }} announcement={announcement} />
+      <Fact line={{ fact: "you opened a linked passage.", reason: "your reading position hasn’t moved." }} speak={speak} />
       <Button aria-expanded={anchor !== null} aria-controls={id} onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}>
         reading options
       </Button>
       <FloatingActionSurface open={anchor !== null} anchor={anchor} id={id} disclosure role="group" label="reading options" align="start" placement="below" flip onDismiss={() => setAnchor(null)}>
-        <FeedbackStatus
-          content={{ tone: "Neutral", title: "make this your reading place" }}
-          announcement="None"
-          actions={[{ label: "read from here", onClick: reader.continueHere, busy: positioning }]}
-          returnFocus={returnFocus}
-        />
+        <Button aria-busy={positioning || undefined} aria-disabled={positioning || undefined} onClick={(event) => {
+          if (positioning) return;
+          // reading from here ends exploring, which takes this popover and its trigger: focus
+          // they held goes to the text. the popover is portaled, so the frame's recovery can't see it.
+          const held = document.activeElement === event.currentTarget;
+          flushSync(reader.continueHere);
+          if (held && document.activeElement === document.body) returnFocus()?.focus({ preventScroll: true });
+        }}>
+          read from here
+        </Button>
       </FloatingActionSurface>
     </div>
   );

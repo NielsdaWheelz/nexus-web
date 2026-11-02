@@ -8,7 +8,9 @@ import { excerptTextParts } from "@nexus/authored/excerpt";
 // assistant links. Mounted X owners are read separately and their offsets enter only
 // occurrences at that publication generation. Authored echoes never replace local rows.
 // Restored admission retries mounted remote evidence under its original account binding.
+// A failed re-read over a shown section says nothing: the section stands until a read lands.
 import { apiFetch, captureApiAccount, isCurrentApiAccount } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/serverState";
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -196,11 +198,11 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       const captureIds = mounted.kind === "text" ? [...new Set(mounted.units.flatMap(unit => unit.xPost?.owner && (unit.xPost.relation === "primary" || unit.xPost.relation === "embedded") ? [unit.xPost.owner.capture_id] : []))] : [];
       const [mediaMaps, captureMaps] = await Promise.all([
         Promise.all(remoteMediaIds(mounted).map(async id => {
-          const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
+          const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal: attempt }), signal);
           return data;
         })),
         Promise.all(captureIds.map(async id => {
-          const { data } = await apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal });
+          const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal: attempt }), signal);
           return { ...data, media_id: mediaId, identity: mounted.identity };
         })),
       ]);
@@ -211,6 +213,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     } catch (error) {
       if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account) || handleUnauthenticatedApiError(error)) return;
       controller.abort();
+      if (remote.status === "ready") return;
       remote = { status: "failed", error, retrying: false };
       project();
     }
@@ -228,7 +231,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       const seen = new Set(linked.map(entry => entry.resource.ref));
       links = { status: "ready", data: [...linked, ...referencing.flatMap(({ resource }) => seen.has(resource.ref) ? [] : [{ resource, link: null }])] };
     } catch (error) {
-      if (read !== linkReads) return;
+      if (read !== linkReads || links.status === "ready") return;
       links = { status: "failed", error, retrying: false };
     }
     project();
