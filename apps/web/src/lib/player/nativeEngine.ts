@@ -482,6 +482,12 @@ export function createNativeEngine(
   setObservationTransport(async (account_id, observations) => { await call("observe_consumption", { account_id, observations }); });
   void call("hello").catch(() => undefined);
 
+  const play = async () => {
+    const loaded = key();
+    if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+    await command("play", { key: loaded, expected_load_id: state.playbackSubject });
+  };
+
   return {
     supportsSilenceSkipping: true,
     queue,
@@ -494,11 +500,8 @@ export function createNativeEngine(
       await command("load", { media_id: descriptor.media_id, play, position_ms: positionMs }, LOAD_TIMEOUT_MS);
     },
     preview: descriptor => command("preview", { descriptor }, LOAD_TIMEOUT_MS).then(() => {}),
-    async play() {
-      const loaded = key();
-      if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      await command("play", { key: loaded, expected_load_id: state.playbackSubject });
-    },
+    play,
+    retry: play, // listeningSaveFailed pauses the service, so its line's retry resumes it
     async resumeLoaded(expectedSubject) {
       const loaded = key();
       if (loaded === null || state.playbackSubject !== expectedSubject || state.phase === "Ended" || state.playbackFailed || state.error !== null)

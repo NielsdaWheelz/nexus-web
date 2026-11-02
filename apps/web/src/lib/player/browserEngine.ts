@@ -10,8 +10,9 @@
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
  * and retains the sample, with the existing player retry for an explicitly refused write.
- * A refused write stands beside playing audio: it gates neither a seek nor a resume, and says
- * so only where admission can send that retry.
+ * A refused write stands beside playing audio: it gates neither a seek nor a resume, and raises
+ * its line only where admission can send the retry. `retry` sends the sample and leaves the
+ * element alone; `play` sends it and plays.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -190,7 +191,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             // The attached episode retries on the tick or `online`, unsent while admission refuses.
             return;
           } else {
-            // Standing error keeps the sample for an explicit retry (`play`), which resumes it.
+            // Standing error keeps the sample for an explicit `retry` or `play`, which sends it.
             current.stopped = true;
             if (current === episode) set({ error: PROGRESS_UNSAVED });
             console.warn("listening_write_refused", { status });
@@ -201,6 +202,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     } finally {
       current.writing = null;
     }
+  };
+
+  /** An explicit press over a stopped write: the line goes and the sample sends. */
+  const resend = (current: Episode) => {
+    current.stopped = false;
+    set({ error: null });
+    void write(current);
   };
 
   const adoptInto = (
@@ -547,14 +555,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       advanceAllowed = true;
       if (state.source === null)
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      if (current !== null && state.error !== null && !playbackHeld(current) && !audio.ended) {
-        // Only a refused write stands, so the element needs no recovery. A press that finds it
-        // playing can only be the retry; one that finds it paused may be the play button.
-        current.stopped = false;
-        set({ error: null });
-        void write(current);
-        if (!audio.paused) return;
-      } else if (state.error !== null) {
+      if (current !== null && state.error !== null && !playbackHeld(current)) resend(current);
+      if (state.error !== null) {
         // Explicit retry may resume a refused sample; never replace it with a fresh read.
         if (current !== null && current.queued !== null) current.stopped = false;
         generation += 1;
@@ -574,6 +576,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
       const subject = state.playbackSubject!;
       capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), subject, generation, mine);
+    },
+    async retry() {
+      const current = episode;
+      if (current === null || current.fenced || state.playbackFailed) return engine.play();
+      resend(current);
     },
     async resumeLoaded(expectedSubject) {
       const current = episode;
