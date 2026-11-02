@@ -188,6 +188,9 @@ export interface PlayerTimeline {
   readonly chapter: Schema<"ChapterOut"> | null;
 }
 export interface PlayerCommands {
+  /** Without `recapture`, a play of the queue cursor's own media plays that entry, from
+   * `positionMs` when given, and leaves the queue as it is. Otherwise it captures `source`, or
+   * the media alone, as a new queue. */
   playAudio(input: { mediaId: string; knownDescriptor: PlayerDescriptor | null; positionMs: number | null; source: (() => Promise<Schema<"PlaybackSnapshotOut">>) | null; recapture: boolean }): Promise<"Applied" | "Superseded">;
   createQueue(input: { entry: QueueEntry }): Promise<void>;
   queueCommand(request: QueueRequest): Promise<void>;
@@ -922,7 +925,7 @@ export function GlobalPlayerProvider({
         ? state?.queue?.queue_id === header?.queue_id && state?.queue?.current_entry_id === current?.id
         : loaded?.queueId === header?.queue_id && loaded?.entryId === current?.id && loaded?.subject === state?.playbackSubject;
     const sameOccurrence = ownsOccurrence && state?.source?.descriptor.media_id === mediaId && state.playbackSubject !== null;
-    if (!recapture && current?.media_id === mediaId && (positionMs === null || sameOccurrence && state?.phase !== "Ended")) {
+    if (!recapture && current?.media_id === mediaId) {
       if (positionMs !== null) retainCurrent();
       retirePending();
       return enqueue(async mine => {
@@ -943,8 +946,8 @@ export function GlobalPlayerProvider({
         } else if (owner.queue !== null) {
           const saved = queueViewRef.current.header!;
           void nativeRefresh(owner, await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
-            command: { kind: "select", entry_id: current.id, play: true, position_ms: null } }));
-        } else await activate(current, true, mine, knownDescriptor, null);
+            command: { kind: "select", entry_id: current.id, play: true, position_ms: positionMs } }));
+        } else await activate(current, true, mine, knownDescriptor, positionMs);
       }, { mediaId });
     }
     let frozen: QueueState | null = null;
