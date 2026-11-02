@@ -2,7 +2,7 @@
 
 imports is the reader's one place to see what happened to everything they brought in (and what the visible shared items they did not bring in are doing), what still needs them, and the one command that recovers it. it is one read model and one narration log; it owns no work.
 
-owners: `python/nexus/services/imports.py` (the read model), `python/nexus/services/import_history.py` (the only writer and reader of `media_upload_events` and `media_processing_events`), `python/nexus/schemas/imports.py` (the wire), `python/nexus/schemas/import_history.py` (stages, the failure catalog, the stored facts), `python/nexus/schemas/import_refs.py` (the ref grammar), `python/nexus/api/routes/imports.py`. web: `apps/web/src/lib/imports/` (`api.ts` reads and the media recovery admission, `ImportsProvider.tsx` the observer, `query.ts` the url, `copy.ts` every import, upload and acquisition string) and `apps/web/src/components/imports/` (list, toolbar, row, actions, inspector, badge), mounted by `app/(authenticated)/imports/ImportsPaneBody.tsx`. the owners it reads: ingest (attempts, sessions, progress, the recovery policy), the media projection (`media_facts`: readiness, offers, restrictions, the metadata view), metadata (`metadata_operations_sql`), content indexing.
+owners: `python/nexus/services/imports.py` (the read model), `python/nexus/services/import_history.py` (the only writer and reader of `media_upload_events` and `media_processing_events`), `python/nexus/schemas/imports.py` (the wire), `python/nexus/schemas/import_history.py` (stages, the failure catalog, the stored facts), `python/nexus/schemas/import_refs.py` (the ref grammar), `python/nexus/api/routes/imports.py`. web: `apps/web/src/lib/imports/` (`api.ts` reads and the media recovery admission, `ImportsProvider.tsx` the observer, `query.ts` the url, `copy.ts` every import, upload and acquisition string, `intake.tsx` the lines coming in, `lineView.ts` a line's words) and `apps/web/src/components/imports/` (list, toolbar, row, actions, inspector, badge), mounted by `app/(authenticated)/imports/ImportsPaneBody.tsx`. the owners it reads: ingest (attempts, sessions, progress, the recovery policy), the media projection (`media_facts`: readiness, offers, restrictions, the metadata view), metadata (`metadata_operations_sql`), content indexing.
 
 ## concepts
 
@@ -108,6 +108,56 @@ there is no storage, startup restore, replay or browser-restart recovery. other
 commands keep their existing owners and retry rules.
 
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
+
+## intake
+
+`lib/imports/intake.tsx` holds one account's lines: each one thing coming in, one identity
+from enter until it is readable, behind every door. `lib/imports/lineView.ts` words a line
+for every surface and for the intake's slips. nothing survives a reload.
+
+- **provider.** `ImportIntakeProvider`, above the workspace boundary and keyed on the
+  account (share mounts it alone), owns the store, the send queue and one account work
+  owner. it publishes a defect and throws nothing.
+- **host.** `ImportIntakeHost`, inside `ImportsProvider`, throws that defect in render, owns
+  the one `useDestinationCreation` for `into`, reads truth, opens armed lines and raises
+  slips. share has no host, so no truth: its accepted lines read `sent`.
+- **admit** never throws: every outcome is a line, or its caller's `Field` (the caller
+  parses with `extractLinks` and holds `ADMIT_LIMIT`). a link already listed adds none.
+  type, emptiness, the size limits and create's name rule refuse a file before any request.
+  while a library create is sending the admission waits, then reads `into`.
+- **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
+  revision and its libraries. a failed read is `no start`, or `offline`. links go one at a
+  time and file puts two at a time; a link's accept and an upload's confirm, both
+  serializable under the viewer lock, take one slot between them. every api call answers
+  within 30 s, the put within its upload window.
+- **answers.** a line is unknown only where an answer was lost after the server could act:
+  a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
+  stopped`. 401 and 426 answer before any route: handoff. a storage failure at a first
+  confirm published nothing: `couldn’t check the file`; after an unanswered confirm it is
+  unknown. a refused create forgets the attempt's guard; a fence or library refusal at
+  confirm opens it to review. an undeclared refusal reads `couldn’t import this.` and warns
+  its request id.
+- **replay.** `retry` sends the same id, guard and session again; for `changed` and `no
+  start` one reread re-freezes the batch's waiting and like lines, a link under a fresh id.
+  `retryWithout` drops every library the refusal's reread found missing. `reselect` starts
+  a fresh session; the expired one stays in imports.
+- **truth.** for accepted, unsettled lines, on acceptance and each clock advance, one pass
+  at a time: `GET /media/source-attempts/{id}` per link, two at a time, following
+  supersession; `POST /media/summaries/resolve` over the media ids, 100 a request; and for
+  a failed or dead run one `GET /imports/{ref}`, which decides readable, the reason or
+  removed. the host retains the observer while any accepted line is unsettled.
+- **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
+  raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
+  `retry` replays that batch's unknown lines.
+- **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
+  removed lines leave. everything else stays until `×`.
+
+- **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
+- **I12** an unknown line's retry replays its frozen id, guard and confirmation, never a fresh read.
+- **I13** `running` counts waiting, sending, uploading and verifying lines; `unsettled` adds
+  accepted lines not yet readable, failed or removed. the work owner stops browser work while
+  `running` is positive and is unconfirmed while a line sends, verifies or is unknown.
+- **I14** with no lines the intake sends nothing and holds no timer or observer.
 
 ## acquisition recovery
 
