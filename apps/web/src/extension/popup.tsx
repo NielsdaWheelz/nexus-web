@@ -523,9 +523,8 @@ function Destinations({
         setCatalog(result.snapshot.destinations);
         setFailure(null);
       } else {
-        setFailure({ tone: "Danger", title: "couldn’t load libraries.",
-          message: result.kind === "failure" ? result.failure.message : result.kind === "unreachable" ? NOT_ANSWERING.title : undefined,
-          requestId: result.kind === "failure" ? result.failure.requestId ?? undefined : undefined });
+        const reason = replyNotice(result);
+        setFailure({ tone: "Danger", title: "couldn’t load libraries.", message: reason?.title, requestId: reason?.requestId });
       }
     });
     return () => { disposed = true; };

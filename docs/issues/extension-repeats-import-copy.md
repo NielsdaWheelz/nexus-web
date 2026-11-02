@@ -2,7 +2,7 @@
 
 status: open · origin: 2026-11-02 import build, lane s3c · area: extension / copy
 
-`apps/web/src/extension/nexusClient.ts` (`refusal`) words the codes the extension's
+`apps/web/src/extension/nexusClient.ts` (`words`) words the codes the extension's
 routes answer with. six of its sentences are the web app's own import copy
 (`apps/web/src/lib/imports/copy.ts`: `CAPTURE_REFUSAL`'s `E_RESOURCE_CONFLICT`,
 `E_MEDIA_DELETING`, `E_INVALID_REQUEST`; `FAILURE_COPY` reasons for `E_FILE_TOO_LARGE`,

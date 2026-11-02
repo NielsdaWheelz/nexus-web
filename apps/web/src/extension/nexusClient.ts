@@ -127,7 +127,7 @@ function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
     repeated, not imported, because its dependencies would put React in this
     background page. Any other code reads as a refusal, or as nexus not answering
     when the status says nexus failed. */
-function refusal(code: string, status: number): string {
+function words(code: string, status: number): string {
   switch (code) {
     case "E_RESOURCE_CONFLICT":
       return "something changed while this was sending.";
@@ -202,7 +202,7 @@ async function call<T>(
   if (typeof error?.code === "string") {
     const requestId =
       typeof error.request_id === "string" ? error.request_id : null;
-    throw failure(error.code, refusal(error.code, response.status), requestId, response.status);
+    throw failure(error.code, words(error.code, response.status), requestId, response.status);
   }
   throw failure("E_UNKNOWN", "the extension couldn’t read nexus’s answer.", null, response.status);
 }
