@@ -35,7 +35,7 @@ export function usePodcastMenuActions(subject: PodcastActionSubject, focus: Podc
   const { ctx, run } = useActionRuntime();
   const actions: ActionDescriptor[] = project(subject, ctx, run, focus);
   const facts = subject.facts;
-  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "Retry checking subscription", icon: createElement(RotateCcw, { size: 16, "aria-hidden": true }), disabled: facts.retrying, onSelect: facts.retry });
+  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "Check subscription again", icon: createElement(RotateCcw, { size: 16, "aria-hidden": true }), busy: facts.retrying, onSelect: facts.retry });
   if (facts.kind === "Ready" && facts.resolution.kind === "Canonical") actions.push(...projectConsumptionUndoActions({ kind: "Podcast", podcast_id: facts.resolution.podcast_id }, ctx));
   return actions;
 }

@@ -549,7 +549,7 @@ export function useNexusController() {
       if (captureAttempt.current?.noteId !== running.noteId) captureAttempt.current = {noteId:running.noteId,promise:captureToday(getWritingRuntime(accountId),running.localDate,running.noteId,running.text),retry:null};
       else if (captureAttempt.current.retry) { captureAttempt.current.promise=captureAttempt.current.retry().then(()=>"");captureAttempt.current.retry=null; }
       await captureAttempt.current.promise;
-      return { target: { href: `/daily/${running.localDate}` }, title: "note saved on this device", openLabel: "open today",
+      return { target: { href: `/daily/${running.localDate}` }, title: "added to today", openLabel: "open",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
