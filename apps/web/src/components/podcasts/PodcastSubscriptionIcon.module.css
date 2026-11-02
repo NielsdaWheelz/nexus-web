@@ -1,6 +1,9 @@
 /* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot.
-   unsubscribed is the app's one weight, --icon-stroke; subscribed is 13/8 of it at every size. */
+   the weights are the badge's own, in the 24 viewbox, so its paths opt out of the
+   global non-scaling stroke. */
 .glyph > * {
+  stroke-width: 2;
+  vector-effect: none;
   transition: stroke-width var(--duration-base) var(--ease-glide);
 }
 .glyph > circle { fill: currentColor; } /* wider strokes invert the dot's inner edge */
@@ -11,7 +14,7 @@
   color: var(--accent);
   transition: color var(--duration-fast) var(--ease-glide);
 }
-.subscribed > * { stroke-width: calc(var(--icon-stroke) * 13 / 8); }
+.subscribed > * { stroke-width: 3.25; }
 /* a read shorter than the hold shows nothing; the control is disabled throughout. */
 [aria-disabled="true"] .subscribed {
   color: inherit;
