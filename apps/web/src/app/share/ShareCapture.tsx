@@ -87,8 +87,10 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
       let capture: ShareAccount["capture"] = null;
       if (props.isShell) {
         const params = new URL(location.href).searchParams;
+        if (params.get("capture_account_id") !== binding.account.account_id) throw new CaptureAdmissionError("OtherAccount");
         const noteId = params.get("capture_id"), localDate = params.get("capture_date");
-        if (params.get("capture_account_id") !== binding.account.account_id || noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new CaptureAdmissionError("OtherAccount");
+        // the share shell writes these: a malformed one is our defect, not another account's share.
+        if (noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new Error("share shell sent a malformed capture");
         capture = {noteId, localDate};
       }
       if (active) { setAccount({user_id:binding.account.account_id,calendar_time_zone:binding.account.calendar_time_zone,capture});setFailure(null); }
