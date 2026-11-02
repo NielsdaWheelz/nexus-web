@@ -73,19 +73,21 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
   const { focusRail, filterRail } = controller;
   // Initial focus is the first verb after the pair, pinned by id so a settling read never moves it.
   useLayoutEffect(() => { if (rail.focus === null && initial !== null) focusRail(initial); }, [rail.focus, initial, focusRail]);
+  const shown = order.join("\n");
   useLayoutEffect(() => {
     const bar = toolbar.current;
     const element = focus === null ? null : bar?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(focus)}"]`);
     if (!bar || !element) return;
     if (element !== document.activeElement) element.focus({ preventScroll: true });
-    // Reveal the focused verb by scrolling the rail alone; the list never moves for it.
+    // Reveal the focused verb by scrolling the rail alone, also when a settling read inserts verbs
+    // before it; the list never moves for it.
     const port = bar.getBoundingClientRect();
     const box = element.getBoundingClientRect();
     const start = port.left + bar.clientLeft;
     const end = start + bar.clientWidth;
     if (box.left < start) bar.scrollLeft -= start - box.left;
     else if (box.right > end) bar.scrollLeft += box.right - end;
-  }, [focus]);
+  }, [focus, shown]);
 
   // A hint is a key that acts: the pair's enter keys, or a letter that leaves its verb alone.
   const hint = (verb: NexusVerb): string | null => {
