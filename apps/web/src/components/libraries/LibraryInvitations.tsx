@@ -4,14 +4,13 @@
 // library, the role and who sent it; Accept, or Decline after a confirm. Every
 // page is read (no cap); an answer rereads the list. This is auxiliary to the
 // index: its own read failure and a missing connection show nothing here. A refused
-// answer speaks once; an unknown one holds until the reread lands.
+// answer speaks once, an unsent one included; an unknown one holds until the reread lands.
 
 import { useEffect, useId, useState } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
-import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import {
@@ -19,8 +18,9 @@ import {
   viewerInvitationsPage,
   type ViewerInvitation,
 } from "@/lib/libraries/api";
-import { refuseLibrary } from "@/lib/libraries/errors";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { installedApp } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
@@ -52,15 +52,16 @@ export default function LibraryInvitations() {
   useEffect(() => { if (unknown !== null && list.fresh) setUnknown(null); }, [unknown, list.fresh]);
 
   const answer = async (invitation: ViewerInvitation, accept: boolean) => {
-    if (installedApp && !remoteReady()) return;
+    const fact = `couldn’t ${accept ? "accept" : "decline"} the invitation to “${invitation.library_name}”.`;
+    if (refusedUnsent(outcome, fact)) return;
     setBusy(invitation.id);
     try {
       await respondToInvitation(invitation.id, accept);
       setDeclining(null);
     } catch (error) {
-      if (isRefusal(error) || !isApiError(error) || isSameSystemApiDefect(error))
-        refuseLibrary(outcome, error, `couldn’t ${accept ? "accept" : "decline"} the invitation to “${invitation.library_name}”.`);
-      else setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      handleUnauthenticatedApiError(error);
+      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      else refuseLibrary(outcome, error, fact);
     } finally {
       setAnswered((n) => n + 1);
       setBusy(null);

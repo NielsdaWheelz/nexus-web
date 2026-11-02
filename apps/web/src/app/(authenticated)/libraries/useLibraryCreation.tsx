@@ -9,10 +9,12 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { Library } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
-import { NAME_REFUSED, refuseLibrary } from "@/lib/libraries/errors";
+import { NAME_REFUSED, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
 import type { PanePrimaryAction } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -35,13 +37,15 @@ type Delivery = {
 };
 
 /** One pane-owned creation attempt; closing its dialog never cancels the write. An unknown
- * outcome holds outside the dialog, with its resend of the same id, until it lands or is
- * refused; a refusal speaks once and returns the draft. */
+ * outcome holds until it lands or is refused: in the dialog while it shows, where its submit is
+ * the resend of the same id, else in the pane with that resend. A refusal speaks once and returns
+ * the draft; a press admission refuses is said and sends nothing. */
 export function useLibraryCreation() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "library creation");
   const { ctx } = useActionRuntime();
   const fail = useThrowLater();
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const guard = useWorkGuard();
   const owner = useResourceDraft<{ creation: Creation; flight: Delivery | null }>("Libraries.Creation", () => ({
     creation: { kind: "Draft", text: "", field: null }, flight: null,
@@ -102,7 +106,7 @@ export function useLibraryCreation() {
     if (result.kind !== "Cancelled") release();
   };
   const deliver = async (attempt: Attempt, unconfirmed: number) => {
-    if (!mounted.current || owner.read().flight) return;
+    if (!mounted.current || owner.read().flight || refusedUnsent(outcome, `couldn’t create “${attempt.name}”.`)) return;
     const delivery: Delivery = { mayOpen: true };
     owner.set(value => ({ ...value, flight: delivery }));
     transition({ kind: "Sending", attempt, unconfirmed });
@@ -121,6 +125,7 @@ export function useLibraryCreation() {
         }
         if (!owns || ctx.sessionSignal().aborted) return null;
         if (result.kind === "Refused" && unconfirmed === 0) {
+          handleUnauthenticatedApiError(result.error);
           const invalid = result.error.code === "E_NAME_INVALID";
           transition({ kind: "Draft", text: attempt.name, field: invalid ? NAME_REFUSED : null });
           if (!invalid) refuseLibrary(outcome, result.error, `couldn’t create “${attempt.name}”.`);
@@ -169,12 +174,13 @@ export function useLibraryCreation() {
   const validation = draft ? creation.field : null;
   const text = draft ? creation.text : creation.kind === "Created" ? creation.library.name : creation.attempt.name;
   const held = creation.kind === "Unconfirmed" || sending && creation.unconfirmed > 0 ? creation : null;
+  const hold = held === null ? null : { id: `library-creation:${held.attempt.id}`, attempt: held.unconfirmed - 1,
+    line: { fact: `not sure creating “${held.attempt.name}” saved.`, reason: "it may have gone through." } };
   return {
     primaryAction,
     content: <>
-      {held !== null ? <Hold id={`library-creation:${held.attempt.id}`} attempt={held.unconfirmed - 1}
-        line={{ fact: `not sure creating “${held.attempt.name}” saved.`, reason: "it may have gone through." }}
-        verbs={[{ label: "retry", commandKey: `library-creation:${held.attempt.id}`, busy: sending, run: intent => submitCreation(intent) }]} /> : null}
+      {hold !== null && !visible ? <Hold {...hold}
+        verbs={resendVerbs({ label: "retry", commandKey: hold.id, busy: sending, run: intent => submitCreation(intent) })} /> : null}
       <Dialog
         open={visible}
         title="new library"
@@ -215,6 +221,7 @@ export function useLibraryCreation() {
             }}
           />
           {validation ? <div role="alert"><Field id={errorId} line={{ fact: validation }} /></div> : null}
+          {hold !== null ? <Hold {...hold} /> : null}
           <div className={styles.creationActions}>
             <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
             <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>

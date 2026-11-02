@@ -5,28 +5,33 @@
 // can advance a queued command's precondition. Unknown delivery retains the exact
 // command, and a read never rebases it. Creation and initial filing are atomic.
 // A lane's unknown outcome stands as a hold until its retry lands or a refusal settles
-// it. A refusal can't say whether an earlier unknown send landed, so the lane rereads
-// first: an intent the reread shows in force retires silently, any other is refused.
-// A refusal speaks once per lane, counting the successors it refused.
+// it; a first send admission refuses unsent is refused. A refusal can't say whether an
+// earlier unknown send landed, so the lane rereads first: an intent the reread shows in
+// force retires silently, unacknowledged, so any successor is refused as a conflict; any
+// other intent is refused. A refusal speaks once per lane, counting the successors it
+// refused; an item's own reason speaks only for one item.
 
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { ChooserRow } from "@/components/libraries/LibraryChooser";
+import type { Line } from "@/components/feedback/stage";
 import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { admissionRefusal, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { requestWithRetry, useFailedReadRepair } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { isAbortError } from "@/lib/errors";
 import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
 import { refuseLibrary } from "@/lib/libraries/errors";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
@@ -76,9 +81,12 @@ interface Creation {
   /** Attempts that left its outcome unconfirmed; past zero it holds until it lands or is refused. */
   unconfirmed: number;
 }
-/** A command the server refused: its fact, and the error that says why (null: refused here). */
-export type PlacementRefusal = { readonly fact: string; readonly error: unknown };
+/** A refused command: its fact and the error that says why, or a line decided here. */
+type Refusal = { readonly fact: string; readonly error: unknown } | { readonly line: Line };
 const REQUEST_TIMEOUT_MS = 30_000;
+const CONFLICT = "your libraries changed meanwhile.";
+/** Codes whose reason speaks of one item, false of the items refused behind it. */
+const ITEM_CODES = new Set(["E_MEDIA_NOT_FOUND", "E_NOT_FOUND", "E_MEDIA_DELETING"]);
 const LOCKED: Record<"PodcastSubscription" | "RequiresAdmin", string> = {
   PodcastSubscription: "a podcast subscription files it here.",
   RequiresAdmin: "only this library’s admins can change it.",
@@ -86,7 +94,7 @@ const LOCKED: Record<"PodcastSubscription" | "RequiresAdmin", string> = {
 const keyOf = (target: LibraryPlacementTarget) => `${target.kind}:${target.id}`;
 const resourceRef = (target: LibraryPlacementTarget) => `media:${target.id}`;
 
-function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refuse: (refusal: PlacementRefusal) => void) {
+function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refuse: (refusal: Refusal) => void) {
   const targets = new Map<string, Target>();
   const creations = new Map<string, Creation>();
   const lanes = new Map<string, Change[]>();
@@ -153,7 +161,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     const lane = lanes.get(change.libraryId)!;
     lane.splice(lane.indexOf(change), 1);
   };
-  /** Refuses `first` and every change queued behind it in its lane, and says so once. */
+  /** Refuses `first` and every change queued behind it in its lane, and says so once. `error` is the
+   * refusal of `first`; null when its predecessor landed unacknowledged, so its precondition moved. */
   const refuseLane = (first: Change, error: unknown) => {
     const refused = [...(lanes.get(first.libraryId) ?? [])];
     const items = new Set(refused.map(change => change.row)).size;
@@ -163,9 +172,12 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
       void read(change.row);
     }
     const name = `“${first.name}”`;
-    refuse({ error, fact: first.included
+    const fact = first.included
       ? items > 1 ? `couldn’t add ${items} items to ${name}.` : `couldn’t add to ${name}.`
-      : items > 1 ? `couldn’t remove ${items} items from ${name}.` : `couldn’t remove from ${name}.` });
+      : items > 1 ? `couldn’t remove ${items} items from ${name}.` : `couldn’t remove from ${name}.`;
+    if (error === null) refuse({ line: { fact, reason: CONFLICT } });
+    else if (items > 1 && isApiError(error) && ITEM_CODES.has(error.code)) refuse({ line: { fact } });
+    else refuse({ fact, error });
   };
   async function drain(libraryId: string) {
     if (!active || defect !== null || running.has(libraryId)) return;
@@ -178,6 +190,14 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         if (change.predecessor !== null) {
           if (change.predecessor.acknowledgedRevision === null) { refuseLane(change, null); break; }
           change.expectedRevision = change.predecessor.acknowledgedRevision;
+        }
+        if (!remoteAttemptAllowed()) {
+          // Refused unsent: a resend leaves its earlier outcome as unknown as it was.
+          const refusal = admissionRefusal();
+          signIn(refusal);
+          if (change.unconfirmed > 0) { change.phase = "Unknown"; break; }
+          refuseLane(change, refusal);
+          break;
         }
         change.phase = "Sending";
         emit();
@@ -261,7 +281,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
       retryRead(attempt.targets);
     } else if (outcome.kind === "Refused") {
       creations.delete(attempt.id);
-      refuse({ error: outcome.error, fact: `couldn’t create “${attempt.name}”.` });
+      signIn(outcome.error);
+      refuse({ fact: `couldn’t create “${attempt.name}”.`, error: outcome.error });
       retryRead(attempt.targets);
     } else if (isDefect(outcome.error)) {
       defect = { error: outcome.error };
@@ -297,7 +318,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         intended: known ? { included: intended, total: rows.length } : null,
         progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled", action };
     });
-    const failed = all.find(row => row.readError !== null);
+    const failed = all.find(row => row.readError !== null && !row.unavailable) ?? all.find(row => row.readError !== null);
     const reading = all.some(row => row.reading !== null);
     const retry = failed === undefined || failed.unavailable ? null : () => retryRead(all);
     const failure = failed === undefined ? null : retry === null
@@ -391,10 +412,11 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const outcome = useOutcome();
   const latestOutcome = useRef(outcome);
   latestOutcome.current = outcome;
+  const resendVerbs = useResendVerbs();
   const [, changedOwner] = useReducer((value: number) => value + 1, 0);
-  const [owner] = useState(() => createOwner(signIn, changedOwner, ({ fact, error }) => {
-    if (error === null) latestOutcome.current.say({ fact });
-    else refuseLibrary(latestOutcome.current, error, fact, "your libraries changed meanwhile.");
+  const [owner] = useState(() => createOwner(signIn, changedOwner, refusal => {
+    if ("line" in refusal) latestOutcome.current.say(refusal.line);
+    else refuseLibrary(latestOutcome.current, refusal.error, refusal.fact, CONFLICT);
   }));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
@@ -451,7 +473,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     {children}
     {owner.holds().map(held => <Hold key={held.id} id={held.id} attempt={held.attempt}
       line={{ fact: held.fact, reason: "it may have gone through." }}
-      verbs={[{ label: "retry", commandKey: held.id, run: held.retry, busy: held.busy }]} />)}
+      verbs={resendVerbs({ label: "retry", commandKey: held.id, run: held.retry, busy: held.busy })} />)}
     {creation.holds}
     <PickerSurface active={external !== null || session !== null} title="libraries"
       focusKey={session !== null ? `stored:${session.key}` : external?.key}

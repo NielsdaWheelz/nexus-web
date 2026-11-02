@@ -11,7 +11,7 @@ import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { admissionReason } from "@/lib/collections/admissionReason";
 import { prepareCollectionConsumption, type CollectionSelection } from "@/lib/consumption/api";
-import { installedApp, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
@@ -33,9 +33,11 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   const verb = podcast ? desiredState === "finished" ? "played" : "unplayed" : desiredState === "finished" ? "finished" : "unread";
   const target = selection.kind === "Podcast" ? { kind: "Podcast" as const, podcast_id: selection.podcast_id } : selection;
   const pending = ctx.consumption.pendingCollection(target);
-  const admitted = !installedApp || ctx.online;
-  // Subscribed, so the reasons below read admission as it stands.
-  const checking = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission) === "Checking";
+  // The owner sends only while admission is ready, in either host. Subscribed, so the reasons
+  // below read admission as it stands.
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const admitted = admission === "Ready";
+  const checking = admission === "Checking";
   const gateId = useId();
   const gate = !admitted ? admissionReason()
     : source.status === "ready" && source.error !== null ? "the selection couldn’t refresh." : null;

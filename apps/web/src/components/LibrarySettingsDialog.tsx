@@ -3,35 +3,35 @@
 // Library settings, opened by id: rename (sent with the name it replaces) and
 // delete (owner only, confirmed). Deleting a library never deletes media: items
 // filed only there move to the owner's All. Membership lives in the Members tab.
-// A refused command speaks once; an unknown one holds in this dialog with its
-// resend until it lands or is refused; the draft name survives both.
+// A refused command speaks once, an unsent one included; an unknown one holds in this
+// dialog with its resend until it lands or is refused; the draft name survives both.
 
 import { useLayoutEffect } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import { transportVerbs, type Verb } from "@/components/feedback/stage";
+import type { CommandVerb } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { unstamped } from "@/lib/consumption/listening";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
-import { NAME_REFUSED, refuseLibrary } from "@/lib/libraries/errors";
+import { mayHaveLanded, NAME_REFUSED, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
 import { libraryNameError } from "@/lib/libraries/views";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import styles from "./LibrarySettingsDialog.module.css";
 
-/** A command whose outcome is unknown: which one, its failed attempts, and the stale build or
- * sign-in that blocks its resend, if one does. */
-type Unconfirmed = { command: "Rename" | "Delete"; attempt: number; blocked: "SignIn" | "Update" | null };
+/** A command whose outcome is unknown: which one, and its failed attempts. */
+type Unconfirmed = { command: "Rename" | "Delete"; attempt: number };
 
 interface SettingsDraft {
   draft: string | null;
@@ -55,6 +55,7 @@ export default function LibrarySettingsDialog({
 }) {
   const fail = useThrowLater();
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const { ctx } = useActionRuntime();
   const workspace = useLatestWorkspace();
   const rawLibrary = usePaneFreeServerValue({
@@ -85,9 +86,7 @@ export default function LibrarySettingsDialog({
   /** Records an unknown outcome; a defect goes to the boundary instead. */
   const unconfirmed = (error: unknown, command: Unconfirmed["command"]) => {
     if (!isApiError(error) || isSameSystemApiDefect(error)) { fail({ error }); return null; }
-    const transport = transportOf(error);
-    return (previous: Unconfirmed | null): Unconfirmed => ({ command, attempt: previous?.command === command ? previous.attempt + 1 : 0,
-      blocked: transport === "SignIn" || transport === "Update" ? transport : null });
+    return (previous: Unconfirmed | null): Unconfirmed => ({ command, attempt: previous?.command === command ? previous.attempt + 1 : 0 });
   };
   const { read: readSettings, set: writeSettings } = state;
   useLayoutEffect(() => {
@@ -118,6 +117,8 @@ export default function LibrarySettingsDialog({
     : (renameRequest ? renameRequest.expectedName !== baseline : baseline !== current.name) ? "save my name" : "Save";
   const rename = async () => {
     const value = state.read();
+    const fact = `couldn’t rename “${current.name}”.`;
+    if (refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline, unconfirmed: false };
     state.set({ ...value, request, busy: "Rename" });
@@ -128,11 +129,12 @@ export default function LibrarySettingsDialog({
         draft: latest.draft === request.rawDraft ? saved.name : latest.draft }));
     } catch (error) {
       if (signal.aborted) return;
+      handleUnauthenticatedApiError(error);
       // A refusal settles a first send; after an unknown one it can't say whether that landed.
-      if (isRefusal(error) && value.request === null) {
-        state.set(latest => ({ ...latest, busy: null, request: null,
-          refusedName: error.code === "E_NAME_INVALID" ? request.name : latest.refusedName }));
-        if (error.code !== "E_NAME_INVALID") refuseLibrary(outcome, error, `couldn’t rename “${current.name}”.`, "it was renamed meanwhile.");
+      if (!mayHaveLanded(error) && value.request === null) {
+        const invalid = isApiError(error) && error.code === "E_NAME_INVALID";
+        state.set(latest => ({ ...latest, busy: null, request: null, refusedName: invalid ? request.name : latest.refusedName }));
+        if (!invalid) refuseLibrary(outcome, error, fact, "it was renamed meanwhile.");
       } else {
         const next = unconfirmed(error, "Rename");
         state.set(latest => ({ ...latest, busy: null, request: { ...request, unconfirmed: true }, unknown: next === null ? latest.unknown : next(latest.unknown) }));
@@ -141,6 +143,8 @@ export default function LibrarySettingsDialog({
     }
   };
   const remove = async () => {
+    const fact = `couldn’t delete “${current.name}”.`;
+    if (refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     setBusy("Delete");
     try {
@@ -155,16 +159,17 @@ export default function LibrarySettingsDialog({
       if (state.read().draft === state.read().baseline && state.read().request === null) onClose();
     } catch (error) {
       if (signal.aborted) return;
-      if (isRefusal(error) && state.read().unknown?.command !== "Delete") {
+      handleUnauthenticatedApiError(error);
+      if (!mayHaveLanded(error) && state.read().unknown?.command !== "Delete") {
         setBusy(null);
-        refuseLibrary(outcome, error, `couldn’t delete “${current.name}”.`);
+        refuseLibrary(outcome, error, fact);
       } else {
         const next = unconfirmed(error, "Delete");
         state.set(latest => ({ ...latest, busy: null, unknown: next === null ? latest.unknown : next(latest.unknown) }));
       }
     }
   };
-  const resend: Verb = unknown?.command === "Delete"
+  const resend: CommandVerb = unknown?.command === "Delete"
     ? { label: "retry", commandKey: `library-delete:${libraryId}`, busy: busy === "Delete", run: () => void remove() }
     : { label: "retry", commandKey: `library-rename:${libraryId}`, busy: busy === "Rename", run: () => void rename() };
 
@@ -173,7 +178,7 @@ export default function LibrarySettingsDialog({
       <div className={styles.sections}>
         {unknown !== null ? <Hold id={`library-settings:${libraryId}:${unknown.command}`} attempt={unknown.attempt}
           line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-          verbs={(unknown.blocked === null ? [resend] : transportVerbs(unknown.blocked, { signIn: null })) ?? undefined} /> : null}
+          verbs={resendVerbs(resend)} /> : null}
         {deleted ? <Fact line={{ fact: `“${current.name}” is deleted.`, reason: "your unsaved name is still here to copy." }} speak /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>

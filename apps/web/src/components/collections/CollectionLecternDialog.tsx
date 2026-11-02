@@ -14,7 +14,7 @@ import { admissionReason } from "@/lib/collections/admissionReason";
 import type { CollectionTarget } from "@/lib/consumption/api";
 import { prepareCollectionLectern } from "@/lib/lectern/api";
 import { LecternReadFailure } from "@/lib/lectern/lectern";
-import { installedApp, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
@@ -36,9 +36,11 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
   const outcome = useOutcome();
   const pending = ctx.lectern.collectionPending;
   const ownPending = pending !== null && JSON.stringify(pending.target) === JSON.stringify(target);
-  const admitted = !installedApp || ctx.online;
-  // Subscribed, so the reasons below read admission as it stands.
-  const checking = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission) === "Checking";
+  // The owner sends only while admission is ready, in either host. Subscribed, so the reasons
+  // below read admission as it stands.
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const admitted = admission === "Ready";
+  const checking = admission === "Checking";
   const lectern = ctx.lectern.read;
   const [sending, setSending] = useState(false);
   const gateId = useId();

@@ -9,7 +9,7 @@
  * Each write publishes `Consumption` (and `Lectern` when a row moves).
  */
 
-import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useOutcome, type FeedbackActions, type FeedbackContent, type Outcome } from "@/components/feedback/Feedback";
 import type { Verbs } from "@/components/feedback/stage";
 import {
@@ -271,9 +271,16 @@ function createConsumptionCommands(
  * them for that mount's old presenter, and leave with it. */
 export function useConsumptionCommands(reportDefect: (failure: { error: unknown }) => void) {
   const outcome = useOutcome();
+  // The owner reads the latest outcome, so a new shell verb never rebuilds it: a rebuild drops
+  // every held write and offered undo.
+  const latestOutcome = useRef(outcome);
+  latestOutcome.current = outcome;
   const { accountId } = useAuthenticatedAccount();
   const guard = useWorkGuard();
-  const owner = useMemo(() => createConsumptionCommands(outcome, accountId, guard, reportDefect), [outcome, accountId, guard, reportDefect]);
+  const owner = useMemo(() => createConsumptionCommands({
+    say: (line, verbs) => latestOutcome.current.say(line, verbs),
+    fail: (error, title, verb) => latestOutcome.current.fail(error, title, verb),
+  }, accountId, guard, reportDefect), [accountId, guard, reportDefect]);
   const bulk = useSyncExternalStore(owner.collections.subscribe, owner.collections.snapshot, owner.collections.snapshot);
   const single = useSyncExternalStore(owner.subscribe, owner.snapshot, owner.snapshot);
   const undoItems = useMemo(() => [...single.undoItems, ...bulk.undoItems], [single.undoItems, bulk.undoItems]);

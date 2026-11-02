@@ -7,7 +7,8 @@ import { ArrowRightLeft, UserMinus } from "lucide-react";
 // Every command is request, then reread: one command at a time, and after any
 // outcome both lists and the library are read again, so a refused command speaks
 // once and the tab goes once the reread says the viewer no longer manages the
-// library. An unknown outcome holds until both rereads land. The hook runs in the
+// library. A command admission refuses is never sent, so it is refused, never held; an unknown
+// outcome holds until both rereads land. The hook runs in the
 // library pane (its lists keep that pane's visit, and its hold stands with the pane);
 // the tab renders its state wherever the inspector puts it.
 
@@ -20,7 +21,6 @@ import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Select from "@/components/ui/Select";
 import PeopleSearch, { personLabel, type Person } from "@/components/users/PeopleSearch";
-import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import {
   invitationsPage,
@@ -35,7 +35,8 @@ import {
   type LibraryMember,
   type LibraryRole,
 } from "@/lib/libraries/api";
-import { refuseLibrary } from "@/lib/libraries/errors";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
@@ -87,14 +88,15 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   useEffect(() => { if (unknown !== null && settled) setUnknown(null); }, [unknown, settled]);
   /** Runs one command; true when it landed. `fact` says what a refusal couldn't do. */
   const run = async (fact: string, command: () => Promise<void>) => {
-    if (busy) return false;
+    if (busy || refusedUnsent(outcome, fact)) return false;
     setBusy(true);
     try {
       await command();
       return true;
     } catch (error) {
-      if (isRefusal(error) || !isApiError(error) || isSameSystemApiDefect(error)) refuseLibrary(outcome, error, fact);
-      else setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      handleUnauthenticatedApiError(error);
+      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      else refuseLibrary(outcome, error, fact);
       return false;
     } finally {
       setVersion((n) => n + 1);

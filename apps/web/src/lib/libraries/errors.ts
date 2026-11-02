@@ -1,12 +1,15 @@
-// Library, entry, placement and membership refusals. A domain code names the server rule that
-// refused, as a reason; every other code takes the transport's line and verb. Domain codes come
-// ahead of `transportOf`, so nothing here restates a transport.
+// Library, entry, placement, membership and sharing commands: whether a failure settles one, and
+// how a refusal is said. A domain code names the server rule that refused, as a reason; every
+// other code takes the transport's line and verb. Domain codes come ahead of `transportOf`, so
+// nothing here restates a transport. Only a sent command can have an unknown outcome.
 
 import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
 import type { Retract } from "@/components/feedback/stage";
-import { apiTransportFeedback, isApiError } from "@/lib/api/client";
+import { admissionRefusal, apiTransportFeedback, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError } from "@/lib/api/serverState";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 
 const GONE = "it’s no longer available.";
 /** The server's name rule, where a refused name is said. */
@@ -42,6 +45,23 @@ export function libraryReason(error: unknown): string | null {
 export function refuseLibrary(outcome: Outcome, error: unknown, fact: string, conflict?: string): Retract {
   const reason = isApiError(error) && error.code === "E_RESOURCE_CONFLICT" && conflict !== undefined ? conflict : libraryReason(error);
   return reason === null ? outcome.fail(error, fact) : outcome.say({ fact, reason });
+}
+
+/** True when admission would refuse the command unsent, after saying so: `fact` with admission's
+ * reason and verb, and a lapsed session handed to its handler. Asked immediately before sending,
+ * since apiFetch decides the same in the same tick. */
+export function refusedUnsent(outcome: Outcome, fact: string): boolean {
+  if (remoteAttemptAllowed()) return false;
+  const refusal = admissionRefusal();
+  handleUnauthenticatedApiError(refusal);
+  outcome.fail(refusal, fact);
+  return true;
+}
+
+/** Whether a sent command's failure leaves it possibly landed, for its owner to hold. A refusal
+ * settles it, and so does a lapsed session, which ran nothing; a defect is no outcome. */
+export function mayHaveLanded(error: unknown): boolean {
+  return isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error);
 }
 
 type Fail = (defect: { readonly error: unknown }) => void;

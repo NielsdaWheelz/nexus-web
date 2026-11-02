@@ -5,6 +5,7 @@ import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { ChooserError } from "@/components/libraries/LibraryChooser";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
@@ -60,6 +61,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   const outcome = useOutcome();
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
+  const resendVerbs = useResendVerbs();
   useLayoutEffect(() => {
     state.form = form;
     state.attempts.clear();
@@ -93,6 +95,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     state.attempts.delete(attempt.name.toLowerCase());
     state.publish();
     if (result.kind === "Refused") {
+      signIn(result.error);
       refuseLibrary(outcome, result.error, `couldn’t create “${attempt.name}”.`);
       return;
     }
@@ -115,7 +118,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   const holds: ReactNode = snapshot.pending.filter(attempt => attempt.form === form && attempt.unconfirmed > 0).map(attempt => {
     const id = `library-creation:${attempt.id}`;
     return <Hold key={id} id={id} attempt={attempt.unconfirmed - 1} line={{ fact: unsure(attempt), reason: MAY_HAVE }}
-      verbs={[{ label: "retry", commandKey: id, run: () => void send(attempt), busy: attempt.sending }]} />;
+      verbs={resendVerbs({ label: "retry", commandKey: id, run: () => void send(attempt), busy: attempt.sending })} />;
   });
   return {
     ...project(null),

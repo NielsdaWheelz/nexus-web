@@ -39,6 +39,8 @@ export interface ChooserError {
 }
 export interface ChooserCreation {
   readonly available: boolean;
+  /** Why creation waits, said on its row while unavailable; without it the row is not offered. */
+  readonly gate?: string;
   readonly pendingNames: readonly string[];
   readonly onCreate: (name: string) => boolean;
 }
@@ -69,7 +71,8 @@ function progress(row: ChooserRow): string | null {
 
 /** Search actions retain their query. Each row carries two marks: its status (spinner, alert or
  * lock) and its membership (check, minus, or `?` while unknown). The only failure in the list region
- * is the owner's read; a command's outcome speaks where its owner raises it. */
+ * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
+ * gates stands disabled with the reason. */
 export default function LibraryChooser({
   context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty,
   label = create === null ? "search libraries" : "search or create a library",
@@ -103,14 +106,16 @@ export default function LibraryChooser({
       .toSorted((a, b) => rank(a) - rank(b) || compareLibraryNames(a, b));
   }, [rows, q]);
   const invalid = create === null || name === "" ? null : libraryNameError(name);
-  const canCreate = create?.available === true && name !== "" && invalid === null
+  const named = create !== null && name !== "" && invalid === null
     && !rows.some(row => row.name.trim().toLowerCase() === q)
     && !create.pendingNames.some(pending => pending.trim().toLowerCase() === q);
+  const canCreate = named && create?.available === true;
+  const createGate = named && create?.available === false ? create.gate ?? null : null;
   const createKey = `create:${name}`;
   const options = [
     // A blocked row with nothing to say is still disabled: an empty reason.
     ...matching.map(row => ({ key: row.id, disabledReason: row.action.kind === "Set" ? null : row.action.reason ?? "" })),
-    ...(canCreate ? [{ key: createKey, disabledReason: null }] : []),
+    ...(canCreate || createGate !== null ? [{ key: createKey, disabledReason: createGate }] : []),
   ];
   const searchContext = JSON.stringify([context, query]);
   const current = reconcileSearchActive({
@@ -135,7 +140,7 @@ export default function LibraryChooser({
     verbs={error.retry ? [{ label: error.retryLabel ?? "retry", commandKey: error.commandKey ?? "library-read", run: error.retry, busy: error.busy ?? loading }] : undefined} /> : null;
   const shownFailure = failure ?? legacy;
   const invalidId = `${base}-invalid`;
-  const nothing = !loading && !shownFailure && matching.length === 0 && !canCreate;
+  const nothing = !loading && !shownFailure && matching.length === 0 && !canCreate && createGate === null;
   const refused = nothing && invalid !== null;
 
   return (
@@ -191,10 +196,14 @@ export default function LibraryChooser({
             </span>
           </div>;
         })}
-        {canCreate ? <div {...navigation.optionProps(createKey)}
-          aria-label={`create “${name}”`} className={collection.row} data-tone="accent">
+        {canCreate || createGate !== null ? <div {...navigation.optionProps(createKey)}
+          aria-label={`create “${name}”`} aria-describedby={createGate === null ? undefined : `${base}-create-gate`}
+          className={collection.row} data-tone="accent">
           <Plus className={collection.adornment} size={16} aria-hidden="true" />
-          <span className={collection.content}>create “{name}”</span>
+          <span className={collection.content}>
+            <span>create “{name}”</span>
+            {createGate === null ? null : <span id={`${base}-create-gate`} className={collection.detail}>{createGate}</span>}
+          </span>
         </div> : null}
       </div>
       {nothing ? <div className={styles.region}>{refused

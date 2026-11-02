@@ -22,6 +22,7 @@ import {
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { refusedUnsent } from "@/lib/libraries/errors";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { ShareSession } from "@/lib/sharing/controller";
@@ -89,8 +90,10 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
   );
 }
 
-/** What the grant editor borrows from the panel: a change's outcome, and share. */
+/** What the grant editor borrows from the panel: a change's admission and outcome, and share. */
 interface PanelActions {
+  /** True when admission refuses the change unsent, once that is said. */
+  refusedUnsent: (fact: string) => boolean;
   /** A change landed: an unknown outcome under the same key is settled. */
   landed: (key: string) => void;
   /** A change failed: refused, it speaks once; unknown, it holds until a read settles it. */
@@ -152,6 +155,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   if (defect !== null) throw defect.error;
 
   const actions: PanelActions = {
+    refusedUnsent: fact => refusedUnsent(outcome, fact),
     landed: key => setUnknown(current => current?.key === key ? null : current),
     fail: (error, key, fact) => {
       if (lifetime.current?.signal.aborted || handleUnauthenticatedApiError(error)) return;
@@ -296,6 +300,7 @@ function GrantEditor(props: {
     key: string,
     fact: string,
   ) => {
+    if (actions.refusedUnsent(fact)) return false;
     setBusy(key);
     const id = attempts.current.get(key) ?? crypto.randomUUID();
     attempts.current.set(key, id);
@@ -318,6 +323,7 @@ function GrantEditor(props: {
   };
 
   const revoke = async (id: string, fact: string) => {
+    if (actions.refusedUnsent(fact)) return;
     setBusy(id);
     try {
       await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });
