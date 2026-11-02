@@ -1,8 +1,9 @@
 """Frozen playback sources. Listing owners supply exact membership and total order.
 
 A read-only repeatable-read transaction freezes ordered identities.
-Filtering pins browser NFC/lowercase substring matching to Unicode 15 (Python 3.12) over title and every
-credited/canonical author name. Only playable episodes enter a queue; shows never
+Filtering pins browser NFC/lowercase substring matching to Unicode 15 (Python 3.12) over the
+names a row shows, as `mediaListFilterFields` reads them: the episode's title, then its show's,
+which the show's own page omits. Only playable episodes enter a queue; shows never
 expand. Selection loss and oversized results refuse the entire capture.
 """
 
@@ -21,7 +22,7 @@ from nexus.services.podcasts import episodes
 
 MAX_ENTRIES = 10_000
 # ECMAScript String.trim's whitespace and line terminators, unlike Python's strip.
-_JS_WHITESPACE = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_JS_WHITESPACE = "\u0009\u000a\u000b\u000c\u000d                  　﻿"
 
 
 def capture(
@@ -42,15 +43,16 @@ def capture(
         _, ids = episodes.ordered_selection_ids(
             db, viewer_id, source.podcast_id, state=source.state, sort=source.sort
         )
-    eligible = playable_episode_fields(db, viewer_id, ids)
+    # A library row names its episode's show; the show's own page omits it.
+    shown = {
+        media_id: (title, show) if isinstance(source, wire.LibraryQueueCapture) else (title,)
+        for media_id, (title, show) in playable_episodes(db, viewer_id, ids).items()
+    }
     matches = [
         media_id
         for media_id in ids
-        if media_id in eligible
-        and (
-            not query
-            or any(query in normalize("NFC", field).lower() for field in eligible[media_id])
-        )
+        if media_id in shown
+        and (not query or any(query in normalize("NFC", name).lower() for name in shown[media_id]))
     ]
     if len(matches) > MAX_ENTRIES:
         raise ConflictError(ApiErrorCode.E_LIMIT, "Too many episodes; narrow this view")
@@ -59,24 +61,25 @@ def capture(
     return wire.PlaybackSnapshotOut(media_ids=matches)
 
 
-def playable_episode_fields(
+def playable_episodes(
     db: Session, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, list[str]]:
-    """Visible playable episodes and their filter fields, without creating descriptors."""
+) -> dict[UUID, tuple[str, str]]:
+    """Visible playable episodes with their titles and show titles; creates no descriptors."""
     if not media_ids:
         return {}
     rows = db.execute(
         text(f"""
-            SELECT m.id, m.kind, m.title, m.external_playback_url, m.canonical_source_url,
-                   m.provider, m.provider_id
+            SELECT m.id, m.kind, m.title, p.title AS show_title, m.external_playback_url,
+                   m.canonical_source_url, m.provider, m.provider_id
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
+            JOIN podcasts p ON p.id = pe.podcast_id
             WHERE m.id = ANY(:media_ids) AND m.id IN ({requested_media_ids_cte_sql()})
               AND m.kind = 'podcast_episode'
         """),
         {"viewer_id": viewer_id, "media_ids": media_ids},
     )
-    fields = {
-        row.id: [row.title]
+    return {
+        row.id: (row.title, row.show_title)
         for row in rows
         if episode_playback_source(
             kind=row.kind,
@@ -88,15 +91,3 @@ def playable_episode_fields(
         )
         is not None
     }
-    for row in db.execute(
-        text("""
-            SELECT cc.media_id, cc.credited_name, c.display_name
-            FROM contributor_credits cc JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = ANY(:media_ids) AND cc.role = 'author'
-        """),
-        {"media_ids": list(fields)},
-    ):
-        fields[row.media_id].append(row.credited_name)
-        if row.display_name is not None:
-            fields[row.media_id].append(row.display_name)
-    return fields

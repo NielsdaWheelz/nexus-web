@@ -53,8 +53,9 @@ library entry types are media kinds, never podcast rules. migration
 `0312_playback_sessions` follows `0311_chapter_end_provenance` and starts with no saved
 queues. text matching trims with
 javascript's whitespace set, nfc-normalizes and lowercases the query, then
-substring-matches title and all credited/canonical author names with the same
-normalization. this is explicitly unicode 15.0, owned by the pinned python 3.12
+substring-matches, with the same normalization, the names the row shows as
+`mediaListFilterFields` reads them: the episode's title and, in a library, its
+show's title, which the show's own page omits; never its authors. this is explicitly unicode 15.0, owned by the pinned python 3.12
 runtime. browser `paneFilterText` shares it using frozen unassigned, cased and
 case-ignorable sets from unicode 15.0: newer characters stay opaque; native nfc
 and scalar lowercase run only on assigned segments, and final sigma uses the

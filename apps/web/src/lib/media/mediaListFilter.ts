@@ -6,7 +6,9 @@ import type { MediaSummary } from "@/lib/media/mediaSummary";
 
 /** The names a media row shows, as MediaIdentity draws them: the title, then an episode's show,
  * which the show's own page omits, else every credited and canonical author name, including
- * visually collapsed names. An episode's authors live in its details, so they never match. */
+ * visually collapsed names. An episode's authors live in its details, so they never match.
+ * A live queue capture reads the same names on the server (`services/playback_snapshot.py`), so
+ * the two change together or a play queues episodes its view hid. */
 export function mediaListFilterFields(
   media: {
     readonly title: string;
