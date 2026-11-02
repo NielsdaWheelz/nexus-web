@@ -26,7 +26,7 @@ const CLOSE_DELAY_MS = 150;
 // One caption at a time: one that shows closes another still in its grace.
 let shownClose: (() => void) | null = null;
 
-type Trigger = HTMLButtonElement | HTMLAnchorElement;
+type Trigger = HTMLButtonElement | HTMLAnchorElement | HTMLInputElement;
 
 export interface TooltipTriggerProps {
   ref: RefCallback<Trigger>;
@@ -40,7 +40,7 @@ export interface TooltipTriggerProps {
 }
 
 /**
- * Text help for a native button or link; its name, command and state remain
+ * Text help for a native button, link or input; its name, command and state remain
  * the caller's. Pointer hover opens it after `openDelayMs` (500 by default; the
  * collapsed rail's labels open at once), keyboard focus at once; it closes
  * 150 ms after the pointer leaves both trigger and caption, on press, blur,
