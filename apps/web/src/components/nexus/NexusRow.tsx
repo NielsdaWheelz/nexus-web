@@ -214,7 +214,7 @@ export function NexusNotices({ controller, returnFocus, id }: {
         retry={isStaleBuild(failure.error) || failure.error.code === "E_INVALID_REQUEST" ? undefined
           : { run: () => controller.retry(source), busy: controller.retrying.has(source) }} />)}
     {controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={controller.lookupGuidance} speak /></div> : null}
-    {kind === "Notice" ? <Fact line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
+    {kind === "Notice" ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
       if (action === "refresh") controller.refreshResults();
       else if (action === "related") controller.retryRelated();
       else controller.retrySearch();
