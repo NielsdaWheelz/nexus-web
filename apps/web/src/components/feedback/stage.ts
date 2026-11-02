@@ -117,7 +117,7 @@ function sameAnchor(a: Anchor, b: Anchor): boolean {
 }
 
 const sameAddress = (a: Address, b: Address) => a.kind === "Pane" ? b.kind === "Pane" && a.paneId === b.paneId : b.kind === "Workspace";
-const sentence = ({ fact, reason }: Line) => reason ? `${fact} ${reason}` : fact;
+export const sentence = ({ fact, reason }: Line) => reason ? `${fact} ${reason}` : fact;
 
 function stopClock(clock: Clock | null): void {
   if (clock?.running == null) return;

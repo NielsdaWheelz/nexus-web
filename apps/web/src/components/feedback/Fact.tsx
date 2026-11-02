@@ -11,7 +11,7 @@ import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Announcement, useActiveRegion } from "./Feedback";
-import { ShellContext, transportVerbs, type CommandVerb, type Line, type Verb, type Verbs } from "./stage";
+import { sentence, ShellContext, transportVerbs, type CommandVerb, type Line, type Verb, type Verbs } from "./stage";
 import styles from "./Fact.module.css";
 
 const sameVerb = (a: Verb, b: Verb) => "href" in a
@@ -95,7 +95,7 @@ function FactVerbs({ verbs, contextId }: { verbs?: Verbs; contextId: string }) {
 export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs; speak?: boolean }) {
   const lineId = useId();
   const [occurrence] = useState({});
-  const text = line.reason ? `${line.fact} ${line.reason}` : line.fact;
+  const text = sentence(line);
   return <div className={styles.fact}>
     <p id={lineId} className={styles.line}>{text}</p>
     <FactVerbs verbs={verbs} contextId={lineId} />
@@ -119,7 +119,7 @@ export function Failed({ error, noun, retry }: { error: unknown; noun: string; r
 /** Beneath its input; the input's owner absorbs the growth. */
 export function Field({ id, line, verbs }: { id: string; line: Line; verbs?: Verbs }) {
   return <div id={id} className={styles.field}>
-    {line.reason ? `${line.fact} ${line.reason}` : line.fact}
+    {sentence(line)}
     <FactVerbs verbs={verbs} contextId={id} />
   </div>;
 }
