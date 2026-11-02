@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Failed, Field } from "@/components/feedback/Fact";
 import { Hold } from "@/components/feedback/Feedback";
 import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
+import { ControlContents } from "@/components/ui/control";
 import MediaImage from "@/components/ui/MediaImage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -13,6 +14,7 @@ import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { MAY_HAVE } from "@/lib/chat/commands";
 import {
   QUESTION_MAX,
   createReading,
@@ -166,12 +168,12 @@ export default function OracleLandingPaneBody() {
                 }
                 aria-busy={submitting || undefined}
               >
-                Consult the oracle
+                <ControlContents busy={submitting}>Consult the oracle</ControlContents>
               </button>
             </div>
             {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : null}
           </form>
-          {held && unknown > 0 ? <Hold id={held.id} attempt={unknown} line={{ fact: "not sure the reading started.", reason: "it may have gone through." }}
+          {held && unknown > 0 ? <Hold id={held.id} attempt={unknown} line={{ fact: "not sure the reading started.", reason: MAY_HAVE }}
             verbs={[{ label: "retry", commandKey: `ask ${held.id}`, busy: submitting, run: resend }]} /> : null}
 
           {readings.status === "failed" ? (
