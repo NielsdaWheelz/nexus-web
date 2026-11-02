@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -12,10 +11,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { OverlayContext, focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
+import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import ModalFrame from "./ModalFrame";
 import styles from "./HoverPreview.module.css";
 
@@ -42,8 +39,6 @@ export function useHoverPreview(enabled: boolean, label: string): {
   render(body: ReactNode): ReactNode;
 } {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const [feedbackBounds, setFeedbackBounds] = useState<HTMLDivElement | null>(null);
-  const modal = useContext(OverlayContext);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const skipReturnFocus = useRef(false);
@@ -81,15 +76,13 @@ export function useHoverPreview(enabled: boolean, label: string): {
     const panel = position.ref.current;
     if (panel) (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
   }, [anchor, position.placed, position.ref]);
-  const { layer } = useOverlay(card, {
+  useOverlay(card, {
     kind: "transient",
     onDismiss: () => close(),
     inside: () => [position.ref.current, anchor],
     returnFocusTo: () => anchor,
     tabContinuation: () => position.ref.current,
   });
-
-  const bindPreview = useCallback((element: HTMLDivElement | null) => { position.ref.current = element; setFeedbackBounds(element); }, [position.ref]);
 
   return {
     trigger: {
@@ -131,12 +124,12 @@ export function useHoverPreview(enabled: boolean, label: string): {
           backdropClassName={styles.sheetBackdrop}
           className={styles.sheet}
         >
-          <div className={styles.content}>{body}<FeedbackRecoveryControl /></div>
+          <div className={styles.sheetBody}>{body}</div>
         </ModalFrame>
       ) : container ? (
         createPortal(
           <div
-            ref={bindPreview}
+            ref={position.ref}
             className={styles.card}
             role="dialog"
             aria-label={label}
@@ -156,10 +149,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
               close();
             }}
           >
-            <FeedbackSurface bounds={feedbackBounds} interaction={layer} modal={modal} active={card}
-              protectedTargets={() => anchor ? [anchor] : []} returnFocus={() => anchor}>
-              <div className={styles.content}>{body}<FeedbackRecoveryControl /></div>
-            </FeedbackSurface>
+            {body}
           </div>,
           container,
         )

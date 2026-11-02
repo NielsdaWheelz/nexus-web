@@ -87,6 +87,9 @@ interface ActionBase {
   readonly busy?: boolean;
   readonly hasPopup?: "dialog";
   readonly disabledReason?: string;
+  /** The reason names a wait, not a lasting cause: the verb is plainly disabled and its reason
+   * is for a screen reader alone. */
+  readonly waiting?: boolean;
   readonly tone?: "default" | "danger";
   readonly separatorBefore?: boolean;
 }
@@ -155,17 +158,22 @@ export type MenuContent = {
   }[];
 };
 
-/** A result belongs only to the exact request signal created by its presenter. */
+/** A result belongs only to the exact request signal created by its presenter. A failure carries
+ * its error: the menu says it, in the transport's words. Until L7, components/player still sets
+ * `feedback` instead, which the menu tells as a failure of no known cause. */
 export type PreparationState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly content: MenuContent }
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error: unknown }
   | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
 
 /**
  * Facts that settle after a prepared snapshot is published, for the same request. They
- * render in one region after it; failures retain their owner's recovery. Arrival cannot reorder,
- * replace or close the published actions, move focus or change their meaning.
+ * render in one region after it; a failure ends the menu with `more actions`, which prepares
+ * everything again. Arrival cannot reorder, replace or close the published actions, move focus
+ * or change their meaning. A failure's `feedback`, `retry` and `pending` are read by nothing:
+ * components/resources still sets them until L7.
  */
 export type TrailingState =
   | null

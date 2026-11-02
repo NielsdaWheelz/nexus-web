@@ -25,12 +25,14 @@
   justify-content: center;
 }
 
+/* The panel clips and its body scrolls, so the stage's modal anchor stays on the panel's floor. */
 .sheet {
+  display: flex;
+  flex-direction: column;
   width: calc(100vw - var(--space-4));
   max-width: 480px;
   max-block-size: 80dvh;
-  overflow-y: auto;
-  padding: var(--space-3) var(--space-4);
+  overflow: hidden;
   margin-bottom: var(--viewport-safe-bottom);
   background: var(--surface-2);
   border: 1px solid var(--edge);
@@ -42,4 +44,9 @@
   color: var(--ink);
 }
 
-.content { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: start; gap: var(--space-2); }
+.sheetBody {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-4);
+}

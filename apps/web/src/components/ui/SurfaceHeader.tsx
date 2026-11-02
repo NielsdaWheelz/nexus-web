@@ -31,7 +31,6 @@ import {
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import Button from "./Button";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
@@ -202,7 +201,6 @@ export default function SurfaceHeader({
             />
           </div>
           <div className={styles.trailing}>
-            <FeedbackRecoveryControl className={styles.headerButton} />
             {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
               returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
             {!narrow && primaryAction && primary && primaryState ? (
@@ -216,7 +214,7 @@ export default function SurfaceHeader({
                     className={styles.headerButton}
                     aria-label={primary.label}
                     aria-describedby={primary.disabledReason ? reasonId : undefined}
-                    tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                    tooltip={{ text: primary.disabledReason && !primary.waiting ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
                     data-action-id={primary.id}
                     data-workspace-rich-target="true"
                     onClick={primaryAction.onActivate}
@@ -234,7 +232,7 @@ export default function SurfaceHeader({
                     aria-pressed={primaryState.barPressed}
                     aria-expanded={primaryState.barExpanded}
                     aria-controls={primaryState.barControls}
-                    tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                    tooltip={{ text: primary.disabledReason && !primary.waiting ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
                     data-action-id={primary.id}
                     onClick={primaryAction.onActivate}
                     onKeyDown={primaryAction.onActivate}

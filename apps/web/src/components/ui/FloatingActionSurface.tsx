@@ -11,12 +11,10 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { Scope, Session } from "@/components/feedback/scope";
+import { Scope } from "@/components/feedback/scope";
 import { cx } from "@/lib/ui/cx";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
-import { OverlayContext, focusableElements, useOverlay, useOverlayContainer, type Layer } from "@/lib/ui/overlay";
+import { focusableElements, useOverlay, useOverlayContainer, type Layer } from "@/lib/ui/overlay";
 import { useAnchoredPosition, type AnchorState, type MeasuredAnchor } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
@@ -54,7 +52,8 @@ export default function FloatingActionSurface({
   readonly id?: string;
   /** An explicitly opened details surface, in the anchor's logical tab order. */
   readonly disclosure?: boolean;
-  /** A source-owned feedback disclosure retains that source host. */
+  /** The old presenter's details keep its host eligible while open. Only components/feedback
+   * passes it, and both go in L7. */
   readonly feedback?: boolean;
   /** The actual control when the positioned anchor includes its whole row. */
   readonly disclosureTrigger?: HTMLElement | null;
@@ -84,9 +83,7 @@ export default function FloatingActionSurface({
   readonly children: ReactNode | ((placed: boolean, anchorState: AnchorState) => ReactNode);
 }) {
   const shown = open && anchor !== null;
-  const modal = useContext(OverlayContext);
   const feedbackScope = useContext(Scope);
-  const session = useContext(Session);
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
   const mobileViewport = useMobileViewport();
   const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
@@ -188,7 +185,6 @@ export default function FloatingActionSurface({
       id={id}
       tabIndex={disclosure ? -1 : undefined}
       data-disclosure={disclosure || undefined}
-      data-feedback-source={feedback ? feedbackScope?.host.bounds?.id || undefined : undefined}
       className={cx(styles.surface, className)}
       style={{ ...position.style, ...caret, ...(feedback && !feedbackScope?.eligible() ? { visibility: "hidden" } : {}) } as CSSProperties}
       role={role}
@@ -202,12 +198,7 @@ export default function FloatingActionSurface({
         if (preservePointerSelection) event.preventDefault();
       }}
     >
-      {feedback || session === null ? typeof children === "function" ? children(position.placed, position.anchorState) : children :
-        <FeedbackSurface bounds={surfaceElement} interaction={layer} modal={modal} active={shown}
-          protectedTargets={() => trigger ? [trigger] : []} returnFocus={() => trigger}>
-          {typeof children === "function" ? children(position.placed, position.anchorState) : children}
-          <FeedbackRecoveryControl />
-        </FeedbackSurface>}
+      {typeof children === "function" ? children(position.placed, position.anchorState) : children}
     </div>,
     container,
   );
