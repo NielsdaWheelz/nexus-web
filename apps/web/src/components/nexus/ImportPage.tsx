@@ -313,8 +313,10 @@ export default function ImportPage({ controller, page, mobile }: {
             }}
           />
         </div>
-        <DestinationTrigger ref={intoRef} label="into" accessibleLabel="import into" emptyLabel="All" chosen={intake.into}
-          expanded={choosing} disabled={false} controls={{ kind: "dialog" }} onToggle={() => setChoosing(current => !current)} />
+        <div className={styles.into}>
+          <DestinationTrigger ref={intoRef} label="into" accessibleLabel="import into" emptyLabel="All" chosen={intake.into}
+            expanded={choosing} disabled={false} controls={{ kind: "dialog" }} onToggle={() => setChoosing(current => !current)} />
+        </div>
       </div>
       <span id={HELP_ID} className="sr-only">with links here, enter imports them.</span>
       {fieldLine || creation.error ? <div className={styles.fieldLines}>

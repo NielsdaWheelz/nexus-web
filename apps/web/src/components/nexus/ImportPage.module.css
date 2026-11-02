@@ -51,7 +51,10 @@
 
 .page[data-mobile] .fieldBox:focus-within { border-color: var(--ring); }
 .page[data-mobile] .field { min-height: 46px; padding: 0; }
-.page[data-mobile] .fieldRow > :last-child { justify-self: start; }
+.page[data-mobile] .into { justify-self: start; max-inline-size: 100%; }
+
+/* `into` takes what its names need, up to a third of the row; the field takes the rest. */
+.into { flex: 0 1 auto; min-width: 0; max-inline-size: 33%; }
 
 .fieldLines { padding: 0 var(--space-4) 0 var(--text-edge); }
 
