@@ -28,6 +28,7 @@ import {
   type MaterializedOpenDailyPageTarget,
   type ChoiceReturn,
   type NexusAction,
+  type NexusImportOrigin,
   type NexusOpenIntent,
   type NexusPage,
   type NexusPane,
@@ -410,11 +411,11 @@ export function useNexusController() {
     setOpen(false);
   }
 
-  function rootOrigin(row: NexusRow | undefined): NexusRootOrigin {
+  function rootOrigin(row: NexusRow | undefined): NexusImportOrigin {
     const control = row?.key === "QuickAction:New" ? "New"
       : row?.key === "Continuation:UseText" ? "Continuation:UseText"
         : row?.key ?? "Search";
-    return { mode: !open ? "Overview" : rootMode, control };
+    return open ? { mode: rootMode, control, query } : { mode: "Overview", control, query: "" };
   }
 
   function choiceReturn(row: NexusRow | undefined, activation: NexusTargetActivation, origin: NexusRootOrigin | undefined): ChoiceReturn {
@@ -422,7 +423,7 @@ export function useNexusController() {
   }
 
   /** The one activation core. */
-  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, origin?: NexusRootOrigin): WorkspaceTargetActivationResult | null {
+  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, origin?: NexusImportOrigin): WorkspaceTargetActivationResult | null {
     reorder.cancel({ silent: true });
     if (target.kind !== "InternalHref" && target.kind !== "PaneOpen" && target.kind !== "OpenDailyPage" &&
       target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" && target.kind !== "CreatePage" &&
@@ -440,7 +441,7 @@ export function useNexusController() {
         openAcceptedSource(target, activation);
         return null;
       case "OpenAdd":
-        setPage({ kind: "Add", sessionId: addSession.start(target.seed) });
+        setPage({ kind: "Add", sessionId: addSession.start(target.seed), origin: origin ?? rootOrigin(row) });
         setOpen(true);
         return null;
       case "CreatePage":
@@ -657,7 +658,7 @@ export function useNexusController() {
     rootFocus.current = null;
     setRootMode("Overview");
     const nextPage: NexusPage = intent.kind === "Add"
-      ? { kind: "Add", sessionId: addSession.start(intent.seed) }
+      ? { kind: "Add", sessionId: addSession.start(intent.seed), origin: null }
       : { kind: "Root" };
     if (intent.kind !== "Add") addSession.discard();
     setQueryState("");
@@ -666,7 +667,7 @@ export function useNexusController() {
     setOpen(true);
     if (intent.kind === "QuickAction") {
       const action = NEXUS_COMMANDS[intent.actionId].action("");
-      if (action.kind === "Available") run(action.target, PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search" });
+      if (action.kind === "Available") run(action.target, PROGRAMMATIC_NEXUS_TARGET_ACTIVATION, undefined, { mode: "Overview", control: "Search", query: "" });
       else setAnnouncement(action.reason);
     }
   }
@@ -693,12 +694,23 @@ export function useNexusController() {
 
   }
 
+  /** Esc, the scrim and android back step back only from a palette that has not sent. */
+  const dismissClosesAdd = page.kind === "Add" && (page.origin === null || addSession.state.sent);
+
   function back() {
     if (reorder.cancel()) return;
-    const exit: Exit = { kind: page.kind === "Add" ? "Close" : "Root" };
+    const exit: Exit = { kind: "Root" };
     if (guardExit(exit) !== "accepted") return;
     setAnnouncement("");
-    if (page.kind === "Add") { performExit(exit); return; }
+    if (page.kind === "Add" && page.origin !== null) {
+      const { mode, control, query: text } = page.origin;
+      const { sent } = addSession.state;
+      // setQuery enters search on phones; the origin's mode then overrides it.
+      setQuery(sent ? "" : text);
+      setRootMode(mode);
+      rootFocus.current = viewport.isMobile && mode === "Search" ? "Search"
+        : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control;
+    }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
       return setPage(page.returnTo);
@@ -713,14 +725,14 @@ export function useNexusController() {
     if (destination?.kind === "Root") {
       setRootMode(destination.origin.mode);
       rootFocus.current = destination.origin.control;
-      if (destination.origin.control === "Continuation:UseText") setActive("Continuation:UseText");
     }
     performExit(exit);
   }
 
   function escape() {
     if (reorder.cancel()) return;
-    if (page.kind !== "Root") back();
+    if (dismissClosesAdd) requestExit({ kind: "Close" });
+    else if (page.kind !== "Root") back();
     else if (rootMode === "NewPane") {
       rootFocus.current = viewport.isMobile ? "NewPane" : "Search";
       setRootMode("Overview");
@@ -916,7 +928,7 @@ export function useNexusController() {
     /** Native keyboard dismissal precedes this task-owned Back transition. */
     guardClose(): DismissDecision {
       if (reorder.cancel()) return "blocked";
-      if (page.kind === "Add") return guardExit({ kind: "Close" });
+      if (dismissClosesAdd) return guardExit({ kind: "Close" });
       if (viewport.isMobile && page.kind === "Root" && rootMode !== "Overview") {
         escape();
         return "blocked";
@@ -953,7 +965,10 @@ export function useNexusController() {
       }
       const control = rootFocus.current;
       rootFocus.current = null;
-      if (control && (viewport.isMobile || page.kind !== "Root")) {
+      if (control && !viewport.isMobile && page.kind === "Root") {
+        // Desktop focus rests in the query; the control names the row to select, now it is composed.
+        if (rows.some(row => row.key === control)) setActive(control);
+      } else if (control) {
         const target = [...container.querySelectorAll<HTMLElement>("[data-nexus-control]")].find((node) => node.dataset.nexusControl === control);
         if (target) return target;
       }

@@ -74,11 +74,29 @@ all older callbacks. reload loses browser drafts/files.
 
 the task registers actual populated rows, unresolved acceptance, destination
 creation and its running browser pipeline with the common work guard. empty
-drafts, destination seed changes and settled receipts are clean. normal and
-defect-boundary dismissal use one native confirmation. cancellation keeps the
-transfer running; confirmed leave stops remaining browser work and discards its
-local state. accepted imports remain server-owned. add has no back-to-launcher
-step or reload recovery.
+drafts, destination seed changes and settled receipts are clean; so is a row
+seeded from the palette query until its first edit, because the query still
+holds that text. normal and defect-boundary dismissal use one native
+confirmation. cancellation keeps the transfer running; confirmed leave stops
+remaining browser work and discards its local state. accepted imports remain
+server-owned. add has no reload recovery.
+
+the page holds its origin: the palette's mode, control and query, or null when
+opened from outside it (rail, library). sent means a submission moved a row out
+of draft in this session; removing or re-staging that row does not unsend it.
+both shells' dismissal branches on the same table, after the guard:
+
+| | arrow | esc, scrim, android back |
+| --- | --- | --- |
+| palette, nothing sent | root, origin restored | same |
+| palette, sent | root, query cleared | close |
+| outside | root, overview | close to opener |
+
+restored means the query, the mode, the import row selected and focus in the
+combobox. a phone has no row selection: from search, focus lands in the search
+input; from the overview, on the import row, since focusing that input enters
+search. a query is never restored after a send. pickers consume esc first. the
+defect view has no arrow and keeps esc.
 
 ## saved placement
 

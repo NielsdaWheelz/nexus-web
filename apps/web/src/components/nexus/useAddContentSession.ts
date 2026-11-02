@@ -76,6 +76,8 @@ export type AddItem =
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
       readonly upload: UploadAttempt | null;
+      /** Still the palette query's text, which leaving keeps: not work until an edit. */
+      readonly seeded?: true;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
   | {
@@ -129,6 +131,8 @@ export type AddSessionState = Readonly<{
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
+  /** A row has left Draft. Removing or re-staging it does not unsend it. */
+  sent: boolean;
 }>;
 
 export interface DraftDestinationScope {
@@ -192,12 +196,14 @@ function initialState(seed: AddSeed): AddSessionState {
           destinations: [...seed.initialDestinations],
           showFeedback: true,
           upload: null,
+          seeded: true,
         }),
       ),
       { kind: "Insertion", id: createRandomId("add-item") },
     ],
     newItemDestinations: [...seed.initialDestinations],
     mutation: { kind: "Idle" },
+    sent: false,
   };
 }
 
@@ -301,7 +307,7 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item),
+        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item) && !(item.kind === "Draft" && item.seeded),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
       },
@@ -611,7 +617,7 @@ export function useAddContentSession(): AddContentSessionController {
       ...next,
       newItemDestinations: scope.includeNewItems ? setDestination(next.newItemDestinations, { destination, included }) : next.newItemDestinations,
       items: next.items.map(row => row.kind === "Draft" && ids.has(row.id)
-        ? { ...row, destinations: setDestination(row.destinations, { destination, included }) } : row),
+        ? { ...row, seeded: undefined, destinations: setDestination(row.destinations, { destination, included }) } : row),
     }));
     return true;
   }
@@ -745,6 +751,7 @@ export function useAddContentSession(): AddContentSessionController {
     });
     update((next) => ({
       ...next,
+      sent: next.sent || rows.length > 0,
       mutation:
         rows.length === 0
           ? { kind: "Idle" }
