@@ -5,7 +5,7 @@ import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { changedLine, recoveryOf, sayRefusal } from "@/lib/chat/commands";
+import { changedLine, recoveryOf, reloadsAlone, sayRefusal } from "@/lib/chat/commands";
 import { routeOf, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
@@ -110,7 +110,8 @@ function Information({ message }: { message: Message }) {
  * "rerun with…" / "regenerate with…": an explicit model, frozen while its command is pending.
  * A shifted menu choice or button lands the answer in a new pane; nothing downgrades that. A
  * refusal is said while the dialog is topmost, so it shows here; an unknown outcome is the pane's,
- * whose held slip shows here too. A changed chat, or the read after it, is the pane's lane, which
+ * whose held slip shows here too, and once a stale build refused its retry the press waits on the
+ * slip's reload. A changed chat, or the read after it, is the pane's lane, which
  * this dialog covers, so it also stands here while the press reads.
  */
 function Repeat({ message, operation, openIntent, onClose }: {
@@ -166,7 +167,8 @@ function Repeat({ message, operation, openIntent, onClose }: {
         <Button onClick={onClose}>cancel</Button>
         <Button
           emphasis="strong"
-          disabled={own ? own.kind === "Busy" : command.kind !== "Idle" || catalog.status !== "ready" || reason !== null || draft.kind !== "Selected"}
+          disabled={own ? own.kind === "Busy" || (own.standing?.kind === "Unknown" && reloadsAlone(own.standing.refused))
+            : command.kind !== "Idle" || catalog.status !== "ready" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
           aria-describedby={reason ? reasonId : undefined}

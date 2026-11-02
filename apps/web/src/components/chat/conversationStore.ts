@@ -10,7 +10,9 @@ import {
   failed,
   getConversationCommands,
   getNewChatCommands,
+  refusedFact,
   repeatMessage,
+  type CommandKind,
   type CommandOutcome,
   type CommandState,
   type ConversationTree,
@@ -59,9 +61,9 @@ export type ChatState = Readonly<{
 }>;
 export type ChatStore = ReturnType<typeof createChatStore>;
 
-/** A command before the pane holds a tree: `fact` is the command's. */
-const unloaded = (fact: string): Promise<CommandOutcome> =>
-  Promise.resolve(failed({ line: { fact, reason: "this chat hasn’t loaded." }, error: null }));
+/** A command before the pane holds a tree. */
+const unloaded = (command: CommandKind): Promise<CommandOutcome> =>
+  Promise.resolve(failed({ line: { fact: refusedFact(command), reason: "this chat hasn’t loaded." }, error: null }));
 
 export function createChatStore(accountId: string, conversationId: string | null, viewId: string) {
   const commands = conversationId ? getConversationCommands(accountId, conversationId) : getNewChatCommands(accountId, viewId);
@@ -259,7 +261,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     send(request: DraftRequest, selectionRoute: Route | null, openIntent: OpenIntent, onAcceptance: () => void): Promise<CommandOutcome> {
       const { destination } = request;
       const observed = revision();
-      if (destination.kind === "Existing" && observed === null) return unloaded("couldn’t send.");
+      if (destination.kind === "Existing" && observed === null) return unloaded({ kind: "Send" });
       const exact = destination.kind === "New" ? destination : { ...destination, expected_revision: observed ?? 0 };
       const send = { kind: "Send", runId: createRandomId(), request: { ...request, destination: exact }, selectionRoute, viewId, openIntent } as const;
       return command(() => commands.execute(send, onAcceptance));
@@ -268,7 +270,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     /** Reuse the exact source choice unless the user explicitly chooses another. */
     repeat(operation: "rerun" | "regenerate", assistantId: string, explicit: { selection: Selection; route: Route | null } | null, openIntent: OpenIntent): Promise<CommandOutcome> {
       const message = state.messages.get(assistantId);
-      if (!state.conversation || state.gone || !message) return unloaded(`couldn’t ${operation}.`);
+      if (!state.conversation || state.gone || !message) return unloaded({ kind: "Repeat", operation });
       const conversation = state.conversation;
       return command(() => repeatMessage(accountId, conversation, message, operation, explicit, openIntent));
     },
@@ -297,7 +299,7 @@ export function createChatStore(accountId: string, conversationId: string | null
 
     /** Freeze the pane's observed tree before asking for destructive confirmation. */
     deleteMessage(messageId: string): Promise<CommandOutcome> {
-      if (!state.conversation || state.gone) return unloaded("couldn’t delete this message.");
+      if (!state.conversation || state.gone) return unloaded({ kind: "DeleteMessage" });
       const tree = { conversation: state.conversation, messages: [...state.messages.values()], active_leaf_message_id: state.activeSendLeafId };
       return command(() => confirmChatDeletion(accountId, { kind: "Message", tree, messageId }));
     },

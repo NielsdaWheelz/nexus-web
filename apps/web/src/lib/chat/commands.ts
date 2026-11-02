@@ -1,10 +1,11 @@
 "use client";
 
 import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
-import type { Line, Verb } from "@/components/feedback/stage";
+import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, type ApiError, type ApiPath } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
@@ -84,10 +85,11 @@ export type CommandOutcome =
     };
 /**
  * What a pending command waits on: an answer that never came, so it may have landed; a chat that
- * changed under it and must be read before anything else is sent; or that read, failed.
+ * changed under it and must be read before anything else is sent; or that read, failed. `refused`
+ * is why the unknown command's last retry was answered no, or never sent.
  */
 export type Standing =
-  | { readonly kind: "Unknown" }
+  | { readonly kind: "Unknown"; readonly refused: Refusal | null }
   | { readonly kind: "Changed" }
   | { readonly kind: "Unread"; readonly error: ApiError };
 type Pending = {
@@ -134,8 +136,11 @@ export function sayRefusal({ say, fail }: Outcome, outcome: CommandOutcome, retr
 
 const BUSY = failed({ line: { fact: PENDING_CHANGE }, error: null });
 
+/** What a command is, without what it carries. */
+export type CommandKind = { readonly kind: Exclude<ChatCommand["kind"], "Repeat"> } | Pick<Extract<ChatCommand, { kind: "Repeat" }>, "kind" | "operation">;
+
 /** What a refused command says first. */
-export function refusedFact(command: ChatCommand): string {
+export function refusedFact(command: CommandKind): string {
   switch (command.kind) {
     case "Send": return "couldn’t send.";
     case "Repeat": return `couldn’t ${command.operation}.`;
@@ -168,10 +173,23 @@ export function commandKey(command: ChatCommand): string {
 export const changedLine = (command: ChatCommand): Line => command.kind === "DeleteChat"
   ? { fact: `couldn’t delete “${command.title}”.`, reason: "it changed meanwhile." } : { fact: CHANGED };
 
+/** What an unknown outcome says: its fact, then why its last retry was refused, else `MAY_HAVE`. */
+const unknownLine = (fact: string, refused: Refusal | null): Line => ({ fact, reason: refused?.line.reason ?? MAY_HAVE });
+
+/** A stale build refused the last retry: nothing sends until a reload. */
+export const reloadsAlone = (refused: Refusal | null): boolean =>
+  refused !== null && refused.error !== null && transportOf(refused.error) === "Update";
+
+/** A held unknown outcome: its line, and its owner's verbs, but a stale build offers reload alone. */
+export const heldUnknown = (fact: string, refused: Refusal | null, verbs: Verbs): { line: Line; verbs: Verbs | undefined } => ({
+  line: unknownLine(fact, refused),
+  verbs: reloadsAlone(refused) ? transportVerbs("Update", { signIn: null }) ?? undefined : verbs,
+});
+
 /** Until L7, the reader dock (L2) reads the standing as content. */
 function told(command: ChatCommand, standing: Standing): FeedbackContent {
   switch (standing.kind) {
-    case "Unknown": return feedbackContent({ line: { fact: unsureFact(command), reason: MAY_HAVE }, error: null });
+    case "Unknown": return feedbackContent({ line: unknownLine(unsureFact(command), standing.refused), error: standing.refused?.error ?? null });
     case "Changed": return feedbackContent({ line: changedLine(command), error: null });
     case "Unread": return feedbackContent(refusal(UNREAD, standing.error));
   }
@@ -273,7 +291,7 @@ export function repeatMessage(
 ): Promise<CommandOutcome> {
   const selection = explicit?.selection ?? message.trust_trail?.run.run_selection.selection;
   if (!selection)
-    return Promise.resolve(failed({ line: { fact: `couldn’t ${operation}.`, reason: "its model wasn’t recorded." }, error: null }));
+    return Promise.resolve(failed({ line: { fact: refusedFact({ kind: "Repeat", operation }), reason: "its model wasn’t recorded." }, error: null }));
   return getConversationCommands(accountId, conversation.id).execute({
     kind: "Repeat",
     messageId: message.id,
@@ -314,7 +332,7 @@ export async function confirmChatDeletion(
     // nothing was sent: the read precedes the confirmation
     return failure.kind === "Handled" || !owner.isActive()
       ? { kind: "Handled" }
-      : failed(refusal(target.kind === "Message" ? "couldn’t delete this message." : "couldn’t delete this chat.", failure.error));
+      : failed(refusal(refusedFact({ kind: target.kind === "Message" ? "DeleteMessage" : "DeleteChat" }), failure.error));
   }
   if (!owner.isActive()) return { kind: "Handled" };
   if (owner.getSnapshot().kind !== "Idle") return BUSY; // another command started during the read
@@ -460,7 +478,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       }
     }
     attempt.unconfirmed = true;
-    return stand({ kind: "Unknown" });
+    return stand({ kind: "Unknown", refused: answer });
   };
   const send = async (): Promise<CommandOutcome> => {
     const attempt = pending;
@@ -527,7 +545,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         if (attempt.accepted) stand({ kind: "Changed" });
         else if (submitted) {
           attempt.unconfirmed = true;
-          stand({ kind: "Unknown" });
+          stand({ kind: "Unknown", refused: null });
         } else {
           pending = null;
           set(IDLE_COMMAND);
@@ -535,7 +553,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         throw failure.error;
       }
       if (failure.kind === "Handled") {
-        if (attempt.unconfirmed) stand({ kind: "Unknown" });
+        if (attempt.unconfirmed) stand({ kind: "Unknown", refused: null });
         else {
           pending = null;
           set(IDLE_COMMAND);
@@ -544,7 +562,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       }
       if (submitted && failure.kind === "Unknown") {
         attempt.unconfirmed = true;
-        return stand({ kind: "Unknown" });
+        return stand({ kind: "Unknown", refused: null });
       }
       return refuse(refusal(refusedFact(command), failure.error), null, MISSING.has(failure.error.code));
     }

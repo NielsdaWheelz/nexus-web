@@ -14,7 +14,7 @@ import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { changedLine, commandKey, MAY_HAVE, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
+import { changedLine, commandKey, heldUnknown, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -39,7 +39,7 @@ import {
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { CommandVerb, Verbs } from "@/components/feedback/stage";
+import type { CommandVerb } from "@/components/feedback/stage";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -446,19 +446,19 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     </div>;
   }
 
-  const unknown = pending?.standing?.kind === "Unknown" && !composed ? pending : null;
-  const unknownKey = unknown === null ? null : commandKey(unknown.command);
-  const unknownRetry: CommandVerb | null = unknown && { label: "retry", commandKey: `retry ${unknownKey}`, busy: unknown.kind === "Busy", run: again };
-  const unknownVerbs: Verbs | undefined = unknownRetry === null ? undefined : unknown?.command.kind === "Send"
-    ? [unknownRetry, { label: "discard send", commandKey: `discard ${unknownKey}`, run: () => store.discardCommand() }]
-    : [unknownRetry];
+  const unknownStanding = pending?.standing?.kind === "Unknown" && !composed ? pending.standing : null;
+  const pendingKey = pending === null ? "" : commandKey(pending.command);
+  const unknownRetry: CommandVerb = { label: "retry", commandKey: `retry ${pendingKey}`, busy: pending?.kind === "Busy", run: again };
+  const unknown = pending !== null && unknownStanding !== null ? heldUnknown(unsureFact(pending.command), unknownStanding.refused, pending.command.kind === "Send"
+    ? [unknownRetry, { label: "discard send", commandKey: `discard ${pendingKey}`, run: () => store.discardCommand() }]
+    : [unknownRetry]) : null;
   const lane = pending?.standing?.kind === "Changed"
     ? <Fact speak={isPaneActive} line={changedLine(pending.command)}
-      verbs={[{ label: "check", commandKey: `check ${commandKey(pending.command)}`, busy: pending.kind === "Busy", run: again }]} />
+      verbs={[{ label: "check", commandKey: `check ${pendingKey}`, busy: pending.kind === "Busy", run: again }]} />
     : pending?.standing?.kind === "Unread"
       ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
       // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
-      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknownVerbs} />
+      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknown.verbs} />
       : null;
   return (
     <div className={styles.pane}>
@@ -468,7 +468,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
         {lane}
       </div> : null}
-      {unknown && holds ? <Hold id={unknownKey!} attempt={unknown.attempt} line={{ fact: unsureFact(unknown.command), reason: MAY_HAVE }} verbs={unknownVerbs} /> : null}
+      {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}

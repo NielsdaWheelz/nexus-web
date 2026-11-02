@@ -7,8 +7,8 @@ import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { commandKey, MAY_HAVE, PENDING_CHANGE, recoveryOf, refusalOf, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
+import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { commandKey, heldUnknown, MAY_HAVE, PENDING_CHANGE, recoveryOf, refusalOf, reloadsAlone, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
@@ -31,9 +31,10 @@ const BLOCKED = {
 } as const;
 
 /** Draft text and model, and the one control for the chat's current admission state. A refused
- * send is said beneath the input, where send is the retry; one whose answer never came is held
- * above the composer until it resolves, and send and `discard send` stay its verbs here. Any other
- * pending command of the chat is the pane's to hold; send says it waits on it. */
+ * send is said beneath the input until text, model or quote changes, and send is the retry; one
+ * whose answer never came is held above the composer until it resolves, and send and `discard send`
+ * stay its verbs here, unless a stale build refused its retry. Any other pending command of the chat
+ * is the pane's to hold; send says it waits on it. */
 export default function ChatComposer(props: {
   scope: string;
   /** This pane: its draft, and the sends whose recovery it shows. */
@@ -93,7 +94,7 @@ export default function ChatComposer(props: {
   const focused = useRef<string | null>(null);
   const fieldId = useId();
   const waitsId = useId();
-  /** A send's refusal, until the input changes. */
+  /** A send's refusal, until what it refused changes. */
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stopUnknown, setStopUnknown] = useState<{ runId: string; attempt: number } | null>(null);
@@ -175,10 +176,17 @@ export default function ChatComposer(props: {
     if (recovery) retry(activation.intent);
     else void submit(activation.intent);
   };
-  // an unknown send holds above the composer; its retry resends the frozen request
-  const held = own?.command.kind === "Send" && own.standing?.kind === "Unknown" ? own : null;
+  // an unknown send holds above the composer; its retry resends the frozen request, unless a stale
+  // build refused it: the hold then offers reload alone, and send waits
+  const unknown = own?.command.kind === "Send" && own.standing?.kind === "Unknown" ? own.standing : null;
+  const held = own !== null && unknown !== null ? heldUnknown(unsureFact(own.command), unknown.refused, [
+    { label: "retry", commandKey: `retry ${commandKey(own.command)}`, busy: own.kind === "Busy", run: retry },
+    { label: "discard send", commandKey: `discard ${commandKey(own.command)}`, run: () => store.discardCommand() },
+  ]) : null;
+  const reloads = unknown !== null && reloadsAlone(unknown.refused);
   const blocked = target.kind === "Blocked" ? target.reason : null;
   const sendWaits = blocked !== null && blocked !== "ReplyTargetUnavailable" ? BLOCKED[blocked]
+    : reloads ? staleBuild()
     : !run && command.kind !== "Idle" && own === null ? PENDING_CHANGE : null;
   // the draft stays: focus on the withdrawn control returns to it
   const discard = (event: MouseEvent<HTMLButtonElement>) => {
@@ -207,10 +215,7 @@ export default function ChatComposer(props: {
     : recallVerb ? [recallVerb] : useRecalled ? [useRecalled] : undefined;
   return (
     <div className={styles.composer}>
-      {held ? <Hold id={commandKey(held.command)} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }} verbs={[
-        { label: "retry", commandKey: `retry ${commandKey(held.command)}`, busy: held.kind === "Busy", run: retry },
-        { label: "discard send", commandKey: `discard ${commandKey(held.command)}`, run: () => store.discardCommand() },
-      ]} /> : null}
+      {own !== null && held !== null ? <Hold id={commandKey(own.command)} attempt={own.attempt} line={held.line} verbs={held.verbs} /> : null}
       {stopUnknown && run?.runId === stopUnknown.runId && !stopRequested
         ? <Hold id={`stop:${stopUnknown.runId}`} attempt={stopUnknown.attempt} line={{ fact: "not sure the answer stopped.", reason: MAY_HAVE }} /> : null}
       <div className={styles.shell}>
@@ -231,6 +236,7 @@ export default function ChatComposer(props: {
             quote={quote}
             onRemove={locked ? undefined : (event) => {
               if (document.activeElement === event.currentTarget) textarea.current?.focus({ preventScroll: true });
+              setRefusal(null);
               props.onRemoveQuote();
             }}
             onRetry={props.onRetryQuote}
@@ -272,16 +278,16 @@ export default function ChatComposer(props: {
           <GenerationPicker
             catalogRead={catalogRead}
             value={selection}
-            onChange={setSelection}
+            onChange={(next) => { setRefusal(null); setSelection(next); }}
             disabled={!inputReady || frozen !== null}
             waiting={recallRequired && recallPending && memoryFailure === null}
           />
-          {held ? <Button disabled={held.kind === "Busy"} onClick={discard}>discard send</Button> : null}
+          {unknown !== null && !reloads ? <Button disabled={own?.kind === "Busy"} onClick={discard}>discard send</Button> : null}
           <Button
             emphasis={recovery || run ? undefined : "strong"}
             iconOnly
             className={styles.send}
-            disabled={sending || (recovery ? false : run ? stopRequested : !canSend)}
+            disabled={sending || (recovery ? reloads : run ? stopRequested : !canSend)}
             onClick={run && !recovery ? () => cancel(run.runId) : activateSend}
             onKeyDown={activateSend}
             aria-label={sendLabel.current}

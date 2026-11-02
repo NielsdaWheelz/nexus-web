@@ -6,7 +6,7 @@ import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/compo
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { changedLine, commandKey, MAY_HAVE, unsureFact, type CommandOutcome, type CommandState, type ConversationCommands } from "./commands";
+import { changedLine, commandKey, heldUnknown, unsureFact, type CommandOutcome, type CommandState, type ConversationCommands } from "./commands";
 
 export interface ChatCommandObservation {
   readonly id: string;
@@ -71,10 +71,12 @@ function PendingCommand({ observation, remove, fail }: {
   });
   const held = (line: Line, verbs: Verbs | undefined) => <Hold id={`${key}:${standing.kind}`} attempt={current.attempt} line={line} verbs={verbs} />;
   switch (standing.kind) {
-    case "Unknown":
-      return held({ fact: unsureFact(command), reason: MAY_HAVE }, command.kind === "Send"
+    case "Unknown": {
+      const { line, verbs } = heldUnknown(unsureFact(command), standing.refused, command.kind === "Send"
         ? [verb("retry"), { label: "discard send", commandKey: `discard ${key}`, run: () => owner.discard() }]
         : [verb("retry")]);
+      return held(line, verbs);
+    }
     case "Changed":
       return held(changedLine(command), [verb("check")]);
     case "Unread": {

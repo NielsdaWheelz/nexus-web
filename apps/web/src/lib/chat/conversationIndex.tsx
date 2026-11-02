@@ -5,15 +5,16 @@ import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import type { CommandVerb } from "@/components/feedback/stage";
 import { apiFetch, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { confirmChatDeletion, MAY_HAVE } from "./commands";
+import { confirmChatDeletion, heldUnknown } from "./commands";
 import { createRandomId } from "@/lib/createRandomId";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { failureOf } from "./wire";
+import { failureOf, type Refusal } from "./wire";
 
 // The complete chat index, latest source lookup and deletion. Writers publish "Chats".
 
@@ -59,15 +60,17 @@ interface Creation {
   readonly abort: () => void;
   readonly body: string;
   busy: boolean;
-  /** Attempts whose answer never came. Once one has, the creation may exist, so it stays held. */
-  unknown: number;
+  /** Once an attempt's answer never came the creation may exist, so it stays held: `attempt` keys
+   * its speech, and `refused` is why the last retry was answered no, or never sent. */
+  held: { attempt: number; refused: Refusal | null } | null;
   intent: OpenIntent;
 }
 const NO_CREATIONS: readonly Creation[] = [];
+const REFUSED = "couldn’t create the chat.";
 
 /** The original context-create closure belongs to this account until its exact request settles. A
  * refusal is told once and forgets the creation; an unknown outcome holds it, and its retry resends
- * the same id, which the server answers with the same chat. */
+ * the same id, which the server answers with the same chat. A refused retry keeps it held. */
 function creationOwner(accountId: string, refused: (error: ApiError, retry: CommandVerb) => void) {
   let retired = false;
   const entries = new Map<string, Creation>();
@@ -94,7 +97,11 @@ function creationOwner(accountId: string, refused: (error: ApiError, retry: Comm
       const failure = failureOf(error);
       if (failure.kind === "Handled") return;
       if (failure.kind === "Defect") {ctx.reportDefect({error: failure.error}); return;}
-      if (failure.kind === "Unknown" || entry.unknown > 0) {entry.unknown += 1; return;}
+      if (failure.kind === "Unknown") {entry.held = {attempt: (entry.held?.attempt ?? 0) + 1, refused: null}; return;}
+      if (entry.held !== null) {
+        entry.held = {attempt: entry.held.attempt + 1, refused: {line: TRANSPORT_LINES[transportOf(failure.error)].command(REFUSED), error: failure.error}};
+        return;
+      }
       remove(entry);
       refused(failure.error, {label: "retry", commandKey: `create ${entry.key}`, run: intent => void owner.create({...entry.input, intent})});
     } finally {entry.busy = false; if (current(entry)) emit();}
@@ -108,12 +115,12 @@ function creationOwner(accountId: string, refused: (error: ApiError, retry: Comm
       const key = `${accountId}:${input.ref}`;
       let entry = entries.get(key);
       if (entry?.busy) return;
-      if (!entry || entry.unknown === 0) {
+      if (!entry || entry.held === null) {
         if (entry) remove(entry);
         const id = createRandomId();
         const signal = input.ctx.sessionSignal();
         const abort = () => remove(admitted);
-        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, unknown: 0, intent: input.intent};
+        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, held: null, intent: input.intent};
         entry = admitted;
         entries.set(key, entry);
         signal.addEventListener("abort", abort, {once: true});
@@ -129,12 +136,15 @@ export function useConversationCreationOwner(accountId: string) {
   const { fail } = useOutcome();
   const told = useRef<Outcome["fail"]>(fail);
   useLayoutEffect(() => { told.current = fail; });
-  const owner = useMemo(() => creationOwner(accountId, (error, retry) => told.current(error, "couldn’t create the chat.", retry)), [accountId]);
+  const owner = useMemo(() => creationOwner(accountId, (error, retry) => told.current(error, REFUSED, retry)), [accountId]);
   useLayoutEffect(() => owner.start(), [owner]);
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => NO_CREATIONS);
-  return {create: owner.create, feedback: entries.map(entry => entry.unknown === 0 ? null :
-    <Hold key={entry.key} id={entry.key} attempt={entry.unknown} line={{fact: "not sure the chat was created.", reason: MAY_HAVE}}
-      verbs={[{label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}}]} />)};
+  return {create: owner.create, feedback: entries.map(entry => {
+    if (entry.held === null) return null;
+    const {line, verbs} = heldUnknown("not sure the chat was created.", entry.held.refused,
+      [{label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}}]);
+    return <Hold key={entry.key} id={entry.key} attempt={entry.held.attempt} line={line} verbs={verbs} />;
+  })};
 }
 
 export function openConversationAbout(input: ConversationCreationInput & {
