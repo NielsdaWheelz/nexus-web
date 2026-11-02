@@ -300,7 +300,9 @@ export async function requestWithRetry<T>(
 const unobserved = () => () => {};
 
 /**
- * Runs `repair` for each repair generation after a read failed, until it stops failing.
+ * Runs `repair` for each repair generation while a read stands failed, until it stops failing.
+ * `failed` means settled: a read in flight already is the answer, and its own success may have
+ * raised the generation, so answering would restart the read that raised it.
  * Only a failed owner subscribes, so a healthy read neither renders nor rereads for one.
  */
 export function useFailedReadRepair(failed: boolean, repair: () => void): void {
@@ -777,7 +779,7 @@ function useServerState<D>(
     admittedGeneration.current = admissionGeneration;
     void refetch().catch(() => { /* A modeled read failure is rendered by this owner. */ });
   }, [admissionGeneration, refetch]);
-  useFailedReadRepair(held.error !== null, () => { void refetch().catch(() => { /* As above. */ }); });
+  useFailedReadRepair(held.error !== null && !held.running, () => { void refetch().catch(() => { /* As above. */ }); });
 
   return valueOf(held, stale, refetch, revalidate);
 }

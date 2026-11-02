@@ -420,7 +420,7 @@ function useList<T, M>(
       refetch().catch(() => {});
     }
   };
-  useFailedReadRepair(failure !== null, retry);
+  useFailedReadRepair(failure !== null && running === null, retry);
 
   const revalidate = useCallback(() => {
     if (latest.current.key === null || pendingObservation.current) return;
