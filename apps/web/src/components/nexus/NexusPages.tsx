@@ -32,7 +32,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   );
 }
 
-function Page({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
+export default function NexusPages({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
   const { page } = controller;
   switch (page.kind) {
     case "Root":
@@ -131,16 +131,5 @@ function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "
         { label: "copy text", commandKey: `copy capture ${page.noteId}`, run: copyText, copied: copy.occurrence ?? undefined },
       ]} /> : null}
     </section>
-  );
-}
-
-export default function NexusPages({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
-  return (
-    <>
-      <Page controller={controller} mobile={mobile} />
-      <div className="sr-only" role="status" aria-label="Nexus status" aria-live="polite">
-        {controller.reorderSpeech}
-      </div>
-    </>
   );
 }
