@@ -180,11 +180,14 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const locatedEntries = useMemo(() => placed.filter(entry => visible.has(entry.key)), [placed, visible]);
   const keys = placements.map((place) => place.key).join();
   const placedKeys = useMemo(() => new Set(placed.map(entry => entry.key)), [placed]);
+  // A readable source that hasn't failed will place this entry once its doc is mounted and bound.
+  const undetermined = useCallback((entry: EvidenceEntry) => actions.readable && document.status !== "failed" &&
+    (doc === null || entry.kind === "highlight" && entry.annotation.placement.kind === "unavailable"), [actions.readable, doc, document.status]);
   const whole = useMemo(() => entries.filter(entry => !placedKeys.has(entry.key) && (entry.kind === "link" || entry.kind === "remote" && entry.root.resolution === null)), [entries, placedKeys]);
   const unavailable = useMemo(() => {
     const wholeKeys = new Set(whole.map(entry => entry.key));
-    return entries.filter(entry => !placedKeys.has(entry.key) && !wholeKeys.has(entry.key));
-  }, [entries, placedKeys, whole]);
+    return entries.filter(entry => !placedKeys.has(entry.key) && !wholeKeys.has(entry.key) && !undetermined(entry));
+  }, [entries, placedKeys, undetermined, whole]);
   const order = useMemo(() => [...placed, ...whole, ...unavailable].filter(entry => visible.has(entry.key)), [placed, whole, unavailable, visible]);
   const logicalOrder = useRef(order); logicalOrder.current = order;
   const byKey = useMemo(() => new Map(entries.map(entry => [entry.key, entry])), [entries]);
@@ -490,14 +493,14 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const row = (entry: EvidenceEntry) => {
     const place = aligned ? placements.find((item) => item.key === entry.key) : null;
     const shown = visible.has(entry.key) && (!aligned || !placedKeys.has(entry.key) || !!place);
-    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown}
+    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown} placed={placedKeys.has(entry.key)}
       sourceText={sourceText} onSourceTextChange={onSourceTextChange} onSourceLayout={onSourceLayout}
       className={styles.group} displaced={place?.displaced ?? false} style={place ? { position: "absolute", top: place.top, width: "100%" } : undefined}
       unresolvedText={doc?.kind === "text"}
       openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} onUnlink={unlink} /></IndexRowWindow>;
   };
   const mounted = new Set(rowWindow.rendered.map(slot => slot.key));
-  const retained = entries.filter(entry => rowWindow.held.has(entry.key) && !mounted.has(entry.key));
+  const retained = entries.filter(entry => rowWindow.held.has(entry.key) && !mounted.has(entry.key) && (entry.key === focused || !undetermined(entry)));
   useLayoutEffect(() => {
     if (!focusRequest) return;
     if (focusRequest.isCurrent()) {

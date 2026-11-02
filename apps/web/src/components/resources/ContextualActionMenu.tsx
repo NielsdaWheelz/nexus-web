@@ -24,10 +24,9 @@ export interface ContextActionSection {
 /**
  * A caller's known navigation and occurrence/view choices publish immediately.
  * Authoritative resource verbs retain their prepared snapshot and source label.
- * A supplied disabled reason blocks commands. An owned authored principal publishes
- * its local verbs as soon as one local read settles; the server's verbs settle in the
- * menu's trailing region (loading, ready or failed), never gating, reordering or
- * replacing the local snapshot.
+ * An owned authored principal publishes its local verbs as soon as one local read
+ * settles; the server's verbs settle in the menu's trailing region (loading, ready or
+ * failed), never gating, reordering or replacing the local snapshot.
  */
 type ContextualMenuProps = Pick<ActionMenuProps,
   "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
@@ -40,7 +39,6 @@ type ContextualMenuProps = Pick<ActionMenuProps,
   readonly omitResourceActions?: readonly string[];
   readonly showSourceSubject?: boolean;
   readonly navigation: DisplayedNavigation | null;
-  readonly commandDisabledReason?: string;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 };
@@ -56,7 +54,7 @@ export default function ContextualActionMenu(props: ContextualMenuProps) {
 /** Authoritative facts and client subscriptions belong only to an invocation. */
 function ContextualMenuInvocation({
   sections, resourceRef, title, subjectKey, onDefect, actionFocus,
-  omitResourceActions = [], showSourceSubject = false, navigation, commandDisabledReason, session, ...props
+  omitResourceActions = [], showSourceSubject = false, navigation, session, ...props
 }: ContextualMenuProps & { readonly session: ActionMenuSession }) {
   const paneSubject = usePaneSubject();
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
@@ -70,10 +68,8 @@ function ContextualMenuInvocation({
     prepareAuthored(signal);
     prepareRemote(signal);
   }, [prepareAuthored, prepareRemote]);
-  const blocked = (action: MenuOption): MenuOption => commandDisabledReason && action.kind === "command"
-    ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const initial: MenuContent = { sections: [
-    ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions.map(blocked) })),
+    ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions })),
     ...(navigation?.fork ? [{ id: "Navigation", label: null, options: [navigation.fork] }] : []),
   ] };
   const groups: MenuContent["sections"][number][] = [];
@@ -98,18 +94,13 @@ function ContextualMenuInvocation({
   const remoteIds = new Set(!owned && remote?.kind === "Ready" ? remote.options.map(action => action.id) : []);
   const device = client.filter(action => !remoteIds.has(action.id) && !omitResourceActions.includes(action.id));
   if (device.length > 0) groups.push({ id: "Device", label: null, options: device });
-  const blockedRemote = (action: ActionDescriptor): ActionDescriptor => commandDisabledReason && action.kind === "command"
-    ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
-  const content: MenuContent = { sections: groups.map((section) => ({
-    ...section,
-    options: section.options.map(blocked),
-  })) };
+  const content: MenuContent = { sections: groups };
   const identity = { title, subjectKey };
   const trailingFailure = remote?.kind === "Failed" ? remote : remote?.kind === "Loading" ? remote.failure : null;
   const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
     kind: "Ready", request, label: showSourceSubject && owned ? `source: ${local.label}` : null,
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
-      !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
+      !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)),
   } : trailingFailure ? {
     kind: "Failed", request, feedback: trailingFailure.feedback, pending: remote?.kind === "Loading",
     retry: trailingFailure.error && isStaleBuild(trailingFailure.error) ? null : () => resource.prepare(request),

@@ -557,6 +557,15 @@ export function excerptView(full: FrozenExcerpt, mode: "compact" | "full", scope
   return {kind: "content", body: window.lo === 0 && window.hi === size ? body : clipBody(body, window.lo, window.hi), omitted_before: window.lo > 0 ? true : full.truncated_before,
     omitted_after: window.hi < size ? true : full.truncated_after, selected_truncated_before: false, selected_truncated_after: window.selected_clipped};
 }
+/** The selected words alone, for a display that already shows their context. */
+export function selectedExcerpt(view: ExcerptView): ExcerptView {
+  if (view.kind !== "content") return view;
+  const {body} = view, at = excerptPointOffsets(body.content);
+  let lo = at(body.selection.start), hi = at(body.selection.end);
+  for (const {node, start, end} of locate(body.content))
+    if (node.kind === "table" && start < hi && end > lo) {lo = Math.min(lo, start); hi = Math.max(hi, end);}
+  return {...view, body: clipBody(body, lo, hi), omitted_before: view.selected_truncated_before, omitted_after: view.selected_truncated_after};
+}
 function clippedExtent(full: FrozenExcerpt, body: ExcerptBody, lo: number, hi: number): ExcerptExtent | null {
   if (full.source_extent === null) return null;
   const projected=textBuffer();let length=0;

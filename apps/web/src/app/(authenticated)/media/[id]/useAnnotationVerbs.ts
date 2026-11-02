@@ -68,6 +68,7 @@ export interface AnnotationVerbs {
   readonly recolouring: string | null;
   /** A highlight whose attached notes the Evidence row should focus. */
   readonly noteEdit: { readonly id: string; readonly request: number } | null;
+  annotate(id: string): void;
   readonly selectionIssue: string | null;
   readonly bounds: BoundsSession | null;
   cancelBounds(): void;
@@ -120,6 +121,9 @@ export function useAnnotationVerbs(input: {
   const activatedMark = useRef<Mark | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
+  // A mounted row outlives closeNoteEdit, so a request number never repeats within a pane visit.
+  const noteRequest = useRef(0);
+  const annotate = useCallback((id: string) => setNoteEdit({ id, request: ++noteRequest.current }), []);
   const [colour, setColour] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
@@ -334,14 +338,14 @@ export function useAnnotationVerbs(input: {
       case "EditHighlight":
         return setColour(id);
       case "EditHighlightAnnotation":
-        setNoteEdit((current) => ({ id, request: (current?.request ?? 0) + 1 }));
+        annotate(id);
         return openEvidence(id);
       case "EditHighlightBounds":
         return editBounds(id);
       case "DeleteHighlight":
         return remove(id);
     }
-  }, [claim, delivery, editBounds, marks, openEvidence, remove, retireSelection, showBounds, store, showNotice]);
+  }, [annotate, claim, delivery, editBounds, marks, openEvidence, remove, retireSelection, showBounds, store, showNotice]);
 
   const closeNoteEdit = useCallback(() => setNoteEdit(null), []);
 
@@ -355,6 +359,7 @@ export function useAnnotationVerbs(input: {
     hovered,
     recolouring: colour,
     noteEdit,
+    annotate,
     selectionIssue,
     bounds,
     cancelBounds,
