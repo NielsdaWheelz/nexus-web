@@ -145,7 +145,10 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   }] : undefined;
   // `check` reads the same run and tails it again; it never reruns
   const check: Verbs = [{ label: "check", commandKey: `check ${id}`, busy: link.kind === "Reconnecting", run: reconnect }];
-  const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
+  // the transcript is a log, which speaks what lands in it; a stop is the viewer's own act, so it stays silent
+  const turn = failed ? <div aria-live={message.status === "cancelled" ? "off" : undefined}>
+    <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
+  </div>
     : !pending ? null
     : phase === "Suspended" ? <Fact line={{ fact: "this answer stalled." }} verbs={link.kind === "Live" ? undefined : check} />
     : link.kind === "Failed" ? <Failed error={link.error} noun="live updates" retry={{ run: reconnect }} />

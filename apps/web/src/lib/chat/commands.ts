@@ -595,10 +595,9 @@ function createCommands(conversationId: string | null, accountActive: () => bool
 
 class AuthoredContextError extends Error {}
 /** Wait through one finite local source prefix, never account-wide currentness.
- * No prompt is submitted until its linked writing has reached server projection. */
+ * No prompt is submitted until its linked writing has reached server projection. The 30s budget
+ * covers the whole wait, the store's opening included. */
 async function waitForAuthoredContext(accountId:string,prefix:Promise<string>,controller:AbortController):Promise<void> {
-  const runtime=getWritingRuntime(accountId);
-  const store=await runtime.store;
   const deadline=setTimeout(()=>controller.abort(new AuthoredContextError("linked notes haven’t synced yet.")),30_000);
   let aborted:()=>void=()=>{};
   try {
@@ -606,6 +605,7 @@ async function waitForAuthoredContext(accountId:string,prefix:Promise<string>,co
       aborted=()=>reject(controller.signal.reason??new DOMException("cancelled","AbortError"));
       if(controller.signal.aborted)aborted();else controller.signal.addEventListener("abort",aborted,{once:true});
     });
+    const store=await Promise.race([getWritingRuntime(accountId).store,cancelled]);
     const sequence=await Promise.race([prefix,cancelled]);
     await store.whenUploaded(sequence,controller.signal);
   } catch(error) {
