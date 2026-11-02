@@ -30,8 +30,8 @@ export default function NexusButton({
   paneCount: number;
   open: boolean;
   onOpen(): void;
-  /** Switches panes and returns the destination's title, or `first pane` / `last pane` at the clamp. */
-  onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): string;
+  /** Switches panes and returns the destination's title, `first pane` / `last pane` at the clamp, or null when it has no title to name. */
+  onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): string | null;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const press = useRef<Press>(null);
@@ -101,7 +101,8 @@ export default function NexusButton({
           const dx = event.clientX - current.x;
           // A button the chrome retreated mid-swipe (module-written inert) never commits.
           if (event.pointerType === "touch" && current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
-            setChip({ text: onSwipe({ direction: dx < 0 ? "Next" : "Previous" }) });
+            const text = onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
+            setChip(text === null ? null : { text });
           }
         }}
         onPointerCancel={cancel}
