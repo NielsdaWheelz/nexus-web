@@ -42,6 +42,8 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
 }
 
 const ROOT: Anchor = { kind: "Root" };
+/** A hint would take the frame's first Escape. */
+const NO_HINT = { text: "" };
 /** Every row carries a control, so a frame is reached through its first one. */
 const firstControl = (room: HTMLElement | null) => room?.querySelector<HTMLElement>("button, a") ?? null;
 
@@ -253,8 +255,8 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
       if (plain) stage.close(row.key);
     }} />)}
     {plain
-      ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" onClick={() => stage.close(row.key)} />
-      : <Button className={styles.close} iconOnly icon={<ChevronDown />} aria-label="tuck notice" onClick={() => stage.tuck(row.key)} />}
+      ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.close(row.key)} />
+      : <Button className={styles.close} iconOnly icon={<ChevronDown />} aria-label="tuck notice" tooltip={NO_HINT} onClick={() => stage.tuck(row.key)} />}
   </div>;
 }
 

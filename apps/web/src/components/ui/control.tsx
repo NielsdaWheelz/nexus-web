@@ -87,7 +87,7 @@ export function ControlTooltip({ content, triggerRef, expanded, renderTrigger }:
     text={help?.text ?? ""}
     placement={help?.placement}
     openDelayMs={help?.openDelayMs}
-    disabled={help === null || expanded}
+    disabled={!help?.text || expanded}
     triggerRef={triggerRef}
     renderTrigger={renderTrigger}
   />;
