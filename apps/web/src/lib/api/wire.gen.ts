@@ -1573,7 +1573,7 @@ export interface paths {
         };
         /**
          * Get Nexus Ranking
-         * @description Get Nexus selection ranking for the current viewer.
+         * @description The viewer's whole Nexus usage map, read once per palette open.
          */
         get: operations["get_nexus_ranking_me_nexus_ranking_get"];
         put?: never;
@@ -5389,9 +5389,9 @@ export interface components {
         Data_MetadataEnrichmentAccepted_: {
             data: components["schemas"]["MetadataEnrichmentAccepted"];
         };
-        /** Data[NexusRankingOut] */
-        Data_NexusRankingOut_: {
-            data: components["schemas"]["NexusRankingOut"];
+        /** Data[NexusUsageMapOut] */
+        Data_NexusUsageMapOut_: {
+            data: components["schemas"]["NexusUsageMapOut"];
         };
         /** Data[OfflineCatalogOut] */
         Data_OfflineCatalogOut_: {
@@ -8611,19 +8611,33 @@ export interface components {
              */
             kind: "New";
         };
-        /** NexusRankingOut */
-        NexusRankingOut: {
-            /** Frecency By Href */
-            frecency_by_href: {
-                [key: string]: number;
-            };
-        };
         /** NexusSelectionRecordRequest */
         NexusSelectionRecordRequest: {
             /** Query */
             query: string | null;
             /** Target Href */
             target_href: string;
+        };
+        /**
+         * NexusUsageMapOut
+         * @description `usages[query_normalized][canonical_href]`; the untyped aggregate is query ``""``.
+         */
+        NexusUsageMapOut: {
+            /** Usages */
+            usages: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["NexusUsageOut"];
+                };
+            };
+        };
+        /** NexusUsageOut */
+        NexusUsageOut: {
+            /** Last Used */
+            last_used: string;
+            /** Points */
+            points: number;
+            /** Use Count */
+            use_count: number;
         };
         /** NoBranchAnchor */
         NoBranchAnchor: {
@@ -17520,9 +17534,7 @@ export interface operations {
     };
     get_nexus_ranking_me_nexus_ranking_get: {
         parameters: {
-            query?: {
-                query?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -17535,16 +17547,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_NexusRankingOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_NexusUsageMapOut_"];
                 };
             };
         };
