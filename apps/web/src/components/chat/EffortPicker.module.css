@@ -126,3 +126,16 @@
     min-height: var(--size-xl);
   }
 }
+
+/* Its choices are still on their way: the chevron spins as control busy's spinner does. */
+.trigger[aria-busy="true"] .chevron {
+  animation: chevron-wait 1s linear 200ms infinite;
+}
+
+@keyframes chevron-wait {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger[aria-busy="true"] .chevron { animation: none; }
+}

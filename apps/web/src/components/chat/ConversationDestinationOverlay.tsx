@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PickerSurface from "@/components/ui/PickerSurface";
@@ -39,7 +39,9 @@ export default function ConversationDestinationOverlay({ open, mediaId, hasSourc
   </PickerSurface>;
 }
 
-/** Title search and source scope admit choices only for the exact settled query. */
+/** Title search and source scope admit choices only for the exact settled query. A failed first
+ * read stands in the list region, outside listbox markup; a failed refresh over shown rows says
+ * nothing. */
 function Picker({ mediaId, hasSourceChats, onSelect }: {
   mediaId: string;
   hasSourceChats: boolean | null;
@@ -66,9 +68,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     load: signal => fetchConversationIndex(new URLSearchParams(queryKey), signal),
   });
   const pageItems = page.status === "ready" ? page.data.items : [];
-  const pageFailure = page.status === "loading" ? null : page.error;
-  const busy = page.status === "loading" || (page.status === "ready" ? page.refreshing : page.retrying);
-  const retry = () => { void page.refetch().catch(() => {}); };
+
   const nowMs = useChatAgeClock({ initialInstant: env.currentInstant, items: pageItems, visible: usePaneIsVisible() });
   const selectable = (page.status === "ready") && (!initializing || !search) && settled === query;
   const items = selectable ? pageItems : [];
@@ -92,12 +92,11 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     onActiveChange: key => setActive({ context, key }),
     onActivate(key) { const item = selectable ? items.find(item => item.id === key) : null; if (item) onSelect(item); },
   });
-  const failure = settled !== query ? null : pageFailure;
-  const occurrence = useFeedbackOccurrence(failure !== null, key);
-  const emptyTitle = search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet";
+  const failed = settled === query && page.status === "failed" ? page : null;
+  const emptyTitle = search ? "no chats match this search." : view === "Source" ? "no chats for this source." : "no chats yet.";
   const readFeedback = useIndexReadFeedback({
-    value: page, requestedKey: readKey, active: paneActive, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !(page.status === "ready") && failure === null,
-    outcome: items.length > 0 ? "results updated." : emptyTitle,
+    value: page, requestedKey: readKey, active: paneActive, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !(page.status === "ready") && failed === null,
+    outcome: items.length > 0 ? null : emptyTitle,
     returnFocus: () => input.current,
   });
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
@@ -111,9 +110,8 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       onChange={event => setQuery(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
-    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: page.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats", requestId: failure.requestId }} announcement={page.status === "ready" ? "None" : "Polite"}
-      actions={[{ label: "try again", onClick: retry, busy }]} returnFocus={() => input.current} />
-      : selectable && items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
+    {failed ? <Failed error={failed.error} noun="chats" retry={{ run: () => void failed.refetch(), busy: failed.retrying }} />
+      : selectable && items.length === 0 ? <Fact line={{ fact: emptyTitle }} /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
       {items.map(item => {
         const presentation = presentConversationListItem(item, env, nowMs);

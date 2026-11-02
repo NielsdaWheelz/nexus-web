@@ -55,6 +55,13 @@
 
 .latest > button { pointer-events: auto; }
 
+/* The composer's stage anchor: a line at its top edge, so a slip stands above the composer. */
+.composerAnchor {
+  position: relative;
+  flex: none;
+  height: 0;
+}
+
 .composerSlot {
   flex: 0 1 auto;
   min-height: 0;

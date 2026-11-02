@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback, isApiError, isRefusal, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -18,7 +17,7 @@ import {
 } from "@/lib/chat/commands";
 import { emptyLive, foldLive, openRunTail, type Link, type Live } from "@/lib/chat/runTail";
 import {
-  chatFailure,
+  failureOf,
   type ChatFailure,
   type Conversation,
   type Message,
@@ -46,7 +45,8 @@ export type ChatState = Readonly<{
   live: Readonly<Record<string, Live>>;
   command: CommandState;
   gone: boolean;
-  error: FeedbackContent | null;
+  /** The cold tree read's failure, while no tree has landed. */
+  unread: ApiError | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
   /** Bumps whenever a read settles a pending answer (its context refs commit with it). */
@@ -54,11 +54,9 @@ export type ChatState = Readonly<{
 }>;
 export type ChatStore = ReturnType<typeof createChatStore>;
 
-const UNAVAILABLE: CommandOutcome = {
-  kind: "Failed",
-  feedback: { tone: "Neutral", title: "conversation history is not available" },
-  rejection: null,
-};
+/** A command before the pane holds a tree: `fact` is the command's. */
+const unloaded = (fact: string): Promise<CommandOutcome> =>
+  Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: fact, message: "this chat hasn’t loaded." }, rejection: null });
 
 export function createChatStore(accountId: string, conversationId: string | null, viewId: string) {
   const commands = conversationId ? getConversationCommands(accountId, conversationId) : getNewChatCommands(accountId, viewId);
@@ -70,7 +68,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     live: {},
     command: commands.getSnapshot(),
     gone: false,
-    error: null,
+    unread: null,
     defect: null,
     contextVersion: 0,
   };
@@ -100,10 +98,6 @@ export function createChatStore(accountId: string, conversationId: string | null
     const live = state.live[id];
     if (live) setLive(id, { ...live, link });
   };
-  const report = (failure: ChatFailure) => {
-    if (failure.kind === "Defect") set({ defect: { error: failure.error } });
-    else if (failure.kind === "Feedback") set({ error: failure.feedback });
-  };
   const owned = () => active && !state.gone && commands.isActive();
 
   /** Replace whole messages from a read; an older copy never wins. */
@@ -127,14 +121,14 @@ export function createChatStore(accountId: string, conversationId: string | null
         activeSendLeafId: null,
         history: "Unavailable",
         gone: true,
-        error: { tone: "Neutral", title: "this chat is no longer available" },
+        unread: null,
       });
     if (state.gone || (state.conversation && tree.conversation.branch_revision < state.conversation.branch_revision)) return;
     apply(tree.messages, true, {
       conversation: tree.conversation,
       activeSendLeafId: tree.active_leaf_message_id,
       history: "Ready",
-      error: null,
+      unread: null,
     });
   };
   /** A run pair updates known messages, never graph membership or the path. */
@@ -165,14 +159,7 @@ export function createChatStore(accountId: string, conversationId: string | null
       const stop = openRunTail(runId, live?.lastSeq ?? 0, {
         event: (event) => {
           const current = state.live[message.id];
-          if (current) setLive(message.id, foldLive({ ...current, suspension: null, link: { kind: "Live" } }, event));
-        },
-        suspended: error => {
-          const current = state.live[message.id];
-          if (current) setLive(message.id, { ...current, suspension: error, link: {
-            kind: "Failed", retryable: false,
-            feedback: apiTransportFeedback(error, "live updates paused") ?? { tone: "Warning", title: "sign in to reconnect", requestId: error.requestId },
-          } });
+          if (current) setLive(message.id, foldLive({ ...current, link: { kind: "Live" } }, event));
         },
         end: () => {
           tails.delete(message.id);
@@ -194,23 +181,20 @@ export function createChatStore(accountId: string, conversationId: string | null
     } catch (error) {
       reading.delete(id);
       if (!active) return;
-      const failure = chatFailure(error, "Couldn’t reconnect");
-      if (failure.kind !== "Feedback") report(failure);
-      setLink(id, retail && failure.kind === "Feedback"
-        ? { kind: "Failed", feedback: failure.feedback, retryable: failure.ambiguous }
+      const failure = failureOf(error);
+      if (failure.kind === "Defect") set({ defect: { error: failure.error } });
+      setLink(id, retail && (failure.kind === "Refused" || failure.kind === "Unknown")
+        ? { kind: "Failed", error: failure.error }
         : { kind: "Lost" });
     }
   };
-  /** Run a command; `notice`: its refusal also becomes the pane's notice. */
-  const command = async (run: () => Promise<CommandOutcome>, notice = true): Promise<CommandOutcome> => {
+  /** A command throws only a defect, which the pane rethrows; its other outcomes are its caller's to tell. */
+  const command = async (run: () => Promise<CommandOutcome>): Promise<CommandOutcome> => {
     try {
-      const outcome = await run();
-      if (outcome.kind === "Failed" && notice) set({ error: outcome.feedback });
-      return outcome;
+      return await run();
     } catch (error) {
-      const failure = chatFailure(error, "chat change failed");
-      report(failure);
-      return failure.kind === "Feedback" ? { kind: "Failed", feedback: failure.feedback, rejection: null } : { kind: "Handled" };
+      set({ defect: { error } });
+      return { kind: "Handled" };
     }
   };
   const revision = () => (state.conversation && !state.gone ? state.conversation.branch_revision : null);
@@ -247,8 +231,9 @@ export function createChatStore(accountId: string, conversationId: string | null
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
         if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") return applyTree(null);
-        report(chatFailure(error, "This chat couldn’t be opened."));
-        if (state.history === "Loading") set({ history: "Unavailable" });
+        const failure = failureOf(error);
+        if (failure.kind === "Defect") set({ defect: { error: failure.error } });
+        else if (failure.kind !== "Handled" && state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
       } finally {
         if (loading === controller) loading = null;
       }
@@ -262,16 +247,16 @@ export function createChatStore(accountId: string, conversationId: string | null
     send(request: DraftRequest, selectionRoute: Route | null, openIntent: OpenIntent, onAcceptance: () => void): Promise<CommandOutcome> {
       const { destination } = request;
       const observed = revision();
-      if (destination.kind === "Existing" && observed === null) return Promise.resolve(UNAVAILABLE);
+      if (destination.kind === "Existing" && observed === null) return unloaded("couldn’t send.");
       const exact = destination.kind === "New" ? destination : { ...destination, expected_revision: observed ?? 0 };
       const send = { kind: "Send", runId: createRandomId(), request: { ...request, destination: exact }, selectionRoute, viewId, openIntent } as const;
-      return command(() => commands.execute(send, onAcceptance), false);
+      return command(() => commands.execute(send, onAcceptance));
     },
 
     /** Reuse the exact source choice unless the user explicitly chooses another. */
     repeat(operation: "rerun" | "regenerate", assistantId: string, explicit: { selection: Selection; route: Route | null } | null, openIntent: OpenIntent): Promise<CommandOutcome> {
       const message = state.messages.get(assistantId);
-      if (!state.conversation || state.gone || !message) return Promise.resolve(UNAVAILABLE);
+      if (!state.conversation || state.gone || !message) return unloaded(`couldn’t ${operation}.`);
       const conversation = state.conversation;
       return command(() => repeatMessage(accountId, conversation, message, operation, explicit, openIntent));
     },
@@ -279,12 +264,14 @@ export function createChatStore(accountId: string, conversationId: string | null
     retryCommand: (openIntent: OpenIntent = "default") => command(() => commands.retry(openIntent)),
     discardCommand: () => commands.discard(),
 
-    cancel: async (runId: string) => {
+    /** Stop intent is idempotent, so a press after any failure is safe; null once the read lands. */
+    cancel: async (runId: string): Promise<ChatFailure | null> => {
       try {
         const path = `/api/chat-runs/${runId}/cancel` as const;
         applyRead((await apiFetch<ApiJson<"/chat-runs/{run_id}/cancel", "post">>(path, { method: "POST" })).data);
+        return null;
       } catch (error) {
-        report(chatFailure(error, outcomeUnknown(error) ? "stop request not confirmed" : "This response couldn’t be stopped."));
+        return failureOf(error);
       }
     },
 
@@ -298,15 +285,16 @@ export function createChatStore(accountId: string, conversationId: string | null
 
     /** Freeze the pane's observed tree before asking for destructive confirmation. */
     deleteMessage(messageId: string): Promise<CommandOutcome> {
-      if (!state.conversation || state.gone) return Promise.resolve(UNAVAILABLE);
+      if (!state.conversation || state.gone) return unloaded("couldn’t delete this message.");
       const tree = { conversation: state.conversation, messages: [...state.messages.values()], active_leaf_message_id: state.activeSendLeafId };
       return command(() => confirmChatDeletion(accountId, { kind: "Message", tree, messageId }));
     },
 
-    /** True once saved. A rename from a stale view is refused (409) and the tree reread. */
-    async renameFork(userMessageId: string, title: string | null, expectedTitle: string | null): Promise<"saved" | "refused" | "unconfirmed"> {
+    /** A rename from a stale view is refused (409) and the tree reread. Renaming to the current
+     * title succeeds, so a resend after an unknown outcome is safe. */
+    async renameFork(userMessageId: string, title: string | null, expectedTitle: string | null): Promise<ChatFailure | { kind: "Missing" } | null> {
       const message = state.messages.get(userMessageId);
-      if (!message) return "refused";
+      if (!message) return { kind: "Missing" };
       try {
         const { data } = await apiFetch<ApiJson<"/messages/{message_id}/fork-title", "patch">>(
           `/api/messages/${userMessageId}/fork-title`,
@@ -314,15 +302,12 @@ export function createChatStore(accountId: string, conversationId: string | null
         );
         // the saved updated_at makes every older read of this message lose
         if (owned()) apply([{ ...message, ...data }], false, {});
-        return "saved";
+        return null;
       } catch (error) {
-        report(chatFailure(error, "This fork couldn’t be renamed."));
         void store.load();
-        return isRefusal(error) ? "refused" : "unconfirmed";
+        return failureOf(error);
       }
     },
-
-    dismissError: () => set({ error: null }),
 
     dispose() {
       active = false;

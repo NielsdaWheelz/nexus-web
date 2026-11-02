@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { useOutcome } from "@/components/feedback/Feedback";
+import type { Line, Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { Schema } from "@/lib/api/wire";
+import { PENDING_CHANGE, sayRefusal } from "@/lib/chat/commands";
 import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
@@ -20,29 +23,26 @@ import MessageFooter from "./MessageFooter";
 import styles from "./ChatSurface.module.css";
 
 type FailureCode = NonNullable<Schema<"TrustRunOut">["failure"]>["code"];
-const DEFECT = [
-  "Something went wrong",
-  "This response could not complete. Keep any support reference shown below for repair.",
-];
-// Quiet product copy: never a provider name, status text or raw code.
-const FAILURE: Record<FailureCode, string[]> = {
-  cancelled: ["Cancelled", "This response was cancelled."],
-  context_too_large: [
-    "Conversation too large",
-    "This conversation has grown too large to process. Start a new conversation or branch from an earlier point.",
-  ],
-  invalid_output: ["Invalid response", "The assistant returned an invalid response. Please try again."],
-  incomplete: ["Response incomplete", "The response ended before it was finished."],
-  assistant_unavailable: ["Assistant unavailable", "The assistant is temporarily unavailable. Please try again shortly."],
-  operator_defect: DEFECT,
-};
+const COULDNT = "couldn’t answer.";
+/** A failed turn's line, by the server's failure card. Only what its owner classifies: never a
+ * provider, a status or a code. A fault, or an errored run with no card, keeps its support id. */
+function failureLine(code: FailureCode | null, supportId: string | null): Line {
+  switch (code) {
+    case "cancelled": return { fact: "stopped." };
+    case "incomplete": return { fact: "this answer ended early." };
+    case "assistant_unavailable": return { fact: COULDNT, reason: "the model wasn’t available." };
+    case "context_too_large": return { fact: COULDNT, reason: "this chat is too long for this model." };
+    case "invalid_output": return { fact: COULDNT, reason: "the model’s reply was malformed." };
+    case "operator_defect":
+    case null: return { fact: COULDNT, reason: supportId === null ? "nexus hit a fault." : `nexus hit a fault. support id ${supportId}.` };
+  }
+}
 const PHASE: Record<string, string> = {
-  Queued: "Response queued.",
-  Running: "Response running.",
-  Recovering: "Recovering response.",
+  Queued: "queued",
+  Running: "answering",
+  Recovering: "retrying",
 };
 type Passage = { exact: string; prefix: string; suffix: string; rect: DOMRect; lines: DOMRect[] };
-type Card = { content: FeedbackContent; action: [string, (intent: OpenIntent) => void] | null };
 
 /** One answer: the saved message, or a pending one painted from its live overlay. */
 export default function AssistantMessage({ message, ordinal, live, latest, engaged, alternatives }: {
@@ -78,13 +78,13 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   const currentAction = tool
     ? [tool.activity.verb, tool.activity.subject === null ? null : truncateText(tool.activity.subject, 80)].filter(Boolean).join(" · ")
     : null;
-  const status = pending && phase !== "Suspended" ? (stopped ? "Stop requested." : (PHASE[phase ?? ""] ?? null)) : null;
+  const status = pending && phase !== "Suspended" ? (stopped ? "stopping" : (PHASE[phase ?? ""] ?? null)) : null;
   const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
   const markUndone = useCallback((toolId: string) => setUndone((previous) => new Set(previous).add(toolId)), []);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsId = useId();
   const detailsTrigger = useRef<HTMLButtonElement>(null);
-  const supportId = run.support_id != null ? `Support ID: ${run.support_id}` : null;
+  const { say } = useOutcome();
   const reconnect = () => store.reconnect(id);
 
   const answer = useRef<HTMLDivElement>(null);
@@ -135,39 +135,22 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
     window.getSelection()?.removeAllRanges();
   };
 
-  const [title, body] = run.failure ? FAILURE[run.failure.code] : DEFECT;
-  const card: Card | null = failed
-    ? {
-        content: { tone: message.status === "cancelled" ? "Neutral" : "Danger", title, message: [body, supportId].filter(Boolean).join(" ") },
-        action: message.can_rerun ? ["Rerun", (intent) => void store.repeat("rerun", id, null, intent)] : null,
-      }
-    : !pending
-      ? null
-      : phase === "Suspended"
-        ? {
-            content: {
-              tone: "Warning",
-              title: stopped ? "Stop requested" : "Response paused",
-              message: stopped ? "The outcome is unconfirmed." : "This response is paused. Its outcome is unconfirmed.",
-            },
-            action: link.kind === "Lost" || (link.kind === "Failed" && link.retryable) ? ["Check saved status", reconnect] : null,
-          }
-        : link.kind === "Failed"
-          ? {
-              content: { tone: "Warning", title: "Couldn’t reconnect", message: link.feedback.message ?? link.feedback.title, requestId: link.feedback.requestId },
-              action: link.retryable ? ["Try reconnecting", reconnect] : null,
-            }
-          : link.kind === "Live"
-            ? null
-            : {
-                content: {
-                  tone: link.kind === "Reconnecting" ? "Neutral" : "Warning",
-                  title: link.kind === "Lost" ? "Connection lost" : "Reconnecting",
-                  message: "Reconnect to check this run’s saved status and listen for later updates.",
-                },
-                action: ["Reconnect", reconnect],
-              };
-  const occurrence = useFeedbackOccurrence(card !== null, id);
+  // the rerun policy is the server's (`can_rerun`); only the latest turn offers it
+  const rerun: Verbs | undefined = message.can_rerun && latest ? [{
+    label: "rerun",
+    commandKey: `rerun ${id}`,
+    busy: repeating,
+    disabledReason: command.kind !== "Idle" && !repeating ? PENDING_CHANGE : undefined,
+    run: (intent: OpenIntent) => void store.repeat("rerun", id, null, intent).then((outcome) => sayRefusal(say, outcome)),
+  }] : undefined;
+  // `check` reads the same run and tails it again; it never reruns
+  const check: Verbs = [{ label: "check", commandKey: `check ${id}`, busy: link.kind === "Reconnecting", run: reconnect }];
+  const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
+    : !pending ? null
+    : phase === "Suspended" ? <Fact line={{ fact: "this answer stalled." }} verbs={link.kind === "Live" ? undefined : check} />
+    : link.kind === "Failed" ? <Failed error={link.error} noun="live updates" retry={{ run: reconnect }} />
+    : link.kind === "Live" ? null
+    : <Fact line={{ fact: "live updates stopped." }} verbs={check} />;
   const details = (
     <Button
       ref={detailsTrigger}
@@ -207,16 +190,10 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           <MarkdownMessage presentation="chat" content={text} citations={citations} />
         </div>
       ) : null}
-      {run.publication_warning != null ? (
-        <FeedbackNotice
-          content={{
-            tone: "Warning",
-            title: "references unavailable",
-            message: ["the answer completed, but its references could not be attached reliably.", supportId].filter(Boolean).join(" "),
-          }}
-          announcement="Polite"
-        />
-      ) : null}
+      {run.publication_warning != null ? <Fact line={{
+        fact: "couldn’t attach citations.",
+        reason: run.support_id == null ? "the answer is complete." : `the answer is complete. support id ${run.support_id}.`,
+      }} /> : null}
       <AssistantTrust actions={actions} undone={undone} onUndone={markUndone} />
       {passage ? (
         <FloatingActionSurface
@@ -238,18 +215,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           </Button>
         </FloatingActionSurface>
       ) : null}
-      {card ? (
-        <FeedbackFailure scope="Local" occurrence={occurrence}
-          content={card.content}
-          announcement={pending && phase === "Suspended" ? "Polite" : "Assertive"}
-          actions={card.action ? [{
-            label: card.action[0],
-            onClick: card.action[1],
-            busy: failed ? repeating : link.kind === "Reconnecting",
-            disabledReason: failed && command.kind !== "Idle" && !repeating ? "finish the current chat action first" : undefined,
-          }] : undefined}
-        />
-      ) : null}
+      {turn}
       <MessageFooter
         message={message}
         latest={latest}

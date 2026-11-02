@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence, useFeedback } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
@@ -12,7 +14,7 @@ import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
+import { CHANGED, commandKey, MAY_HAVE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -73,8 +75,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId, runtime.paneId);
   const savedCatalog = useCatalogState();
   const saved = conversationId === null || savedCatalog.data === null ? null : catalogChat(savedCatalog.data, conversationId);
-  // A menu's chat deletion speaks as a workspace condition (commandFeedback.tsx).
-  const recovery = recoveryOf(state.command, (command) => command.kind !== "DeleteChat");
   const catalogRead = useServerValue({
     key: "/llm-catalog",
     stale: "",
@@ -247,8 +247,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           const { conversation_id, assistant_message_id } = outcome.receipt.outcome;
           return {
             target: { href: conversationViewHref(conversation_id, assistant_message_id) },
-            title: sending === null ? "response ready" : "message sent",
-            openLabel: "open response",
+            // admitted, its answer still pending
+            title: sending === null ? "new answer started" : "message sent",
+            openLabel: "open answer",
           };
         },
         onDefault: (result) => {
@@ -286,7 +287,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     seed(delivery.entry.text);
     claim(delivery);
   }, [delivery, claim, seed, enterMemory]);
-  const feedback = useFeedback();
+  const { say } = useOutcome();
   const workspace = useLatestWorkspace();
   useEffect(() => {
     if (delivery === null || !("messageId" in delivery.entry) || !ready) return;
@@ -299,10 +300,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       return;
     }
     if (!claim(delivery)) return;
-    if (!message)
-      return void feedback.receipt({ tone: "Neutral", title: "This message is no longer available." });
+    if (!message) return void say({ fact: "couldn’t find that message." });
     if (entry.kind === "DeleteMessage") {
-      void store.deleteMessage(message.id);
+      void store.deleteMessage(message.id).then((outcome) => sayRefusal(say, outcome));
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
@@ -312,7 +312,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         quote: "",
       });
     }
-  }, [fork, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path]);
+  }, [fork, clearArrival, claim, delivery, say, messages, ready, runtime, store, view.path]);
   useEffect(() => {
     if (!state.gone || conversationId === null) return;
     settleDeletedResourcePanes({
@@ -343,10 +343,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       linkedItems: conversationId ? (
         <ChatContext conversationId={conversationId} refreshKey={contextVersion} />
       ) : (
-        <FeedbackNotice
-          content={{ tone: "Neutral", title: "Start a chat to link items." }}
-          announcement="None"
-        />
+        <Fact line={{ fact: "context opens after the first message." }} />
       ),
       forks: (
         <ForksPanel
@@ -407,66 +404,45 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     let ancestor = previous.get(leafId)?.parent_message_id ?? null;
     while (ancestor !== null && !messages.has(ancestor)) ancestor = previous.get(ancestor)?.parent_message_id ?? null;
     if (ancestor !== null) selectEndpoint(ancestor);
-    feedback.receipt({ tone: "Neutral", title: "this branch was deleted" });
+    say({ fact: "this branch was deleted." });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: a replaced graph repairs a known deleted endpoint once
   }, [messages, ready]);
 
   const pathOnly = conversationId ? conversationViewHref(conversationId, leafId) : "/conversations/new";
-  const check = {
-    label: "check chat change",
-    onClick: (openIntent: OpenIntent) => void paneStore.retryCommand(openIntent),
-    busy: recovery?.kind === "Busy",
-  };
+  // a source arrival's failure is said once, and retracted when it clears
+  const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
+  useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
 
-  const readOccurrence = useFeedbackOccurrence(state.error !== null || history === "Unavailable", conversationId);
-  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null || invalidatedInspection, conversationId);
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
-  if (savedOnly) return <div className={styles.pane}>
-    {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
-    <FeedbackNotice content={saved === null ? catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this chat is not available offline" }} announcement="Polite" />
-  </div>;
+  if (savedOnly) {
+    const absent = saved !== null ? null
+      : catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" });
+    return <div className={styles.pane}>
+      {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
+      <Fact speak line={saved !== null ? { fact: "this chat’s messages aren’t saved on this device." }
+        : absent !== null ? { fact: absent.title, reason: absent.message } : { fact: "couldn’t open saved chats." }} />
+    </div>;
+  }
 
+  // The pane holds a repeat's or deletion's unknown outcome (a send's is its composer's), and any
+  // command's changed chat in its lane until a read. A menu's chat deletion is the workspace's.
+  const pending = state.command.kind === "Idle" || state.command.command.kind === "DeleteChat" ? null : state.command;
+  const again = (openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(say, outcome));
+  const lane = pending?.standing?.kind === "Changed"
+    ? <Fact speak line={{ fact: CHANGED }} verbs={[{ label: "check", commandKey: `check ${commandKey(pending.command)}`, busy: pending.kind === "Busy", run: again }]} />
+    : pending?.standing?.kind === "Unread"
+      ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
+      : null;
+  const held = pending !== null && pending.command.kind !== "Send" && pending.standing?.kind === "Unknown" ? pending : null;
   return (
     <div className={styles.pane}>
-      {unavailableBranch ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "this branch is no longer available" }}
-          announcement="Polite"
-          actions={[{ label: "choose another branch", onClick: () => runtime.requestSecondarySurface("resource-forks") }]}
-        />
-      ) : null}
-      {intent.kind === "invalid" ? (
-        <FeedbackNotice
-          content={{
-            tone: "Danger",
-            title: "This quote link is malformed",
-            message:
-              "The passage couldn’t be attached. Reopen it from the reader.",
-          }}
-          announcement="Assertive"
-        />
-      ) : null}
-      {arrival.failure || invalidatedInspection ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{ tone: "Warning", title: arrival.failure?.title ?? "this match is no longer available" }} announcement="Polite" /> : null}
-      {state.error || history === "Unavailable" ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}
-          announcement="Assertive"
-          actions={history === "Unavailable"
-            ? [{ label: "retry chat", onClick: () => void store.load() }]
-            : [{ label: "Dismiss", onClick: store.dismissError }]}
-        />
-      ) : null}
-      {recovery?.feedback ? (
-        <FeedbackFailure scope="Local" occurrence={recovery.occurrence} announcementOccurrence={recovery.feedback}
-          content={recovery.feedback}
-          announcement="Assertive"
-          actions={recovery.kind === "Unconfirmed" && recovery.command.kind === "Send"
-            // the viewer's way out of a send no retry settles; the draft keeps its text
-            ? [check, { label: "discard send", onClick: store.discardCommand }]
-            : [check]}
-        />
-      ) : null}
+      {unavailableBranch ? <Fact speak line={{ fact: "can’t find this branch." }}
+        verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
+      {intent.kind === "invalid" ? <Fact speak line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
+      {lane}
+      {held ? <Hold id={commandKey(held.command)} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }}
+        verbs={[{ label: "retry", commandKey: `retry ${commandKey(held.command)}`, busy: held.kind === "Busy", run: again }]} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}
@@ -474,6 +450,10 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         live={state.live}
         command={state.command}
         loading={history === "Loading"}
+        absent={history === "Loading" ? <Ruling />
+          : state.gone ? <Fact line={{ fact: "this chat doesn’t exist." }} />
+          : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load() }} />
+          : null}
         store={paneStore}
         fork={fork}
         composer={

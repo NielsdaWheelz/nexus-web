@@ -1,9 +1,10 @@
 "use client";
 
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
+import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, STALE_BUILD_FEEDBACK, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, type ApiError, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
@@ -12,8 +13,9 @@ import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { readCatalog } from "./catalog";
 import { isSelectable, type Route } from "./selection";
 import {
-  chatFailure,
-  failureDetail,
+  failureOf,
+  rejected,
+  refusal,
   type AcceptedReceipt,
   type Conversation,
   type Message,
@@ -58,7 +60,8 @@ export type ChatCommand =
       readonly openIntent: OpenIntent;
     }
   | { readonly kind: "DeleteMessage"; readonly messageId: string; readonly expectedRevision: number }
-  | { readonly kind: "DeleteChat"; readonly expectedRevision: number };
+  /** `title` is the one the viewer confirmed deleting. */
+  | { readonly kind: "DeleteChat"; readonly expectedRevision: number; readonly title: string };
 /**
  * Pending: the command is still the owner's; its state says why. Accepted: a send the
  * server admitted (the read that follows may still be pending in the state), or a write
@@ -69,29 +72,87 @@ export type CommandOutcome =
   | { readonly kind: "Settled" | "Gone" | "Pending" | "Handled" }
   | { readonly kind: "Accepted"; readonly receipt: AcceptedReceipt }
   | { readonly kind: "Failed"; readonly feedback: FeedbackContent; readonly rejection: RejectionCode | null };
-/** The incident survives landing changes; feedback is the last outcome and stays through retry. */
+/**
+ * What a pending command waits on: an answer that never came, so it may have landed; a chat that
+ * changed under it and must be read before anything else is sent; or that read, failed.
+ */
+export type Standing =
+  | { readonly kind: "Unknown" }
+  | { readonly kind: "Changed" }
+  | { readonly kind: "Unread"; readonly error: ApiError };
+type Pending = {
+  readonly command: ChatCommand;
+  /** Until L7, the reader dock (L2) keys its card by it. */
+  readonly occurrence: object;
+  /** How many attempts left it unknown: a failed retry speaks again. */
+  readonly attempt: number;
+  /** Until L7, the reader dock's card (L2) reads the standing as content. */
+  readonly feedback: FeedbackContent | null;
+};
+/** The incident survives landing changes; a retry stands on the last standing until it answers. */
 export type CommandState =
   | { readonly kind: "Idle" }
-  | { readonly kind: "Busy"; readonly command: ChatCommand; readonly occurrence: object; readonly feedback: FeedbackContent | null }
-  | {
-      readonly kind: "Unconfirmed" | "RefreshRequired";
-      readonly command: ChatCommand;
-      readonly occurrence: object;
-      readonly feedback: FeedbackContent;
-    };
+  | Pending & { readonly kind: "Busy"; readonly standing: Standing | null }
+  | Pending & { readonly kind: "Unconfirmed"; readonly standing: Extract<Standing, { kind: "Unknown" }> }
+  | Pending & { readonly kind: "RefreshRequired"; readonly standing: Exclude<Standing, { kind: "Unknown" }> };
 export type ConversationCommands = ReturnType<typeof createCommands>;
 
 export const IDLE_COMMAND: CommandState = { kind: "Idle" };
-const CHANGED: FeedbackContent = {
-  tone: "Warning",
-  title: "chat changed elsewhere",
-  message: "refresh to review it before trying again.",
-};
-const BUSY: CommandOutcome = {
-  kind: "Failed",
-  feedback: { tone: "Neutral", title: "another chat change is still in progress" },
-  rejection: null,
-};
+export const PENDING_CHANGE = "another change to this chat isn’t finished.";
+export const CHANGED = "this chat changed meanwhile.";
+export const MAY_HAVE = "it may have gone through.";
+const UNREAD = "couldn’t load messages.";
+const BUSY: CommandOutcome = { kind: "Failed", feedback: { tone: "Warning", title: PENDING_CHANGE }, rejection: null };
+
+/** What a refused command says first. */
+export function refusedFact(command: ChatCommand): string {
+  switch (command.kind) {
+    case "Send": return "couldn’t send.";
+    case "Repeat": return `couldn’t ${command.operation}.`;
+    case "DeleteMessage": return "couldn’t delete this message.";
+    case "DeleteChat": return "couldn’t delete this chat.";
+  }
+}
+
+/** What an unknown outcome says, before `MAY_HAVE`. */
+export function unsureFact(command: ChatCommand): string {
+  switch (command.kind) {
+    case "Send": return "not sure your message sent.";
+    case "Repeat": return "not sure the new answer started.";
+    case "DeleteMessage": return "not sure the message was deleted.";
+    case "DeleteChat": return `not sure “${command.title}” was deleted.`;
+  }
+}
+
+/** A pending command's identity: what its held slip and its observers follow. */
+export function commandKey(command: ChatCommand): string {
+  switch (command.kind) {
+    case "Send":
+    case "Repeat": return `${command.kind}:${command.runId}`;
+    case "DeleteMessage": return `DeleteMessage:${command.messageId}:${command.expectedRevision}`;
+    case "DeleteChat": return `DeleteChat:${command.expectedRevision}`;
+  }
+}
+
+/** A refused outcome as a slip or a field tells it: the fact, its reason, and a stale build's reload. */
+export function refusalOf({ title, message, reload }: FeedbackContent): { line: Line; verbs?: Verbs } {
+  return { line: { fact: title, reason: message }, verbs: reload ? transportVerbs("Update", { signIn: null }) ?? undefined : undefined };
+}
+
+/** Says a refused outcome where it was asked: a plain slip, or the topmost modal's. */
+export function sayRefusal(say: Outcome["say"], outcome: CommandOutcome): void {
+  if (outcome.kind !== "Failed") return;
+  const { line, verbs } = refusalOf(outcome.feedback);
+  say(line, verbs);
+}
+
+function told(command: ChatCommand, standing: Standing): FeedbackContent {
+  switch (standing.kind) {
+    case "Unknown": return { tone: "Warning", title: unsureFact(command), message: MAY_HAVE };
+    case "Changed": return { tone: "Warning", title: CHANGED };
+    case "Unread": return refusal(UNREAD, standing.error);
+  }
+}
 const MISSING = new Set(["E_CONVERSATION_NOT_FOUND", "E_MESSAGE_NOT_FOUND"]);
 const owners = new Map<string, { accountId: string; key: string; owner: ConversationCommands; release: (() => void) | null }>();
 let workGuard: WorkGuard | null = null;
@@ -189,7 +250,7 @@ export function repeatMessage(
 ): Promise<CommandOutcome> {
   const selection = explicit?.selection ?? message.trust_trail?.run.run_selection.selection;
   if (!selection)
-    return Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: "model not recorded" }, rejection: null });
+    return Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: `couldn’t ${operation}.`, message: "its model wasn’t recorded." }, rejection: null });
   return getConversationCommands(accountId, conversation.id).execute({
     kind: "Repeat",
     messageId: message.id,
@@ -225,11 +286,12 @@ export async function confirmChatDeletion(
   try {
     tree = target.kind === "Message" ? target.tree : await readConversationTree(conversationId);
   } catch (error) {
-    const failure = chatFailure(error, "chat could not be inspected before deletion");
+    const failure = failureOf(error);
     if (failure.kind === "Defect") throw failure.error;
+    // nothing was sent: the read precedes the confirmation
     return failure.kind === "Handled" || !owner.isActive()
       ? { kind: "Handled" }
-      : { kind: "Failed", feedback: failure.feedback, rejection: null };
+      : { kind: "Failed", feedback: refusal(target.kind === "Message" ? "couldn’t delete this message." : "couldn’t delete this chat.", failure.error), rejection: null };
   }
   if (!owner.isActive()) return { kind: "Handled" };
   if (owner.getSnapshot().kind !== "Idle") return BUSY; // another command started during the read
@@ -241,7 +303,7 @@ export async function confirmChatDeletion(
   return owner.execute(
     target.kind === "Message"
       ? { kind: "DeleteMessage", messageId: target.messageId, expectedRevision }
-      : { kind: "DeleteChat", expectedRevision },
+      : { kind: "DeleteChat", expectedRevision, title: tree.conversation.title || "untitled chat" },
   );
 }
 
@@ -250,6 +312,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   let pending: {
     command: ChatCommand;
     occurrence: object;
+    attempt: number;
     body: string | null;
     unconfirmed: boolean;
     /**
@@ -273,13 +336,19 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     state = next;
     for (const listener of listeners) listener.changed();
   };
-  const hold = (kind: "Unconfirmed" | "RefreshRequired", feedback: FeedbackContent, preserveCopy = false): CommandOutcome => {
+  const stand = (standing: Standing): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
-    set({ kind, command: pending.command, occurrence: pending.occurrence, feedback: kind === "Unconfirmed" && !preserveCopy && feedback !== STALE_BUILD_FEEDBACK
-      ? { ...feedback, title: "change not confirmed", message: "the request may have succeeded." }
-      : feedback });
+    if (standing.kind === "Unknown") pending.attempt += 1;
+    const { command, occurrence, attempt } = pending;
+    const feedback = told(command, standing);
+    set(standing.kind === "Unknown"
+      ? { kind: "Unconfirmed", command, occurrence, attempt, standing, feedback }
+      : { kind: "RefreshRequired", command, occurrence, attempt, standing, feedback });
     return PENDING;
   };
+  /** A retry stands on what its command last stood on, until it answers. */
+  const busy = (attempt: NonNullable<typeof pending>) => set({ kind: "Busy", command: attempt.command, occurrence: attempt.occurrence, attempt: attempt.attempt,
+    standing: state.kind === "Idle" ? null : state.standing, feedback: state.kind === "Idle" ? null : state.feedback });
   const deliver = (tree: ConversationTree | null) => {
     handoff = { tree };
     for (const listener of listeners) listener.settled?.(tree);
@@ -295,13 +364,13 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   };
   const conflict = (): CommandOutcome => {
     if (pending) pending.unconfirmed = false; // a newer revision fences every copy
-    return hold("RefreshRequired", CHANGED);
+    return stand({ kind: "Changed" });
   };
   /** Read the canonical tree and hand it to every mounted store (no command: a plain refresh). */
   const reconcile = async (): Promise<CommandOutcome> => {
     const attempt = pending;
     if (conversationId === null) return { kind: "Settled" };
-    if (attempt) set({ kind: "Busy", command: attempt.command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
+    if (attempt) busy(attempt);
     try {
       const tree = await readConversationTree(conversationId);
       if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
@@ -313,21 +382,17 @@ function createCommands(conversationId: string | null, accountActive: () => bool
           deliver(tree);
           attempt.accepted = null;
           handoff = null;
-          return hold("RefreshRequired", {
-            tone: "Warning",
-            title: "another change is now current",
-            message: "refresh to review the current conversation.",
-          });
+          return stand({ kind: "Changed" });
         }
       }
       const read = settle(tree);
       return accepted && read.kind === "Settled" ? { kind: "Accepted", receipt: accepted } : read;
     } catch (error) {
       if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
-      const failure = chatFailure(error, "chat refresh failed");
+      const failure = failureOf(error);
       if (failure.kind === "Defect") throw failure.error;
-      if (failure.kind === "Handled" || !isActive()) return { kind: "Handled" };
-      return attempt ? hold("RefreshRequired", failure.feedback) : { kind: "Failed", feedback: failure.feedback, rejection: null };
+      if (failure.kind === "Handled") return { kind: "Handled" };
+      return attempt ? stand({ kind: "Unread", error: failure.error }) : { kind: "Failed", feedback: refusal(UNREAD, failure.error), rejection: null };
     }
   };
   /** A later refusal never decides an earlier attempt still in flight. */
@@ -355,19 +420,19 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         }
       } catch (error) {
         if (!isActive() || pending !== attempt) return { kind: "Handled" };
-        const failure = chatFailure(error, "chat refresh failed");
+        const failure = failureOf(error);
         if (failure.kind === "Defect") throw failure.error;
-        if (!attempt.unconfirmed) return hold("RefreshRequired", failure.kind === "Feedback" ? failure.feedback : CHANGED);
+        if (!attempt.unconfirmed) return stand(failure.kind === "Handled" ? { kind: "Changed" } : { kind: "Unread", error: failure.error });
       }
     }
     attempt.unconfirmed = true;
-    return hold("Unconfirmed", feedback);
+    return stand({ kind: "Unknown" });
   };
   const send = async (): Promise<CommandOutcome> => {
     const attempt = pending;
     if (!attempt) return { kind: "Settled" };
     const command = attempt.command;
-    set({ kind: "Busy", command, occurrence: attempt.occurrence, feedback: state.kind === "Idle" ? null : state.feedback });
+    busy(attempt);
     let submitted = false;
     try {
       let deleted = false;
@@ -380,11 +445,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
           const catalog = await readCatalog(null);
           if (!isActive() || pending !== attempt) return { kind: "Handled" };
           if (!isSelectable(catalog, command.selection))
-            return refuse({
-              tone: "Warning",
-              title: "the original model is unavailable",
-              message: "choose a different model for this run; nothing was substituted.",
-            }, null, false);
+            return refuse({ tone: "Warning", title: refusedFact(command), message: "its model isn’t available now." }, null, false);
         }
         submitted = true;
         const path = command.kind === "Send" ? "/api/chat-runs" : `/api/messages/${command.messageId}/${command.operation}` as const;
@@ -393,8 +454,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         if (receipt.outcome.kind === "Rejected") {
           const code = receipt.outcome.reason.code;
           if (code === "E_CONVERSATION_CHANGED") return conflict();
-          const title = command.kind === "Send" ? "This message wasn’t sent." : "response could not be repeated";
-          return refuse({ tone: "Warning", title, message: failureDetail(code) }, code, MISSING.has(code));
+          return refuse(rejected(refusedFact(command), code), code, MISSING.has(code));
         }
         const accepted: AcceptedReceipt = { ...receipt, outcome: receipt.outcome };
         attempt.accepted = accepted;
@@ -425,15 +485,15 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       return reconcile();
     } catch (error) {
       if (!isActive() || pending !== attempt) return { kind: "Handled" };
-      if (error instanceof AuthoredContextError) return refuse({tone:"Warning",title:"message wasn’t sent",message:error.message},null,false);
+      if (error instanceof AuthoredContextError) return refuse({ tone: "Warning", title: refusedFact(command), message: error.message }, null, false);
       if (isApiError(error) && error.code === "E_CONVERSATION_CHANGED") return conflict();
-      const failure = chatFailure(error, command.kind === "Repeat" ? "response could not be repeated" : "chat change failed");
+      const failure = failureOf(error);
       if (failure.kind === "Defect") {
         // A malformed response can follow a committed write: keep admission closed.
-        if (attempt.accepted) hold("RefreshRequired", { tone: "Warning", title: "chat refresh required" });
+        if (attempt.accepted) stand({ kind: "Changed" });
         else if (submitted) {
           attempt.unconfirmed = true;
-          hold("Unconfirmed", { tone: "Warning", title: "change status unconfirmed" });
+          stand({ kind: "Unknown" });
         } else {
           pending = null;
           set(IDLE_COMMAND);
@@ -441,18 +501,18 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         throw failure.error;
       }
       if (failure.kind === "Handled") {
-        if (attempt.unconfirmed) hold("Unconfirmed", { tone: "Warning", title: "", message: "sign in to check this change" }, true);
+        if (attempt.unconfirmed) stand({ kind: "Unknown" });
         else {
           pending = null;
           set(IDLE_COMMAND);
         }
         return { kind: "Handled" };
       }
-      if (submitted && failure.ambiguous) {
+      if (submitted && failure.kind === "Unknown") {
         attempt.unconfirmed = true;
-        return hold("Unconfirmed", failure.feedback);
+        return stand({ kind: "Unknown" });
       }
-      return refuse(failure.feedback, null, isApiError(error) && MISSING.has(error.code));
+      return refuse(refusal(refusedFact(command), failure.error), null, MISSING.has(failure.error.code));
     }
   };
   const run = (work: () => Promise<CommandOutcome>) => {
@@ -491,7 +551,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         : null;
       const authored_prefix=accountId!==null && (command.kind==="Send"||command.kind==="Repeat") ? getWritingRuntime(accountId).committedPrefix() : null;
       void authored_prefix?.catch(()=>{});
-      pending = { command, occurrence: {}, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
+      pending = { command, occurrence: {}, attempt: 0, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
       return run(send);
     },
     /** Unconfirmed resends the frozen command; RefreshRequired rereads the tree. */
@@ -539,7 +599,7 @@ class AuthoredContextError extends Error {}
 async function waitForAuthoredContext(accountId:string,prefix:Promise<string>,controller:AbortController):Promise<void> {
   const runtime=getWritingRuntime(accountId);
   const store=await runtime.store;
-  const deadline=setTimeout(()=>controller.abort(new AuthoredContextError("linked notes haven’t finished syncing. try sending again.")),30_000);
+  const deadline=setTimeout(()=>controller.abort(new AuthoredContextError("linked notes haven’t synced yet.")),30_000);
   let aborted:()=>void=()=>{};
   try {
     const cancelled=new Promise<never>((_resolve,reject)=>{
@@ -550,7 +610,7 @@ async function waitForAuthoredContext(accountId:string,prefix:Promise<string>,co
     await store.whenUploaded(sequence,controller.signal);
   } catch(error) {
     if(controller.signal.aborted)throw controller.signal.reason;
-    throw error instanceof AuthoredContextError?error:new AuthoredContextError("couldn’t sync your linked notes. try sending again.");
+    throw error instanceof AuthoredContextError?error:new AuthoredContextError("linked notes didn’t sync.");
   } finally {
     clearTimeout(deadline);controller.signal.removeEventListener("abort",aborted);
   }

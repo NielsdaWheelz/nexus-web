@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
-import { FeedbackBusy, FeedbackFailure, FeedbackStatus, type FeedbackAction, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Fact, Field } from "@/components/feedback/Fact";
+import { Hold, useOutcome, type FeedbackContent } from "@/components/feedback/Feedback";
+import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
-import { recoveryOf, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { commandKey, MAY_HAVE, recoveryOf, refusalOf, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import type { ChatView } from "@/lib/chat/tree";
 import type { Execution, RejectionCode } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
@@ -21,14 +23,16 @@ import GenerationPicker from "./GenerationPicker";
 import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
+/** Why send waits, read with it; a reply target that can't take one is said beneath the input. */
 const BLOCKED = {
-  HistoryLoading: "Conversation history is loading.",
-  HistoryUnavailable: "Conversation history could not be loaded.",
-  AssistantRunning: "Assistant response in progress. Your draft is still editable.",
-  ReplyTargetUnavailable: "Choose a complete assistant response before sending.",
-};
+  HistoryLoading: "messages are still loading.",
+  HistoryUnavailable: "messages didn’t load.",
+  AssistantRunning: "an answer is still running.",
+} as const;
 
-/** Draft text and model, and the one control for the chat's current admission state. */
+/** Draft text and model, and the one control for the chat's current admission state. A refused
+ * send is said beneath the input, where send is the retry; one whose answer never came is held
+ * above the composer until it resolves. */
 export default function ChatComposer(props: {
   scope: string;
   /** This pane: its draft, and the sends whose recovery it shows. */
@@ -48,7 +52,8 @@ export default function ChatComposer(props: {
   const { quote, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
   const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
-  const { read: memoryRead, failureOccurrence: memoryOccurrence, enter: enterMemory, fresh: freshMemory } = useChatSelection();
+  const { read: memoryRead, enter: enterMemory, fresh: freshMemory } = useChatSelection();
+  const { fail } = useOutcome();
   const { delivery, claim } = usePaneEntryDelivery();
   const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
@@ -85,8 +90,12 @@ export default function ChatComposer(props: {
   const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
-  const [error, setError] = useState<FeedbackContent | null>(null);
+  const fieldId = useId();
+  const blockedId = useId();
+  /** A send's refusal, until the input changes. */
+  const [refusal, setRefusal] = useState<FeedbackContent | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [stopUnknown, setStopUnknown] = useState<{ runId: string; attempt: number } | null>(null);
   useEffect(() => {
     mounted.current = true;
     setReady(true);
@@ -105,14 +114,14 @@ export default function ChatComposer(props: {
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
   }, [inputReady, focusKey, isPaneActive]);
 
-  const reason = catalog ? unavailability(catalog, selection) : null;
+  const reason = catalog && selection.kind !== "Uninitialized" ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
   const canSend = inputReady && command.kind === "Idle" && target.kind !== "Blocked" && !!catalog
     && selection.kind === "Selected" && (draft.selection.kind !== "Uninitialized" || recalled !== null) && !reason && !!draft.text.trim() && (!quote || !!quoted);
 
   const submit = async (openIntent: OpenIntent = "default") => {
     if (!canSend || selection.kind !== "Selected") return;
-    setError(null);
+    setRefusal(null);
     const submitted = draft;
     const request: DraftRequest = {
       destination: target.kind === "New" ? { kind: "New" } : {
@@ -130,43 +139,69 @@ export default function ChatComposer(props: {
   };
   const present = (outcome: CommandOutcome) => {
     if (!mounted.current || outcome.kind !== "Failed") return;
-    setError(outcome.feedback);
+    setRefusal(outcome.feedback);
     if (outcome.rejection === null) return;
     catalogRead.refetch(); // a rejection may mean the catalog changed; rereading is cheap
     props.onRejected(outcome.rejection);
   };
   // cancel intent is monotonic, so saved or live saying so is exact
   const stopRequested = Boolean(run?.execution?.cancel_requested || props.liveExecution?.cancel_requested);
-  const stop = () => {
-    if (!run) return;
+  // stop intent is idempotent: a press after any failure is safe
+  const cancel = (runId: string) => {
     setStopping(true);
-    void store.cancel(run.runId).finally(() => mounted.current && setStopping(false));
+    void store.cancel(runId).then((failure) => {
+      if (!mounted.current) return;
+      setStopping(false);
+      setStopUnknown((current) => failure?.kind === "Unknown" ? { runId, attempt: current?.runId === runId ? current.attempt + 1 : 1 } : null);
+      if (failure?.kind === "Refused" || failure?.kind === "Defect")
+        fail(failure.error, "couldn’t stop this answer.", { label: "retry", commandKey: `stop ${runId}`, run: () => cancel(runId) });
+    });
   };
   const recovery = own?.kind === "Unconfirmed" || own?.kind === "RefreshRequired";
+  const retry = (openIntent: OpenIntent) => void store.retryCommand(openIntent).then(present);
   // shift sends (or retries) into a new pane
   const sending = recovery ? false : run ? stopping : own?.kind === "Busy";
-  const sendLabel = useRef("Send message");
-  if (own?.kind !== "Busy") sendLabel.current = own?.kind === "RefreshRequired" ? "Retry refresh"
-    : own?.kind === "Unconfirmed" ? "Retry send"
-    : run ? (stopRequested ? "Stop requested" : "Stop response") : "Send message";
+  const sendLabel = useRef("send");
+  if (own?.kind !== "Busy") sendLabel.current = own?.kind === "RefreshRequired" ? "check"
+    : own?.kind === "Unconfirmed" ? "retry"
+    : run ? (stopRequested ? "stopping" : "stop") : "send";
   const activateSend = (event: TargetActivationEvent) => {
     if (run && !recovery) return;
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Unowned") return;
     event.preventDefault();
     if (activation.kind === "Consume") return;
-    if (recovery) void store.retryCommand(activation.intent).then(present);
+    if (recovery) retry(activation.intent);
     else void submit(activation.intent);
   };
-  const recallRetry: FeedbackAction = {
-    label: "retry", busy: memoryRead.status === "failed" ? memoryRead.retrying : memoryRead.status === "ready" && memoryRead.refreshing,
-    onClick: enterMemory,
+  // an unknown send holds above the composer; its retry resends the frozen request
+  const held = own?.command.kind === "Send" && own.standing?.kind === "Unknown" ? own : null;
+  const blocked = target.kind === "Blocked" ? target.reason : null;
+  const field: { line: Line; verbs?: Verbs } | null = refusal ? refusalOf(refusal)
+    : blocked === "ReplyTargetUnavailable" ? { line: { fact: "you can reply only to a complete answer." } }
+    : reason && (!recallRequired || !recallPending) ? { line: { fact: reason } }
+    : null;
+  const recallTransport = recallRequired && memoryFailure !== null ? transportOf(memoryFailure) : null;
+  const recallRetry: CommandVerb = {
+    label: "retry", commandKey: "retry last model", run: enterMemory,
+    busy: memoryRead.status === "failed" ? memoryRead.retrying : memoryRead.status === "ready" && memoryRead.refreshing,
   };
+  const useRecalled: CommandVerb | null = shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
+    ? { label: "use this model", commandKey: "use last model", run: () => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); } }
+    : null;
+  const recallVerb = recallTransport && transportVerbs(recallTransport, { retry: recallRetry, signIn: null })?.[0];
+  const recallVerbs: Verbs | undefined = recallVerb && useRecalled ? [recallVerb, useRecalled]
+    : recallVerb ? [recallVerb] : useRecalled ? [useRecalled] : undefined;
   return (
     <div className={styles.composer}>
+      {held ? <Hold id={commandKey(held.command)} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }} verbs={[
+        { label: "retry", commandKey: `retry ${commandKey(held.command)}`, busy: held.kind === "Busy", run: retry },
+        { label: "discard send", commandKey: `discard ${commandKey(held.command)}`, run: () => store.discardCommand() },
+      ]} /> : null}
+      {stopUnknown && run?.runId === stopUnknown.runId && !stopRequested
+        ? <Hold id={`stop:${stopUnknown.runId}`} attempt={stopUnknown.attempt} line={{ fact: "not sure the answer stopped.", reason: MAY_HAVE }} /> : null}
       <div className={styles.shell}>
-        <span className="sr-only" aria-live="polite">{target.kind === "Blocked" ? BLOCKED[target.reason] : ""}</span>
-        {error ? <FeedbackFailure scope="Local" occurrence={error} content={error} announcement="Assertive" /> : null}
+        {blocked !== null && blocked !== "ReplyTargetUnavailable" ? <span id={blockedId} className="sr-only">{BLOCKED[blocked]}</span> : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
             <GitBranch size={16} aria-hidden="true" />
@@ -196,6 +231,7 @@ export default function ChatComposer(props: {
           value={inputReady ? draft.text : ""}
           onChange={(event) => {
             const text = event.target.value;
+            setRefusal(null);
             const fresh = freshMemory(catalog);
             if (draft.selection.kind === "Uninitialized" && fresh) setDraft({ text, selection: fresh });
             else setText(text);
@@ -214,40 +250,33 @@ export default function ChatComposer(props: {
             setText(field.value);
           }}
           {...(inputReady ? { "aria-label": "ask anything" } : { "aria-hidden": true, disabled: true })}
+          aria-describedby={field ? fieldId : undefined}
           placeholder="ask anything…"
           readOnly={locked}
         />
+        {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : null}
         <div className={styles.row}>
           <GenerationPicker
             catalogRead={catalogRead}
             value={selection}
             onChange={setSelection}
             disabled={!inputReady || frozen !== null}
+            waiting={recallRequired && recallPending && memoryFailure === null}
           />
+          {held ? <Button disabled={held.kind === "Busy"} onClick={() => store.discardCommand()}>discard send</Button> : null}
           <Button
             emphasis={recovery || run ? undefined : "strong"}
             iconOnly
             className={styles.send}
             disabled={sending || (recovery ? false : run ? stopRequested : !canSend)}
-            onClick={run && !recovery ? stop : activateSend}
+            onClick={run && !recovery ? () => cancel(run.runId) : activateSend}
             onKeyDown={activateSend}
             aria-label={sendLabel.current}
-            busyKey={own?.command ?? run?.runId}
+            aria-describedby={field ? fieldId : blocked !== null ? blockedId : undefined}
             aria-busy={sending}
             icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
         </div>
-        <FeedbackBusy pending={recallRequired && recallPending && memoryFailure === null} />
-        {recallRequired && memoryFailure !== null && memoryOccurrence !== null ? <FeedbackFailure scope="Local" occurrence={memoryOccurrence}
-          content={isApiError(memoryFailure) && apiTransportFeedback(memoryFailure, shownMemory ? "couldn’t refresh your last model" : "couldn’t restore your last model") || {tone: "Warning", title: shownMemory ? "couldn’t refresh your last model" : "couldn’t restore your last model"}}
-          announcement="Polite" actions={shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
-            ? [recallRetry, {label: "use this model", onClick: () => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); }}]
-            : [recallRetry]} /> : null}
-        {reason && selection.kind !== "Uninitialized" && (!recallRequired || !recallPending) ? (
-          <FeedbackStatus
-            content={{ tone: "Neutral", title: reason }}
-            announcement="Polite"
-          />
-        ) : null}
+        {recallTransport ? <Fact line={TRANSPORT_LINES[recallTransport].command("couldn’t load your last model.")} verbs={recallVerbs} /> : null}
       </div>
     </div>
   );

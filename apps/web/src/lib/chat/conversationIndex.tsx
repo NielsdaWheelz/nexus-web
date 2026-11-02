@@ -1,18 +1,19 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { FeedbackFailure, type FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import type { CommandVerb } from "@/components/feedback/stage";
+import { apiFetch, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { confirmChatDeletion } from "./commands";
+import { confirmChatDeletion, MAY_HAVE } from "./commands";
 import { createRandomId } from "@/lib/createRandomId";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { chatFailure } from "./wire";
+import { failureOf } from "./wire";
 
 // The complete chat index, latest source lookup and deletion. Writers publish "Chats".
 
@@ -58,14 +59,16 @@ interface Creation {
   readonly abort: () => void;
   readonly body: string;
   busy: boolean;
-  ambiguous: boolean;
-  failure: FeedbackContent | null;
+  /** Attempts whose answer never came. Once one has, the creation may exist, so it stays held. */
+  unknown: number;
   intent: OpenIntent;
 }
 const NO_CREATIONS: readonly Creation[] = [];
 
-/** The original context-create closure belongs to this account until its exact request settles. */
-function creationOwner(accountId: string) {
+/** The original context-create closure belongs to this account until its exact request settles. A
+ * refusal is told once and forgets the creation; an unknown outcome holds it, and its retry resends
+ * the same id, which the server answers with the same chat. */
+function creationOwner(accountId: string, refused: (error: ApiError, retry: CommandVerb) => void) {
   let retired = false;
   const entries = new Map<string, Creation>();
   const listeners = new Set<() => void>();
@@ -88,14 +91,15 @@ function creationOwner(accountId: string) {
       if (current(entry)) remove(entry);
     } catch (error) {
       if (!current(entry)) return;
-      const failure = chatFailure(error, "chat couldn’t be created");
+      const failure = failureOf(error);
       if (failure.kind === "Handled") return;
       if (failure.kind === "Defect") {ctx.reportDefect({error: failure.error}); return;}
-      entry.ambiguous = entry.ambiguous || failure.ambiguous;
-      entry.failure = entry.ambiguous ? {...failure.feedback, title: "change not confirmed", message: "the request may have succeeded."} : failure.feedback;
+      if (failure.kind === "Unknown" || entry.unknown > 0) {entry.unknown += 1; return;}
+      remove(entry);
+      refused(failure.error, {label: "retry", commandKey: `create ${entry.key}`, run: intent => void owner.create({...entry.input, intent})});
     } finally {entry.busy = false; if (current(entry)) emit();}
   };
-  return {
+  const owner = {
     subscribe(listener: () => void) {listeners.add(listener); return () => {listeners.delete(listener);};},
     snapshot: () => snapshot,
     start() {retired = false; return () => {retired = true; for (const entry of entries.values()) entry.signal.removeEventListener("abort", entry.abort); entries.clear(); emit();};},
@@ -104,12 +108,12 @@ function creationOwner(accountId: string) {
       const key = `${accountId}:${input.ref}`;
       let entry = entries.get(key);
       if (entry?.busy) return;
-      if (!entry || !entry.ambiguous) {
+      if (!entry || entry.unknown === 0) {
         if (entry) remove(entry);
         const id = createRandomId();
         const signal = input.ctx.sessionSignal();
         const abort = () => remove(admitted);
-        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, ambiguous: false, failure: null, intent: input.intent};
+        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, unknown: 0, intent: input.intent};
         entry = admitted;
         entries.set(key, entry);
         signal.addEventListener("abort", abort, {once: true});
@@ -118,16 +122,19 @@ function creationOwner(accountId: string) {
     },
     retry(entry: Creation, intent: OpenIntent) {return submit(entry, intent, entry.input.ctx.workspace().state.active_primary_pane_id);},
   };
+  return owner;
 }
 
 export function useConversationCreationOwner(accountId: string) {
-  const owner = useMemo(() => creationOwner(accountId), [accountId]);
+  const { fail } = useOutcome();
+  const told = useRef<Outcome["fail"]>(fail);
+  useLayoutEffect(() => { told.current = fail; });
+  const owner = useMemo(() => creationOwner(accountId, (error, retry) => told.current(error, "couldn’t create the chat.", retry)), [accountId]);
   useLayoutEffect(() => owner.start(), [owner]);
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => NO_CREATIONS);
-  return {create: owner.create, feedback: entries.map(entry => entry.failure === null ? null :
-    <FeedbackFailure key={entry.key} scope="Local" occurrence={entry} announcementOccurrence={entry.failure}
-      content={entry.failure} announcement="Polite" actions={entry.ambiguous ? [{label: "retry creation", busy: entry.busy,
-        onClick: intent => {void owner.retry(entry, intent);}}] : undefined} />)};
+  return {create: owner.create, feedback: entries.map(entry => entry.unknown === 0 ? null :
+    <Hold key={entry.key} id={entry.key} attempt={entry.unknown} line={{fact: "not sure the chat was created.", reason: MAY_HAVE}}
+      verbs={[{label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}}]} />)};
 }
 
 export function openConversationAbout(input: ConversationCreationInput & {

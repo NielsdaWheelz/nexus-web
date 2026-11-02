@@ -72,7 +72,7 @@ function Action({ action, undone, onInspect }: {
   const { activity } = action;
   const expandable = Boolean(activity.detail) || action.retrievals.length > 0;
   const state = undone || action.reverted_at !== null ? "undone"
-    : action.status === "error" ? "failed" : action.status === "complete" ? null : action.status;
+    : action.status === "error" ? "didn’t work" : action.status === "complete" ? null : action.status;
   const label = [activity.verb, activity.subject === null ? null : truncateText(activity.subject, 80)].filter(Boolean).join(" · ");
   return <li data-message-action={action.tool_call_index}>
     <div className={styles.actionLine}>
