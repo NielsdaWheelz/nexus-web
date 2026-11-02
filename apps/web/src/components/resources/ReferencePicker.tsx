@@ -5,7 +5,8 @@ import ResourceBody from "./ResourceBody";
 import { FeedbackNotice, FeedbackStatus, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import Button from "@/components/ui/Button";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { itemMediaKind, resourceType, resourceTypeName } from "@/lib/resources/type";
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
 import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
 import collection from "@/components/ui/Collection.module.css";
@@ -19,10 +20,10 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
     {!search.minimum && !search.loading && !search.items.length && !search.error && !search.localError ? <p>no matching resources</p> : null}
     <div {...bindings.listProps} ref={bindings.listRef} aria-busy={search.loading} className={collection.compactViewport}>
       {search.items.map(target => {
-        const key = targetKey(target), scheme = parseResourceRef(target.item.ref)!.scheme;
+        const key = targetKey(target), type = resourceType(parseResourceRef(target.item.ref)!.scheme, itemMediaKind(target.item));
         const props = bindings.optionProps(key);
         return <div key={key} {...props} className={collection.row} aria-labelledby={`${props.id}-label`} aria-describedby={`${props.id}-detail`}>
-          <div className={collection.content}><div id={`${props.id}-label`}><ResourceBody body={target.item.preview.body} /></div><span id={`${props.id}-detail`} className={collection.detail}>{resourceTypeLabel(scheme)}{target.existing_link_id ? " · already linked" : ""}</span></div>
+          <div className={collection.content}><div id={`${props.id}-label`}><ResourceBody body={target.item.preview.body} /></div><span id={`${props.id}-detail`} className={collection.detail}>{resourceTypeName(type)}{target.existing_link_id ? " · already linked" : ""}</span></div>
         </div>;
       })}
     </div>
