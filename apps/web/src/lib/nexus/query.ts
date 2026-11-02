@@ -1,7 +1,7 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
 import { FilePlus2, FileText, Globe, Library, MessageSquarePlus, Upload } from "lucide-react";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import { extractUrls } from "@/lib/extractUrls";
+import { extractLinks } from "@/lib/extractLinks";
 import { browseHref } from "@/lib/browse/query";
 import { DESTINATIONS, getDestination, type DestinationId } from "@/lib/navigation/destinations";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -96,8 +96,8 @@ const BROWSE_NOUNS: Record<string, BrowseKind> = {
 };
 
 function singleUrl(value: string): string | null {
-  const urls = extractUrls(value);
-  return urls.length === 1 && urls[0] === value ? new URL(value).toString() : null;
+  const { links } = extractLinks(value, "Urls");
+  return links.length === 1 && links[0] === value ? new URL(value).toString() : null;
 }
 
 function parseIntent(text: string, norm: string): NexusIntent {

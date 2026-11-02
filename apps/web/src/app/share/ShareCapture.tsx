@@ -20,7 +20,7 @@ import {
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
-import { extractUrls } from "@/lib/extractUrls";
+import { extractLinks } from "@/lib/extractLinks";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
@@ -74,7 +74,7 @@ export default function ShareCapture(props: { text: string; isShell: boolean }) 
   </div></FeedbackProvider>;
 }
 function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
-  const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
+  const plain = props.text.trim() !== "" && extractLinks(props.text, "Urls").links.length === 0;
   const [account, setAccount] = useState<ShareAccount | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
   const [admissionDefect, setAdmissionDefect] = useState<{ error: unknown } | null>(null);
@@ -112,7 +112,7 @@ function ShareCaptureContent({
   account: ShareAccount | null;
 }) {
   const trimmed = text.trim();
-  const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
+  const urls = useMemo(() => extractLinks(trimmed, "Urls").links, [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
   const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
