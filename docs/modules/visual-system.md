@@ -419,8 +419,10 @@ also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-`ResourceType` renders its scheme's sign, decorative, unfocusable and
-current-color, at `--text-md` square. outline markers use muted ink at rest and retain
+`ResourceType` renders the sign `lib/resources/type.ts` chooses for its type (a
+held media kind's medium, else its scheme's; see the
+[presentation contract](resource-references.md#presentation-contract)),
+decorative, unfocusable and current-color, at `--text-md` square. outline markers use muted ink at rest and retain
 control hover/focus treatment; disabled opening markers remain readable in muted
 ink. index prefixes use muted ink with a
 `--space-1` gap; the glyph does not shrink, while the existing title fragment
