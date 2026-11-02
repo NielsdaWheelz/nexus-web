@@ -70,6 +70,10 @@
 
 /* The sheet: MobileSheet's handle strip, then the list, then the field as the last child. */
 .sheet { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+/* Typed, the sheet holds the available height (MobileSheet clamps the basis) and the continuations are a
+   band above the list, so arrivals fill the list upward and move nothing shown. */
+.sheet.typed { flex-basis: 100dvh; }
+.continuations { flex: 0 0 auto; border-bottom: 1px solid var(--edge-subtle); }
 
 /* Dom order is rank order; the list paints bottom-up, so rank 1 touches the field and arrivals grow upward
    without moving what is shown. A group's head is its last child, so it paints above its rows. */

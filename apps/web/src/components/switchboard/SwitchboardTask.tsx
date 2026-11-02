@@ -3,7 +3,7 @@
 // The phone's palette: a sheet that opens keyboard-down on the armed row and reads upward to its field.
 // Rank 1 touches the field; continuations, places and the account sit farthest. Pages render in the
 // same sheet with their headers.
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from "react";
 import { X } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import AccountMenu from "@/components/appnav/AccountMenu";
@@ -29,6 +29,7 @@ import nexus from "@/components/nexus/Nexus.module.css";
 import styles from "./Switchboard.module.css";
 
 const GRID_ID = "mobile-nexus-results";
+const CONTINUATIONS_ID = "mobile-nexus-continuations";
 const RAIL_ID = "mobile-nexus-rail";
 const NOTICE_ID = "mobile-nexus-notices";
 const PLACES = placeChipRows();
@@ -48,6 +49,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const [excerpt, setExcerpt] = useState<ResourceItem | null>(null);
   if (!controller.open && excerpt !== null) setExcerpt(null);
   const typed = controller.rootMode === "Typed";
+  const pinned = typed && controller.continuations.length > 0;
   useLayoutEffect(() => { taskPointerId.current = null; placementPress.current = null; }, [controller.open]);
   useEffect(() => {
     const release = () => { placementPress.current = null; };
@@ -77,6 +79,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   }, [controller.paneFocusRevision, controller.paneFocusKey, controller.open]);
   // A row control that leaves the tree hands focus to the heading, so the keyboard stays down.
   const focusedControl = useRef<HTMLElement | null>(null);
+  const trackFocus = (event: FocusEvent<HTMLDivElement>) => { if (event.target instanceof HTMLElement) focusedControl.current = event.target; };
   useLayoutEffect(() => {
     if (!focusedControl.current || focusedControl.current.isConnected) return;
     focusedControl.current = null;
@@ -199,10 +202,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       {[controller.announcement, controller.noticeText, typed && controller.searchProgress.kind === "Pending" ? controller.searchProgress.text : null, typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
     </div>
     <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
-      <div ref={listRef} className={styles.list} aria-busy={controller.busy || undefined}
-        onFocusCapture={event => { if (event.target instanceof HTMLElement) focusedControl.current = event.target; }}>
-        <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} className={cx(nexus.grid, styles.grid)}>
-          {controller.groups.filter(group => controller.reorder.placement === null || group.id === "Open").map(group => <Fragment key={group.id}>
+      {/* Typed, the continuations are a band above the scrollport: farthest, and arrivals never move them. */}
+      {pinned ? <div id={CONTINUATIONS_ID} role="rowgroup" aria-label="query actions" className={cx(nexus.grid, styles.grid, styles.continuations)} onFocusCapture={trackFocus}>
+        {controller.continuations.map((item, rowIndex) => row(item, "Continuations", rowIndex))}
+      </div> : null}
+      <div ref={listRef} className={styles.list} aria-busy={controller.busy || undefined} onFocusCapture={trackFocus}>
+        <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={pinned ? CONTINUATIONS_ID : undefined} className={cx(nexus.grid, styles.grid)}>
+          {controller.groups.filter(group => (controller.reorder.placement === null || group.id === "Open") && !(pinned && group.id === "Continuations")).map(group => <Fragment key={group.id}>
             <div role="rowgroup" aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}
               aria-label={group.label ? undefined : group.id === "Results" ? "results" : group.id === "Here" ? "here" : "query actions"}
               id={group.id === "Open" && controller.paneListPresented ? "mobile-nexus-open-panes" : undefined} className={styles.group}>
@@ -294,7 +300,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
-      <div className={styles.sheet}
+      <div className={cx(styles.sheet, controller.page.kind === "Root" && typed && styles.typed)}
         onPointerDownCapture={(event) => { taskPointerId.current = event.pointerId; }}
         onPointerCancelCapture={(event) => { if (taskPointerId.current === event.pointerId) taskPointerId.current = null; }}
         onClickCapture={admitClick}>
