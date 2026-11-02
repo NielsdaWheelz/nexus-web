@@ -1,11 +1,13 @@
 /* the dial and the disc keep scaling strokes: the sweep is a dash measured on a 360-unit circle,
-   and the disc's stroke is the rounded corner of a filled shape. */
+   and the disc's stroke is the rounded corner of a filled shape, so its width is drawing, set in
+   the 24 viewbox, not the app's weight. */
 .speed > *,
 .playPause > * {
   vector-effect: none;
 }
 
 .playPause > * {
+  stroke-width: 1.5;
   transition: d var(--duration-fast) var(--ease-snap);
 }
 
