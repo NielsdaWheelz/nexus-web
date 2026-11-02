@@ -8,6 +8,7 @@ import type {WritingDocument} from "@/lib/notes/runtime";
 import type {OutlineController, RootField} from "@/lib/notes/outlineController";
 import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {hasActiveInteractionOwner, overlayOwnsHistoryTraversal, ownsOverlayFocus, useInteractionOwner} from "@/lib/ui/overlay";
+import {usePointerGesture} from "@/lib/ui/pointerGesture";
 import type {TextEditorHandle} from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
 import BoundPageTitleEditor from "./BoundPageTitleEditor";
@@ -32,15 +33,21 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     return () => {root.doc.off("update", update);};
   }, [root]);
   const expandedRef = useRef(expanded); expandedRef.current = expanded;
-  const ownedFocus = useRef(false), pointer = useRef(false), pendingCollapse = useRef(false);
+  const ownedFocus = useRef(false), pendingCollapse = useRef(false);
   const returnFocus = useRef(false);
   const firstFocus = useRef(false);
   const shownInspection = useRef<{controller: OutlineController; activationId: string} | null>(null);
   const inspection = field?.inspection ?? null;
+  const within = useCallback((target: EventTarget | null) => target instanceof Element && !!region.current &&
+    (region.current.contains(target) || ownsOverlayFocus(region.current, target)), []);
+  const {active, reset} = usePointerGesture({enabled: expanded, within, onComplete: outside => {
+    if (outside && !pendingCollapse.current) leave();
+    attemptCollapse(); controller?.blurRoot();
+  }});
   useLayoutEffect(() => {
-    firstFocus.current = false; ownedFocus.current = false; pointer.current = false;
+    firstFocus.current = false; ownedFocus.current = false; reset();
     pendingCollapse.current = false; returnFocus.current = false;
-  }, [controller]);
+  }, [controller, reset]);
   const reveal = useCallback(() => {
     setVisit(current => current.controller === controller && current.expanded ? current : {controller, expanded: true, opened: current.controller === controller && current.opened});
   }, [controller]);
@@ -51,16 +58,20 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     return editor?.getAttribute("data-reference-editor") === controller?.rootRef || editor === null;
   }, [controller]);
   const attemptCollapse = useCallback(() => {
-    if (!pendingCollapse.current || pointer.current || !handle?.settleNativeInput()) return;
+    if (!pendingCollapse.current || active() || !handle?.settleNativeInput()) return;
     pendingCollapse.current = false;
     setVisit(current => ({...current, expanded: false}));
     ownedFocus.current = false;
     if (returnFocus.current) disclosure.current?.focus({preventScroll: true});
     returnFocus.current = false;
-  }, [handle]);
+  }, [handle, active]);
   const collapse = useCallback((focus: boolean) => {
     pendingCollapse.current = true; returnFocus.current = focus; attemptCollapse();
   }, [attemptCollapse]);
+  const leave = useCallback(() => {
+    if (!document.hasFocus() || !ownedFocus.current || within(document.activeElement)) return;
+    collapse(false);
+  }, [within, collapse]);
   const ready = useCallback((next: TextEditorHandle | null) => {
     setBound(next && controller && root ? {controller, document: root, handle: next} : null);
   }, [controller, root]);
@@ -79,52 +90,31 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const interaction = useInteractionOwner();
   useEffect(() => {
     if (!expanded) return;
-    const within = (target: EventTarget | null) => target instanceof Element && !!region.current &&
-      (region.current.contains(target) || ownsOverlayFocus(region.current, target));
-    const leave = () => {
-      if (!document.hasFocus() || !ownedFocus.current || within(document.activeElement)) return;
-      collapse(false);
-    };
     const focus = (event: FocusEvent) => {
       if (within(event.target)) {ownedFocus.current = true; pendingCollapse.current = false;}
       else leave();
     };
     const blur = (event: FocusEvent) => {if (event.relatedTarget !== null && !within(event.relatedTarget)) queueMicrotask(leave);};
-    let completion = 0;
-    const down = (event: PointerEvent) => {cancelAnimationFrame(completion); pointer.current = !within(event.target);};
-    const finish = () => {const outside = pointer.current; pointer.current = false; if (outside && !pendingCollapse.current) leave(); attemptCollapse(); controller?.blurRoot();};
-    // A captured click can precede target handlers and their microtasks. Its
-    // next rendering boundary certifies activation completion; pointerup cannot
-    // do that for a delayed touch click. Native cancellation/drag end complete
-    // their own gestures without predicting a click.
-    const complete = () => {cancelAnimationFrame(completion); completion = requestAnimationFrame(finish);};
     const key = (event: KeyboardEvent) => {
-      if (pointer.current) complete();
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || hasActiveInteractionOwner() || !within(event.target)) return;
       event.preventDefault(); collapse(true);
     };
     const back = () => {if (!overlayOwnsHistoryTraversal()) collapse(false);};
-    document.addEventListener("focusin", focus); document.addEventListener("focusout", blur);
-    document.addEventListener("pointerdown", down, true); document.addEventListener("click", complete, true);
-    document.addEventListener("pointercancel", complete, true); document.addEventListener("dragend", complete, true); document.addEventListener("keydown", key);
+    document.addEventListener("focusin", focus); document.addEventListener("focusout", blur); document.addEventListener("keydown", key);
     window.addEventListener("popstate", back);
     return () => {
-      document.removeEventListener("focusin", focus); document.removeEventListener("focusout", blur);
-      cancelAnimationFrame(completion);
-      document.removeEventListener("pointerdown", down, true); document.removeEventListener("click", complete, true);
-      document.removeEventListener("pointercancel", complete, true); document.removeEventListener("dragend", complete, true); document.removeEventListener("keydown", key);
+      document.removeEventListener("focusin", focus); document.removeEventListener("focusout", blur); document.removeEventListener("keydown", key);
       window.removeEventListener("popstate", back);
     };
-  }, [expanded, controller, collapse, attemptCollapse]);
+  }, [expanded, within, leave, collapse]);
   useEffect(() => {
     if (expanded && ownedFocus.current && region.current && document.hasFocus() && document.activeElement !== document.body &&
       !region.current.contains(document.activeElement) && !ownsOverlayFocus(region.current, document.activeElement)) collapse(false);
   }, [interaction, expanded, collapse]);
   const focus = () => {if (ownsFocus()) controller?.setFocused(true);};
   const blur = (event: ReactFocusEvent<HTMLDivElement>) => {
-    const next = event.relatedTarget;
-    if (next instanceof Element && region.current && (region.current.contains(next) || ownsOverlayFocus(region.current, next))) return;
-    if (!pointer.current) queueMicrotask(() => controller?.blurRoot());
+    if (within(event.relatedTarget)) return;
+    if (!active()) queueMicrotask(() => controller?.blurRoot());
   };
   useEffect(() => {if (inspection && !inspection.restored && !inspection.signal.aborted) reveal();}, [inspection, reveal]);
   if (!controller || !field || !root || !history) return {rootEditor: null, rootTitle: null, rootReady: false};

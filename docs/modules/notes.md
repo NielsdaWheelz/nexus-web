@@ -261,7 +261,9 @@ own operation. append uses the proven absolute tail.
 within the descendant outline, return splits prose at the selection; an empty
 nested item outdents. an empty top-level item stays empty. backward/forward
 deletion at a boundary joins adjacent notes; deleting an empty item unlinks its
-occurrence. code return remains an
+occurrence. in a body with no such intent, deleting in an empty code body returns it
+to prose, one format edit with history boundaries on both sides. it leaves no empty
+code body, so a held key stops there. code return remains an
 in-note break. its native DOM parser preserves literal newlines; clipboard slices
 retain their separate existing import policy. block commands normalize selected
 ancestors and descendants to topmost occurrences. indent/outdent plans complete
@@ -558,7 +560,7 @@ read and android applies its store-revision fence to the entire operation.
 retains its cursor and full-search/picker contract.
 `search_admission` reuses that compound admission for at most eight held
 `{ref, field}` targets, including current query membership and scoped evidence.
-it proves the held field itself: a quotation cannot admit a cleared annotation,
+it proves the held field itself: a quotation cannot admit an emptied annotation,
 and a stronger quotation cannot revoke an annotation that still matches.
 it returns null cursors and avoids a corpus scan; resource existence alone cannot
 prove scoped admission.
