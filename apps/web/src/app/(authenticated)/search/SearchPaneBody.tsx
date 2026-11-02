@@ -66,7 +66,7 @@ const LEXICAL_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Searc
 const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Hybrid");
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"];
 const phaseRank = { lexical: 0, hybrid: 1 };
-/** What the last results showed, so the next key can show it dimmed until it adopts. */
+/** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };
 
 export default function SearchPaneBody() {
@@ -286,13 +286,14 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   const count = results.length;
   // Until this key adopts, the last key's rows stand, dimmed and inert.
   const [previous] = useState(() => shown.current?.accountId === accountId && shown.current.view === query.view ? shown.current.rows : []);
-  useLayoutEffect(() => {
-    if (visit.adopted !== null) shown.current = { accountId, view: query.view, rows: results };
-  });
   // Text failed, unless related matches are still on their way: then it is a wait.
   const textFailed = visit.adopted === null && phaseIncidents.lexical !== null && !(hybridState === "pending" && phaseIncidents.hybrid === null);
   const stale = visit.adopted === null && pending && unfixable === undefined && !textFailed;
   const rows = stale ? previous : results;
+  // Rows, or none where a fact stands instead: what the next key may stand dimmed.
+  useLayoutEffect(() => {
+    shown.current = { accountId, view: query.view, rows };
+  });
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const filtered = query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all";
   const clearFilters: Verbs = [{ label: "clear filters", commandKey: "clear filters", run: () => commit({ ...emptySearchQuery(), text: query.text, view: query.view }) }];

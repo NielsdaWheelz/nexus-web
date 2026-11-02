@@ -1024,9 +1024,11 @@ function outcomeReason(error: UploadSessionError): string {
 }
 
 /** The capture endpoints' domain codes, as reasons (media_source_ingest.py, x_ingest.py,
- * x_client.py). E_X_SOURCE_CONFLICT has none that anything keeps true. */
+ * x_client.py). E_RESOURCE_CONFLICT and E_X_SOURCE_CONFLICT have none that anything keeps true: the
+ * first answers a moved library guard, a moved removal fence, a taken attempt id, another post of
+ * the thread importing, and an unreadable saved version alike. */
 const CAPTURE_REFUSAL: Readonly<Record<string, string | null>> = {
-  E_RESOURCE_CONFLICT: "its libraries changed since you chose them.",
+  E_RESOURCE_CONFLICT: null,
   E_LIBRARY_FORBIDDEN: OUTCOME_REASON.LibraryForbidden,
   E_SOURCE_IMPORT_ACTIVE: "this source is already importing.",
   E_X_IDENTITY_CONFLICT: "it matches more than one thread you saved.",

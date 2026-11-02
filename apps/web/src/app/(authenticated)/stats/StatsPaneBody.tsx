@@ -833,7 +833,12 @@ export default function StatsPaneBody() {
   const running = useRef(false);
   const [correcting, setCorrecting] = useState(false);
   const [unconfirmed, setUnconfirmed] = useState<readonly Unconfirmed[]>([]);
+  // The id resent for a session until it is known to have landed. A landed id is a no-op when sent
+  // again, even after its exclusion was restored (python/nexus/services/consumption/activity.py).
   const exclusionIds = useRef(new Map<string, string>());
+  const retire = (id: string) => {
+    for (const [session, held] of exclusionIds.current) if (held === id) exclusionIds.current.delete(session);
+  };
   const update = (next: Partial<StatsView>) =>
     router.replace(statsViewHref({ ...view, ...next }));
 
@@ -885,7 +890,11 @@ export default function StatsPaneBody() {
   // another view's exclusions say nothing about it.
   const landed = (correction: Unconfirmed) => last !== null && last.query === correction.query &&
     (correction.kind === "Exclude") === last.data.activity.active_exclusions.some((row) => row.id === correction.id);
-  if (unconfirmed.some(landed)) setUnconfirmed(unconfirmed.filter((correction) => !landed(correction)));
+  const resolved = unconfirmed.filter(landed);
+  if (resolved.length > 0) {
+    for (const correction of resolved) retire(correction.id);
+    setUnconfirmed(unconfirmed.filter((correction) => !landed(correction)));
+  }
 
   // The refreshed timeline shows a landed correction; only a failure reports.
   const send = async (correction: Correction) => {
@@ -895,6 +904,7 @@ export default function StatsPaneBody() {
     const others = (held: readonly Unconfirmed[]) => held.filter((item) => item.id !== correction.id);
     try {
       await correction.send();
+      retire(correction.id);
       if (!mounted.current) return;
       setUnconfirmed(others);
       publishChange("Consumption");
@@ -943,7 +953,6 @@ export default function StatsPaneBody() {
         method: "PUT",
         body: JSON.stringify(body),
       });
-      exclusionIds.current.delete(key);
     } }, `Don’t count this ${duration(row.active_ms)} session?`);
   };
   const restore = (row: Exclusion) => correct({ kind: "Restore", id: row.id, query, send: () =>

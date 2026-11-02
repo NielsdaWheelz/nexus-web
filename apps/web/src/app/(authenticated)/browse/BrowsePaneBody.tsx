@@ -3,9 +3,10 @@
 // Browse fans a query out to independent source sections. Each shared list owns traversal,
 // errors and its pane-visit snapshot, and reports its cold read to the body. The body owns one
 // rule: once every section has failed with one transport, it says so once, and the sections stay
-// mounted, quiet and hidden, because each owns the read that can recover. A section the body
-// quieted stays quiet through the reread that may heal it, and speaks only if that fails again. The
-// body's own sentence, said offline, waits in a ruling through the reread that reconnecting starts.
+// mounted, quiet and hidden, because each owns the read that can recover. While that sentence may
+// still come, a failed section waits quiet in its ruling. A section the body quieted stays quiet
+// through the reread that may heal it, and speaks only if that fails again. The body's own
+// sentence, said offline, waits in a ruling until rereads replace every failure seen offline.
 
 import {
   useCallback,
@@ -150,8 +151,8 @@ function BrowseToolbar({ query, inputRef, onQuery }: {
   />;
 }
 
-/** Each kind/source keeps its own visit snapshot and its own failure. `quiet` while the body
- * speaks for every section at once. */
+/** Each kind/source keeps its own visit snapshot and its own failure. `quiet` while the body may
+ * yet speak, or speaks, for every section at once. */
 function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   readonly queryKey: string;
   readonly text: string;
@@ -189,7 +190,7 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   useEffect(() => {
     onStatus(sectionKey, { settled, failure, invalid, running, refetch });
   }, [queryKey, onStatus, sectionKey, settled, failure, invalid, running, refetch]);
-  // Quieted by the body, it stays quiet through the reread that may heal it, waiting in its ruling:
+  // Quieted, a failure waits in its ruling, and stays there through the reread that may heal it:
   // the old failure stands until that read settles, and would read meanwhile as a fresh line.
   const [quieted, setQuieted] = useState(false);
   const stillQuiet = quiet || (quieted && running);
@@ -227,7 +228,7 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
     {list.status === "loading" ? <Ruling />
       : refusal !== null ? <Fact line={{ fact: `couldn’t load ${noun}.`, reason: refusal.reason }}
         verbs={refusal.retry ? [{ label: "retry", commandKey: `retry ${noun}`, run: list.retry, busy: running }] : undefined} />
-      : failure !== null ? quiet ? null : stillQuiet ? <Ruling /> : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
+      : failure !== null ? stillQuiet ? <Ruling /> : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
       : list.complete && rows.length === 0 ? <Fact line={{ fact: "no results." }} />
       : null}
     <CollectionView
@@ -287,16 +288,19 @@ export default function BrowsePaneBody() {
   });
   const settled = statuses.filter((status) => status.settled).length;
   const invalid = statuses.some((status) => status.invalid);
-  // One cause gets one sentence: every planned section failed, all with one transport.
+  // One cause gets one sentence: every planned section failed, all with one transport. While every
+  // settled read is such a failure and some are still out, that sentence may yet come.
   const failures = statuses.flatMap((status) => status.failure ?? []);
-  const shared = failures.length > 0 && failures.length === sections.length
-    && failures.every((failure) => transportOf(failure) === transportOf(failures[0])) ? failures[0] : null;
+  const oneCause = failures.length === settled
+    && failures.every((failure) => transportOf(failure) === transportOf(failures[0]));
+  const shared = oneCause && failures.length === sections.length && failures.length > 0 ? failures[0] : null;
+  const awaiting = oneCause && settled < sections.length;
   // A transport is read at render, so back online a failure seen offline would read `nexus isn’t
-  // answering.` before nexus was asked again. Until a reread replaces it, the body waits.
-  const [seenOffline, setSeenOffline] = useState<ApiError | null>(null);
+  // answering.` before nexus was asked again. While any of them stands, the body waits.
+  const [seenOffline, setSeenOffline] = useState<readonly ApiError[]>([]);
   const offline = shared !== null && transportOf(shared) === "Offline";
-  if (offline && shared !== seenOffline) setSeenOffline(shared);
-  const reconnecting = !offline && shared !== null && shared === seenOffline;
+  if (offline && failures.some((failure) => !seenOffline.includes(failure))) setSeenOffline(failures);
+  const reconnecting = !offline && shared !== null && failures.some((failure) => seenOffline.includes(failure));
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
   const onQuery = useCallback(
     (next: BrowseQuery | null) => {
@@ -326,7 +330,7 @@ export default function BrowsePaneBody() {
       <section key={kind} className={styles.chapter} hidden={shared !== null}>
         <h2 className={styles.chapterHeading}>{BROWSE_KIND_LABELS[kind]}</h2>
         {sections.filter((section) => section.kind === kind).map((section) => (
-          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} quiet={shared !== null} onStatus={onStatus} />
+          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} quiet={awaiting || shared !== null} onStatus={onStatus} />
         ))}
       </section>
     )) : null}
