@@ -7,7 +7,7 @@
 // never changes the view or text.
 import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
-import { useEvidenceWindow } from "./useEvidenceWindow";
+import { firstVisibleRow, useEvidenceWindow, type Anchor, type Memory } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -19,6 +19,7 @@ import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteLink } from "@/lib/resourceGraph/links";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { getOverlayOpeners, useInteractionOwner } from "@/lib/ui/overlay";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
@@ -37,6 +38,7 @@ interface ConnectionsView {
     active: string | null;
     anchor: { key: string; offsetPx: number; outerScrollTop: number } | null;
     sourceText: ReadonlySet<string>;
+    memory: Memory;
   } | null;
 }
 const CONNECTIONS_VIEW = definePaneVisitDataKey<ConnectionsView>("Reader.Connections");
@@ -84,7 +86,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const [sourceText, setSourceText] = useState<ReadonlySet<string>>(() => saved?.browse?.sourceText ?? new Set());
   capture.current = { hidden, following, browse: browse.current };
   const restore = useRef(saved?.browse?.anchor ?? null);
-  const scheduleRestore = useRef<(() => void) | null>(null);
+  const restoreAnchor = useRef<(() => void) | null>(null);
+  const memory = useRef<Memory>(saved?.browse?.memory ?? { metrics: "", heights: new Map() });
+  const readerProfile = useReaderProfile();
   const [focused, setFocused] = useState<string | null>(null);
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
   const pane = useRef<HTMLDivElement>(null);
@@ -137,7 +141,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const updateBrowse = useCallback((change: (current: NonNullable<ConnectionsView["browse"]>) => NonNullable<ConnectionsView["browse"]>) => {
     if (publicationKey === null) return;
     const current = browse.current?.publicationKey === publicationKey ? browse.current
-      : { publicationKey, active: null, anchor: null, sourceText: new Set<string>() };
+      : { publicationKey, active: null, anchor: null, sourceText: new Set<string>(), memory: memory.current };
     browse.current = change(current);
     capture.current = { hidden, following, browse: browse.current };
     writeView(capture.current);
@@ -154,6 +158,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     if (publicationKey === null || browse.current?.publicationKey === publicationKey) return;
     restore.current = null;
     browse.current = null;
+    memory.current = { metrics: "", heights: new Map() };
     setActive(null);
     setSourceText(new Set());
     capture.current = { hidden, following, browse: null };
@@ -195,12 +200,26 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     ...order.map(entry => ({key: entry.key, estimate: aligned ? 0 : 96})),
     ...(aligned ? [{key: "placed-space", estimate: placedHeight}] : []),
   ], [aligned, order, placedHeight]);
+  const onAnchor = useCallback((anchor: Anchor) => {
+    // a held return anchor stays what it was until the reader acts.
+    if (restore.current !== null) return;
+    updateBrowse(current => ({ ...current, anchor: { key: anchor.key, offsetPx: anchor.offset, outerScrollTop: pane.current?.scrollTop ?? 0 } }));
+  }, [updateBrowse]);
   const rowWindow = useEvidenceWindow({scope: publicationKey, slots, aligned, placements: placements.map(place => place.key),
-    demand: arrival ?? focusRequest?.key ?? (aligned ? null : restore.current?.key) ?? null, focused, root: windowRoot, port: list, outer: pane});
+    demand: arrival ?? focusRequest?.key ?? (aligned ? null : restore.current?.key) ?? null, focused, root: windowRoot, port: list, outer: pane,
+    memory, profile: JSON.stringify([readerProfile.font_family, readerProfile.font_size_px, readerProfile.line_height]),
+    onGeometry: () => restoreAnchor.current?.(), onAnchor});
   const heldKeys = [...rowWindow.held].sort().join();
   const mountedKeys = rowWindow.rendered.map(slot => slot.key).join();
   const held = useRef(rowWindow.held); held.current = rowWindow.held;
   const {interact, release} = rowWindow;
+  /** The held return anchor ends: the reader acted, an arrival took over, or its row can't land. */
+  const endRestore = useCallback(() => {
+    if (restore.current === null) return;
+    release(restore.current.key);
+    restore.current = null;
+    restoreAnchor.current = null;
+  }, [release]);
   const requestFocus = useCallback((key: string, occurrence: string | null, last: boolean, isCurrent: () => boolean) => {
     if (aligned) setFollowing(false);
     interact(key); setFocusRequest({key, occurrence, last, isCurrent});
@@ -228,62 +247,32 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     });
   }, [writing, requestFocus]);
 
-  const captureScroll = useCallback(() => {
-    if (aligned || restore.current !== null) return;
-    const port = list.current;
-    const root = pane.current;
-    if (!port || !root) return;
-    const box = port.getBoundingClientRect();
-    const bounds = root.getBoundingClientRect();
-    const top = Math.max(box.top, bounds.top);
-    const bottom = Math.min(box.bottom, bounds.bottom);
-    const row = [...port.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].find(node => node.getBoundingClientRect().bottom > top);
-    if (!row || bottom <= top || row.getBoundingClientRect().top >= bottom) return;
-    const key = row.dataset.group;
-    if (key) updateBrowse(current => ({ ...current, anchor: { key, offsetPx: row.getBoundingClientRect().top - box.top, outerScrollTop: root.scrollTop } }));
-  }, [aligned, updateBrowse]);
-
   useLayoutEffect(() => {
     const port = list.current;
     if (!port || aligned || publicationKey === null) return;
     alignedPosition.current = null;
-    if (restore.current === null) {captureScroll(); return;}
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
+    if (restore.current === null) return;
+    // the window's observer calls this on every geometry change, so it lands before paint.
+    const follow = () => {
       const anchor = restore.current;
       if (!anchor || browse.current?.publicationKey !== publicationKey) {
-        observer.disconnect();
-        scheduleRestore.current = null;
+        restoreAnchor.current = null;
         return;
       }
       // This occurrence holds until the reader acts: rows above can grow long after the data settles.
       const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(anchor.key)}"]:not([hidden])`);
       if (row) {
         if (pane.current) pane.current.scrollTop = anchor.outerScrollTop;
-        port.scrollTop += row.getBoundingClientRect().top - port.getBoundingClientRect().top - anchor.offsetPx;
+        port.scrollBy({ top: row.getBoundingClientRect().top - port.getBoundingClientRect().top - anchor.offsetPx, behavior: "instant" });
       } else if (terminal) {
         updateBrowse(current => ({ ...current, anchor: null }));
-        restore.current = null;
-        observer.disconnect();
-        scheduleRestore.current = null;
+        endRestore();
       }
     };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    scheduleRestore.current = schedule;
-    const observer = new ResizeObserver(schedule);
-    observer.observe(port);
-    if (pane.current) observer.observe(pane.current);
-    if (windowRoot.current) observer.observe(windowRoot.current);
-    schedule();
-    return () => { scheduleRestore.current = null; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [aligned, captureScroll, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
-
-  const stopRestore = () => {
-    if (restore.current) release();
-    restore.current = null;
-    scheduleRestore.current?.();
-  };
+    restoreAnchor.current = follow;
+    follow();
+    return () => { restoreAnchor.current = null; };
+  }, [aligned, endRestore, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
 
   useLayoutEffect(() => {
     if (!aligned) { alignedPosition.current = null; return; }
@@ -365,8 +354,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
 
   useLayoutEffect(() => {
     if (!openKey?.isCurrent()) return;
-    restore.current = null;
-    scheduleRestore.current?.();
+    endRestore();
     if (state.local.status === "loading") return;
     const target = entries.find((entry) => entryMatches(entry, openKey.id));
     if (!target) {
@@ -390,7 +378,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
       return next;
     });
     setPreparedRequest(openKey);
-  }, [aligned, doc, entries, openKey, preparedRequest, reader, state.local.status, state.remote.status, updateBrowse]);
+  }, [aligned, doc, endRestore, entries, openKey, preparedRequest, reader, state.local.status, state.remote.status, updateBrowse]);
 
   function chooseView(next: boolean) {
     if (next === following) return;
@@ -401,12 +389,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
       const bounds = root.getBoundingClientRect();
       const top = Math.max(box.top, bounds.top);
       const bottom = Math.min(box.bottom, bounds.bottom);
-      const shown = (element: HTMLElement) => {
-        const rect = element.getBoundingClientRect();
-        return bottom > top && element.isConnected && !element.closest("[hidden], [inert]") && rect.height > 0 && rect.bottom > top && rect.top < bottom;
-      };
-      const occurrence = lastFocused.current && shown(lastFocused.current) ? lastFocused.current :
-        [...port.querySelectorAll<HTMLElement>("[data-group]")].find(shown);
+      const focusedRow = lastFocused.current, rect = focusedRow?.getBoundingClientRect();
+      const occurrence = focusedRow?.isConnected && !focusedRow.closest("[hidden], [inert]") && rect && rect.height > 0 && rect.bottom > top && rect.top < bottom
+        ? focusedRow : firstVisibleRow(port, top, bottom);
       if (occurrence?.dataset.group) {
         const anchor = { key: occurrence.dataset.group, offsetPx: occurrence.getBoundingClientRect().top - box.top, outerScrollTop: root.scrollTop };
         restore.current = anchor;
@@ -417,6 +402,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     setFollowing(next);
   }
 
+  /** The revealed row becomes the window's anchor at its revealed offset. */
   const revealInSidebar = useCallback((element: HTMLElement) => {
     const port = list.current;
     const root = pane.current;
@@ -424,10 +410,12 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     const primary = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
     const rect = primary.getBoundingClientRect();
     const offset = rect.top - port.getBoundingClientRect().top;
-    if (offset < 0 || offset + Math.min(rect.height, port.clientHeight) > port.clientHeight) port.scrollTop += offset;
+    if (offset < 0 || offset + Math.min(rect.height, port.clientHeight) > port.clientHeight) port.scrollBy({ top: offset, behavior: "instant" });
     const top = primary.getBoundingClientRect().top - root.getBoundingClientRect().top;
-    if (top < 0 || top + Math.min(rect.height, root.clientHeight) > root.clientHeight) root.scrollTop += top;
-  }, []);
+    if (top < 0 || top + Math.min(rect.height, root.clientHeight) > root.clientHeight) root.scrollBy({ top, behavior: "instant" });
+    const key = element.closest<HTMLElement>("[data-group]")?.dataset.group;
+    if (key) release(key);
+  }, [release]);
 
   const localOccurrence = useFeedbackOccurrence(state.local.status === "failed");
   const linksOccurrence = useFeedbackOccurrence(state.links.status === "failed");
@@ -457,7 +445,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const row = (entry: EvidenceEntry) => {
     const place = aligned ? placements.find((item) => item.key === entry.key) : null;
     const shown = visible.has(entry.key) && (!aligned || !!place);
-    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown} placed={placedKeys.has(entry.key)}
+    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow rowWindow={rowWindow} position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown} placed={placedKeys.has(entry.key)}
       sourceText={sourceText} onSourceTextChange={onSourceTextChange}
       className={styles.group} displaced={place?.displaced ?? false} style={place ? { position: "absolute", top: place.top, width: "100%" } : undefined}
       unresolvedText={doc?.kind === "text"}
@@ -479,10 +467,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   }, [focusRequest, mountedKeys, revealInSidebar]);
   return (
     <div ref={pane} className={styles.pane}
-      onPointerDownCapture={stopRestore}
-      onWheelCapture={stopRestore}
-      onKeyDownCapture={stopRestore} onScroll={() => {
-      captureScroll();
+      onPointerDownCapture={endRestore}
+      onWheelCapture={endRestore}
+      onKeyDownCapture={endRestore} onScroll={() => {
       if (pinned.current?.element.isConnected) pinned.current.y = pinned.current.element.getBoundingClientRect().top;
     }}>
       {failures}
@@ -526,7 +513,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         const serial = interaction.current;
         requestFocus(next.key, null, event.shiftKey, () => interaction.current === serial);
       }} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {
-        captureScroll();
         const pin = pinned.current;
         if (pin?.element.isConnected && pin.scrollTop !== event.currentTarget.scrollTop) {
           pin.y = pin.element.getBoundingClientRect().top;

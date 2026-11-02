@@ -3,7 +3,7 @@
 // One reader evidence row. Local highlights and whole-document links render from the
 // account database by ref; remote roots keep their server presentation. Membership
 // only selects facets and reveal targets; the shared row owns resource commands.
-import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
@@ -16,6 +16,7 @@ import type { LocalLink } from "../annotations";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
 import { rootItem, type EvidenceRoot } from "./model";
+import type { useEvidenceWindow } from "./useEvidenceWindow";
 
 export interface EvidenceOpenRequest {
   readonly id: string;
@@ -42,7 +43,8 @@ export function sourceTextKey(entry: EvidenceEntry): string | null {
     ? JSON.stringify([entry.root.source.media_id, entry.root.source.identity, `evidence/${entry.key}`]) : null;
 }
 
-export default function EvidenceRow({ entry, actions, active, visible, placed, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, position, count }: {
+export default function EvidenceRow({ entry, actions, active, visible, placed, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced, sourceText, onSourceTextChange, position, count, rowWindow }: {
+  readonly rowWindow: Pick<ReturnType<typeof useEvidenceWindow>, "observeRow" | "reserve" | "moving">;
   readonly position: number | null;
   readonly count: number;
   readonly sourceText: ReadonlySet<string>;
@@ -63,7 +65,12 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   readonly className?: string;
   readonly displaced: boolean;
 }) {
-  const row = useRef<HTMLLIElement>(null);
+  const row = useRef<HTMLLIElement | null>(null);
+  const { observeRow } = rowWindow;
+  const attachRow = useCallback((node: HTMLLIElement | null) => {
+    row.current = node;
+    observeRow(entry.key, node);
+  }, [entry.key, observeRow]);
   const interactionOwner = useInteractionOwner();
   const occurrenceKey = `evidence/${entry.key}`;
   useLayoutEffect(() => {
@@ -76,9 +83,10 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   const { verbs } = actions;
   const highlightId = entry.kind === "highlight" ? entry.annotation.id
     : entry.kind === "remote" && entry.root.content.kind === "Highlight" ? entry.root.content.highlight_id : null;
-  const rootProps = { hidden: !visible, style, className, "data-active": active || openRequest !== null, "data-group": entry.key, "data-window-key": entry.key,
+  const rootProps = { hidden: !visible, style: { ...style, ...rowWindow.reserve(entry.key) }, className, "data-active": active || openRequest !== null, "data-group": entry.key, "data-window-key": entry.key,
     "aria-posinset": position ?? undefined, "aria-setsize": count,
-    onMouseEnter: () => { if (highlightId) verbs.hover(highlightId); },
+    // a row passing under a still pointer is no hover.
+    onMouseEnter: () => { if (highlightId && !rowWindow.moving()) verbs.hover(highlightId); },
     onMouseLeave: () => { if (highlightId) verbs.hover(null); },
   };
   const placementDetails = <>
@@ -87,7 +95,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   if (entry.kind === "highlight") {
     const { annotation } = entry;
     const placement = annotation.placement.kind;
-    return <ResourceOutlineRow resource={annotation.projection} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed}
+    return <ResourceOutlineRow resource={annotation.projection} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed}
       omitResourceActions={actions.sourceContext ? ["EditHighlightAnnotation"] : ["EditHighlightAnnotation", "Share"]}
       rowActions={[{ kind: "command", id: "EditHighlightAnnotation", label: annotation.body === null ? "annotate" : "edit annotation",
         icon: <ACTION_CATALOG.EditHighlightAnnotation.icon aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
@@ -102,14 +110,14 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   }
   if (entry.kind === "link") {
     const { resource, link } = entry.link;
-    return <ResourceOutlineRow resource={resource} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} onChanged={actions.refresh}
+    return <ResourceOutlineRow resource={resource} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} onChanged={actions.refresh}
       incoming={link ? { kind: "link", linkId: link.link_id, parentLabel: actions.mediaLabel, unlink: () => onUnlink(link.link_id, row.current) } : null}
       occurrenceLabel={link ? undefined : "mentions this document"} />;
   }
   const { root } = entry;
   const content = root.content;
   const disclosureKey = sourceTextKey(entry);
-  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
+  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
     sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}
