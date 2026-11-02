@@ -813,9 +813,7 @@ export function useNexusController() {
     searchProgress: find.progress,
     searchFailures: find.readFailures,
     localSearchFailures: find.localFailures,
-    searchIdentity: find.queryIdentity,
     resultsHeld,
-    searchUnavailable: find.searchUnavailable,
     searchRefreshRevision,
     interact,
     setComposing(value: boolean) {

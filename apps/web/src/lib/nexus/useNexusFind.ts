@@ -232,8 +232,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     localValidationReady,
     localReference,
     localReferenceMissing: localRef !== null && localRead.data !== null && !localRow?.authored_by_viewer && reference.status === "ready" && reference.data.authored_by_viewer,
-    searchUnavailable,
-    queryIdentity: identityKey ?? `${accountId}:nexus-ref:${referenceRef}`,
     readFailures,
     localFailures: [
       {key: "reference", error: localRead.error, occurrence: localRead.occurrence, pending: localRead.pending, retry: localRead.retry},
