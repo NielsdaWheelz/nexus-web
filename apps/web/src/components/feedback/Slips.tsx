@@ -149,6 +149,15 @@ export default function Slips() {
     document.addEventListener("keydown", reach);
     return () => document.removeEventListener("keydown", reach);
   }, [stage, platform]);
+  // Root and pane rooms share a floor and root paints later, so a root room stands clear of all
+  // that pane rooms show. A held room stays put, and rises when the hold ends.
+  useLayoutEffect(() => {
+    const root = view.rooms.findLast(({ anchor }) => anchor.kind === "Root");
+    if (!root || root.held) return;
+    const tops = view.rooms.flatMap(({ anchor, element }) => anchor.kind === "Pane" ? [...element.children].map(child => child.getBoundingClientRect().top) : []);
+    const clearance = tops.length > 0 ? root.element.getBoundingClientRect().bottom - Math.min(...tops) : 0;
+    root.element.style.setProperty("--stage-pane-clearance", `${clearance}px`);
+  }, [view]);
   return view.rooms.map(room => createPortal(<Room room={room} typing={view.typing} speech={view.speech} />, room.element, String(room.id)));
 }
 

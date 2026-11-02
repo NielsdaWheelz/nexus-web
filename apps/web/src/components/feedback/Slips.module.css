@@ -5,6 +5,8 @@
   pointer-events: none;
   /* A composer's anchor is a zero-height line, so only the viewport bounds its frame. */
   --stage-ceiling: 100dvb;
+  /* Pane clearance is written on a root anchor alone: see Slips. */
+  --stage-floor: calc(var(--stage-bottom-clearance, 0px) + var(--stage-pane-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
 }
 
 /* A modal anchor is portaled clear of every projection: it uses its floor alone, and its panel clips. */
@@ -15,7 +17,7 @@
   position: absolute;
   z-index: 1;
   inset-inline: 12px;
-  inset-block-end: calc(12px + var(--stage-bottom-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
+  inset-block-end: calc(12px + var(--stage-floor));
   box-sizing: border-box;
   inline-size: fit-content;
   max-inline-size: min(22rem, 100% - 24px);
@@ -105,7 +107,7 @@
 .tab {
   position: absolute;
   inset-inline: 0;
-  inset-block-end: calc(var(--stage-bottom-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
+  inset-block-end: var(--stage-floor);
   inline-size: 44px;
   block-size: 32px;
   margin-inline: auto;
