@@ -76,7 +76,7 @@ export type AddItem =
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
       readonly upload: UploadAttempt | null;
-      /** Still the palette query's text, which leaving keeps: not work until an edit. */
+      /** The palette query's text, unedited. Until a send this visit, leaving restores that query. */
       readonly seeded?: true;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
@@ -131,7 +131,10 @@ export type AddSessionState = Readonly<{
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
-  /** A row has left Draft. Removing or re-staging it does not unsend it. */
+  /**
+   * A row has left Draft this visit. Removing or re-staging it does not unsend it, and
+   * starting or discarding a session keeps it, since the arrow does not end a visit.
+   */
   sent: boolean;
 }>;
 
@@ -150,6 +153,8 @@ export interface AddContentSessionController {
   readonly state: AddSessionState;
   readonly workOwnerIds: readonly string[];
   start(seed: AddSeed): string;
+  /** Clears `sent`. The palette calls it as it opens. */
+  beginVisit(): void;
   setItemUrl(input: {
     itemId: string;
     text: string;
@@ -307,7 +312,8 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item) && !(item.kind === "Draft" && item.seeded),
+        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item)
+            && !(item.kind === "Draft" && item.seeded && !current.current.sent),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
       },
@@ -319,7 +325,7 @@ export function useAddContentSession(): AddContentSessionController {
     const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
-    update(() => next);
+    update((snapshot) => ({ ...next, sent: snapshot.sent }));
     return next.sessionId;
   }
   /**
@@ -777,6 +783,7 @@ export function useAddContentSession(): AddContentSessionController {
     state,
     workOwnerIds,
     start,
+    beginVisit: () => update((snapshot) => ({ ...snapshot, sent: false })),
     setItemUrl,
     revealItemFeedback,
     pasteUrls,

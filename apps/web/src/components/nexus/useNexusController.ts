@@ -654,6 +654,7 @@ export function useNexusController() {
       rootScroll.current = { Overview: 0, Search: 0, NewPane: 0 };
       suppressReturnFocus.current = false;
       transferFocus.current = null;
+      addSession.beginVisit();
     }
     rootFocus.current = null;
     setRootMode("Overview");
@@ -694,7 +695,7 @@ export function useNexusController() {
 
   }
 
-  /** Esc, the scrim and android back step back only from a palette that has not sent. */
+  /** Esc, the scrim and android back step back only to a palette that opened the page and has sent nothing this visit. */
   const dismissClosesAdd = page.kind === "Add" && (page.origin === null || addSession.state.sent);
 
   function back() {

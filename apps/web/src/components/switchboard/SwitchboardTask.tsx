@@ -59,14 +59,18 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     window.addEventListener("blur", release);
     return () => window.removeEventListener("blur", release);
   }, []);
+  // A mode's rows compose after the commit that enters it, so restore once they exist.
+  // A restore can clamp without a scroll event; the position then records where it landed.
+  const composed = controller.groups.length > 0;
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (!controller.open || controller.page.kind !== "Root" || !list) return;
+    if (!controller.open || controller.page.kind !== "Root" || !list || !composed) return;
     const positions = controller.rootScroll.current;
     if (previousQuery.current !== controller.query) positions.Search = 0;
     previousQuery.current = controller.query;
     list.scrollTop = positions[controller.rootMode];
-  }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll]);
+    positions[controller.rootMode] = list.scrollTop;
+  }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll, composed]);
 
   const paneFocusRevision = useRef(controller.paneFocusRevision);
   useLayoutEffect(() => {
