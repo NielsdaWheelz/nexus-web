@@ -847,7 +847,7 @@ export default function PdfSurface({
         page {position.page} of {position.pages}
       </p> : null}
       {status.kind === "Opening" ? (
-        <div className={`${styles.feedback} ${styles.readerState}`}>
+        <div className={`${styles.feedback} ${styles.readerState} ${styles.readerPitch}`}>
           <Ruling />
         </div>
       ) : null}

@@ -593,7 +593,7 @@ export function useSelectionComposer(input: {
       }
       const insertion = view?.target;
       if (target === "Existing" && insertion?.kind !== "Empty" && insertion?.kind !== "Reply") throw new Error("Reader send without a replyable snapshot");
-      store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: { kind: "Dispatched", runId, owner, selection, destination: target, input: submittedInput } }));
+      store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: { kind: "Dispatched", runId, owner, selection, destination: target } }));
       const request = { destination: observed && insertion && (insertion.kind === "Empty" || insertion.kind === "Reply")
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
@@ -653,25 +653,6 @@ export function useSelectionComposer(input: {
     store.update(entry.id, value => value.destination.kind !== "Selected" ? value : { ...value, chatIssue: null, chatAttempt: null,
       destination: { ...value.destination, read: value.destination.read + 1, snapshot: { kind: "Loading" } } });
   };
-  const retryChat = async () => {
-    const opened = current.current;
-    const entry = opened && get(opened.draftId);
-    const attempt = entry?.chatAttempt;
-    if (!opened || !entry || attempt?.kind !== "Dispatched") return;
-    const state = attempt.owner.getSnapshot();
-    if (state.kind === "Idle" || state.command.kind !== "Send" || state.command.runId !== attempt.runId || state.kind !== "Unconfirmed") return;
-    const owns = () => {
-      const latest = get(entry.id);
-      return activeRef.current && current.current?.id === opened.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
-        (latest.revision === attempt.input.revision || latest.revision === attempt.input.consumedRevision);
-    };
-    try {
-      await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: state.command.openIntent, disposition: "Fork", mayOpen: owns,
-        onOpened: () => { if (owns()) { store.remove(entry.id); show(null); } },
-        create: async () => chatOutcome(entry, await attempt.owner.retry(), attempt.destination, true) });
-    } catch (error) { onError(error, "couldn’t resend the question."); }
-  };
   const restoreHistoryFocus = () => {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
@@ -705,7 +686,7 @@ export function useSelectionComposer(input: {
       restoreEditor();
     },
     retryDefault() { if (draft && draft.destination.kind === "LookupFailed") store.update(draft.id, entry => ({ ...entry, destination: { kind: "Resolving" } })); },
-    refreshChat, retryChat,
+    refreshChat,
     retryCatalog: refreshCatalog,
     retryRecall: memory.enter,
     recallFailed: memory.failureOccurrence !== null,

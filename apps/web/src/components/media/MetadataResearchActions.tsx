@@ -1,6 +1,6 @@
 "use client";
 
-import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
+import { remoteAttemptAllowed, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -11,14 +11,15 @@ import {
   useActionRuntime,
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import { isApiError, isRefusal, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
+import { isApiError, isStaleBuild, isUnauthenticatedApiError, outcomeUnknown } from "@/lib/api/client";
 import { staleBuild, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
-import { admissionTransport, useMediaAdmissions } from "@/lib/media/admissions";
+import { admissionTransport, unadmitted, useMediaAdmissions } from "@/lib/media/admissions";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -56,15 +57,22 @@ export function MetadataReviewButton({
   const fact = "couldn’t mark this reviewed.";
   const review = async (trigger: HTMLElement | null) => {
     if (pending) return;
+    // what admission holds back is never sent, so it is no unknown outcome.
+    if (!remoteAttemptAllowed()) {
+      const { line, verbs } = unadmitted(fact);
+      say(line, verbs ?? undefined);
+      return;
+    }
     setPending(true);
     try {
       await (trigger ? landing(trigger, () => submitMetadataResultReview(mediaId, jobId)) : submitMetadataResultReview(mediaId, jobId));
       setUnknown(null);
     } catch (error) {
+      handleUnauthenticatedApiError(error);
       if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) say({ fact, reason: "this result isn’t available." });
       else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") say({ fact, reason: "this result changed." });
-      else if (isRefusal(error) || !isApiError(error) || isSameSystemApiDefect(error)) fail(error, fact);
-      else setUnknown(attempt => (attempt ?? -1) + 1);
+      else if (outcomeUnknown(error) && !isUnauthenticatedApiError(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else fail(error, fact);
     } finally {
       setPending(false);
     }
@@ -108,7 +116,7 @@ export default function MetadataResearchActions({
   const pending = admissions.pending("MetadataResearch", mediaId);
   const { say, fail } = useOutcome();
   const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
-  const unadmitted = admissionTransport(useRemoteAdmission());
+  const heldBack = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
   const reviewJob =
@@ -203,8 +211,9 @@ export default function MetadataResearchActions({
           const request = remedyRequest.current;
           if (request !== null && !request.signal.aborted) prepare(request.signal);
         } }} />
-        // no request went out: admission says why.
-        : <Fact line={TRANSPORT_LINES[unadmitted].read("source actions")} verbs={transportVerbs(unadmitted, { signIn: null }) ?? undefined} /> : null}
+        // no request went out: admission says why, once a reason is true.
+        : <Fact line={heldBack === null ? { fact: "couldn’t load source actions." } : TRANSPORT_LINES[heldBack].read("source actions")}
+          verbs={heldBack === null ? undefined : transportVerbs(heldBack, { signIn: null }) ?? undefined} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
           data-metadata-action=""

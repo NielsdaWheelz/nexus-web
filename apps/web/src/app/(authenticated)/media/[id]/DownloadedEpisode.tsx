@@ -26,7 +26,7 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import { useSourceArrival } from "@/lib/reader/sourceArrival";
+import { useArrivalFailure, useSourceArrival } from "@/lib/reader/sourceArrival";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -104,7 +104,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const listening = useListening();
   const [contents, setContents] = useState(false);
   const [artwork, setArtwork] = useState<string | null>(null);
-  const { say, fail } = useOutcome();
+  const { say } = useOutcome();
   const [retrying, setRetrying] = useState(false);
   const transcriptReady = item.extras?.transcript.kind === "Ready";
   const readerRef = useRef<Reader | null>(null);
@@ -191,10 +191,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     },
   });
   arrivalRef.current = arrival;
-  // An arrival that can't land is a one-off miss; a later arrival retires it, and so its slip.
-  const arrivalFailure = arrival.failure;
-  useEffect(() => arrivalFailure === null ? undefined : arrivalFailure.error !== null
-    ? fail(arrivalFailure.error, arrivalFailure.title) : say({ fact: arrivalFailure.title }), [arrivalFailure, fail, say]);
+  useArrivalFailure(arrival.failure);
   const retryListening = () => void retryNativeListening(id).catch(() =>
     say({ fact: "couldn’t resume listening sync." }, [{ label: "retry", commandKey: "RetryListeningSync", run: retryListening }]));
   usePaneChrome({ displayTitle: capture.rendition.title, resourceRef: canonicalResourceRef({ scheme: "media", id }),

@@ -9,6 +9,7 @@
 // note admits its own whole-resource arrival locally; other sources keep their
 // existing resolution authority.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
 import type { PassageState } from "@nexus/authored/types";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { selectStates } from "@/lib/notes/runtime";
@@ -64,6 +65,14 @@ interface ArrivalStatus {
   readonly sourceIdentity: string | null;
   readonly pending: boolean;
   readonly failure: SourceArrivalFailure | null;
+}
+
+/** Says an arrival that couldn't land, once: its transport says why where the server refused it.
+ * The slip retracts when a later arrival retires the failure. */
+export function useArrivalFailure(failure: SourceArrivalFailure | null): void {
+  const { say, fail } = useOutcome();
+  useEffect(() => failure === null ? undefined : failure.error !== null
+    ? fail(failure.error, failure.title) : say({ fact: failure.title }), [failure, fail, say]);
 }
 
 export function useSourceArrival(input: {

@@ -65,6 +65,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
 }) {
   const outcome = useOutcome();
   const fieldId = useId();
+  const blockedId = useId();
   const navigation = page?.navigation ?? null;
   const initial = useMemo(() => ({ title: definition?.title ?? initialTitle,
     first: definition?.selection?.section_ids[0] ?? initialSelection?.section_ids[0] ?? initialSection,
@@ -184,7 +185,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
           {ends.map(section => <option key={section.section_id} value={section.section_id}>{section.label}</option>)}
         </SelectField><p>changing these sections also changes this work’s shared links.</p></>}
         {selector ? <PartPreview preview={preview} /> : null}
-        {blockedPreview ? <Field id={`${fieldId}-blocked`} line={{ fact: partBlockMessage(previewConflict?.reason ?? null) }} /> : null}
+        {blockedPreview ? <Field id={blockedId} line={{ fact: partBlockMessage(previewConflict?.reason ?? null) }} /> : null}
       </> : null}
       {conflict && definition ? <section aria-label="current saved work"><p>currently saved: {definition.title}</p>
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
@@ -192,7 +193,8 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
       </section> : null}
       {request !== null && !busy && failed ? <Hold id={`part-editor:${source}`} line={UNSURE}
         verbs={[{ label: "retry", commandKey: "RetryPartCommand", run: () => void run(request, true) }]} /> : null}
-      <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy} onClick={save}>{definition === null ? "extract" : "save"}</Button>
+      <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy}
+        aria-describedby={[freshChoice ? fieldId : null, canBounds && blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} onClick={save}>{definition === null ? "extract" : "save"}</Button>
     </div>
   </Dialog>;
 }

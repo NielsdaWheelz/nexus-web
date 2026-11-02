@@ -6,7 +6,7 @@ import { Check, ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, S
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Field } from "@/components/feedback/Fact";
-import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type Retract, type Verb, type Verbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import NoteEditor from "@/components/notes/NoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -514,8 +514,8 @@ function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionCo
     ? { label: "retry", commandKey: "RetryDraftChat", run: composer.refreshChat } : verbs.check, verbs.openChat] };
   if (destination.kind === "LookupFailed") {
     const transport = transportOf(destination.error);
-    return { line: TRANSPORT_LINES[transport].read("recent chats"), verbs: TRANSPORT_LINES[transport].verb === "Retry"
-      ? [{ label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault }] : undefined };
+    return { line: TRANSPORT_LINES[transport].read("recent chats"),
+      verbs: transportVerbs(transport, { retry: { label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault }, signIn: null }) ?? undefined };
   }
   return null;
 }

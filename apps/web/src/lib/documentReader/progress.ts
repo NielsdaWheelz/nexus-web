@@ -32,7 +32,8 @@ export type ProgressState =
       readonly view: ProgressView;
       readonly saving: boolean;
       readonly retrying: boolean;
-      readonly saveFailed: boolean;
+      /** A failed save or resolution; the next movement, a landed save or a newer read clears it. */
+      readonly saveFailure: { readonly error: unknown } | null;
       readonly handoff: Handoff | null;
     };
 
@@ -106,7 +107,7 @@ export function createProgressSync(
   let handoff: Handoff | null = null;
   let unsaved: Locator | null = null;
   let adopting = false;
-  let failed = false;
+  let failure: { readonly error: unknown } | null = null;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
   let inFlight: Promise<void> | null = null;
@@ -124,7 +125,7 @@ export function createProgressSync(
   );
   const requireSourceReload = () => {
     view = null;
-    failed = false;
+    failure = null;
     fenced = true;
     state = {
       kind: "LoadFailed",
@@ -143,7 +144,7 @@ export function createProgressSync(
             view,
             saving: inFlight !== null,
             retrying: revalidating,
-            saveFailed: failed,
+            saveFailure: failure,
             handoff,
           };
     hooks.changed();
@@ -205,7 +206,7 @@ export function createProgressSync(
           requireSourceReload();
           return;
         }
-        failed = false;
+        failure = null;
         if (result.kind === "Stale") {
           if (result.canonical.state === "Unresolved") {
             view = { kind: "Canonical", snapshot: result.canonical };
@@ -242,12 +243,12 @@ export function createProgressSync(
         cutOff = keepalive || leaving;
         if (!cutOff) {
           console.error("reader_cursor_save_failed", error);
-          failed = true;
+          failure = { error };
         }
       } finally {
         inFlight = null;
         publish();
-        if (!failed && !cutOff) schedule();
+        if (!failure && !cutOff) schedule();
       }
     };
     inFlight = run();
@@ -258,7 +259,7 @@ export function createProgressSync(
   async function revalidate() {
     if (state.kind === "LoadFailed" && state.retrying) return;
     if (fenced) {
-      if (failed) await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+      if (failure) await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
       return;
     }
     if (view === null || revalidating) return;
@@ -277,7 +278,7 @@ export function createProgressSync(
         // An equal-position device save can be accepted without moving the cursor revision.
         view = next;
         handoff = null;
-        failed = false;
+        failure = null;
       } else if (next.snapshot.revision > base().revision) {
         const { snapshot } = next;
         if (snapshot.state === "Unresolved") {
@@ -303,7 +304,7 @@ export function createProgressSync(
           activitySaved = false;
           if (pending) {
             unsaved = null;
-            failed = false;
+            failure = null;
           }
           hooks.remote(snapshot, !own);
           if (handoff?.kind === "Newer" && handoff.snapshot.revision <= snapshot.revision) handoff = null;
@@ -331,14 +332,14 @@ export function createProgressSync(
       adopt(next);
       handoff = next.kind === "Conflict" ? handoff : null;
       unsaved = null;
-      failed = false;
+      failure = null;
       fenced = false;
       activitySaved = false;
       if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
     } catch (error) {
       if (mine === generation) {
         // Reconciliation reads own load failures; the fence keeps saves paused.
-        failed = true;
+        failure = { error };
         state = { kind: "LoadFailed", recovery: "RetryPosition", retrying: false, error };
       }
       throw error;
@@ -356,7 +357,7 @@ export function createProgressSync(
       window.clearTimeout(timer);
       unsaved = null;
       adopting = false;
-      failed = false;
+      failure = null;
       handoff = null;
       state = state.kind === "LoadFailed"
         ? { ...state, recovery: "ReloadDocument", retrying: true }
@@ -365,7 +366,7 @@ export function createProgressSync(
       await inFlight;
       if (mine !== generation) return null;
       view = null;
-      failed = false;
+      failure = null;
       handoff = null;
       activitySaved = false;
       try {
@@ -379,7 +380,7 @@ export function createProgressSync(
         return loaded;
       } catch (error) {
         if (mine === generation) {
-          failed = !signal.aborted;
+          failure = signal.aborted ? null : { error };
           state = {
             kind: "LoadFailed",
             recovery: signal.aborted ? "ReloadDocument" : "RetryPosition",
@@ -399,7 +400,7 @@ export function createProgressSync(
       if (unsaved === null) dirtySince = Date.now();
       movedAt = Date.now();
       unsaved = locator;
-      failed = false;
+      failure = null;
       leaving = false;
       schedule();
     },
@@ -424,7 +425,7 @@ export function createProgressSync(
         publish();
         throw new ProgressPreparationError();
       }
-      failed = false;
+      failure = null;
       publish();
     },
     reconcileFence,
@@ -440,7 +441,7 @@ export function createProgressSync(
       handoff = null;
       unsaved = null;
       adopting = false;
-      failed = false;
+      failure = null;
       activitySaved = false;
       publish();
     },
@@ -453,7 +454,7 @@ export function createProgressSync(
         handoff = null;
         if (choice === "Canonical") {
           unsaved = null;
-          failed = false;
+          failure = null;
           publish();
           hooks.remote(open.snapshot, true);
           return;
@@ -479,15 +480,15 @@ export function createProgressSync(
             }),
           );
           if (choice === "Canonical" || unsaved === device) unsaved = null;
-          failed = false;
+          failure = null;
           if (choice === "Canonical") hooks.remote(current.canonical, true);
         } catch (error) {
           console.error("reader_cursor_resolve_failed", error);
-          failed = true;
+          failure = { error };
         } finally {
           inFlight = null;
           publish();
-          if (!failed) schedule();
+          if (!failure) schedule();
         }
       };
       inFlight = run();
@@ -496,11 +497,11 @@ export function createProgressSync(
     },
     retry() {
       if (fenced) {
-        if (failed) void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
+        if (failure) void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
         return;
       }
       void revalidate().then(() => {
-        if (failed && handoff?.kind !== "Newer") void save(false);
+        if (failure && handoff?.kind !== "Newer") void save(false);
       });
     },
     stop() {

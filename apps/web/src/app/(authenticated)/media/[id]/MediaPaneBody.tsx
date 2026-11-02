@@ -51,6 +51,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { localPoint } from "@/lib/documentReader/model";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
+  ReaderRuling,
   useDocumentReader,
   useReaderState,
   type Decorations,
@@ -79,9 +80,8 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { useSourceArrival, type SourceArrivalContext, type SourceArrivalOutcome } from "@/lib/reader/sourceArrival";
+import { useArrivalFailure, useSourceArrival, type SourceArrivalContext, type SourceArrivalOutcome } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -104,6 +104,7 @@ import { matches as matchesEvidence } from "./evidence/model";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import {
   hostedProgress,
+  positionSaveFailure,
   hostedSource,
   inspectionOfLocator,
   targetOfLocator,
@@ -155,13 +156,13 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   });
   const result = source.status === "ready" ? source.data : null;
   const settled = result?.settled === true;
-  const error = source.status === "loading" ? null : source.error;
   const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
-  // justify-polling: an accepted source has no identity event stream. Only visible,
-  // unsettled handoffs poll; failed reads stop until the reader explicitly retries.
+  // justify-polling: an accepted source has no identity event stream. Only visible, unsettled
+  // handoffs poll. A failed refresh over the saved fact polls on, since the next poll heals it;
+  // a failed first read has nothing to poll and waits for its retry.
   useIntervalPoll({
-    enabled: visible && result !== null && !settled && error === null,
+    enabled: visible && result !== null && !settled,
     pollIntervalMs: 2_000,
     onPoll: () => {
       if (document.visibilityState === "visible") source.refetch();
@@ -171,14 +172,14 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
     if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
   }, [result, runtime.router, settled]);
   const speak = useActiveRegion();
-  if (error !== null) {
+  if (source.status === "failed") {
+    const { error } = source;
     // imports' domain codes come ahead of transport; savedSourceReadFailure answers only refusals here.
-    if (isApiError(error) && !isSameSystemApiDefect(error) && transportOf(error) === "Refused") {
+    if (!isSameSystemApiDefect(error) && transportOf(error) === "Refused") {
       const domain = savedSourceReadFailure(error);
       return <Fact line={{ fact: domain.title, reason: domain.message }} verbs={[viewImports]} speak={speak} />;
     }
-    return <Failed error={error} noun="import details" retry={{ run: source.refetch,
-      busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing }} />;
+    return <Failed error={error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
   }
   if (settled || source.status === "loading") return <Ruling />;
   return <Fact line={{ fact: "source saved.", reason: "it opens here when processing finishes." }} verbs={[viewImports]} speak={speak} />;
@@ -209,10 +210,11 @@ function MediaRoute({ id }: { readonly id: string }) {
   usePaneReturnReady(record.status === "failed" || !admitted && !catalog.loading && record.status !== "ready");
   const failure = record.status === "loading" ? null : record.error;
   const savedReady = saved.kind === "Ready";
-  // Only an entry that could not reach the server opens on the saved copy. A live pane stays
-  // live through a later dropped response: that is a refresh failure, and it heals.
+  // Only an entry whose own record read failed with the server out of reach opens on the saved
+  // copy, and stays there once the record lands. Another read's dropped response, or a refresh
+  // failure over a live pane, latches nothing: it heals.
   useEffect(() => {
-    if (savedReady && view !== "live" && record.status !== "ready" && (admission === "Unavailable" || admission === "SignInRequired" || admission === "UpdateRequired")) setOpenedOffline(true);
+    if (savedReady && view !== "live" && record.status === "failed" && (admission === "Unavailable" || admission === "SignInRequired" || admission === "UpdateRequired")) setOpenedOffline(true);
   }, [admission, record.status, savedReady, view]);
   const showSaved = savedReady && (view === "downloaded" || record.status !== "ready" || view !== "live" && (openedOffline || interacted));
   const switchView = (next: "live" | "downloaded") => {
@@ -260,7 +262,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   return record.status === "failed" ? <>
     <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
     <LocalAnnotations mediaId={id} />
-  </> : <div className={styles.ruled} style={readerSurfaceStyle(profile)}><Ruling /></div>;
+  </> : <ReaderRuling profile={profile} />;
 }
 
 /** Writing about a source this device can't open: its quotes and notes stay local and editable. */
@@ -760,10 +762,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     },
   });
   arrivalRef.current = arrival;
-  // An arrival that can't land is a one-off miss; a later arrival retires it, and so its slip.
-  const arrivalFailure = arrival.failure;
-  useEffect(() => arrivalFailure === null ? undefined : arrivalFailure.error !== null
-    ? outcome.fail(arrivalFailure.error, arrivalFailure.title) : outcome.say({ fact: arrivalFailure.title }), [arrivalFailure, outcome]);
+  useArrivalFailure(arrival.failure);
   const { clear: clearArrival } = arrival;
   useEffect(() => {
     if (inspection && navigationMode === "Reading") clearArrival();
@@ -872,8 +871,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   // ---- render ----
   if (record.status === "loading" || (record.status === "ready" && !media))
     return (
-      <div className={`${styles.stateScrollport} ${styles.ruled}`} style={readerSurfaceStyle(profile)} data-mobile={isMobile}>
-        <Ruling />
+      <div className={styles.stateScrollport} data-mobile={isMobile}>
+        <ReaderRuling profile={profile} />
       </div>
     );
   if (record.status === "failed" || !media) {
@@ -944,6 +943,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         isMobile={isMobile}
         showCaptureTitle={false}
         failure={(error, retry) => isApiError(error) ? <Failed error={error} noun="this document’s contents" retry={retry} /> : null}
+        saveFailure={positionSaveFailure}
         decorations={decorations}
         inspection={inspection}
         activePassage={verbs.composer.activePassage}
@@ -974,7 +974,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         }
         lane={
           <>
-            {boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
+            {boundsPrompt ? <Fact key={`${boundsPrompt.fact}${boundsPrompt.reason ?? ""}`} line={boundsPrompt} speak={speak}
               verbs={bounds?.phase === "Selecting" ? [{ label: "cancel", commandKey: "CancelHighlightBounds", run: verbs.cancelBounds }] : undefined} /> : null}
             {isMobile && verbs.composer.reselection ? <Fact line={{ fact: "select the passage again." }} speak={speak}
               verbs={[{ label: "cancel", commandKey: "CancelReselection", run: verbs.dismissSelection }]} /> : null}

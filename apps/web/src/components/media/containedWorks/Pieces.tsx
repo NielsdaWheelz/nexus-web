@@ -17,7 +17,7 @@ import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { isAbortError } from "@/lib/errors";
@@ -38,6 +38,7 @@ type Command = { kind: "discover"; body: Schema<"PartDiscovery"> }
 export function SourcePieces({ source, reader, onNavigate }: { readonly source: string; readonly reader: Reader; readonly onNavigate?: (destination: ReaderDestination) => void }) {
   const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(usePaneIsActive(), 0)}`;
   const contents = usePaneFreeServerValue({ key: `/media/${source}/parts`, stale, load: signal => sourceContents(source, signal) });
+  const speak = useActiveRegion();
   const page = contents.status === "ready" ? contents.data : null;
   const navigation = page?.navigation ?? null;
   const [intent, setIntent] = useState<Intent | null>(null);
@@ -190,7 +191,8 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
       {creator && (page.capabilities.discover.allowed || operationActive || operation?.status === "dead") && navigation ? <Button data-contents-top="true" disabled={blocking || operationActive} aria-busy={commands.value.busy || undefined} onClick={() => {
         if (!blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
       }}>{operation?.status === "dead" || operation?.outcome === "superseded" ? "retry" : "extract independent works"}</Button> : null}
-      {operationText ? <Fact line={{ fact: operationText }} /> : null}
+      {/* a job's progress stays quiet; its death speaks, once per line. */}
+      {operationText ? <Fact key={operationText} line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
         {/* the contents stay inert until the reader shows their version; a load that ended without it says so */}
         {!matched && mounted.status === "ready" && !mounted.refreshing && requestedGeneration.current === navigation.generation

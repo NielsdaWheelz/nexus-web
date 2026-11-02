@@ -1,6 +1,6 @@
 "use client";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
-import type { Verb } from "@/components/feedback/stage";
+import type { Line, Verb, Verbs } from "@/components/feedback/stage";
 import type { ExcerptBody } from "@nexus/authored/excerpt";
 
 // The reader primitive. A host builds a source (and optionally a progress
@@ -23,7 +23,7 @@ import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
-import { targetOfLocator, type HighlightColor, type PdfQuad, type TextUnit } from "./model";
+import { targetOfLocator, type HighlightColor, type PdfQuad, type ReaderDocument, type TextUnit } from "./model";
 import PdfSurface from "./pdf/PdfSurface";
 import {
   createReaderRuntime,
@@ -98,6 +98,14 @@ export interface Inspection {
 export type SelectionCandidate =
   | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
   | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
+/** Why a selection can't become a highlight here: one line per rejection, for every reader host. */
+export function rejectedSelectionFact(reason: Extract<SelectionCandidate, { kind: "Rejected" }>["reason"], doc: ReaderDocument | null): string {
+  switch (reason) {
+    case "UnsupportedExcerpt": return "nexus can’t capture some text in this passage.";
+    case "CrossPage": return "highlights can’t cross pages.";
+    case "CrossUnit": return doc?.kind === "text" && doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections.";
+  }
+}
 export type SelectionEvent = SelectionCandidate & {
   readonly identity: string;
   readonly input: "pointer" | "keyboard" | "touch";
@@ -150,6 +158,9 @@ export interface DocumentReaderViewProps {
   /** The host's own words for its publication's failed read, which only it can classify; null,
    * or absent, and the reader says it couldn't open the document. */
   readonly failure?: (error: unknown, retry: { readonly run: () => void; readonly busy: boolean }) => ReactNode;
+  /** The host's words for a failed position save, which only its port can classify; absent, the
+   * reader says the position isn't saving. `retry` is the reader's own. */
+  readonly saveFailure?: (error: unknown, retry: Verb) => { readonly line: Line; readonly verbs: Verbs | null };
   /** The host's durable facts about this reading, in the reader's status lane beside its own.
    * The reader re-anchors when the lane changes height, so the text under the eye stays put. */
   readonly lane?: ReactNode;
@@ -227,7 +238,7 @@ export default function DocumentReaderView(
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
-      <div className={`${styles.feedback} ${styles.readerState}`}>
+      <div className={`${styles.feedback} ${styles.readerState} ${styles.readerPitch}`}>
         {props.before}
         <Ruling />
       </div>
@@ -273,7 +284,7 @@ export default function DocumentReaderView(
       data-hyphenation={props.profile.hyphenation}
     >
       <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
-        {tracked ? <StatusStrip reader={runtime} speak={speak} /> : null}
+        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} /> : null}
         {props.lane}
       </div>
       {body}
@@ -308,7 +319,7 @@ function originLabel(state: ReaderState): string | null {
 }
 
 /** The reading position's lane: at most one fact per condition, each with the verbs that settle it. */
-function StatusStrip({ reader, speak }: { readonly reader: Reader; readonly speak: boolean }) {
+function StatusStrip({ reader, speak, saveFailure }: { readonly reader: Reader; readonly speak: boolean; readonly saveFailure: DocumentReaderViewProps["saveFailure"] }) {
   const navigation = useReaderState(reader, (state) => state.navigation);
   const progress = useReaderState(reader, (state) => state.progress);
   const documentReady = useReaderState(reader, (state) => state.document.status === "ready");
@@ -320,8 +331,11 @@ function StatusStrip({ reader, speak }: { readonly reader: Reader; readonly spea
   const unresolved = ready ? unresolvedPosition(ready.view) : null;
   const handoff = unresolved ? null : ready?.handoff ?? null;
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
-  if (!unresolved && !exploring && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
+  if (!unresolved && !exploring && !handoff && !ready?.saveFailure && !unavailable && !loadFailed) return null;
   const readFromHere = (busy: boolean): Verb => ({ label: "read from here", commandKey: "ReadFromHere", run: reader.continueHere, busy });
+  const retrySave: Verb = { label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: !!ready && (ready.saving || ready.retrying) };
+  const saveFailed = ready?.saveFailure ? saveFailure?.(ready.saveFailure.error, retrySave)
+    ?? { line: { fact: "your reading position isn’t saving.", reason: "this tab still holds it." }, verbs: [retrySave] } : null;
   return (
     <div className={styles.status} role="group" aria-label="reading position">
       {unresolved ? <>
@@ -342,10 +356,7 @@ function StatusStrip({ reader, speak }: { readonly reader: Reader; readonly spea
           { label: "stay here", commandKey: "KeepDevicePosition", run: () => void reader.resolveHandoff("Device"), busy: !!ready?.saving },
         ]} />
       ) : null}
-      {ready?.saveFailed ? (
-        <Fact line={{ fact: "not sure your reading position saved.", reason: "this tab still holds it." }} speak={speak}
-          verbs={[{ label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: ready.saving || ready.retrying }]} />
-      ) : null}
+      {saveFailed ? <Fact key={`${saveFailed.line.fact}${saveFailed.line.reason ?? ""}`} line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
       {unavailable && !exploring && !unresolved ? (
         <Fact line={{ fact: "your saved reading position no longer matches this version." }} speak={speak} />
       ) : null}
@@ -357,6 +368,11 @@ function StatusStrip({ reader, speak }: { readonly reader: Reader; readonly spea
         : null}
     </div>
   );
+}
+
+/** A host's cold region before its reader mounts: the ruling at the reader's line pitch. */
+export function ReaderRuling({ profile }: { readonly profile: Schema<"ReaderProfileOut"> }) {
+  return <div className={styles.readerPitch} style={readerSurfaceStyle(profile)}><Ruling /></div>;
 }
 
 /** A first deep link has no earlier cursor to return to. Adoption remains explicit. */

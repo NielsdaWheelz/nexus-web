@@ -198,6 +198,7 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
 }) {
   const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
   const { say } = useOutcome();
+  const speak = useActiveRegion();
   const openTime = (event: TargetActivationEvent, ms: number) => {
     const play = () => {
       const document = reader.getState().document;
@@ -254,7 +255,7 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
   return <div className={styles.transcriptChrome}>
     {media.kind === "video" ? embed && !videoFailed
       ? <YouTubeEmbedFrame ref={frame} embedUrl={embed} seekTargetMs={videoAt} className={styles.video} onError={() => setVideoFailed(true)} />
-      : <Fact line={{ fact: "this video can’t play here." }} /> : null}
+      : <Fact line={{ fact: "this video can’t play here." }} speak={speak} /> : null}
     {(media.kind === "video" || !media.playerDescriptor) && (source?.source_url || media.canonical_source_url) ?
       <a href={source?.source_url || media.canonical_source_url!} target="_blank" rel="noopener noreferrer" className={styles.textButton}>open in source</a> : null}
     {media.kind === "podcast_episode" && identity !== null ? <PlaybackPosition mediaId={media.id} reader={reader} transcriptReaderKey={transcriptReaderKey} /> : null}

@@ -91,11 +91,24 @@ function refusalReason(error: ApiError): string {
   }
 }
 
-/** What a request would meet now, from admission alone: signed out, stale, or unreachable. */
-export function admissionTransport(admission: RemoteAdmission): Transport {
-  if (admission === "SignInRequired") return "SignIn";
-  if (admission === "UpdateRequired") return "Update";
-  return navigator.onLine === false ? "Offline" : "Unavailable";
+/** What a request would meet now, from admission alone: signed out, stale, or unreachable. While
+ * admission checks, or is ready, no reason is true yet: null. */
+export function admissionTransport(admission: RemoteAdmission): Transport | null {
+  switch (admission) {
+    case "SignInRequired": return "SignIn";
+    case "UpdateRequired": return "Update";
+    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
+    case "Checking":
+    case "Ready":
+      return null;
+  }
+}
+
+/** A command admission holds back unsent: its fact, and why where a reason is true. */
+export function unadmitted(fact: string): { line: Line; verbs: Verbs | null } {
+  const transport = admissionTransport(remoteAdmission());
+  return transport === null ? { line: { fact }, verbs: null }
+    : { line: TRANSPORT_LINES[transport].command(fact), verbs: transportVerbs(transport, { signIn: null }) };
 }
 
 function localFailure(line: Line, verbs: Verbs | null, error: ApiError | null): AdmissionResult {
@@ -201,8 +214,8 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
       snapshot.find(entry => entry.intent.kind === kind && entry.intent.mediaId === mediaId) ?? null,
     admit(original: AdmissionIntent): Promise<AdmissionResult> {
       if (!remoteReady()) {
-        const transport = admissionTransport(remoteAdmission());
-        return Promise.resolve(localFailure(TRANSPORT_LINES[transport].command(FACT[original.kind]), transportVerbs(transport, { signIn: null }), null));
+        const { line, verbs } = unadmitted(FACT[original.kind]);
+        return Promise.resolve(localFailure(line, verbs, null));
       }
       const scope = lifetime;
       if (scope === null || !live(scope)) return Promise.resolve({ kind: "OwnerGone" });

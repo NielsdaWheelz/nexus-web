@@ -386,8 +386,3 @@
   margin-inline-end: var(--space-4);
   border-radius: var(--radius-sm);
 }
-
-/* A cold media pane is ruled at its reader's line pitch, from its first read on. */
-.ruled {
-  --ruling-pitch: calc(var(--reader-font-size-px, var(--text-md)) * var(--reader-line-height, var(--leading-normal)));
-}

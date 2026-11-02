@@ -2,8 +2,8 @@
 
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
-// flight, latest wins; a failed save keeps the change and holds a slip with retry
-// until a save lands.
+// flight, latest wins; a failed save keeps the change and holds a slip until a save
+// lands, with the verb its transport allows.
 import {
   createContext,
   useCallback,
@@ -15,14 +15,14 @@ import {
   type ReactNode,
 } from "react";
 import { ReaderProfileProvider } from "./ReaderProfileContext";
-import { remoteAdmission, remoteReady } from "@/lib/native/admission";
+import { remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line } from "@/components/feedback/stage";
-import { apiFetch, outcomeUnknown, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
+import { apiFetch, outcomeUnknown, isApiError, isSameSystemApiDefect, isUnauthenticatedApiError, type ApiError } from "@/lib/api/client";
 import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { admissionTransport } from "@/lib/media/admissions";
+import { unadmitted } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -117,8 +117,8 @@ export function ReaderProvider({
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
       if (!remoteReady()) {
-        const transport = admissionTransport(remoteAdmission());
-        say(TRANSPORT_LINES[transport].command("couldn’t change reader settings."), transportVerbs(transport, { signIn: null }) ?? undefined);
+        const { line, verbs } = unadmitted("couldn’t change reader settings.");
+        say(line, verbs ?? undefined);
         return;
       }
       setProfile((current) => ({ ...current, ...patch }));
@@ -161,11 +161,12 @@ export function ReaderProvider({
     [editable, intend, persistence, profile, send, saving, connectionOccurrence, unavailableReason],
   );
   if (defect) throw defect.error;
+  const retry: Verb = { label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving };
+  const failed = persistence.state === "SaveFailed" ? { attempt: persistence.attempt, ...saveFailure(persistence.failure, retry) } : null;
   return (
     <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>
       {children}
-      {persistence.state === "SaveFailed" ? <Hold id="reader-settings" attempt={persistence.attempt} line={saveFailureLine(persistence.failure)}
-        verbs={[{ label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving }]} /> : null}
+      {failed ? <Hold id="reader-settings" attempt={failed.attempt} line={failed.line} verbs={failed.verbs ?? undefined} /> : null}
     </ReaderProfileProvider></ReaderContext.Provider>
   );
 }
@@ -177,13 +178,14 @@ export function useReaderContext(): ReaderProfileCapability {
   return context;
 }
 
-/** A failed save, unsure when its outcome is unknown: the change applies here either way. */
-function saveFailureLine(failure: ApiError): Line {
-  if (outcomeUnknown(failure) && failure.code !== "E_UNAUTHENTICATED")
-    return { fact: "not sure reader settings saved.", reason: "they may have gone through." };
+/** A failed save, unsure when its outcome is unknown: the change applies here either way. Its
+ * transport chooses the verbs, so a stale build offers reload alone and sign-in offers none here. */
+function saveFailure(failure: ApiError, retry: Verb): { line: Line; verbs: Verbs | null } {
+  if (outcomeUnknown(failure) && !isUnauthenticatedApiError(failure))
+    return { line: { fact: "not sure reader settings saved.", reason: "they may have gone through." }, verbs: [retry] };
   const transport = transportOf(failure);
-  return transport === "Refused" ? { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." }
-    : TRANSPORT_LINES[transport].command("couldn’t save reader settings.");
+  return transport === "Refused" ? { line: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." }, verbs: [retry] }
+    : { line: TRANSPORT_LINES[transport].command("couldn’t save reader settings."), verbs: transportVerbs(transport, { retry, signIn: null }) };
 }
 
 /** The provider's held slip is this failure's one home; the settings pane's mount says nothing

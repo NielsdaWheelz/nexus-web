@@ -26,7 +26,7 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import { useEditorDraft } from "@/lib/notes/editorHost";
 import NoteEditor, {type NoteEditorHandle} from "@/components/notes/NoteEditor";
 import { captureSelection, createHighlight, createReaderAnnotations, type Capture, type SourceLabel } from "../annotations";
-import { useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
+import { rejectedSelectionFact, useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
 import type { Reader } from "../runtime";
 import { AnnotationList, AnnotationQuote, PLACEMENT_COPY } from "./ReaderAnnotation";
 import styles from "./chrome.module.css";
@@ -130,11 +130,14 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     onAttachmentActiveChange={attachment => draft.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => draft.set(value => ({...value, hyperlink}))} />;
   if (defect) throw defect.error;
   const retry: Verb | null = issue?.kind === "Unsaved" ? {label: "retry", commandKey: "RetryAnnotationSave", run: issue.retry, busy} : null;
+  const issueField = issue?.kind === "TooLarge" || retry !== null && !hasNote;
   const issueNotice = issue?.kind === "TooLarge" ? <Field id={issueId} line={{ fact: "this passage is too long to save." }} />
     : retry === null ? null
     : hasNote ? <Hold id={`compact-annotation:${mediaId}`} risk line={{ fact: "this note isn’t saved yet." }}
       verbs={[retry, {label: "copy text", commandKey: "CopyUnsavedAnnotation", run: copyWriting, copied: copied.occurrence ?? undefined}]} />
     : <Field id={issueId} line={{ fact: "couldn’t save the highlight." }} verbs={[retry]} />;
+  // the save the field refuses is what it describes; NoteEditor takes no description of its own.
+  const saveDescribedBy = [sourceChanged ? changedId : null, issueField ? issueId : null].filter(Boolean).join(" ") || undefined;
   const panel = <>
     <Dialog open={manualCopy !== null} title="copy unsaved writing" onClose={() => setManualCopy(null)} initialFocus={panel => panel.querySelector("textarea")}>
       <textarea aria-label="unsaved writing" readOnly value={manualCopy ?? ""} onFocus={event => event.currentTarget.select()} />
@@ -146,7 +149,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         {sourceChanged ? <Field id={changedId} line={{ fact: "the text changed.", reason: "your words are kept." }} /> : null}
         {editor("write an annotation…", () => save(open.capture, true))}
         <div className={styles.compactActions}>
-          <Button emphasis="strong" aria-busy={busy} disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
+          <Button emphasis="strong" aria-busy={busy} aria-describedby={saveDescribedBy} disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
           <Button onClick={close}>cancel</Button>
         </div>
       </div> : null}
@@ -168,7 +171,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         <div className={styles.compactActions}>
           {shownAnnotation.selection.locator.type === "x_capture_offsets" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.locator.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
 
-          <Button tone="danger" aria-busy={busy} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close, "Delete")}>delete highlight</Button>
+          <Button tone="danger" aria-busy={busy} aria-describedby={!annotation ? changedId : undefined} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close, "Delete")}>delete highlight</Button>
         </div>
         {issueNotice}
       </div> : null}
@@ -191,16 +194,14 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     const { doc } = current.current;
     if (notice.kind !== "Admitted" || !doc || notice.selection.identity !== doc.identity) return;
     if (notice.selection.kind === "Rejected") {
-      const { reason } = notice.selection;
-      say({ fact: reason === "UnsupportedExcerpt" ? "nexus can’t capture some text in this passage." : reason === "CrossPage" ? "highlights can’t cross pages."
-        : doc.kind === "text" && doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections." });
+      say({ fact: rejectedSelectionFact(notice.selection.reason, doc) });
       return;
     }
     let capture: Capture | null;
     try { capture = captureSelection(doc, current.current.mediaId, notice.selection.anchor, notice.selection.excerpt, notice.selection.excerpt_start, notice.selection.excerpt_end); }
     catch (error) {
       if (!(error instanceof ExcerptCaptureError)) throw error;
-      say({ fact: "nexus can’t capture some text in this passage." });
+      say({ fact: rejectedSelectionFact("UnsupportedExcerpt", doc) });
       return;
     }
     if (capture && guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) { setIssue(null); setNoteBody(value => ({...value, body: emptyBody(), revision: value.revision + 1})); setOpen({ kind: "selection", capture, identity: doc.identity }); }

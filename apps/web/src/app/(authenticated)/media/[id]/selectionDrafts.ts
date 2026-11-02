@@ -51,7 +51,7 @@ export type ReaderChatIssue = (
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Extract<SelectionEditor, { kind: "Selected" }>; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Extract<SelectionEditor, { kind: "Selected" }>; destination: "New" | "Existing" };
 
 export interface ComposerDraft {
   id: string;

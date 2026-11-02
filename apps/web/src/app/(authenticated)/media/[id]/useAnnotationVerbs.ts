@@ -15,6 +15,7 @@ import type { Line, Retract, Verb, Verbs } from "@/components/feedback/stage";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import {
+  rejectedSelectionFact,
   useReaderState,
   type Mark,
   type MarkEvent,
@@ -193,10 +194,9 @@ export function useAnnotationVerbs(input: {
       if (handleUnauthenticatedApiError(error)) return;
       // an uncommitted local frame is retried from the pane's writing error notice.
       if (error instanceof LocalCommitError) return;
-      const again: Verb | undefined = retry && { label: "retry", commandKey: `retry ${title}`, run: () => void retry().then(
-        () => notice.current(),
-        (failure: unknown) => fail(failure, title, retry),
-      ) };
+      // the press dismissed the slip it stood on; a landed retry has nothing left to retract.
+      const again: Verb | undefined = retry && { label: "retry", commandKey: `retry ${title}`,
+        run: () => void retry().catch((failure: unknown) => fail(failure, title, retry)) };
       if (isAuthoredStorageFailure(error)) { showNotice({ fact: title }, again && [again]); return; }
       notice.current();
       notice.current = outcome.fail(error, title, again);
@@ -237,8 +237,7 @@ export function useAnnotationVerbs(input: {
   };
   const rejectedSelection = (next: Extract<SelectionEvent, { kind: "Rejected" }>) => {
     const shown = reader.getState().document;
-    setSelectionIssue({ fact: next.reason === "UnsupportedExcerpt" ? "nexus can’t capture some text in this passage." : next.reason === "CrossPage" ? "highlights can’t cross pages."
-      : shown.status === "ready" && shown.doc.kind === "text" && shown.doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections." });
+    setSelectionIssue({ fact: rejectedSelectionFact(next.reason, shown.status === "ready" ? shown.doc : null) });
   };
   /** The new extent's exact capture, when it may replace this highlight's selection. */
   const boundsCapture = (session: BoundsSession, next: SelectionEvent) => {
@@ -249,7 +248,7 @@ export function useAnnotationVerbs(input: {
       try { capture = captureSelection(shown.doc, mediaId, next.anchor, next.excerpt, next.excerpt_start, next.excerpt_end); }
       catch (error) {
         if (!(error instanceof ExcerptCaptureError)) throw error;
-        showBounds({ ...session, issue: { fact: "nexus can’t capture some text in this passage." } });
+        showBounds({ ...session, issue: { fact: rejectedSelectionFact("UnsupportedExcerpt", shown.doc) } });
         return null;
       }
     }
