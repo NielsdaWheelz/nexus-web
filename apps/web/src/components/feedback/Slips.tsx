@@ -12,6 +12,7 @@ import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { OverlayContext, topModal } from "@/lib/ui/overlay";
+import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { VerbControl } from "./Fact";
 import { Announcement } from "./Feedback";
 import { useStage, type Anchor, type RoomView, type SlipView, type Speech, type Verb } from "./stage";
@@ -115,7 +116,8 @@ function ModalAnchor() {
   return <div ref={element} className={`${styles.anchor} ${styles.modalAnchor}`} />;
 }
 
-/** Where slips land. Root is the host's root element, Modal sits in its panel. Pane sits above its
+/** Where slips land. Root is the canvas, or a host's root element, which keeps tabindex -1 to take
+ * focus back from a frame whose origin is gone. Modal sits in its panel. Pane sits above its
  * content: `floor` is the shell's own, and any composer's stands over it while it stands, the
  * latest of them winning. A composer's is a zero-height box at its top edge, outside any clip. */
 export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal" }) {
@@ -165,6 +167,7 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
   const navigated = useRef(false);
   const target = () => navigated.current ? null
     : origin.current?.isConnected ? origin.current
+    : room.anchor.kind === "Root" ? findActivePaneLandmarkFocusTarget() ?? room.element.closest<HTMLElement>("[tabindex='-1']")
     : room.element.closest<HTMLElement>("[data-pane-focus-landmark], [role='dialog']");
   const focus: FocusHome = {
     frame,
