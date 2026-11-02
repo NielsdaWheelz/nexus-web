@@ -332,9 +332,10 @@ and the existing private one-day cache. next can report cached failures through
 episode index rows carry no artwork. `MediaSummaryOut.show` (`podcast_id`, `title`,
 `image_url`), null exactly for media without a `podcast_episodes` row, puts the
 show's name where a work's authors stand, as a credit link to its page; the
-show's own page omits it. list filters (`mediaListFilterFields`) and the live
-queue capture behind their play (`playback_snapshot.py`) match the names the row
-shows: the show's, never an episode's authors.
+show's own page omits it. `mediaByline` decides that byline once: rows draw it,
+list filters (`mediaListFilterFields`) match it, and the live queue capture behind
+their play (`playback_snapshot.py`) matches the same names: the show's, never an
+episode's authors.
 
 ## Android Offline Downloads
 

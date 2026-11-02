@@ -7,6 +7,7 @@ import {
   collectionActivityText,
   collectionConsumptionText,
 } from "@/components/collections/collectionRowFormatting";
+import { mediaByline } from "@/lib/media/mediaByline";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
 import styles from "./MediaIdentity.module.css";
 
@@ -39,15 +40,11 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   </span>;
 }
 
-/** The show whose own page lists these rows, which already names it. */
+/** The show whose own page lists these rows, which already names it. The page passes the same id
+ * to `mediaByline` for its list filter. */
 export const ShowPage = createContext<string | null>(null);
 
-/** An episode's show stands in the authors' slot; every other media keeps its authors. */
-export function mediaByline(summary: MediaSummary): IndexByline {
-  return summary.show === null ? { kind: "Authors", contributors: summary.contributors } : { kind: "Show", show: summary.show };
-}
-
-/** Index line 2: an episode's show in the authors' slot, else the authors; then the year and part provenance. The show's own page omits the show. Rows own facts: MediaFacts goes in their trailing cell. */
+/** Index line 2: the row's byline (`mediaByline`), then the year and part provenance. Rows own facts: MediaFacts goes in their trailing cell. */
 export default function MediaIdentity({ subject, returnFocus }: {
   subject: MediaSubject;
   returnFocus: () => HTMLElement | null;
@@ -55,7 +52,7 @@ export default function MediaIdentity({ subject, returnFocus }: {
   const page = useContext(ShowPage);
   const summary = subject.kind === "Stored" ? subject.summary : null;
   const byline: IndexByline | null = subject.kind === "External" ? { kind: "Authors", contributors: subject.contributors }
-    : subject.summary.show !== null && subject.summary.show.podcast_id === page ? null : mediaByline(subject.summary);
+    : mediaByline(subject.summary, page);
   return <span className={styles.support}>
     <IndexBibliography byline={byline} originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
     {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}

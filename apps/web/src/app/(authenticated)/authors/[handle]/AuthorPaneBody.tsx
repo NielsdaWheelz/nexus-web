@@ -45,7 +45,7 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -201,12 +201,9 @@ function AuthorPane({ handle }: { readonly handle: string }) {
         const subject = row.resourceActions?.kind === "Media" ? row.resourceActions.subject : null;
         return matchesPaneFilterQuery(
           text,
-          mediaListFilterFields(
-            subject?.kind === "Stored"
-              ? subject.summary
-              : { title: row.title.text, contributors: row.contributors, show: null },
-            null,
-          ),
+          subject?.kind === "Stored"
+            ? mediaListFilterFields(subject.summary.title, mediaByline(subject.summary, null))
+            : mediaListFilterFields(row.title.text, { kind: "Authors", contributors: row.contributors }),
         );
       }),
     [rows],

@@ -24,7 +24,8 @@ conversation messages retain their message layout.
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
 | `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact byline (observed author names, or an episode's show) and first-publication year; complete credits remain in existing metadata |
-| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance: an episode's show in the authors' slot, omitted on the show's own page (`ShowPage`); `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
+| `lib/media/mediaByline.ts` | a media row's byline, an episode's show in the authors' slot and none on the show's own page, and the names its list filter matches |
+| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance: draws `mediaByline` for the show page its rows sit in (`ShowPage`); `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |

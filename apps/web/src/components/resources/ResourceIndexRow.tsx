@@ -7,7 +7,8 @@ import ResourceRow from "@/components/ui/ResourceRow";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
-import MediaIdentity, { MediaFacts, mediaByline } from "@/components/media/MediaIdentity";
+import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
+import { mediaByline } from "@/lib/media/mediaByline";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
@@ -125,8 +126,8 @@ export default function ResourceIndexRow({
   const contextParts = metadata.parts.filter(part => part.key === "source" || (status === null && part.key === "role"));
   const locationParts = status === null ? metadata.parts.filter(part => part.key === "location") : [];
   if (parsed.scheme === "note_block" || (status === null && body.kind === "reference")) contextParts.unshift({ kind: "text", key: "identity", text: typeLabel, href: null, date: null });
-  const contextByline: IndexByline = status !== null ? { kind: "Authors", contributors: source?.contributors ?? [] }
-    : summary !== null ? mediaByline(summary) : { kind: "Authors", contributors };
+  const contextByline: IndexByline | null = status !== null ? { kind: "Authors", contributors: source?.contributors ?? [] }
+    : summary !== null ? mediaByline(summary, null) : { kind: "Authors", contributors };
   const contextReason = item.missing ? "resource unavailable" : item.activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : item.activation.unavailable_reason === "source_unavailable" ? "source unavailable" : item.activation.kind === "none" ? "can’t open here" : null;
   const contextMetadata = <span className={`${styles.metadata} ${styles.contextMetadata}`}>

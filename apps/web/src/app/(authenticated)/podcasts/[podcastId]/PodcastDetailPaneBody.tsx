@@ -40,7 +40,7 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
 import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
@@ -212,6 +212,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       }),
     [loaded, summaries],
   );
+  const matching = (text: string) => resolved.filter(episode =>
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary.title, mediaByline(episode.media_summary, podcastId))));
 
   const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
   const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
@@ -251,10 +253,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   }, [canCheckSource, ctx, podcastId, retainCheck, runCheck]);
   const filterRows = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId}`,
-    getRowStatus: (text) => {
-      const visible = resolved.filter(episode => matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, podcastId)));
-      return indexRowStatus(episodes, resolved.length, visible.length, { singular: "episode", plural: "episodes" });
-    },
+    getRowStatus: (text) =>
+      indexRowStatus(episodes, resolved.length, matching(text).length, { singular: "episode", plural: "episodes" }),
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
@@ -351,9 +351,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       (ready !== null && episodes.status !== "loading"),
   );
 
-  const visible = resolved.filter((episode) =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, podcastId)),
-  );
+  const visible = matching(text);
   const emptyTitle = text !== ""
     ? "no episodes match this filter."
     : known === "all"
