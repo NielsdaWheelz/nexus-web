@@ -40,10 +40,10 @@ export function PlacementEditor({ targets }: { readonly targets: readonly Librar
       rows={view.items}
       onToggle={view.onToggle}
       loading={view.loading}
-      summary={targets.length > 1 ? `applies to ${targets.length} items · ${view.summary}` : null}
-      error={view.error}
+      summary={targets.length > 1 ? `applies to ${targets.length} items${view.summary === null ? "" : ` · ${view.summary}`}` : null}
+      failure={view.failure}
       create={{ available: view.creationAvailable, pendingNames: view.pendingNames, onCreate: view.onCreate }}
-      empty="no libraries match"
+      empty="no libraries yet."
     />
   </>;
 }

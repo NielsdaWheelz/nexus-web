@@ -1,12 +1,16 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
+import { Hold } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger, type DestinationChange } from "@/components/libraries/DestinationChooser";
 import type { ChooserCreation, ChooserError } from "@/components/libraries/LibraryChooser";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { LibraryDestination } from "@/lib/libraries/api";
 
+/** A destination picker behind its trigger. `error` is a form's unknown creation, restated by
+ * `useDestinationCreation` for a form that does not render its `holds` yet; it holds here, picker
+ * open or closed, and leaves with that form's `holds`. */
 export default function DestinationField({ context, label, emptyLabel, chosen, onSet, disabled, create, error }: {
   readonly context: string;
   readonly label: string;
@@ -19,14 +23,15 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const resendVerbs = useResendVerbs();
+  const holdId = error?.commandKey ?? "library-creation";
   return <div style={{ minWidth: 0 }}>
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
-        create={create} error={error} />
+      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
     </PickerSurface>
-    {!open && error ? <FeedbackFailure scope="Local" occurrence={error.occurrence} content={error.content} announcement="Assertive"
-      actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy, commandKey: error.commandKey }] : undefined} /> : null}
+    {error ? <Hold id={holdId} line={{ fact: error.content.title, reason: error.content.message }}
+      verbs={error.retry ? resendVerbs({ label: "retry", commandKey: holdId, run: error.retry, busy: error.busy }) : undefined} /> : null}
   </div>;
 }

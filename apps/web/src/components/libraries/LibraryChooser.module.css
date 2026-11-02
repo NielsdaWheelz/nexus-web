@@ -17,20 +17,29 @@
   overflow-wrap: anywhere;
 }
 
+/* Two 20px cells: status, then membership. */
 .marks {
   display: grid;
-  grid-template-columns: repeat(3, 1rem);
+  grid-template-columns: repeat(2, 20px);
+  justify-content: space-between;
   align-items: center;
-  gap: var(--space-1);
+  inline-size: 56px;
 }
 
-.marks > span {
+.mark {
   display: flex;
   align-items: center;
   justify-content: center;
+  inline-size: 20px;
+  block-size: 20px;
 }
 
-.empty {
+.region {
   flex: 0 0 auto;
-  padding: var(--space-2);
+  padding-inline: var(--space-2);
+}
+
+.ruling {
+  --ruling-pitch: 32px;
+  flex: 0 0 auto;
 }

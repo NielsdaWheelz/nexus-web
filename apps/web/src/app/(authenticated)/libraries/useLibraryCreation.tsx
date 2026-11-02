@@ -2,16 +2,19 @@
 
 import { Plus } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Field } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { Library } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
+import { NAME_REFUSED, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
 import type { PanePrimaryAction } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -22,28 +25,31 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./page.module.css";
 
 type Attempt = Readonly<{ id: string; name: string; openIntent: OpenIntent }>;
+/** `field` is what stands beneath the name: the name rule once a submit checked it, or the
+ * server's refusal. `unconfirmed` counts the attempts that left the outcome unknown. */
 type Creation =
-  | { kind: "Draft"; text: string; feedback: FeedbackContent | null }
-  | { kind: "Sending"; attempt: Attempt; wasUnconfirmed: boolean }
-  | { kind: "Unconfirmed"; attempt: Attempt; feedback: FeedbackContent }
+  | { kind: "Draft"; text: string; field: string | null }
+  | { kind: "Sending"; attempt: Attempt; unconfirmed: number }
+  | { kind: "Unconfirmed"; attempt: Attempt; unconfirmed: number }
   | { kind: "Created"; library: Library };
 type Delivery = {
   mayOpen: boolean;
 };
-const UNCERTAIN: FeedbackContent = {
-  tone: "Warning",
-  title: "creation not confirmed",
-  message: "this library may already exist. retry before creating another library.",
-};
 
-/** One pane-owned creation attempt; closing its dialog never cancels the write. */
+/** One pane-owned creation attempt; closing its dialog never cancels the write. An unknown
+ * outcome holds until it lands or is refused: in the dialog while it shows, where its submit is
+ * the resend of the same id, else in the pane with that resend. A refusal speaks once and returns
+ * the draft; a first press admission refuses is said and sends nothing. A resend it refuses holds
+ * again, since the first send may have landed. */
 export function useLibraryCreation() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "library creation");
   const { ctx } = useActionRuntime();
   const fail = useThrowLater();
+  const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const guard = useWorkGuard();
   const owner = useResourceDraft<{ creation: Creation; flight: Delivery | null }>("Libraries.Creation", () => ({
-    creation: { kind: "Draft", text: "", feedback: null }, flight: null,
+    creation: { kind: "Draft", text: "", field: null }, flight: null,
   }), value => ({
     changed: value.creation.kind === "Draft" && value.creation.text.trim() !== "",
     unconfirmed: value.creation.kind === "Sending" || value.creation.kind === "Unconfirmed",
@@ -77,7 +83,7 @@ export function useLibraryCreation() {
     navigating.current = false;
     flowIntent.current = intent;
     if (owner.read().creation.kind === "Created")
-      transition({ kind: "Draft", text: "", feedback: null });
+      transition({ kind: "Draft", text: "", field: null });
     open.current = true;
     setVisible(true);
   };
@@ -86,7 +92,7 @@ export function useLibraryCreation() {
     composing.current = false;
     if (owner.read().flight) owner.read().flight!.mayOpen = false;
     if (owner.read().creation.kind === "Draft")
-      transition({ kind: "Draft", text: "", feedback: null });
+      transition({ kind: "Draft", text: "", field: null });
     open.current = false;
     setVisible(false);
   };
@@ -100,31 +106,34 @@ export function useLibraryCreation() {
     const result = runtime.activateTarget({ target, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     if (result.kind !== "Cancelled") release();
   };
-  const deliver = async (attempt: Attempt, wasUnconfirmed: boolean) => {
-    if (!mounted.current || owner.read().flight) return;
+  const deliver = async (attempt: Attempt, unconfirmed: number) => {
+    if (!mounted.current || owner.read().flight || unconfirmed === 0 && refusedUnsent(outcome, `couldn’t create “${attempt.name}”.`)) return;
     const delivery: Delivery = { mayOpen: true };
     owner.set(value => ({ ...value, flight: delivery }));
-    transition({ kind: "Sending", attempt, wasUnconfirmed });
+    transition({ kind: "Sending", attempt, unconfirmed });
     // The answer is classified where it lands: openAsyncResult opens only a created library.
     await openAsyncResult({
       ctx, originPaneId: runtime.paneId, intent: attempt.openIntent,
       mayOpen: () => delivery.mayOpen && open.current,
       onOpened: release,
       create: async () => {
-        const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
+        const result = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
         const owns = !ctx.sessionSignal().aborted && owner.read().flight === delivery;
         if (owns) owner.set(value => ({ ...value, flight: null }));
-        if (outcome.kind === "Created") {
-          if (owns) transition({ kind: "Created", library: outcome.library });
-          return { target: { href: `/libraries/${outcome.library.id}`, labelHint: outcome.library.name }, title: "library created", openLabel: "open library" };
+        if (result.kind === "Created") {
+          if (owns) transition({ kind: "Created", library: result.library });
+          return { target: { href: `/libraries/${result.library.id}`, labelHint: result.library.name }, title: "library created", openLabel: "open library" };
         }
         if (!owns || ctx.sessionSignal().aborted) return null;
-        if (outcome.kind === "Refused" && !wasUnconfirmed) {
-          transition({ kind: "Draft", text: attempt.name, feedback: libraryErrorFeedback(outcome.error, "library wasn’t created", fail) });
+        if (result.kind === "Refused" && unconfirmed === 0) {
+          handleUnauthenticatedApiError(result.error);
+          const invalid = result.error.code === "E_NAME_INVALID";
+          transition({ kind: "Draft", text: attempt.name, field: invalid ? NAME_REFUSED : null });
+          if (!invalid) refuseLibrary(outcome, result.error, `couldn’t create “${attempt.name}”.`);
         } else {
           // Record uncertainty, then hand a sign-out or a defect to its owner.
-          transition({ kind: "Unconfirmed", attempt, feedback: UNCERTAIN });
-          modeledApiError(outcome.error, fail);
+          transition({ kind: "Unconfirmed", attempt, unconfirmed: unconfirmed + 1 });
+          modeledApiError(result.error, fail);
         }
         return null;
       },
@@ -135,15 +144,15 @@ export function useLibraryCreation() {
     const value = owner.read().creation;
     if (value.kind === "Created") return openLibrary(value.library, intent);
     const openIntent = intent === "new_pane" ? intent : flowIntent.current;
-    if (value.kind === "Unconfirmed") return void deliver({ ...value.attempt, openIntent: openIntent === "new_pane" ? openIntent : value.attempt.openIntent }, true);
+    if (value.kind === "Unconfirmed") return void deliver({ ...value.attempt, openIntent: openIntent === "new_pane" ? openIntent : value.attempt.openIntent }, value.unconfirmed);
     if (value.kind !== "Draft") return;
     const error = libraryNameError(value.text);
     if (error) {
-      transition({ ...value, feedback: { tone: "Danger", title: error } });
+      transition({ ...value, field: error });
       input.current?.focus({ preventScroll: true });
       return;
     }
-    void deliver({ id: crypto.randomUUID(), name: value.text.trim(), openIntent }, false);
+    void deliver({ id: crypto.randomUUID(), name: value.text.trim(), openIntent }, 0);
   };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -163,23 +172,16 @@ export function useLibraryCreation() {
   };
   const draft = creation.kind === "Draft";
   const sending = creation.kind === "Sending";
-  const validation = draft && creation.feedback ? libraryNameError(creation.text) : null;
-  const feedback: FeedbackContent | null = sending
-    ? creation.wasUnconfirmed
-      ? UNCERTAIN
-      : { tone: "Neutral", title: "creating library…", message: "you can close this dialog. creation will continue." }
-    : creation.kind === "Created"
-      ? { tone: "Success", title: "library created", message: `“${creation.library.name}” is ready.` }
-      : creation.kind === "Unconfirmed" ? creation.feedback : validation ? null : creation.feedback;
+  const validation = draft ? creation.field : null;
   const text = draft ? creation.text : creation.kind === "Created" ? creation.library.name : creation.attempt.name;
-
-  const failure = creation.kind === "Unconfirmed" || sending && creation.wasUnconfirmed || draft && validation === null ? feedback : null;
-  const failureOccurrence = useFeedbackOccurrence(failure !== null, creation.kind === "Unconfirmed" || creation.kind === "Sending" ? creation.attempt.id : "draft");
+  const held = creation.kind === "Unconfirmed" || sending && creation.unconfirmed > 0 ? creation : null;
+  const hold = held === null ? null : { id: `library-creation:${held.attempt.id}`, attempt: held.unconfirmed - 1,
+    line: { fact: `not sure creating “${held.attempt.name}” saved.`, reason: "it may have gone through." } };
   return {
     primaryAction,
     content: <>
-      {!visible && failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite"
-        actions={[{label: "review creation", onClick: intent => show(null, intent)}]}/> : null}
+      {hold !== null && !visible ? <Hold {...hold}
+        verbs={resendVerbs({ label: "retry", commandKey: hold.id, busy: sending, run: intent => submitCreation(intent) })} /> : null}
       <Dialog
         open={visible}
         title="new library"
@@ -216,16 +218,15 @@ export function useLibraryCreation() {
               const value = owner.read().creation;
               if (value.kind !== "Draft") return;
               const text = event.currentTarget.value;
-              const error = value.feedback ? libraryNameError(text) : null;
-              transition({ kind: "Draft", text, feedback: error ? { tone: "Danger", title: error } : null });
+              transition({ kind: "Draft", text, field: value.field === null ? null : libraryNameError(text) });
             }}
           />
-          {validation ? <div role="alert"><FieldFeedback id={errorId} content={{ tone: "Danger", title: validation }} /></div> : null}
-          {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite"/> : null}
+          {validation ? <div role="alert"><Field id={errorId} line={{ fact: validation }} /></div> : null}
+          {hold !== null ? <Hold {...hold} /> : null}
           <div className={styles.creationActions}>
             <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
-            <Button reserveIcon ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
-              {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
+            <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
+              {held !== null ? "retry" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>
           </div>
         </form>

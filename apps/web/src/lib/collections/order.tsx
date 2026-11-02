@@ -4,29 +4,30 @@
 // order is fenced by an order revision from one global sequence. A move names its
 // item and successor and applies only at the exact revision the reader saw; it is
 // never rebased. One move per collection is pending at a time, held in memory for
-// the tab's life. A lost answer is never replayed blindly: "check order" reads the
-// current revision and resends only while nothing moved, and any read past the
-// move's revision settles it. The rows' own read is the snapshot (a library's
-// complete unfiltered entries page, the lectern's read); this module adds the
-// pending move, its notice and the last acknowledged order.
+// the tab's life. A lost answer holds at the account and is never replayed blindly:
+// its retry reads the current revision and resends only while nothing moved, and any
+// read past the move's revision settles it. A refused move speaks once. The rows' own
+// read is the snapshot (a library's complete unfiltered entries page, the lectern's
+// read); this module adds the pending move and the last acknowledged order.
 
 import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { FeedbackFailure, FeedbackBusy, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
-import { isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { admissionRefusal, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { libraryOrder, moveEntry } from "@/lib/libraries/api";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { useLatestWorkspace } from "@/lib/workspace/store";
+import { refuseLibrary } from "@/lib/libraries/errors";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 import type { OrderPresentation } from "./types";
 
 export type OrderRevision = string;
@@ -41,19 +42,17 @@ export interface Move {
 }
 export type MoveOutcome = "Acknowledged" | "Unconfirmed" | "Superseded" | "Rejected";
 export interface PendingMove {
-  readonly occurrence: object;
   readonly command: Move;
+  /** The moved row's title, for what the move says about itself. */
+  readonly title: string;
   readonly phase: "Sending" | "Unconfirmed" | "Checking";
+  /** Attempts that left its outcome unconfirmed; past zero it holds until settled. */
+  readonly unconfirmed: number;
 }
-export type OrderNoticeState =
-  | { readonly kind: "Conflict"; readonly occurrence: object }
-  | { readonly kind: "Rejected"; readonly content: FeedbackContent; readonly occurrence: object };
 /** What a pane renders for one collection's order. */
 interface OrderState {
   readonly scopeKey: string;
   readonly pending: PendingMove | null;
-  readonly notice: OrderNoticeState | null;
-  readonly originPaneId: string | null;
   readonly check: () => void;
 }
 /** One collection's order as its owner hands it to a pane. `acked`: the last
@@ -64,7 +63,7 @@ export interface CollectionOrder {
   readonly state: OrderState;
   readonly acked: Snapshot | null;
   readonly revision: OrderRevision | null;
-  readonly move: (command: Move) => Promise<MoveOutcome>;
+  readonly move: (command: Move, title: string) => Promise<MoveOutcome>;
 }
 
 const WRITE_DEADLINE_MS = 30_000;
@@ -116,8 +115,9 @@ export type Delivery<T> =
 /** One fenced write (a move, or a lectern membership intent) under a 30 s
  * deadline. A check first reads the current revision: past the expected one, the
  * write is settled, since it landed or something else did. A refusal is definite
- * only on a first send: while checking, an earlier send may still land. A lapsed
- * session leaves the outcome unknown; a defect throws. */
+ * only on a first send: while checking, an earlier send may still land. A first
+ * send admission keeps unsent is refused; a check it keeps unsent leaves the outcome
+ * as unknown as it was. A lapsed session leaves the outcome unknown; a defect throws. */
 export async function deliver<T>(input: {
   readonly expected: OrderRevision;
   readonly checking: boolean;
@@ -125,6 +125,8 @@ export async function deliver<T>(input: {
   readonly send: (signal: AbortSignal) => Promise<T>;
   readonly signal: AbortSignal;
 }): Promise<Delivery<T>> {
+  // apiFetch decides the same in this same tick.
+  if (!input.checking && !remoteAttemptAllowed()) return { kind: "Refused", error: admissionRefusal() };
   try {
     return await requestWithDeadline({ signal: input.signal, timeoutMs: WRITE_DEADLINE_MS, request: async signal => {
       if (input.checking && compareRevision(await input.current(signal), input.expected) > 0)
@@ -142,16 +144,14 @@ export async function deliver<T>(input: {
 /** A collection's move state, as its owner holds it. */
 export interface MoveEntry {
   pending: PendingMove | null;
-  notice: OrderNoticeState | null;
   /** The last acknowledged order. */
   acked: Snapshot | null;
-  originPaneId: string | null;
 }
 
 /** Deliver one move and record its outcome on the entry: acknowledged, its order
- * shows until the rows reach it; unknown, it stays recoverable ("check order");
- * settled by a check or refused, a notice says so. A defect leaves it unknown and
- * throws to the pane's boundary. The caller publishes a known outcome. */
+ * shows until the rows reach it; unknown, it stays recoverable by its retry;
+ * refused, `refused` says so. A defect leaves it unknown and throws to the pane's
+ * boundary. The caller publishes a known outcome. */
 export async function runMove(
   entry: MoveEntry,
   pending: PendingMove,
@@ -161,6 +161,7 @@ export async function runMove(
     readonly signal: AbortSignal;
     readonly fail: (defect: { readonly error: unknown }) => void;
     readonly emit: () => void;
+    readonly refused: (error: ApiError) => void;
   },
 ): Promise<MoveOutcome> {
   const { command } = pending;
@@ -176,33 +177,26 @@ export async function runMove(
       signal: io.signal,
     });
   } catch (error) {
-    if (entry.pending?.command === command) entry.pending = { ...pending, phase: "Unconfirmed" };
+    if (entry.pending?.command === command) entry.pending = { ...pending, phase: "Unconfirmed", unconfirmed: pending.unconfirmed + 1 };
     io.emit();
     throw error;
   }
   if (io.signal.aborted || entry.pending?.command !== command) return "Superseded";
-  entry.pending = result.kind === "Unknown" ? { ...pending, phase: "Unconfirmed" } : null;
-  if (result.kind === "Acknowledged") {
-    entry.acked = result.value;
-    entry.notice = null;
-  } else if (result.kind === "Moved") entry.notice = null;
-  else if (result.kind === "Refused") {
-    const content =
-      result.error.code === "E_RESOURCE_CONFLICT"
-        ? null
-        : libraryErrorFeedback(result.error, "order was not changed", io.fail);
-    entry.notice = content === null ? { kind: "Conflict", occurrence: pending.occurrence } : { kind: "Rejected", content, occurrence: pending.occurrence };
-  }
+  entry.pending = result.kind === "Unknown" ? { ...pending, phase: "Unconfirmed", unconfirmed: pending.unconfirmed + 1 } : null;
+  if (result.kind === "Acknowledged") entry.acked = result.value;
+  else if (result.kind === "Refused") io.refused(result.error);
   io.emit();
   if (result.kind === "Unknown") return "Unconfirmed";
   return result.kind === "Acknowledged" ? "Acknowledged" : "Rejected";
 }
 
-/** The pane's order state as the toolbar and the sortable list read it. */
+/** The pane's order state as the toolbar and the sortable list read it; `titleOf` names a
+ * moved row. */
 export function presentOrder(input: {
   readonly order: CollectionOrder;
   readonly view: "Custom" | "Sorted" | "Filtered";
   readonly complete: boolean;
+  readonly titleOf: (itemId: string) => string;
 }): OrderPresentation {
   const { order, view } = input;
   const pending = order.state.pending;
@@ -215,7 +209,7 @@ export function presentOrder(input: {
           ? { kind: "Incomplete" }
           : order.revision === null
             ? { kind: "Refreshing" }
-            : { kind: "Ready", revision: order.revision, move: order.move };
+            : { kind: "Ready", revision: order.revision, move: command => order.move(command, input.titleOf(command.itemId)) };
   return { scopeKey: order.state.scopeKey, state };
 }
 
@@ -225,91 +219,24 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
     case "Ready":
     case "Incomplete":
     case "Refreshing":
+    case "Saving":
+    case "Checking":
+    case "Unconfirmed":
       return null;
     case "Sorted":
       return "choose custom order to reorder.";
     case "Filtered":
       return "clear filters to reorder.";
-    case "Saving":
-    case "Checking":
-    case "Unconfirmed":
-      return null;
   }
 }
 
-/** The order's notice, announced in the pane the move came from while that pane
- * shows it, else in the active pane. Returns null when no notice is needed so
- * the surface does not reserve an empty state slot. */
-export function OrderNotice({
-  order,
-  active,
-  paneId,
-}: {
-  readonly order: OrderState;
-  readonly active: boolean;
-  readonly paneId: string | null;
-}) {
-  const { pending, notice } = order;
-  const recover = pending !== null && pending.phase !== "Sending";
-  const content: FeedbackContent | null = recover
-    ? {
-        tone: "Warning",
-        title: "order not confirmed",
-        message: "we could not confirm your last move. check order before moving another item.",
-      }
-    : notice?.kind === "Rejected"
-      ? notice.content
-      : notice?.kind === "Conflict"
-          ? {
-              tone: "Warning",
-              title: "review current order",
-              message: "review the current order before making another move.",
-            }
-          : null;
-  if (content === null) return <FeedbackBusy subject={pending?.occurrence ?? order.scopeKey} pending={pending?.phase === "Sending"}/>;
-  const origin =
-    typeof document === "undefined" || order.originPaneId === null
-      ? null
-      : document.querySelector<HTMLElement>(
-          `[data-pane-id="${CSS.escape(order.originPaneId)}"] [data-order-scope="${CSS.escape(order.scopeKey)}"]`,
-        );
-  const rect = origin?.closest<HTMLElement>("[data-pane-id]")?.getBoundingClientRect();
-  const originVisible =
-    origin != null &&
-    !origin.closest("[inert]") &&
-    rect !== undefined &&
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.bottom > 0 &&
-    rect.top < window.innerHeight &&
-    rect.right > 0 &&
-    rect.left < window.innerWidth;
-  const announce = originVisible ? paneId === order.originPaneId : active;
-  return (
-    <FeedbackFailure scope="Local" occurrence={pending?.occurrence ?? notice!.occurrence}
-      content={content}
-      announcement={announce ? "Polite" : "None"}
-      actions={
-        recover
-          ? [{ label: "check order", onClick: order.check, busy: pending.phase === "Checking" }]
-          : undefined
-      }
-      returnFocus={() => {
-        if (paneId === null) return null;
-        const scope = document.querySelector<HTMLElement>(
-          `[data-pane-id="${CSS.escape(paneId)}"] [data-order-scope="${CSS.escape(order.scopeKey)}"]`,
-        );
-        if (!scope?.isConnected || scope.closest("[hidden], [inert]")) return null;
-        const itemId = pending?.command.itemId;
-        const row = itemId === undefined ? null : scope.querySelector<HTMLElement>(
-          `[data-collection-row-id="${CSS.escape(itemId)}"]`,
-        );
-        const primary = row?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])");
-        return primary?.closest("[data-collection-row-id]") === row &&
-          !primary.closest("[hidden], [inert]") ? primary : findPaneLandmarkFocusTarget(paneId);
-      }}
-    />
-  );
+/** An unknown move, held until its retry lands or a read settles it. */
+export function MoveHold({ pending, check }: { readonly pending: PendingMove; readonly check: () => void }) {
+  const resendVerbs = useResendVerbs();
+  const id = `collection-move:${pending.command.itemId}:${pending.command.expectedRevision}`;
+  return <Hold id={id} attempt={pending.unconfirmed - 1}
+    line={{ fact: `not sure moving “${pending.title}” saved.`, reason: "it may have gone through." }}
+    verbs={resendVerbs({ label: "retry", commandKey: id, busy: pending.phase === "Checking", run: check })} />;
 }
 
 // Library moves: one pending move per library for the account, outliving the
@@ -317,7 +244,7 @@ export function OrderNotice({
 
 function createLibraryOrders(
   fail: (defect: { readonly error: unknown }) => void,
-  origin: () => string,
+  refused: (pending: PendingMove, error: ApiError) => void,
 ) {
   const entries = new Map<string, MoveEntry>();
   const listeners = new Set<() => void>();
@@ -330,7 +257,7 @@ function createLibraryOrders(
   const get = (libraryId: string) => {
     let entry = entries.get(libraryId);
     if (entry === undefined) {
-      entry = { pending: null, notice: null, acked: null, originPaneId: null };
+      entry = { pending: null, acked: null };
       entries.set(libraryId, entry);
     }
     return entry;
@@ -343,6 +270,7 @@ function createLibraryOrders(
       signal: lifetime.signal,
       fail,
       emit,
+      refused: error => refused(pending, error),
     });
     if (outcome === "Acknowledged" || outcome === "Rejected") publishChange("Entries");
     return outcome;
@@ -361,12 +289,13 @@ function createLibraryOrders(
       return () => current.abort();
     },
     get,
-    move(libraryId: string, command: Move): Promise<MoveOutcome> {
+    /** Each library's unknown move, with its retry. */
+    held: () => [...entries].flatMap(([libraryId, entry]) => entry.pending !== null && entry.pending.unconfirmed > 0
+      ? [{ libraryId, pending: entry.pending }] : []),
+    move(libraryId: string, command: Move, title: string): Promise<MoveOutcome> {
       const entry = get(libraryId);
       if (entry.pending !== null) return Promise.resolve("Rejected");
-      entry.originPaneId = origin();
-      entry.notice = null;
-      return run(libraryId, { command: Object.freeze({ ...command }), occurrence: {}, phase: "Sending" });
+      return run(libraryId, { command: Object.freeze({ ...command }), title, phase: "Sending", unconfirmed: 0 });
     },
     check(libraryId: string) {
       const pending = get(libraryId).pending;
@@ -381,7 +310,6 @@ function createLibraryOrders(
       if (pending?.phase !== "Unconfirmed") return;
       if (compareRevision(revision, pending.command.expectedRevision) <= 0) return;
       entry.pending = null;
-      entry.notice = null;
       emit();
     },
   };
@@ -392,12 +320,17 @@ const Context = createContext<Orders | null>(null);
 
 export function LibraryOrderProvider({ children }: { readonly children: ReactNode }) {
   const fail = useThrowLater();
-  const workspace = useLatestWorkspace();
-  const [orders] = useState(() =>
-    createLibraryOrders(fail, () => workspace().state.active_primary_pane_id),
-  );
+  const outcome = useOutcome();
+  const latestOutcome = useRef(outcome);
+  latestOutcome.current = outcome;
+  const [orders] = useState(() => createLibraryOrders(fail, (pending, error) =>
+    refuseLibrary(latestOutcome.current, error, `couldn’t move “${pending.title}”.`, "the list changed meanwhile.")));
+  useSyncExternalStore(orders.subscribe, orders.version, orders.version);
   useEffect(() => orders.start(), [orders]);
-  return <Context.Provider value={orders}>{children}</Context.Provider>;
+  return <Context.Provider value={orders}>
+    {children}
+    {orders.held().map(({ libraryId, pending }) => <MoveHold key={libraryId} pending={pending} check={() => orders.check(libraryId)} />)}
+  </Context.Provider>;
 }
 
 /** One library's order over the pane's rows; `rowsRevision` is the revision their
@@ -421,12 +354,10 @@ export function useLibraryOrder(
     state: {
       scopeKey: `library:${libraryId}`,
       pending: entry.pending,
-      notice: entry.notice,
-      originPaneId: entry.originPaneId,
       check: () => orders.check(libraryId),
     },
     acked: behind ? entry.acked : null,
     revision: behind ? entry.acked!.revision : rowsRevision,
-    move: (command) => orders.move(libraryId, command),
+    move: (command, title) => orders.move(libraryId, command, title),
   };
 }

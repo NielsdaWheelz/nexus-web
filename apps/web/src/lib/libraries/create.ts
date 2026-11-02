@@ -2,19 +2,14 @@
 // resending the same id answers that library, so an unknown outcome is retried
 // under the same id and never under a new one. The pane dialog, form destinations
 // and "Libraries…" own their attempts' lifetimes; this module decides what an
-// answer means. The name rule is `libraryNameError` (views).
+// answer means: only a sent attempt can be unknown. The name rule is `libraryNameError`
+// (views).
 
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { isRefusal, type ApiError } from "@/lib/api/client";
+import { admissionRefusal, isRefusal, type ApiError } from "@/lib/api/client";
 import { createLibrary, type Library } from "@/lib/libraries/api";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 
 const DEADLINE_MS = 30_000;
-/** An unknown outcome with no transport copy of its own: the deadline passed. */
-export const CREATION_UNCONFIRMED: FeedbackContent = {
-  tone: "Warning",
-  title: "library creation wasn’t confirmed",
-  message: "check your connection, then retry this creation.",
-};
 
 interface CreationAttempt {
   readonly id: string;
@@ -32,6 +27,8 @@ type CreationOutcome =
 export async function sendCreation(
   attempt: CreationAttempt,
 ): Promise<CreationOutcome> {
+  // What apiFetch would refuse unsent in this same tick never landed.
+  if (!remoteAttemptAllowed()) return { kind: "Refused", error: admissionRefusal() };
   try {
     const library = await createLibrary(
       { id: attempt.id, name: attempt.name, initial_items: [...attempt.initial_items], expected_removal_revision: attempt.expected_removal_revision },

@@ -1,19 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
+import { Announcement, useActiveRegion } from "@/components/feedback/Feedback";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { ServerList } from "@/lib/api/useServerList";
 import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
 
 /**
- * Continuation recovery and one outcome for a host's announced first-read wait.
- * Each wait belongs to its requested key; changing the key retires that wait.
- * Waiting is independent of activity; inactivity retires its episode permanently.
- * The host supplies truthful rendered-row outcomes and mounts the live node outside
- * optional footers. Passive traversal and same-query refresh never announce here.
+ * A list's continuation failure, for the host to place at the list's foot, and one outcome for a
+ * host's announced first-read wait. The rows already loaded stay; `retry` reads `More` again, or
+ * the list's own recovery after a rejected cursor. A same-query refresh failure renders nowhere.
+ * Each wait belongs to its requested key; changing the key retires that wait. Inactivity retires
+ * its episode for good. Only the host's `outcome` is spoken, from the active region alone, and
+ * once: a region that goes quiet under a modal and speaks again never repeats it.
+ * `returnFocus` is unread, and `useIndexReadFeedback`'s `notice` is always null: both stay
+ * only until their callers stop passing and reading them.
  */
-export default function useCollectionReadFeedback({ list, unit, waiting, outcome, returnFocus }: {
+export default function useCollectionReadFeedback({ list, unit, waiting, outcome }: {
   readonly list: ServerList<unknown, unknown>;
   readonly unit: PaneFilterRowsUnit;
   readonly waiting: boolean;
@@ -22,29 +26,14 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
 }): { notice: ReactNode | null; announcement: ReactNode } {
   const { requestedKey, active, current, failure } = list;
   const announcement = useReadOutcome({ requestedKey, active, current, failed: failure !== null, waiting, outcome });
-
-  const continuationFailure = failure?.op === "More" ? failure : null;
-  const occurrence = useFeedbackOccurrence(continuationFailure !== null, requestedKey);
-  const rejected = continuationFailure?.error.code === "E_INVALID_CURSOR";
-  const notice = continuationFailure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
-    content={{
-      tone: "Warning",
-      title: rejected ? `couldn’t continue loading ${unit.plural}` : `couldn’t load remaining ${unit.plural}`,
-      message: `the ${unit.plural} already loaded are still available.`,
-      requestId: continuationFailure.error.requestId,
-    }}
-    announcement={active ? "Polite" : "None"}
-    actions={[{ label: rejected ? "refresh list" : "try again", busy: list.running !== null, onClick: list.retry }]}
-    returnFocus={returnFocus}
-  />;
-  return {
-    notice,
-    announcement,
-  };
+  const notice = failure?.op === "More"
+    ? <Failed error={failure.error} noun={`more ${unit.plural}`} retry={{ run: list.retry, busy: list.running !== null }} />
+    : null;
+  return { notice, announcement };
 }
 
-
-/** One foreground wait/outcome; preparation, returns and passive reads are silent. */
+/** One foreground wait/outcome; preparation, returns and passive reads are silent. Each outcome is
+ * its own occurrence, which the live region delivers at most once. */
 function useReadOutcome({ requestedKey, active, current, failed, waiting, outcome }: {
   readonly requestedKey: string | null;
   readonly active: boolean;
@@ -53,8 +42,9 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
   readonly waiting: boolean;
   readonly outcome: string | null;
 }): ReactNode {
+  const region = useActiveRegion();
   const episode = useRef({ key: requestedKey, waiting: false, armed: false });
-  const [spoken, setSpoken] = useState<string | null>(null);
+  const [spoken, setSpoken] = useState<{ readonly text: string; readonly occurrence: object } | null>(null);
   useEffect(() => {
     const changedKey = requestedKey !== episode.current.key;
     const started = waiting && (changedKey || !episode.current.waiting);
@@ -72,7 +62,7 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
     if (current) {
       if (episode.current.armed) {
         episode.current.armed = false;
-        setSpoken(outcome);
+        setSpoken(outcome === null || outcome === "" ? null : { text: outcome, occurrence: {} });
       }
       return;
     }
@@ -87,11 +77,11 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
     }
   }, [requestedKey, waiting, active, current, failed, outcome]);
 
-  return <span className="sr-only" role="status" aria-live={active ? "polite" : "off"} aria-atomic="true">{spoken}</span>;
+  return <Announcement text={spoken?.text ?? ""} occurrence={spoken?.occurrence} level={region ? "Polite" : "None"} />;
 }
 
-/** Complete-value feedback carries no continuation or prefix semantics. */
-export function useIndexReadFeedback({ value, requestedKey, active, unit, waiting, outcome, returnFocus }: {
+/** Complete-value outcome; a refresh failure over shown data renders nowhere and heals. */
+export function useIndexReadFeedback({ value, requestedKey, active, waiting, outcome }: {
   readonly value: ServerValue<unknown>;
   readonly requestedKey: string | null;
   readonly active: boolean;
@@ -102,12 +92,5 @@ export function useIndexReadFeedback({ value, requestedKey, active, unit, waitin
 }): { notice: ReactNode | null; announcement: ReactNode } {
   const error = value.status === "loading" ? null : value.error;
   const announcement = useReadOutcome({ requestedKey, active, current: value.status === "ready", failed: error !== null, waiting, outcome });
-  const occurrence = useFeedbackOccurrence(value.status === "ready" && error !== null, requestedKey);
-  const notice = value.status !== "ready" || error === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
-    content={{ tone: "Warning", title: `couldn’t refresh ${unit.plural}`, requestId: error.requestId }}
-    announcement="None"
-    actions={[{ label: "try again", busy: value.refreshing, onClick: () => { void value.refetch().catch(() => {}); } }]}
-    returnFocus={returnFocus}
-  />;
-  return { notice, announcement };
+  return { notice: null, announcement };
 }

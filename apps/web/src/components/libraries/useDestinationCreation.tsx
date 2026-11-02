@@ -1,31 +1,32 @@
 "use client";
 
-import { useLayoutEffect, useSyncExternalStore } from "react";
+import { useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { ChooserError } from "@/components/libraries/LibraryChooser";
-import { useThrowLater } from "@/lib/api/serverState";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { LibraryDestination } from "@/lib/libraries/api";
-import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
+import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
+import { refuseLibrary } from "@/lib/libraries/errors";
 
 type Attempt = {
-  readonly occurrence: object;
   readonly form: string;
   readonly id: string;
   readonly name: string;
   readonly scope: string;
   readonly onCreated: (destination: LibraryDestination) => void;
   sending: boolean;
-  failure: ChooserError | null;
+  /** Attempts that left its outcome unconfirmed; past zero only a resend of this id is safe, and it holds. */
+  unconfirmed: number;
 };
 
 interface DestinationCreation {
   form: string | null;
   attempts: Map<string, Attempt>;
-  refusals: Map<string, { name: string; error: ChooserError }>;
   subscribe(listener: () => void): () => void;
-  getSnapshot(): { pending: readonly Attempt[]; refusals: ReadonlyMap<string, { name: string; error: ChooserError }> };
+  getSnapshot(): { pending: readonly Attempt[] };
   readUnconfirmed(): boolean;
   publish(): void;
 }
@@ -33,37 +34,42 @@ interface DestinationCreation {
 /** The actual parent task/visit retains these immutable creation attempts. */
 export function createDestinationCreation(): DestinationCreation {
   const listeners = new Set<() => void>();
-  let snapshot: ReturnType<DestinationCreation["getSnapshot"]> = { pending: [], refusals: new Map() };
+  let snapshot: ReturnType<DestinationCreation["getSnapshot"]> = { pending: [] };
   const state: DestinationCreation = {
     form: null,
     attempts: new Map<string, Attempt>(),
-    refusals: new Map(),
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getSnapshot: () => snapshot,
     readUnconfirmed: () => state.attempts.size > 0,
     publish() {
-      snapshot = { pending: [...state.attempts.values()], refusals: new Map(state.refusals) };
+      snapshot = { pending: [...state.attempts.values()] };
       for (const listener of listeners) listener();
     },
   };
   return state;
 }
 
-/** The form owns creation; picker visibility never retires its requests. */
+const unsure = (attempt: Attempt) => `not sure creating “${attempt.name}” saved.`;
+const MAY_HAVE = "it may have gone through.";
+
+/** The form owns creation; picker visibility never retires its requests. A refusal speaks once
+ * where the form is; an unknown outcome holds, with its resend of the same id, while the form
+ * renders `holds`. `error` restates the first unknown outcome for forms outside this lane that
+ * still render it, and leaves with them. */
 export function useDestinationCreation(form: string, state: ReturnType<typeof createDestinationCreation>) {
   const snapshot = useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
+  const outcome = useOutcome();
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
+  const resendVerbs = useResendVerbs();
   useLayoutEffect(() => {
     state.form = form;
     state.attempts.clear();
-    state.refusals.clear();
     state.publish();
     return () => {
       if (state.form !== form) return;
       state.form = null;
       state.attempts.clear();
-      state.refusals.clear();
       state.publish();
     };
   }, [form, state]);
@@ -73,43 +79,35 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   }
   async function send(attempt: Attempt) {
     if (attempt.sending || !owns(attempt)) return;
-    const wasUnconfirmed = attempt.failure !== null;
     attempt.sending = true;
     state.publish();
-    const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
+    const result = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
     if (!owns(attempt)) return;
     attempt.sending = false;
-    if (outcome.kind === "Unknown" || outcome.kind === "Refused" && wasUnconfirmed) {
-      const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      attempt.failure = { occurrence: attempt.occurrence, content: wasUnconfirmed ? CREATION_UNCONFIRMED : content ?? CREATION_UNCONFIRMED,
-        retry: () => void send(attempt) };
+    // A refusal after an unknown outcome cannot say whether the first send landed. A sign-out or
+    // a defect still goes to its owner.
+    if (result.kind === "Unknown" || result.kind === "Refused" && attempt.unconfirmed > 0) {
+      attempt.unconfirmed += 1;
       state.publish();
+      modeledApiError(result.error, fail, signIn);
       return;
     }
     state.attempts.delete(attempt.name.toLowerCase());
-    if (outcome.kind === "Refused") {
-      const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      if (content !== null) state.refusals.set(attempt.scope, { name: attempt.name, error: { occurrence: attempt.occurrence, content, retry: null } });
-      state.publish();
+    state.publish();
+    if (result.kind === "Refused") {
+      signIn(result.error);
+      refuseLibrary(outcome, result.error, `couldn’t create “${attempt.name}”.`);
       return;
     }
-    state.publish();
-    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name, order_revision: outcome.library.order_revision }); }
+    try { attempt.onCreated({ id: result.library.id, name: result.library.name, order_revision: result.library.order_revision }); }
     catch (error) { fail({ error }); }
   }
   function project(scope: string | null) {
     const pending = snapshot.pending.filter(attempt => attempt.form === form && (scope === null || attempt.scope === scope));
-    const failed = pending.filter(attempt => attempt.failure !== null);
-    const errors = [
-      ...failed.map(attempt => ({ name: attempt.name, error: { ...attempt.failure!, busy: attempt.sending, commandKey: `library-create:${attempt.id}` } })),
-      ...[...snapshot.refusals].filter(([key]) => scope === null || key === scope).map(([, refusal]) => refusal),
-    ];
-    const error: ChooserError | null = errors.length === 0 ? null : errors.length === 1 ? errors[0].error : {
-      occurrence: errors[0]!.error.occurrence,
-      content: { tone: "Warning", title: "some library creations need attention", message: errors.map(item => item.name).join(", ") },
-      busy: failed.some(attempt => attempt.sending),
-      commandKey: `library-create:${failed.map(attempt => attempt.id).sort().join(",")}`,
-      retry: failed.some(attempt => attempt.failure?.retry != null) ? () => { for (const attempt of failed) attempt.failure?.retry?.(); } : null,
+    const unknown = pending.find(attempt => attempt.unconfirmed > 0);
+    const error: ChooserError | null = unknown === undefined ? null : {
+      occurrence: unknown, content: { tone: "Warning", title: unsure(unknown), message: MAY_HAVE },
+      retry: () => void send(unknown), busy: unknown.sending, commandKey: `library-creation:${unknown.id}`,
     };
     return {
       pendingNames: snapshot.pending.filter(attempt => attempt.form === form).map(attempt => attempt.name),
@@ -117,8 +115,14 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       error,
     };
   }
+  const holds: ReactNode = snapshot.pending.filter(attempt => attempt.form === form && attempt.unconfirmed > 0).map(attempt => {
+    const id = `library-creation:${attempt.id}`;
+    return <Hold key={id} id={id} attempt={attempt.unconfirmed - 1} line={{ fact: unsure(attempt), reason: MAY_HAVE }}
+      verbs={resendVerbs({ label: "retry", commandKey: id, run: () => void send(attempt), busy: attempt.sending })} />;
+  });
   return {
     ...project(null),
+    holds,
     forScope: (scope: string) => project(scope),
     admit({ name, scope, onCreated }: { name: string; scope: string; onCreated: (destination: LibraryDestination) => void }): boolean {
       name = name.trim();
@@ -126,13 +130,12 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       const key = name.toLowerCase();
       const existing = state.attempts.get(key);
       if (existing) {
-        if (existing.scope !== scope || existing.sending || existing.failure?.retry === null) return false;
+        if (existing.scope !== scope || existing.sending) return false;
         void send(existing);
         return true;
       }
-      const attempt: Attempt = { occurrence: {}, form, id: crypto.randomUUID(), name, scope, onCreated, sending: false, failure: null };
+      const attempt: Attempt = { form, id: crypto.randomUUID(), name, scope, onCreated, sending: false, unconfirmed: 0 };
       state.attempts.set(key, attempt);
-      state.refusals.delete(scope);
       void send(attempt);
       return true;
     },

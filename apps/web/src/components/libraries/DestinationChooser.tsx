@@ -2,13 +2,11 @@
 
 import { forwardRef, type MouseEventHandler } from "react";
 import { ChevronDown } from "lucide-react";
+import { Failed } from "@/components/feedback/Fact";
 import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
-import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { useChangeStamp } from "@/lib/api/changes";
-import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
-import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { libraryDestinations, type LibraryDestination } from "@/lib/libraries/api";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import styles from "./DestinationChooser.module.css";
 
 export type DestinationChange = { destination: LibraryDestination; included: boolean };
@@ -42,7 +40,10 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
   </button>;
 });
 
-/** Local draft selection over one complete writable catalog. Reads belong to serverState. */
+/** Local draft selection over one complete writable catalog. Reads belong to serverState; a cold
+ * read waits and fails in the list region, a refresh does both nowhere, though creation, which
+ * needs the current catalog, waits on it and says so. `error` is only for callers outside
+ * this lane until they stop passing it. */
 export default function DestinationChooser({ context, selection, onSet, disabled, create, error }: {
   readonly context: string;
   readonly selection: DestinationSelection;
@@ -53,8 +54,6 @@ export default function DestinationChooser({ context, selection, onSet, disabled
 }) {
   const stamp = useChangeStamp("Libraries");
   const catalog = usePaneFreeServerValue({ key: "/libraries/destinations", stale: stamp, load: libraryDestinations });
-  const fail = useThrowLater();
-  const signIn = useUnauthenticatedApiHandler();
   const total = selection.kind === "Item" ? 1 : selection.total;
   const entries = selection.kind === "Item"
     ? selection.chosen.map(destination => ({ destination, included: 1 })) : selection.entries;
@@ -70,22 +69,21 @@ export default function DestinationChooser({ context, selection, onSet, disabled
     return {
       id: destination.id, name: destination.name, confirmed: count, intended: count, progress: "Settled",
       note: missing && catalog.status === "ready" ? "unavailable" : undefined,
-      action: disabled || total === 0 ? { kind: "Blocked", reason: "these items cannot be changed now" }
+      action: disabled || total === 0 ? { kind: "Blocked", reason: "can’t change these right now." }
         : { kind: "Set", included: desired, label: total === 1 ? desired ? "choose destination" : "remove destination" : desired ? "choose for all" : "remove from all" },
     };
   });
-  const readError = catalog.status === "failed" ? catalog.error : catalog.status === "ready" ? catalog.error : null;
-  const occurrence = useFeedbackOccurrence(readError !== null, "library-destinations");
-  const feedback = readError ? libraryErrorFeedback(readError, "libraries couldn’t be loaded", fail, signIn) : null;
   const names = entries.filter(entry => entry.included > 0).map(entry => entry.destination).toSorted(compareLibraryNames).map(destination => destination.name);
   return <LibraryChooser context={context} membershipKind="Chosen" rows={rows}
     onToggle={({ id, included }) => {
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
-    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
+    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying}
     summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
-    error={error ?? (feedback ? { occurrence, content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
-    create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null }}
-    empty="no libraries yet" />;
+    failure={catalog.status === "failed" ? <Failed error={catalog.error} noun="libraries" retry={{ run: catalog.refetch, busy: catalog.retrying }} /> : null}
+    error={error}
+    create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null,
+      gate: catalog.status === "ready" && catalog.error !== null ? "the libraries couldn’t refresh." : undefined }}
+    empty="no libraries yet." />;
 }

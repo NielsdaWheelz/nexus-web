@@ -5,19 +5,22 @@ import { ArrowRightLeft, UserMinus } from "lucide-react";
 // The Members tab for an admin of a named library: invite an existing user, the
 // people (role, remove, transfer ownership) and the pending invitations (revoke).
 // Every command is request, then reread: one command at a time, and after any
-// outcome both lists and the library are read again, so a refused command shows
-// its copy and the tab goes once the reread says the viewer no longer manages the
-// library. The hook runs in the library pane (its lists keep that pane's visit);
+// outcome both lists and the library are read again, so a refused command speaks
+// once and the tab goes once the reread says the viewer no longer manages the
+// library. A command admission refuses is never sent, so it is refused, never held; an unknown
+// outcome holds until both rereads land. The hook runs in the
+// library pane (its lists keep that pane's visit, and its hold stands with the pane);
 // the tab renders its state wherever the inspector puts it.
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Failed, Fact } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Select from "@/components/ui/Select";
 import PeopleSearch, { personLabel, type Person } from "@/components/users/PeopleSearch";
-import { useThrowLater } from "@/lib/api/serverState";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import {
   invitationsPage,
@@ -32,7 +35,8 @@ import {
   type LibraryMember,
   type LibraryRole,
 } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
@@ -51,13 +55,14 @@ interface Question {
   readonly run: () => Promise<boolean>;
 }
 
-/** Null unless the viewer manages the library; lists load while `open`. */
+/** Null unless the viewer manages the library; lists load while `open`. `held` is the
+ * unknown outcome's hold, for the pane to render. */
 export function useLibraryMembers(library: Library | null, open: boolean, reread: () => void) {
-  const fail = useThrowLater();
+  const outcome = useOutcome();
   const active = usePaneIsActive() && open;
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [unknown, setUnknown] = useState<{ attempt: number } | null>(null);
   const shown = library?.can_manage === true;
   const id = library?.id ?? "";
   const key = shown && open ? id : null;
@@ -79,16 +84,19 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     id: (invitation) => invitation.id,
     fetchPage: (cursor, limit, signal) => invitationsPage(id, cursor, limit, signal),
   });
-  /** Runs one command; true when it landed. */
-  const run = async (title: string, command: () => Promise<void>) => {
-    if (busy) return false;
+  const settled = members.fresh && invitations.fresh;
+  useEffect(() => { if (unknown !== null && settled) setUnknown(null); }, [unknown, settled]);
+  /** Runs one command; true when it landed. `fact` says what a refusal couldn't do. */
+  const run = async (fact: string, command: () => Promise<void>) => {
+    if (busy || refusedUnsent(outcome, fact)) return false;
     setBusy(true);
     try {
       await command();
-      setFeedback(null);
       return true;
     } catch (error) {
-      setFeedback(libraryErrorFeedback(error, title, fail));
+      handleUnauthenticatedApiError(error);
+      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      else refuseLibrary(outcome, error, fact);
       return false;
     } finally {
       setVersion((n) => n + 1);
@@ -96,9 +104,10 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
       setBusy(false);
     }
   };
-  const occurrence = useFeedbackOccurrence(feedback !== null, library?.id);
   if (!shown || library === null) return null;
-  return { library, members, invitations, busy, feedback, occurrence, run };
+  const held: ReactNode = unknown === null ? null : <Hold id={`library-members:${library.id}`} attempt={unknown.attempt}
+    line={{ fact: "not sure that saved.", reason: "it may have gone through." }} />;
+  return { library, members, invitations, busy, held, run };
 }
 
 export type LibraryMembersState = NonNullable<ReturnType<typeof useLibraryMembers>>;
@@ -116,12 +125,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
   const headingId = useId();
   const memberFeedback = useCollectionReadFeedback({
     list: members, unit: { singular: "member", plural: "members" },
-    waiting: members.status === "loading", outcome: members.items.length > 0 ? "results updated." : members.complete ? "no members." : "no members found so far.",
+    waiting: members.status === "loading", outcome: null,
     returnFocus: () => heading.current,
   });
+  const invitationsEmpty = invitations.complete && invitations.items.length === 0;
   const invitationFeedback = useCollectionReadFeedback({
     list: invitations, unit: { singular: "invitation", plural: "invitations" },
-    waiting: invitations.status === "loading", outcome: invitations.items.length > 0 ? "results updated." : invitations.complete ? "no pending invitations." : "no pending invitations found so far.",
+    waiting: invitations.status === "loading", outcome: invitationsEmpty ? "no pending invitations." : null,
     returnFocus: () => heading.current,
   });
   const trigger = (key: string) => (node: HTMLElement | null) => {
@@ -144,7 +154,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       role,
     };
     const sent = await run(
-      "Invitation wasn’t sent",
+      `couldn’t invite ${personLabel(person)}.`,
       () => invite(library.id, body),
     );
     if (sent) {
@@ -183,7 +193,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             if (await q.run()) close(q.key);
           }}
           disabled={busy}
-          reserveIcon aria-busy={busy}
+          aria-busy={busy}
         >
           {q.yes}
         </Button>
@@ -191,24 +201,9 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     </div>
   );
 
-  const memberOccurrence = useFeedbackOccurrence(members.failure !== null, members.requestedKey);
-  const invitationOccurrence = useFeedbackOccurrence(invitations.failure !== null, invitations.requestedKey);
-  const footer = (list: ServerList<unknown>, what: string) => <>
-    {list.status === "loading" ? (
-      <FeedbackBusy pending/>
-    ) : list.failure && list.failure.op !== "More" ? (
-      <FeedbackFailure scope="Local" occurrence={list === members ? memberOccurrence : invitationOccurrence}
-        content={
-          libraryErrorFeedback(list.failure.error, `The ${what} couldn’t be loaded`, throwDefect) ?? {
-            tone: "Danger",
-            title: `The ${what} couldn’t be loaded`,
-          }
-        }
-        announcement="Polite"
-        actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
-      />
-    ) : null}
-  </>;
+  /** A cold read waits or fails where its rows would stand; a failed reread over rows says nothing. */
+  const footer = (list: ServerList<unknown>, noun: string) => list.status === "loading" ? <Ruling />
+    : list.status === "failed" ? <Failed error={list.failure?.error} noun={noun} retry={{ run: list.retry, busy: list.running !== null }} /> : null;
 
   return (
     <section className={styles.surface} aria-labelledby={headingId}>
@@ -218,7 +213,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         </h3>
         <p>Manage who can open {library.name}.</p>
       </div>
-      {state.feedback ? <FeedbackFailure scope="Local" occurrence={state.occurrence} content={state.feedback} announcement="Assertive" /> : null}
       <div className={styles.invite}>
         <PeopleSearch
           context={library.id}
@@ -252,9 +246,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
       <div className={styles.section}>
         <h4>People</h4>
-        {members.current && members.failure === null && members.items.length === 0 ? (
-          <p className={styles.note}>{members.complete ? "no members." : "no members found so far."}</p>
-        ) : null}
         {members.items.map((member) => {
           const key = `member:${member.user_id}`;
           const name = personLabel(member);
@@ -279,7 +270,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     disabled={busy}
                     onChange={(event) => {
                       const next = event.target.value as LibraryRole;
-                      void run("Role wasn’t changed", () =>
+                      void run(`couldn’t change ${name}’s role.`, () =>
                         setMemberRole(library.id, member.user_id, next, member.role),
                       );
                     }}
@@ -291,7 +282,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     label={`more actions for ${name}`}
                     triggerRef={trigger(key)}
                     triggerDisabled={busy}
-                    triggerDisabledReason="Another change is in progress."
+                    triggerDisabledReason="another change is in progress."
                     source={{ kind: "Immediate", subjectKey: `library:${library.id}:${key}`, title: name, content: { sections: [{ id: "Member", label: null, options: [
                       {
                         kind: "command",
@@ -306,7 +297,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                           yesLabel: `Remove ${name}`,
                           cancelLabel: `Cancel removing ${name}`,
                           run: () =>
-                            run("Member wasn’t removed", () =>
+                            run(`couldn’t remove ${name}.`, () =>
                               removeMember(library.id, member.user_id),
                             ),
                         }),
@@ -326,7 +317,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                                 yesLabel: `Transfer Library ownership to ${name}`,
                                 cancelLabel: `Cancel transferring Library ownership to ${name}`,
                                 run: () =>
-                                  run("Ownership wasn’t transferred", () =>
+                                  run(`couldn’t make ${name} the owner.`, () =>
                                     transferOwnership(library.id, member.user_id),
                                   ),
                               }),
@@ -346,9 +337,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
       <div className={styles.section}>
         <h4>Pending invitations</h4>
-        {invitations.current && invitations.failure === null && invitations.items.length === 0 ? (
-          <p className={styles.note}>{invitations.complete ? "no pending invitations." : "no pending invitations found so far."}</p>
-        ) : null}
+        {invitations.current && invitations.failure === null && invitationsEmpty ? <Fact line={{ fact: "no pending invitations." }} /> : null}
         {invitations.items.map((invitation) => {
           const key = `invitation:${invitation.id}`;
           const name = personLabel({
@@ -377,7 +366,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       yesLabel: `Revoke invitation for ${name}`,
                       cancelLabel: `Cancel revoking invitation for ${name}`,
                       run: () =>
-                        run("Invitation wasn’t revoked", () =>
+                        run(`couldn’t revoke ${name}’s invitation.`, () =>
                           revokeInvitation(invitation.id),
                         ),
                     })
@@ -389,7 +378,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             </div>
           );
         })}
-        {footer(invitations, "invitations")}
+        {footer(invitations, "pending invitations")}
         {invitationFeedback.notice}
       </div>
       <p className={styles.note}>

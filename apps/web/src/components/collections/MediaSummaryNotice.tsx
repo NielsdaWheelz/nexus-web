@@ -1,21 +1,13 @@
 "use client";
 
-import { FeedbackFailure, useFeedbackOccurrence, type FeedbackAnnouncement } from "@/components/feedback/Feedback";
-import type { ApiError } from "@/lib/api/client";
-
-export default function MediaSummaryNotice({ error, retry, busy = false, announcement = "Polite", returnFocus }: {
-  error: ApiError | null;
-  retry: () => void;
-  busy?: boolean;
-  announcement?: FeedbackAnnouncement;
-  returnFocus?: () => HTMLElement | null;
+/** A summary read over rows already shown says nothing: it heals on return and on reconnect.
+ * It renders nothing, and stays only for callers outside this lane until they stop mounting it. */
+export default function MediaSummaryNotice(_props: {
+  readonly error: unknown;
+  readonly retry: () => void;
+  readonly busy?: boolean;
+  readonly announcement?: "None" | "Polite" | "Assertive";
+  readonly returnFocus?: () => HTMLElement | null;
 }) {
-  const occurrence = useFeedbackOccurrence(error !== null);
-  if (error === null) return null;
-  return <FeedbackFailure scope="Local" occurrence={occurrence}
-    announcement={announcement}
-    content={{ tone: "Warning", title: "couldn’t update items", requestId: error.requestId }}
-    actions={[{ label: "try again", busy, onClick: retry }]}
-    returnFocus={returnFocus}
-  />;
+  return null;
 }

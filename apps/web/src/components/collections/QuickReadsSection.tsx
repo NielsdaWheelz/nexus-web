@@ -2,10 +2,8 @@
 
 import { useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import PaneSection from "@/components/ui/PaneSection";
-import { apiTransportFeedback } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { useQuickReadsEntryRead } from "@/lib/panes/suggestionEntryReads";
 import { lecternFull, useLectern } from "@/lib/lectern/lectern";
@@ -15,7 +13,8 @@ import { definePaneVisitDataKey, usePaneReturnDescendantReady } from "@/lib/work
 
 const VISIT = definePaneVisitDataKey<Visit<QuickReads>>("Suggestions.QuickReads");
 
-/** The direct quick-read query keeps the normal read and inspected-add owners. */
+/** The direct quick-read query keeps the normal read and inspected-add owners. It is the lectern
+ * pane's one home for the lectern being full. */
 export default function QuickReadsSection() {
   const full = lecternFull(useLectern());
   const descriptor = useQuickReadsEntryRead();
@@ -23,7 +22,6 @@ export default function QuickReadsSection() {
   if (descriptor === null) throw new Error("quick reads without lectern entry");
   const read = useServerValue({ ...descriptor, visit: VISIT });
   const loaded = read.status === "ready" ? read.data : null;
-  const failure = read.status === "loading" ? null : read.error;
   // Quick reads are media only (the server's direct read).
   const items = loaded?.items.flatMap((item) => item.target.kind === "Media" ? [item.target] : []) ?? [];
   const summaries = useMediaSummaries(items.map((target) => target.media_summary));
@@ -33,25 +31,14 @@ export default function QuickReadsSection() {
   });
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: read.status !== "loading" });
-  const occurrence = useFeedbackOccurrence(failure !== null);
-  const failureTitle = loaded === null ? "couldn’t load quick reads" : "couldn’t refresh quick reads";
-  const failureNotice = failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence}
-    content={apiTransportFeedback(failure, failureTitle) ?? {
-      tone: "Danger", title: failureTitle, requestId: failure.requestId,
-    }}
-    announcement={loaded === null ? "Polite" : "None"} actions={[{ label: "try again", onClick: read.refetch }]} />;
   return (
     <PaneSection ref={rootRef} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
       <CollectionView geometry="UniformIndex"
         returnScope="Lectern.QuickReads" ariaLabel="Quick reads" rows={rows}
         status={read.status === "failed" ? "error" : read.status}
-        notice={<>
-          {full ? <FeedbackNotice content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }} announcement="None" /> : null}
-          {loaded !== null ? failureNotice : null}
-          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} />
-        </>}
-        error={failureNotice}
-        empty={<p>No quick reads.</p>}
+        notice={full ? <Fact line={{ fact: "the lectern is full." }} /> : null}
+        error={read.status === "failed" ? <Failed error={read.error} noun="quick reads" retry={{ run: read.refetch, busy: read.retrying }} /> : null}
+        empty={<Fact line={{ fact: "no quick reads." }} />}
         surface={false}
       />
     </PaneSection>
