@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { Hold } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
 import PickerSurface from "@/components/ui/PickerSurface";
@@ -115,6 +115,7 @@ export default function AddPanel({
 }): React.ReactElement {
   const { state } = session;
   const id = useId();
+  const { say } = useOutcome();
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
   const openTarget = (event: TargetActivationEvent, target: NexusTarget, blocked = false) => {
@@ -284,6 +285,19 @@ export default function AddPanel({
     }
   }
   const placementEditor = editor && "placement" in editor ? editor : null;
+  // Where the chooser does not state a creation's failure, a refusal is said once and an unknown
+  // outcome holds with its resend.
+  const creationShown = !editor || placementEditor !== null;
+  const refusal = creationShown && creation.error?.retry === null ? creation.error : null;
+  const saidRefusal = useRef<{ occurrence: object; title: string; message: string | undefined } | null>(null);
+  useEffect(() => {
+    if (refusal === null) return;
+    const { occurrence, content: { title, message } } = refusal;
+    const said = saidRefusal.current;
+    if (said?.occurrence === occurrence && said.title === title && said.message === message) return;
+    saidRefusal.current = { occurrence, title, message };
+    say({ fact: title, reason: message });
+  }, [refusal, say]);
 
   function editorContent() {
     if (!editor) return null;
@@ -654,10 +668,9 @@ export default function AddPanel({
         </div>
         <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to the current unsubmitted items; use for new items to change defaults</span>
       </header>
-      {!editor || placementEditor ? <>
-        {creation.error ? <Hold id="add-library-creation" line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
-          verbs={creation.error.retry ? [{ label: "retry", run: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey ?? "retry library creation" }] : undefined} /> : null}
-      </> : null}
+      {creationShown && creation.error?.retry && creation.error.commandKey !== undefined
+        ? <Hold id={creation.error.commandKey} line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
+          verbs={[{ label: "retry", run: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey }]} /> : null}
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
         {savedFailure ? <Failed error={savedFailure.error} noun="saved sources" retry={{ run: savedFailure.retry, busy: savedFailure.busy }} /> : null}
