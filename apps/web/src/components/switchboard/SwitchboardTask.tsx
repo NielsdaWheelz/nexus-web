@@ -62,12 +62,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !list) return;
-    const mode = controller.rootMode;
     const positions = controller.rootScroll.current;
     if (previousQuery.current !== controller.query) positions.Search = 0;
     previousQuery.current = controller.query;
-    list.scrollTop = positions[mode];
-    return () => { positions[mode] = list.scrollTop; };
+    list.scrollTop = positions[controller.rootMode];
   }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll]);
 
   const paneFocusRevision = useRef(controller.paneFocusRevision);
@@ -186,7 +184,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         </div>
       </div>
       <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
-      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
+      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onScroll={event => { controller.rootScroll.current[controller.rootMode] = event.currentTarget.scrollTop; }} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
 
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
