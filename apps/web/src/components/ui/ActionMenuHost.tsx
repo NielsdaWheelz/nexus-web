@@ -4,8 +4,8 @@
  * A menu's trigger and the sessions it invokes. The trigger stays mounted; each press begins
  * one session, and only the invoked controller (`ActionMenuInvocation`) owns overlays. A menu
  * holds verbs alone, so what a session could not open is said here, outside it: the host
- * outlives its sessions, owns their one standing report, and retracts it when a menu opens or
- * the host unmounts.
+ * outlives its sessions, owns their one standing report, and retracts it when a menu opens, the
+ * subject changes or the host unmounts, so a report's `retry` always prepares the subject it names.
  */
 import {
   Fragment,
@@ -210,7 +210,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
   };
   local.begin = begin;
   useLayoutEffect(() => () => { cancelHold(); local.releasePress?.(); }, [subjectKey, pathname, cancelHold, local]);
-  useLayoutEffect(() => () => { local.report?.(); local.report = null; }, [local]);
+  useLayoutEffect(() => () => { local.report?.(); local.report = null; }, [subjectKey, local]);
   const { visible, busy } = state.presentation;
   const popup = mobile ? "dialog" : "menu";
   const triggerProps: ActionMenuTriggerProps = {
