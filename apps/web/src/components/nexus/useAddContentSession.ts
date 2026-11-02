@@ -2,7 +2,7 @@
 
 /**
  * The Add session (docs/modules/add-content.md): stage links and files with
- * their libraries, send them two at a time and reconcile unknown outcomes, all
+ * their libraries, send them one at a time and reconcile unknown outcomes, all
  * browser-local. What was sent is frozen: an unknown outcome keeps its intent
  * for exact replay; a new attempt gets a key at submission. At most one
  * mutation runs; stop and reset fence every older completion. Accepted items
@@ -282,7 +282,12 @@ export function useAddContentSession(): AddContentSessionController {
   function active(signal: AbortSignal) {
     return signal === abort.current.signal && !signal.aborted;
   }
-  /** Runs one mutation's work two at a time; the first failure is rethrown. */
+  /**
+   * Runs one mutation's rows one at a time, a file's create, put and confirm
+   * whole; the first failure is rethrown. The server serializes an account's
+   * acquisitions (url acceptance, upload confirm), and one sent beside another
+   * waits on a stale snapshot and can exhaust its retries into a refusal.
+   */
   async function batch<T>(
     items: readonly T[],
     signal: AbortSignal,
@@ -290,7 +295,7 @@ export function useAddContentSession(): AddContentSessionController {
   ) {
     const outcomes = await runBoundedTasks({
       items,
-      concurrency: 2,
+      concurrency: 1,
       run: async (value) => {
         signal.throwIfAborted();
         await run(value);
