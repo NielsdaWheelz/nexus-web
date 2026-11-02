@@ -3,7 +3,7 @@
 // The phone's palette: a sheet that opens keyboard-down on the armed row and reads upward to its field.
 // Rank 1 touches the field; continuations, places and the account sit farthest. Pages render in the
 // same sheet with their headers.
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent } from "react";
 import { X } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import AccountMenu from "@/components/appnav/AccountMenu";
@@ -19,6 +19,7 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import collection from "@/components/ui/Collection.module.css";
 import type { NexusGroup, NexusRow } from "@/lib/nexus/model";
+import { ARRIVAL_ONSET_MS } from "@/lib/nexus/policy";
 import { placeChipRows } from "@/lib/nexus/rows";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { ResourceItem } from "@/lib/resources/items";
@@ -207,7 +208,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {controller.continuations.map((item, rowIndex) => row(item, "Continuations", rowIndex))}
       </div> : null}
       <div ref={listRef} className={styles.list} aria-busy={controller.busy || undefined} onFocusCapture={trackFocus}>
-        <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={pinned ? CONTINUATIONS_ID : undefined} className={cx(nexus.grid, styles.grid)}>
+        <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={pinned ? CONTINUATIONS_ID : undefined} className={cx(nexus.grid, styles.grid)}
+          style={{ "--arrival-onset": `${ARRIVAL_ONSET_MS}ms` } as CSSProperties}>
           {controller.groups.filter(group => (controller.reorder.placement === null || group.id === "Open") && !(pinned && group.id === "Continuations")).map(group => <Fragment key={group.id}>
             <div role="rowgroup" aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}
               aria-label={group.label ? undefined : group.id === "Results" ? "results" : group.id === "Here" ? "here" : "query actions"}

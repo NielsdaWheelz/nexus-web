@@ -6,6 +6,8 @@ export const ARM_WINDOW_MS = 200;
 export const PERCEIVED_MS = 120;
 /** Arriving rows fade in over this many ms. */
 export const ARRIVAL_ONSET_MS = 200;
+/** A disc swipe names its destination this long; a notice, not motion, so reduced motion keeps it. */
+export const SWIPE_CHIP_MS = 600;
 /** A target chosen this often under one typed string owns that string's prefixes and extensions. */
 export const LATCH_USES = 2;
 /** Principal rows shown for a typed query. */

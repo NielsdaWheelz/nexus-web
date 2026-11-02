@@ -3,7 +3,7 @@
 // The desktop palette: a card with the query, one scrollport of rows and, while typed, the
 // continuations pinned below it so arrivals never move them. The query edits text and arms rows;
 // → or tab opens the armed row's rail; native controls own their actions.
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { X } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
@@ -14,6 +14,7 @@ import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import collection from "@/components/ui/Collection.module.css";
 import type { NexusGroup, NexusRow } from "@/lib/nexus/model";
+import { ARRIVAL_ONSET_MS } from "@/lib/nexus/policy";
 import type { ResourceItem } from "@/lib/resources/items";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import { cx } from "@/lib/ui/cx";
@@ -324,7 +325,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             className={styles.list}
             onFocusCapture={event => { if (event.target instanceof HTMLElement) focusedNative.current = event.target; }}
           >
-            <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={typed && controller.continuations.length > 0 ? CONTINUATIONS_ID : undefined} className={styles.grid}>
+            <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={typed && controller.continuations.length > 0 ? CONTINUATIONS_ID : undefined} className={styles.grid}
+              style={{ "--arrival-onset": `${ARRIVAL_ONSET_MS}ms` } as CSSProperties}>
               {groups.filter(group => !(typed && group.id === "Continuations")).map((group) => (
                 <Fragment key={group.id}>
                   <div role="rowgroup" aria-labelledby={group.label ? `desktop-nexus-section-${group.id}` : undefined} aria-label={group.label ? undefined : group.id === "Results" ? "results" : group.id === "Here" ? "here" : "query actions"}>

@@ -8,14 +8,13 @@ import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import { SWIPE_CHIP_MS } from "@/lib/nexus/policy";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
 import styles from "./Switchboard.module.css";
 
 const SLOP_PX = 8;
 const HORIZONTAL_LOCK_RATIO = 1.5;
 const COMMIT_PX = 20;
-/** How long the swipe's destination stays named; `--duration-deliberate` is zeroed by reduced motion, a notice is not motion. */
-const CHIP_MS = 600;
 
 /** idle, or a press: Tracking until it leaves the slop, then Locked (horizontal) or Yielded. */
 type Press = { readonly phase: "Tracking" | "Locked" | "Yielded"; readonly pointerId: number; readonly x: number; readonly y: number } | null;
@@ -41,7 +40,7 @@ export default function NexusButton({
   const [chip, setChip] = useState<{ readonly text: string } | null>(null);
   useEffect(() => {
     if (chip === null) return;
-    const timer = setTimeout(() => setChip(null), CHIP_MS);
+    const timer = setTimeout(() => setChip(null), SWIPE_CHIP_MS);
     return () => clearTimeout(timer);
   }, [chip]);
   // The chrome module owns the button's own inert (retreat); the open switchboard inerts the wrapper.

@@ -1,7 +1,8 @@
 /* The palette's arrangement: a card with the query, one scrollport of rows and, while typed, the
    continuations pinned below it; the rows, the rail and the pane list both surfaces share. Selection
-   paint is Collection's, the scrim the room's, the match ResourceContent's. 120, 200 and 100ms are
-   literals here: no duration token holds them, so the reduced-motion block is mandatory. */
+   paint is Collection's, the scrim the room's, the match ResourceContent's. 120 and 100ms are literals
+   here: no duration token holds them, so the reduced-motion block is mandatory. The arrival onset is
+   policy's ARRIVAL_ONSET_MS, set on each grid as `--arrival-onset`. */
 
 .backdrop {
   position: fixed;
@@ -73,7 +74,7 @@
   cursor: default;
 }
 
-.grid .row[data-band="arriving"] { animation: onset 200ms var(--ease-glide); }
+.grid .row[data-band="arriving"] { animation: onset var(--arrival-onset) var(--ease-glide); }
 @keyframes onset { from { opacity: 0; } }
 
 .cell { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-inline-size: 0; }
