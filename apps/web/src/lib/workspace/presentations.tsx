@@ -1,6 +1,7 @@
 "use client";
 /** Authored titles come from the local graph, even online. Other resource labels
- * retain their server/catalog owner. Saved visit hints are display evidence only. */
+ * retain their server/catalog owner. Saved visit hints are display evidence only.
+ * `detail` is the byline or the reason a title is missing, never a kind word: the glyph is the kind. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { localResourceLabel } from "@/lib/resources/localResource";
@@ -26,7 +27,7 @@ type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; mediaKind?: MediaKind; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
-interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; holdRecent(entries: readonly RecentEntry[]): void; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void; titleFailure: {error: ApiError; occurrence: object; pending: boolean} | null }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; resourceRefForVisit(visit: PaneVisit): string | null; /** Re-run the remote title reads in place: held titles stay until the new ones land. */ retryTitles(): void; titleFailure: {error: ApiError; occurrence: object; pending: boolean} | null }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
@@ -50,23 +51,20 @@ function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevisio
 export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
   const recent = useRecent();
-  const [heldRecent, setHeldRecent] = useState<readonly RecentEntry[]>([]);
-  const holdRecent = useCallback((entries: readonly RecentEntry[]) => setHeldRecent(entries), []);
   const store = useAuthoredStore();
   const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
   const { observation } = useImports();
   const foreground = useRefreshStamp(true, 0);
-  const [attempt, retry] = useState(0);
   const locators = useMemo(() => {
     const result = new Map<string, PanePresentationLocator>();
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
-    for (const entry of [...recent.snapshot?.entries ?? [], ...heldRecent]) {
+    for (const entry of recent.snapshot?.entries ?? []) {
       const target = entry.target;
       if (target.kind !== "preview") result.set(panePresentationLocatorKey(target), target);
     }
     return [...result.values()];
-  }, [state.panes, recent.snapshot, heldRecent]);
+  }, [state.panes, recent.snapshot]);
   const [local, setLocal] = useState<{entries: Map<string, {facts: TitleFacts | null; store_revision: string; used_revision?: string}>; semanticRevision: number}>(() => ({entries: new Map(), semanticRevision: 0}));
   const publishLocal = useCallback<PublishTitle>((key, facts, storeRevision, usedRevision) => {
     setLocal(previous => {
@@ -83,7 +81,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   }, []);
   const remoteLocators = locators.filter(locator => !authored(locator) && locator.kind !== "x_capture");
   const captureLocators = locators.filter(locator => locator.kind === "x_capture");
-  const remoteKey = JSON.stringify([accountId, remoteLocators, recent.snapshot?.entries.map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, observation, foreground, attempt]);
+  const remoteKey = JSON.stringify([accountId, remoteLocators, recent.snapshot?.entries.map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, observation, foreground]);
   const remote = usePaneFreeServerValue({ key: `workspace-presentations:${remoteKey}`, stale: "", load: async signal => {
     const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
     for (let offset = 0; offset < remoteLocators.length; offset += 100) {
@@ -92,7 +90,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
     return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
   } });
-  const captureKey = JSON.stringify([accountId, captureLocators, recent.snapshot?.entries.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, foreground, attempt]);
+  const captureKey = JSON.stringify([accountId, captureLocators, recent.snapshot?.entries.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, foreground]);
   const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${captureKey}` : null, stale: "", load: async signal => {
     while (!signal.aborted) {
       const { command_seq } = await store.readReplica();
@@ -142,10 +140,10 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     if (authored(locator)) {
       const resource = local.entries.get(key)?.facts;
       if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
-      if (resource === null) return { title: route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
+      if (resource === null) return { title: route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint, detail: route.id === "dailyDate" ? null : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
       const title = resource.title;
       const name = title.trim() ? title : resource.local_date !== null ? pageTitle("", resource.local_date) : null;
-      return { title: name ?? route.defaultLabel, name, detail: kind, status: "Ready" };
+      return { title: name ?? route.defaultLabel, name, detail: null, status: "Ready" };
     }
     const canonical: Canonical | null | undefined = remoteFacts?.get(key);
     let saved: string | null = null;
@@ -165,11 +163,11 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     if (canonical) {
       const authors = selectMediaAuthors(canonical.contributors).flatMap(credit => { const name = creditName(credit); return name ? [name.label] : []; });
       const byline = authors.slice(0, 2).join(", ") || canonical.source_label;
-      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, mediaKind, status: "Ready" };
+      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline || null, mediaKind, status: "Ready" };
     }
-    if (saved !== null) return { title, name, detail: noun, mediaKind, status: "Ready" };
-    if (remoteFailed) return { title, name, detail: noun, mediaKind, status: "Failed" };
-    if (remoteStatus !== "ready") return { title, name, detail: noun, mediaKind, status: "Loading" };
+    if (saved !== null) return { title, name, detail: null, mediaKind, status: "Ready" };
+    if (remoteFailed) return { title, name, detail: null, mediaKind, status: "Failed" };
+    if (remoteStatus !== "ready") return { title, name, detail: null, mediaKind, status: "Loading" };
     return { title, name, detail: "removed or no longer accessible", mediaKind, status: "Unavailable" };
     // Facts change only with semanticRevision; newer watermarks keep this callback's facts equivalent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,7 +188,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return { title: entry.title_hint ?? fact?.title ?? fallback, name: entry.title_hint ?? fact?.title ?? null, detail: entry.detail_hint ?? "post", status: fact === null ? "Unavailable" : fact ? "Ready" : "Loading" };
     }
     const presentation = forVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
-    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint ?? (presentation.mediaKind !== undefined ? mediaKindLabel(presentation.mediaKind) : fallback.toLowerCase()) };
+    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint };
     return presentation;
   }, [forVisit, captureFacts]);
   const isRecentRemoved = useCallback((entry: RecentEntry): boolean => {
@@ -241,8 +239,10 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
         recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: value });
     }
   }, [recent, forRecent, local.entries, state.panes, remote, isRecentRemoved]);
-  const retryTitles = useCallback(() => retry(value => value + 1), []);
-  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, holdRecent, resourceRefForVisit, retryTitles, titleFailure: titleError !== null ? {error: titleError, occurrence: titleOccurrence, pending: titlePending} : null }), [forVisit, forRecent, isRecentRemoved, holdRecent, resourceRefForVisit, retryTitles, titleError, titleOccurrence, titlePending]);
+  const remoteRefetch = remote.refetch, captureRefetch = captures.refetch;
+  // The same keys re-run their loads; the held titles stay shown until the new ones land (nexus-open-blanks-remote-titles).
+  const retryTitles = useCallback(() => { void remoteRefetch().catch(() => {}); void captureRefetch().catch(() => {}); }, [remoteRefetch, captureRefetch]);
+  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleFailure: titleError !== null ? {error: titleError, occurrence: titleOccurrence, pending: titlePending} : null }), [forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleError, titleOccurrence, titlePending]);
   useEffect(() => {
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);
@@ -257,7 +257,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       const key = panePresentationLocatorKey(locator);
       return <AuthoredTitleSubscription key={key} store={store} locatorKey={key}
         kind={locator.kind === "daily_date" ? "daily" : "resource"}
-        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} usedRevision={[...recent.snapshot?.entries ?? [], ...heldRecent].find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
+        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} usedRevision={recent.snapshot?.entries.find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
     })}
     {children}
   </Context>;
