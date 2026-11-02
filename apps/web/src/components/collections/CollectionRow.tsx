@@ -116,7 +116,7 @@ export default function CollectionRow({
   /> : null;
   const metadata = <span className={styles.supportLine}>
     {media ? <MediaIdentity subject={media.subject} returnFocus={returnFocus} /> : <IndexBibliography
-      contributors={row.contributors} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
+      byline={{ kind: "Authors", contributors: row.contributors }} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
     />}
     {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
   </span>;

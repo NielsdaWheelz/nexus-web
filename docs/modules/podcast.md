@@ -329,6 +329,11 @@ alt text and no duplicate accessible name. image delivery retains original bytes
 and the existing private one-day cache. next can report cached failures through
 `onLoad`; readiness requires positive `naturalWidth`.
 
+episode index rows carry no artwork. `MediaSummaryOut.show` (`podcast_id`, `title`,
+`image_url`), null exactly for media without a `podcast_episodes` row, puts the
+show's name where a work's authors stand, as a credit link to its page; the
+show's own page omits it.
+
 ## Android Offline Downloads
 
 included-show offline snapshots export complete known episode metadata at snapshot

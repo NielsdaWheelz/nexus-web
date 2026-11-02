@@ -1,5 +1,8 @@
+"use client";
+
+import { createContext, useContext } from "react";
 import { Check } from "lucide-react";
-import IndexBibliography from "@/components/resources/IndexBibliography";
+import IndexBibliography, { type IndexByline } from "@/components/resources/IndexBibliography";
 import {
   collectionActivityText,
   collectionConsumptionText,
@@ -36,15 +39,25 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   </span>;
 }
 
-/** Index bibliography and provenance. Rows own facts: `MediaFacts` goes in their trailing cell. */
+/** The show whose own page lists these rows, which already names it. */
+export const ShowPage = createContext<string | null>(null);
+
+/** An episode's show stands in the authors' slot; every other media keeps its authors. */
+export function mediaByline(summary: MediaSummary): IndexByline {
+  return summary.show === null ? { kind: "Authors", contributors: summary.contributors } : { kind: "Show", show: summary.show };
+}
+
+/** Index line 2: an episode's show in the authors' slot, else the authors; then the year and part provenance. The show's own page omits the show. Rows own facts: MediaFacts goes in their trailing cell. */
 export default function MediaIdentity({ subject, returnFocus }: {
   subject: MediaSubject;
   returnFocus: () => HTMLElement | null;
 }) {
+  const page = useContext(ShowPage);
   const summary = subject.kind === "Stored" ? subject.summary : null;
+  const byline: IndexByline | null = subject.kind === "External" ? { kind: "Authors", contributors: subject.contributors }
+    : subject.summary.show !== null && subject.summary.show.podcast_id === page ? null : mediaByline(subject.summary);
   return <span className={styles.support}>
-    <IndexBibliography contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
-      originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
+    <IndexBibliography byline={byline} originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
     {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}
   </span>;
 }

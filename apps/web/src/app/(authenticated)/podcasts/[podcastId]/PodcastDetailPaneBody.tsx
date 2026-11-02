@@ -22,6 +22,7 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
+import { ShowPage } from "@/components/media/MediaIdentity";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -54,6 +55,7 @@ import {
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
+import { pluralize } from "@/lib/text/pluralize";
 import {
   listEpisodes,
   requestPodcastRefresh,
@@ -380,7 +382,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 <div className={styles.identityCopy}>
                   <ContributorCreditList credits={selectMediaAuthors(podcast.contributors)} />
                   <p className={styles.counts}>
-                    {ready.data.episode_counts.known_count} episodes
+                    {pluralize(ready.data.episode_counts.known_count, "episode")}
                   </p>
                 </div>
                 <Button ref={detailsButton} className={styles.detailButton}
@@ -469,6 +471,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
             }}>
             <PaneSection title="episodes">
+            <ShowPage value={podcastId}>
             <CollectionView geometry="UniformIndex"
               surface={false}
               returnScope="PodcastDetail.Episodes"
@@ -488,6 +491,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               </>}
               empty={<FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />}
             />
+            </ShowPage>
             </PaneSection>
             </PlaybackSourceContext.Provider>
           )}
