@@ -288,6 +288,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const sourceOpened = useRef(false);
   const announcedSource = useRef<string | null>(null);
   const announcedPhase = useRef<Loaded["phase"] | null>(null);
+  const announcedUnavailable = useRef<Extract<Player.PlayerState, { kind: "Unavailable" }>["reason"] | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded === null ? null : `${loaded.source.kind}:${
     loaded.source.kind === "Episode"
@@ -376,16 +377,22 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     target?.focus({ preventScroll: true });
   }, [state, isMobile, preferences, sheetShown, presentation.visible, returnFocus]);
 
-  // The player's own state speaks here; a failed playback is the stage's line, never `now playing`.
+  // The player's own state speaks here, outside the slot phones hide under the sheet and the
+  // keyboard; a failed playback is the stage's line, never `now playing`.
   useEffect(() => {
     switch (state.kind) {
       case "Absent":
         if (announcedSource.current !== null) setAnnouncement({ text: "playback stopped", occurrence: {} });
         announcedSource.current = null;
         announcedPhase.current = null;
+        announcedUnavailable.current = null;
         break;
-      case "Unavailable": break;
+      case "Unavailable":
+        if (state.reason !== announcedUnavailable.current) setAnnouncement({ text: UNAVAILABLE[state.reason].fact, occurrence: {} });
+        announcedUnavailable.current = state.reason;
+        break;
       case "Loaded": {
+        announcedUnavailable.current = null;
         if (queuePlaybackFailure) {
           announcedSource.current = identity;
           announcedPhase.current = state.phase;
@@ -446,7 +453,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       break;
     }
     case "Unavailable": {
-      const warning = <Fact line={UNAVAILABLE[state.reason]} speak
+      const warning = <Fact line={UNAVAILABLE[state.reason]}
         verbs={state.reason === "UpdateRequired" ? [{ label: "update", href: "/android" }] : undefined} />;
       desktopSource = warning;
       if (pendingPlayback !== null) sheetPlayerContent = <>{warning}<Transport compact /></>;

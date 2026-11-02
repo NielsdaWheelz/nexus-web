@@ -8,16 +8,18 @@ import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 
-/** Why a queue or playback-ownership press did nothing. */
+/** Why a queue, playback or ownership press did nothing. */
 export type QueueRefusal =
   | "Loading" | "LoadFailed" | "Saving" | "Changed" | "Refused" | "Unsettled" | "AddUnsettled" | "NoRestore"
   | "NotQueued" | "NotInView" | "TooMany" | "OwnerSilent" | "Moving" | "NotMoved" | "Unsupported" | "NotConnected"
-  | "Unresponsive" | "Superseded";
+  | "Unresponsive" | "PlaceUnread" | "Superseded";
 
 /** What a refusal tells its reader, a refused press or the queue's own failed read. null: nothing
  * to tell. `Superseded`: a newer press owns the outcome. `Unsettled`: a sent change went
- * unanswered, so the held line for it stands; nothing else may claim it. The native player's
- * conditions name only the cause, so they are true of a read and a change alike. */
+ * unanswered, so the held line for it stands; nothing else may claim it. `PlaceUnread`: the
+ * press reread the episode's place and it still couldn't load, which the place's own line says,
+ * with `retry`. The native player's conditions name only the cause, so they are true of a read
+ * and a change alike. */
 const REFUSAL_LINES: Readonly<Record<QueueRefusal, Line | null>> = {
   Loading: { fact: "the queue is still loading." },
   LoadFailed: { fact: "couldn’t load the queue." },
@@ -36,6 +38,7 @@ const REFUSAL_LINES: Readonly<Record<QueueRefusal, Line | null>> = {
   Unsupported: { fact: "this browser can’t run the player." },
   NotConnected: { fact: "the player isn’t connected." },
   Unresponsive: { fact: "the player isn’t responding." },
+  PlaceUnread: null,
   Superseded: null,
 };
 

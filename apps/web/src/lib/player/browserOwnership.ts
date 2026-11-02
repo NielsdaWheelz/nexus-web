@@ -3,7 +3,8 @@
  * audio/write authority. A transfer carries the originating queue fence and a
  * bounded request lifetime; neither grants permission after cancellation.
  * Holder admission runs in its playback lane before any pause or release. The
- * acquirer rereads and checks that same fence before becoming ready.
+ * acquirer rereads and checks that same fence before becoming ready. The bound is
+ * on the other tab: once the lock is this tab's, its read's own deadline bounds the rest.
  */
 import { QueueCommandError, type QueueFence, type QueueRefusal, type QueueRequest } from "@/lib/player/queue";
 import { ApiError, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -174,17 +175,18 @@ export function createBrowserOwnership(input: {
       const options: LockOptions = transfer ? { mode: "exclusive", signal: abort.signal } : { mode: "exclusive", ifAvailable: true };
       void navigator.locks.request(lockName, options, async lock => {
         if (lock === null || closed || abort.signal.aborted) { finish(null, false); return; }
+        clearTimeout(timer);
         owner = true;
         let free = () => {};
         const held = new Promise<void>(done => { free = done; unlock = done; });
         try {
           await input.acquired();
-          if (closed || abort.signal.aborted || Date.now() >= expiresAt) { finish(null, false); return; }
+          if (closed || abort.signal.aborted) { finish(null, false); return; }
           const header = input.snapshot().queue.header;
           if (expectedQueue !== null && (header?.queue_id !== expectedQueue.queue_id || header.revision !== expectedQueue.expected_revision))
             throw new QueueCommandError("Changed");
           const locks = await navigator.locks.query();
-          if (closed || abort.signal.aborted || Date.now() >= expiresAt) { finish(null, false); return; }
+          if (closed || abort.signal.aborted) { finish(null, false); return; }
           ownerClientId = locks.held?.find(heldLock => heldLock.name === lockName)?.clientId ?? null;
           if (ownerClientId === null) throw new QueueCommandError("NotMoved");
           ready = true;
@@ -215,6 +217,12 @@ export function createBrowserOwnership(input: {
   return {
     supported,
     owner: () => owner && ready,
+    /** Another tab holds the player: the lock is held, and not by this tab. */
+    async heldElsewhere() {
+      if (!supported || owner) return false;
+      const locks = await navigator.locks.query();
+      return !owner && (locks.held?.some(lock => lock.name === lockName) ?? false);
+    },
     acquire,
     cancelAcquisition,
     publish,

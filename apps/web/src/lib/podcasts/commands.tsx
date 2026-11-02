@@ -1,12 +1,15 @@
 "use client";
 
 /** Account-memory podcast commands freeze ids, scope and guards before sending.
- * Accepted retires a command. Refused retires it and says its fact as a slip, unless the
- * surface that sent it still stands to show a refusal a reread can answer (`shown`): then it
- * stays `Refused` for that surface's `check` to review. Unanswered, it stays `Unknown`, a held
- * line in `feedback` until a replay settles it or `stop tracking` forgets it, never undoing
- * it. A replay sends the same body and ids; an import is checked by reading its operation.
- * Mount `feedback` once. Dismissal changes presentation only.
+ * Accepted retires a command. Refused retires it and says its fact as a slip, unless its sender
+ * passed `shown`, still stands, and a reread can answer the refusal: then it stays `Refused`,
+ * its `refusal` the sender's to show, until the sender's `check` reviews it or the sender goes
+ * (`release`). Sign-in, a stale build and a busy server are always the slip's, with their verb.
+ * Unanswered, it stays `Unknown`, a held line in `feedback` until a replay settles it or `stop
+ * tracking` forgets it, never undoing it. A replay sends the same body and ids; an import is
+ * checked by reading its operation. So when `submit` resolves false, `pending(subject)` names
+ * the outcome's one home: `Refused` is the sender's, `Unknown` is the held line's, and null was
+ * said as a slip. Mount `feedback` once. Dismissal changes presentation only.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
@@ -46,7 +49,8 @@ interface Entry {
   phase: "Sending" | "Unknown" | "Refused";
   /** Sent without an answer: only a confirmed replay or `stop tracking` settles it. */
   uncertain: boolean;
-  /** A replay of the unanswered command was refused, so `retry` cannot help. */
+  /** The server refused a replay of the unanswered command on its merits, not for sign-in, a
+   * stale build or load, so `retry` cannot help. */
   replayRefused: boolean;
   /** Bumps per failed replay or check, so the held line speaks again. */
   attempt: number;
@@ -137,7 +141,7 @@ function createOwner(accountId: string, guard: WorkGuard, defect: (input: { erro
       else {
         if (entry.uncertain) entry.attempt += 1;
         entry.uncertain = true;
-        entry.replayRefused ||= isRefusal(error);
+        entry.replayRefused ||= isRefusal(error) && transportOf(error) === "Refused";
         entry.phase = "Unknown";
         handleUnauthenticatedApiError(error);
         if ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error)) defect({ error });
@@ -152,8 +156,9 @@ function createOwner(accountId: string, guard: WorkGuard, defect: (input: { erro
     return true;
   }
   const commands = {
-    /** `title` is the subject's own; `library` names a non-default destination. `shown` is true
-     * while the sender's surface stands to show a refusal, with `check` reviewing it. */
+    /** `title` is the subject's own, never a composite; `library` names a non-default destination
+     * and is absent for the default one, which goes unnamed. `shown` is true while the sender
+     * stands to show a refusal and review it, and the sender calls `release` when it goes. */
     submit(input: { subject: string; title: string; library?: string | null; command: PodcastCommand; onAccepted?: () => void; shown?: () => boolean }): Promise<boolean> {
       if (lifetime === null || lifetime.signal.aborted || entries.has(input.subject)) return Promise.resolve(false);
       const key = `podcast-command:${accountId}:${crypto.randomUUID()}`;
@@ -187,6 +192,11 @@ function createOwner(accountId: string, guard: WorkGuard, defect: (input: { erro
         emit();
       }
       invalidateReads("Podcasts", "Entries");
+    },
+    /** The sender's surface is gone: a refusal it showed was said there, so it retires. */
+    release(subject: string) {
+      const entry = entries.get(subject);
+      if (entry?.phase === "Refused") retire(entry);
     },
     /** A refused command's `check`, or an unanswered one's `stop tracking`: it forgets the
      * command after the loss prompt, and never undoes it. */

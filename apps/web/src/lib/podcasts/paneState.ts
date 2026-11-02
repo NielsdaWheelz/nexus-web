@@ -50,9 +50,8 @@ export function podcastRefusalReason(error: ApiError): string | undefined {
   }
 }
 
-/** Coexistence until L7: collections, the metadata overlay and the browse preview still read
- * this shape. Throws defects. */
-/** Failure copy for podcast reads and commands; throws defects. */
+/** Coexistence until L7: collections (L5a), the metadata overlay (L2) and the browse preview
+ * (L6) still read this shape. Throws defects. */
 export function podcastErrorMessage(
   error: unknown,
   title: string,
@@ -99,7 +98,7 @@ export function podcastErrorMessage(
   }
 }
 
-/** Coexistence until L7, for the browse preview: one command at a time; its modeled failure
+/** Coexistence until L7, for the browse preview (L6): one command at a time; its modeled failure
  * becomes `failure`. */
 export function useCommand(): {
   readonly running: string | null;

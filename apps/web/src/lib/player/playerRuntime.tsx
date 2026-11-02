@@ -228,6 +228,7 @@ export interface PlayerCommands {
   queueCommand(request: QueueRequest): Promise<PressOutcome>;
   retryQueueIndex(): Promise<void>;
   stop(): void;
+  /** Settles the queue with its owner: a browser's unanswered change replays, anything else reads. */
   checkQueue(): void;
   cancelQueuePreparation(): void;
   playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded" | "Refused">;
@@ -398,6 +399,8 @@ export function GlobalPlayerProvider({
   }, []);
   const pendingLoad = useRef<number | null>(null);
   const descriptorRead = useRef<AbortController | null>(null);
+  /** The preparation a refused queue's `retry` replays, until it is settled, cancelled, retired or
+   * superseded; nothing else replays it. */
   const preparationRetry = useRef<(() => Promise<PressOutcome>) | null>(null);
   const [pendingPlayback, setPendingPlayback] = useState<PendingPlayback | null>(null);
   const intent = useRef<PreferenceIntent | null>(null);
@@ -527,10 +530,12 @@ export function GlobalPlayerProvider({
     setEngine(created);
     let observationDeadline: ReturnType<typeof setTimeout> | null = null;
     if (!androidShell) {
-      observationDeadline = setTimeout(() => {
-        if (engineRef.current === created && !queueViewRef.current.known && !ownership.current?.owner())
+      // Unanswered only while another tab holds the player: this tab's own slow or failed read is
+      // the queue's `Failed`.
+      observationDeadline = setTimeout(() => void ownership.current?.heldElsewhere().then(elsewhere => {
+        if (elsewhere && engineRef.current === created && !queueViewRef.current.known)
           publishQueue({ ...queueViewRef.current, error: { kind: "Coordination" } });
-      }, BROWSER_COORDINATION_BOUND_MS);
+      }), BROWSER_COORDINATION_BOUND_MS);
       const session = createBrowserSession(accountId, () => {
         if (browser.current !== session) return;
         if (session.snapshot().known && observationDeadline !== null) clearTimeout(observationDeadline);
@@ -1074,14 +1079,14 @@ export function GlobalPlayerProvider({
         if (failure instanceof QueueCommandError) { if (failure.line !== null) outcome.say(failure.line); }
         // A capture's refusal carries its reason as its message, as the engine's do.
         else if (failure.code === "E_PLAYBACK_REFUSED") outcome.say({ fact: "couldn’t queue these episodes.", reason: failure.message || undefined });
-        else outcome.fail(failure, "couldn’t queue these episodes.",
-          { label: "retry", commandKey: "retry queue preparation", run: () => navigation.current?.checkQueue() });
+        else outcome.fail(failure, "couldn’t queue these episodes.", { label: "retry", commandKey: "retry queue preparation",
+          run: () => { if (preparationRetry.current === attempt) void attempt().catch(report); } });
         return "Refused";
       } finally { if (mine === latest.current) setPendingPlayback(null); }
     };
     preparationRetry.current = attempt;
     return attempt();
-  }, [activate, androidShell, enqueue, mirroredEngine, nativeRefresh, outcome, publishQueue, replaceQueue, retainCurrent, retirePending, settleNative, unsettled]);
+  }, [activate, androidShell, enqueue, mirroredEngine, nativeRefresh, outcome, publishQueue, replaceQueue, report, retainCurrent, retirePending, settleNative, unsettled]);
 
   const execute = useCallback(async (command: BrowserPlayerCommand) => {
     const target = engineRef.current;
@@ -1280,11 +1285,7 @@ export function GlobalPlayerProvider({
         }
       },
       stop: () => { void route({ kind: "stop" }); },
-      checkQueue: () => {
-        const retry = preparationRetry.current;
-        if (queueViewRef.current.known && retry !== null) void retry().catch(report);
-        else void route({ kind: "check" });
-      },
+      checkQueue: () => { void route({ kind: "check" }); },
       cancelQueuePreparation: () => { preparationRetry.current = null; retirePending(); browser.current?.preparing(false); publishQueue({ ...queueViewRef.current, phase: "Ready" }); },
       /** The caller resolves the descriptor, so a failed resolution is its own to say; the player
        * says the rest. */

@@ -9,10 +9,12 @@
  * playing, and with `keepalive` on pagehide. A stale epoch (409) adopts the server's position.
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
- * and retains the sample as `Unsaved`, which holds a resume and a timed play until a press sends it.
- * A refused write is `Unsaved` too, but stands beside playing audio: it gates neither a seek nor a
- * resume. `retry` sends the sample, or rereads a fence's place, and leaves the element alone;
- * `play` sends it and plays. A failed element is `playbackFailed` alone; `play` reloads it.
+ * and retains the sample as `Unsaved`, which holds a resume and a timed play until the sample is
+ * stored, by the tick, `online` or a press. A refused write is `Unsaved` too, but stands beside
+ * playing audio: it gates neither a seek nor a resume, and only a press resends it. `retry` sends
+ * the sample, or rereads a fence's place, and leaves the element alone; `play` sends it and plays.
+ * A press over a fence rereads first: a place that still couldn't load is `Unread`, whose own line
+ * answers the press. A failed element is `playbackFailed` alone; `play` reloads it.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -29,6 +31,7 @@
 
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { apiFetch, ApiError, isApiError } from "@/lib/api/client";
+import { QueueCommandError } from "@/lib/player/queue";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { remoteAttemptAllowed } from "@/lib/native/admission";
@@ -168,7 +171,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             body: JSON.stringify(body),
           });
           current.overrideRevision = data.state.consumption_override_revision;
-          if (current === episode) set({ synced: true });
+          // A drain's unsent place is stored now, so its line goes.
+          if (current === episode) set(unsentDrain(current) ? { synced: true, error: null } : { synced: true });
           publishChange("Consumption");
         } catch (error) {
           current.queued ??= body;
@@ -537,7 +541,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const current = episode;
       if (current?.fenced) {
         await engine.reconcileProgressFence(current.descriptor.media_id);
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", current.fenced ? "its saved place couldn’t load." : "its saved place just changed.");
+        if (current.fenced) throw new QueueCommandError("PlaceUnread");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its saved place just changed.");
       }
       const mine = ++asked;
       advanceAllowed = true;
@@ -577,7 +582,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
       if (current.fenced) {
         await engine.reconcileProgressFence(current.descriptor.media_id);
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", current.fenced ? "its saved place couldn’t load." : "its saved place just changed.");
+        if (current.fenced) throw new QueueCommandError("PlaceUnread");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its saved place just changed.");
       }
       if (unsentDrain(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its place isn’t saved yet.");
       const admission = ++asked;
@@ -594,7 +600,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const current = episode;
       if (current?.descriptor.media_id !== mediaId || state.playbackSubject === null || audio.ended)
         throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
-      if (current.fenced) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its progress is changing.");
+      if (current.fenced) throw new ApiError(409, "E_PLAYBACK_REFUSED",
+        state.error?.kind === "Unread" ? "its saved place couldn’t load." : "its progress is changing.");
       if (state.playbackFailed) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its playback failed.");
       if (unsentDrain(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its place isn’t saved yet.");
       const admission = ++asked;
