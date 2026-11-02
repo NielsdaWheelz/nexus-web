@@ -11,7 +11,10 @@ redesign is built:
 - the terminal row draws `Icon.Locate` (go to the spot), the sign
   `OutlineEditorRow.tsx` and `ResourceOutlineRow.tsx` already draw for
   `show earlier occurrence`.
-- reference rows' scheme glyphs come from `resourceIconForScheme`.
+- reference rows draw `<ResourceTypeIcon type={resourceType(scheme, kind)} />`
+  (`lib/resources/type.ts`), as both rows do now, not `resourceIconForScheme`:
+  the type layer draws a held media kind's medium, which authored stubs will
+  carry once `note-editor-references-lack-media-kind.md` resolves.
 
 resolved when the outline redesign merges with `--check-swept` and
 `./scripts/test` passing.
