@@ -1,0 +1,22 @@
+/* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot. */
+.glyph > * {
+  stroke-width: 2;
+  transition: stroke-width var(--duration-base) var(--ease-glide);
+}
+.glyph > circle { fill: currentColor; } /* wider strokes invert the dot's inner edge */
+.glyph > :nth-child(1) { transition-delay: var(--duration-instant); }
+.glyph > :nth-child(2) { transition-delay: calc(2 * var(--duration-instant)); }
+
+.subscribed {
+  color: var(--accent);
+  transition: color var(--duration-fast) var(--ease-glide);
+}
+.subscribed > * { stroke-width: 3.25; }
+/* a read shorter than the hold shows nothing; the control is disabled throughout. */
+[aria-disabled="true"] .subscribed {
+  color: inherit;
+  transition: color var(--duration-base) var(--ease-glide) var(--duration-deliberate);
+}
+@media (forced-colors: active) {
+  .subscribed { color: inherit; }
+}

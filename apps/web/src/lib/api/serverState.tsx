@@ -79,7 +79,7 @@ export type ServerValue<T> = (
       /** A refetch is running over the shown data. */
       readonly refreshing: boolean;
     }
-) & { readonly refetch: () => Promise<void>; readonly revalidate: () => void };
+) & { readonly refetch: () => Promise<void>; readonly revalidate: (options?: { readonly passive: boolean }) => void };
 type Load<D> = (signal: AbortSignal) => Promise<D>;
 type Defect = { readonly error: unknown };
 interface Held<D> {
@@ -90,6 +90,7 @@ interface Held<D> {
   readonly generation: number;
   readonly error: ApiError | null;
   readonly running: boolean;
+  readonly passive: boolean;
 }
 
 // live reads share requests, not pane snapshots. the representation key and policy
@@ -551,7 +552,7 @@ function arrive<D>(key: string | null, shown: Visit<D> | null): Held<D> {
     key, data: shown?.key === key ? shown.data : null,
     source: shown?.source ?? LIVE_SOURCE,
     acceptedStale: shown?.acceptedStale ?? null,
-    generation: 0, error: null, running: key !== null,
+    generation: 0, error: null, running: key !== null, passive: false,
   };
 }
 
@@ -610,21 +611,21 @@ function useServerState<D>(
     setState(next);
   };
   const start = useRef<() => void>(() => {});
-  const queueRead = () => {
-    if (!mounted.current) return;
-    if (flight.current !== null) flight.current.strict = true;
-    else start.current();
-  };
+  const queueRead = () => { if (mounted.current) start.current(); };
   const owner = useReadOwner(key, policyIdentity({ readPolicy, ...policy }), stale, queueRead);
   const lane = useMemo(() => ({ active: false, owner, stateKey }), [owner, stateKey]);
-  const run = useCallback(async (prepared: ArrivalClaim<D> | null = null) => {
-    if (flight.current !== null) { flight.current.strict = true; return; }
+  const run = useCallback(async (prepared: ArrivalClaim<D> | null = null, passive = false) => {
+    if (flight.current !== null) {
+      flight.current.strict = true;
+      update(h => h.passive ? { ...h, passive: false } : h);
+      return;
+    }
     const controller = new AbortController();
     const current: Flight = { controller, strict: true, observe: false };
     flight.current = current;
     const releasePrepared = () => prepared?.release();
     controller.signal.addEventListener("abort", releasePrepared, { once: true });
-    update(h => ({ ...h, running: true }));
+    update(h => ({ ...h, running: true, passive }));
     try {
       while (current.strict || current.observe) {
         if (controller.signal.aborted || latest.current.accountId !== accountId || latest.current.stateKey !== stateKey) return;
@@ -685,7 +686,7 @@ function useServerState<D>(
       controller.signal.removeEventListener("abort", releasePrepared);
       if (flight.current === current) {
         flight.current = null;
-        if (!controller.signal.aborted) update(h => ({ ...h, running: false }));
+        if (!controller.signal.aborted) update(h => ({ ...h, running: false, passive: false }));
       }
     }
   // Presentation refs update synchronously; owner/key alone define this lane.
@@ -741,11 +742,14 @@ function useServerState<D>(
     void promise.catch(() => {});
     return promise;
   }, [key, owner, stateKey, lane]);
-  const revalidate = useCallback(() => {
+  const revalidate = useCallback((options?: { readonly passive: boolean }) => {
     if (!lane.active || !mounted.current || key === null || latest.current.stateKey !== stateKey || heldRef.current?.error !== null) return;
-    if (flight.current !== null) flight.current.observe = true;
-    else start.current();
-  }, [key, stateKey, lane]);
+    if (flight.current === null) { void run(null, options?.passive === true); return; }
+    flight.current.observe = true;
+    if (!options?.passive) update(h => h.passive ? { ...h, passive: false } : h);
+  // Presentation refs update synchronously; owner/key alone define this lane.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, stateKey, lane, run]);
   const admittedGeneration = useRef(admissionGeneration);
   useEffect(() => {
     if (admissionGeneration === admittedGeneration.current) return;
@@ -756,7 +760,7 @@ function useServerState<D>(
   return valueOf(held, stale, refetch, revalidate);
 }
 
-function valueOf<T>(held: Held<T>, stale: string, refetch: () => Promise<void>, revalidate: () => void): ServerValue<T> {
+function valueOf<T>(held: Held<T>, stale: string, refetch: () => Promise<void>, revalidate: ServerValue<T>["revalidate"]): ServerValue<T> {
   if (held.data === null) return held.error === null
     ? { status: "loading", refetch, revalidate }
     : { status: "failed", error: held.error, retrying: held.running, refetch, revalidate };
@@ -764,7 +768,7 @@ function valueOf<T>(held: Held<T>, stale: string, refetch: () => Promise<void>, 
     status: "ready", data: held.data, source: held.source,
     acceptedStale: held.acceptedStale,
     fresh: held.source.kind === "live" && held.acceptedStale === stale,
-    generation: held.generation, error: held.error, refreshing: held.running,
+    generation: held.generation, error: held.error, refreshing: held.running && !held.passive,
     refetch, revalidate,
   };
 }
