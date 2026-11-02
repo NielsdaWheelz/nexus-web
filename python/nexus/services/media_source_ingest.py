@@ -376,7 +376,12 @@ def accept_url_source(
         record_input_change(db, owners=(f"media:{result.media_id}",))
         return result
 
-    return retry_serializable(db, "accept_url_source", admit)
+    # justify-retry-schedule: lab-scale evidence only. there, with tables small enough that
+    # every serializable read locks its whole relation, the account's own background
+    # settlement cancelled acceptance as a pivot in bursts: 8 of 449 exhausted three
+    # immediate attempts, 0 of 877 exhausted six. production's rate is unknown, and the wide
+    # reads that cause it stay open in lone-acquisition-exhausts-serializable-retry.
+    return retry_serializable(db, "accept_url_source", admit, retries=6)
 
 
 def read_source_attempt(

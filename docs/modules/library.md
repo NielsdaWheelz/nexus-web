@@ -69,8 +69,8 @@ no-ops. wire revisions are exact decimal strings. placement, move and lectern
 commands validate authority and captured revision BEFORE desired-state equality: a
 toggle depends on what was reviewed. stale intent is 409 without effects. frozen
 retries may conflict after landing; fresh review is explicit. acquisition compares
-no order revision: appends commute, so n additions into one library in one submit
-all land, and only an actual insert advances the revision.
+no order revision: appends commute, so no addition is refused for another's insert,
+and only an actual insert advances the revision.
 
 `users.removal_revision` fences acquisition. workspace removal, library deletion,
 podcast stop, accepted episode removal and import cancellation advance it;
