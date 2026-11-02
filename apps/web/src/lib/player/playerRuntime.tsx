@@ -35,6 +35,7 @@ import { isAbortError } from "@/lib/errors";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { holdProgress } from "@/lib/consumption/state";
+import { subscribeRepair } from "@/lib/native/admission";
 import { publishChange } from "@/lib/api/changes";
 import { createBrowserSession, type QueueSavePhase, type QueueTerminal } from "@/lib/player/browserSession";
 import { BROWSER_COORDINATION_BOUND_MS, createBrowserOwnership, type BrowserPlayerCommand } from "@/lib/player/browserOwnership";
@@ -146,7 +147,8 @@ export interface Engine {
   setRate(rate: number): Promise<void>;
   /** This load's explicit choice; resolves after application and snapshot publication. */
   setShortenPauses(on: boolean): Promise<void>;
-  /** An operational refusal rejects with action feedback; its consumption write must not send. */
+  /** A place that couldn't settle rejects with `ProgressPreparationError`, which the consumption
+   * owner says; its write must not send. */
   prepareProgressFence(mediaId: string): Promise<void>;
   /** Reads the server's position; an authority outage keeps the fence and local retry feedback. */
   reconcileProgressFence(mediaId: string): Promise<void>;
@@ -201,6 +203,42 @@ export interface PlayerQueue {
   readonly error: QueueFailure | null;
   readonly canRestore: boolean;
   readonly owner: boolean;
+}
+
+/** Why a queue verb can't act now, or null when it can. `waiting`: the reason is a wait that ends
+ * by itself, so it is a screen reader's alone; any other reason lasts until someone acts, and shows. */
+export type QueueBlock = { readonly reason: string; readonly waiting: boolean };
+
+const QUEUE_BLOCKS = {
+  UpdateRequired: { reason: "audio needs the current nexus apk.", waiting: false },
+  NotResponding: { reason: "the player isn’t responding.", waiting: false },
+  Unsupported: { reason: "this browser can’t run the player.", waiting: false },
+  Unconfirmed: { reason: "the last queue change isn’t confirmed.", waiting: false },
+  OwnerSilent: { reason: "another nexus tab has the player and isn’t answering.", waiting: false },
+  LoadFailed: { reason: "couldn’t load the queue.", waiting: false },
+  Saving: { reason: "the queue is still saving.", waiting: true },
+  Loading: { reason: "the queue is still loading.", waiting: true },
+} as const satisfies Record<string, QueueBlock>;
+
+/** The one derivation of why queue verbs wait or are blocked. `Queue`: verbs that need only the
+ * queue's authority, as adding does. `Rows`: verbs on a displayed occurrence, which also need the
+ * index of that exact revision. Each block is one constant, so a reader may compare identities. */
+export function queueBlock(queue: PlayerQueue, state: PlayerState, scope: "Queue" | "Rows"): QueueBlock | null {
+  if (state.kind === "Unavailable") return QUEUE_BLOCKS[state.reason];
+  switch (queue.phase) {
+    case "Unavailable": return QUEUE_BLOCKS.Unsupported;
+    case "Uncertain": return QUEUE_BLOCKS.Unconfirmed;
+    case "Saving": return QUEUE_BLOCKS.Saving;
+    case "Preparing": return QUEUE_BLOCKS.Loading;
+    case "Ready": break;
+  }
+  const index = queue.index;
+  if (!queue.known) return queue.error?.kind === "Coordination" ? QUEUE_BLOCKS.OwnerSilent
+    : index.kind === "Failed" ? QUEUE_BLOCKS.LoadFailed : QUEUE_BLOCKS.Loading;
+  if (scope === "Queue") return null;
+  if (index.kind === "Failed") return QUEUE_BLOCKS.LoadFailed;
+  return index.kind === "Ready" && index.snapshot.queue_id === queue.header?.queue_id && index.snapshot.revision === queue.header.revision
+    ? null : QUEUE_BLOCKS.Loading;
 }
 
 export interface PlayerSession {
@@ -756,7 +794,6 @@ export function GlobalPlayerProvider({
         return;
       case "E_PLAYBACK_REFUSED":
       case "E_PLAYBACK_STALE":
-      case "E_NATIVE_PLAYER_NOT_RESPONDING":
         outcome.say({ fact: "couldn’t change playback.", reason: failure.message || undefined });
         return;
       default: outcome.fail(failure, "couldn’t change playback.");
@@ -1413,6 +1450,10 @@ export function GlobalPlayerProvider({
     loads.current = terminalWrite.catch(() => {});
     await terminalWrite;
   } };
+
+  // A failed queue read heals as any failed read does: on reconnect and on focus.
+  const unreadIndex = queueView.index.kind === "Failed";
+  useEffect(() => unreadIndex ? subscribeRepair(() => void navigation.current?.retryQueueIndex()) : undefined, [unreadIndex]);
 
   // Unread, reset and undo of the loaded episode: its unsaved sample settles first, the server's
   // position after.

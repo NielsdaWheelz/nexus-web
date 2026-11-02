@@ -4,11 +4,14 @@
  * edits; check resends it, including terminal consumption, without rebasing.
  * Knowledge begins with a successful read or acknowledged save; failed reads
  * retain the last confirmed state, and the first one's error stands as `unread`
- * until a read lands. A refused write throws its refusal and keeps nothing.
- * `unanswered` counts the retained request's sends that had no answer.
+ * until a read lands. A write the queue refused throws its refusal and keeps nothing; one the
+ * transport turned away (sign-in, a stale build, load) throws the transport's error, and keeps
+ * its request only if it is a replay, whose first send may have landed. `unanswered` counts the
+ * retained request's sends that had no answer.
  * Only the account's Web Lock holder may call this owner.
  */
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, requestWithDeadline, type ApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { readSharedValue } from "@/lib/api/serverState";
@@ -73,21 +76,27 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       publish();
       return saved;
     } catch (cause) {
-      if (isUnauthenticatedApiError(cause)) {
-        handleUnauthenticatedApiError(cause);
-        throw cause;
-      }
+      handleUnauthenticatedApiError(cause);
+      const stayUnanswered = () => {
+        unanswered += 1;
+        phase = "Uncertain";
+        publish();
+      };
       if (isSameSystemApiDefect(cause) || (!isApiError(cause) && !isAbortError(cause))) {
-        unanswered += 1;
-        phase = "Uncertain";
-        publish();
+        stayUnanswered();
         throw cause;
       }
-      if (!isRefusal(cause)) {
-        unanswered += 1;
-        phase = "Uncertain";
-        publish();
+      if (!isApiError(cause) || cause.status === 0 || cause.status >= 500) {
+        stayUnanswered();
         throw new QueueCommandError("Unsettled");
+      }
+      // Sign-in, a stale build or load turned this send away unread. A first send left nothing; a
+      // replay's first send may still have landed, so it stays unanswered. Either way the
+      // transport says why, with its verb.
+      const answered = transportOf(cause) === "Refused";
+      if (!answered && unanswered > 0) {
+        stayUnanswered();
+        throw cause;
       }
       pending = null;
       frozenBody = null;
@@ -95,6 +104,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       unanswered = 0;
       phase = "Ready";
       publish();
+      if (!answered) throw cause;
       if (cause.code === "E_LIMIT") throw new QueueCommandError("TooMany");
       if (cause.status !== 409) throw new QueueCommandError("Refused");
       // Refresh reports the other writer's result. The refused command is never reapplied.

@@ -31,6 +31,7 @@ import {
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
 import { announceListeningRevision, listeningSourceReconnected, setObservationTransport } from "@/lib/consumption/listening";
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest } from "@/lib/player/queue";
 import {
   expectArray, expectBoolean, expectCanonicalRfcUuid, expectExactRecord, expectFiniteNumber, expectNonnegativeInteger,
@@ -432,12 +433,16 @@ export function createNativeEngine(
     return state.queue;
   };
   /** A sent change the service did not answer may have landed: it is unanswered until a read
-   * reconciles it, tried once here. */
-  const unsettle = async (error: Error) => {
+   * reconciles it, tried once here. The service runs queue frames in order under one lock, so the
+   * read's snapshot follows the change, and `landed` tells from it whether the change is in force:
+   * then the change resolves with that header, else it is refused. A change that moves nothing
+   * reads as refused; the reconcile's pause has retired its playback anyway. */
+  const settle = async (error: Error, landed: (header: QueueHeader) => boolean): Promise<QueueHeader> => {
     unanswered = 1;
-    const refusal = queueError(error, false);
-    await readQueue().catch(() => undefined);
-    return refusal;
+    try { await readQueue(); } catch { throw queueError(error, false); }
+    const reconciled = state.queue;
+    if (reconciled !== null && landed(reconciled)) return reconciled;
+    throw new QueueCommandError("Refused");
   };
   const queue: NativeQueueOwner = {
     known: () => snapshotId > 0,
@@ -476,7 +481,7 @@ export function createNativeEngine(
         committed = true;
         return header(await call("queue_commit", { queue_id: next.queue_id }, { timeoutMs: LOAD_TIMEOUT_MS }));
       } catch (error) {
-        if (committed && nativeUnavailable(error)) throw await unsettle(error);
+        if (committed && nativeUnavailable(error)) return await settle(error, reconciled => reconciled.queue_id === next.queue_id);
         await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
         throw queueError(error, false);
       }
@@ -484,7 +489,11 @@ export function createNativeEngine(
     async command(input: QueueRequest) {
       if (unanswered > 0) throw new QueueCommandError("Unsettled");
       try { return header(await call("queue_command", { ...input }, { timeoutMs: LOAD_TIMEOUT_MS })); }
-      catch (error) { throw nativeUnavailable(error) ? await unsettle(error) : queueError(error, false); }
+      catch (error) {
+        if (!nativeUnavailable(error)) throw queueError(error, false);
+        return await settle(error, reconciled => reconciled.queue_id !== input.queue_id || reconciled.revision !== input.expected_revision ||
+          input.command.kind === "stop" && state.source === null);
+      }
     },
   };
   const owner = {
@@ -541,8 +550,9 @@ export function createNativeEngine(
       try {
         await call("fence", { key: mediaId, expected_load_id: state.playbackSubject }, { timeoutMs: LOAD_TIMEOUT_MS });
       } catch (error) {
-        if (!nativeUnavailable(error)) throw error;
-        throw new ApiError(0, "E_NATIVE_PLAYER_NOT_RESPONDING", error.message === "NotConnected" ? "the player isn’t connected." : "the player isn’t responding.");
+        // An unanswered fence leaves the place unsettled: progress's own refusal, never a transport's.
+        if (nativeUnavailable(error)) throw new ProgressPreparationError();
+        throw error;
       }
     },
     async reconcileProgressFence(mediaId) {

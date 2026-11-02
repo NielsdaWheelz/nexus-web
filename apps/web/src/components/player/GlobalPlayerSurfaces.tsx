@@ -15,7 +15,7 @@ import {
 import * as Icon from "lucide-react";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import type { Line, Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
@@ -45,7 +45,7 @@ import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlayb
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { remoteAttemptAllowed, subscribeAdmission } from "@/lib/native/admission";
+import { remoteAdmission, remoteAttemptAllowed, subscribeAdmission } from "@/lib/native/admission";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { getPodcastSettings, type PodcastSettings } from "@/lib/podcasts/api";
 import { usePodcastSettingsSave } from "@/lib/podcasts/usePodcastSettingsSave";
@@ -674,13 +674,15 @@ function MiniProgress() {
 
 /** The player is never an anchor: its lines are slips at the workspace, raised once per onset,
  * and its unresolved writes are held lines while they stand. A refused place is held only where
- * admission can send its retry; otherwise the account owns the line. */
+ * admission can send its retry; otherwise the account owns the line. An unanswered queue change
+ * stays held whatever admission does; under a stale build its replay offers reload alone. */
 function PlayerOutcomes() {
   const { state, queue, playbackSubject } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
   const { say } = useOutcome();
   const androidShell = useAndroidShell();
-  const admitted = useSyncExternalStore(subscribeAdmission, remoteAttemptAllowed, remoteAttemptAllowed);
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const admitted = remoteAttemptAllowed();
   const loaded = state.kind === "Loaded" ? state : null;
   const title = loaded?.source.descriptor.title ?? null;
   const episode = loaded?.source.kind === "Episode" ? loaded.source.descriptor.media_id : null;
@@ -704,7 +706,8 @@ function PlayerOutcomes() {
       line={{ fact: `couldn’t save your place in “${title}”.` }} verbs={[{ label: "retry", commandKey: "retry place", run: commands.retry }]} /> : null}
     {queue.unanswered > 0 ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} attempt={queue.unanswered}
       line={{ fact: "not sure the queue saved.", reason: "it may have gone through." }}
-      verbs={[{ label: androidShell ? "check" : "retry", commandKey: androidShell ? "check queue" : "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" }]} /> : null}
+      verbs={!androidShell && admission === "UpdateRequired" ? transportVerbs("Update", { signIn: null }) ?? undefined
+        : [{ label: androidShell ? "check" : "retry", commandKey: androidShell ? "check queue" : "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" }]} /> : null}
   </>;
 }
 

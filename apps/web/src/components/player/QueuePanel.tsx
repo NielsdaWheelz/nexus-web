@@ -19,7 +19,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useLocalContent } from "@/lib/offline/localContent";
-import { usePlayerCommands, usePlayerSession, type PlayerQueue, type PlayerState } from "@/lib/player/playerRuntime";
+import { queueBlock, usePlayerCommands, usePlayerSession, type QueueBlock } from "@/lib/player/playerRuntime";
 import { QueueCommandError, type QueueCommand, type QueueEntry, type QueueManifest, type QueueRequest } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { useQueueWindow } from "./useQueueWindow";
@@ -35,19 +35,6 @@ type FocusRecovery = {
 
 type Send = (request: QueueRequest, focus: readonly string[] | null) => Promise<boolean>;
 
-/** Why the rows' controls wait, or null when they act. A wait names no machinery. */
-function queueBlocked(queue: PlayerQueue, state: PlayerState, current: boolean): string | null {
-  if (state.kind === "Unavailable") return state.reason === "NotResponding" ? "the player isn’t responding." : "audio needs the current nexus apk.";
-  switch (queue.phase) {
-    case "Uncertain": return "the last queue change isn’t confirmed.";
-    case "Saving": case "Preparing": return "saving the queue";
-    case "Unavailable": return "this browser can’t run the player.";
-    case "Ready": break;
-  }
-  if (queue.index.kind === "Failed") return "couldn’t load the queue.";
-  return queue.known && queue.index.kind === "Ready" && current ? null : "loading the queue";
-}
-
 const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, current, initialTarget, playing, failed, blocked, summary, title, send, rowElement, menuChanged }: {
   readonly entry: QueueEntry;
   readonly index: number;
@@ -57,7 +44,7 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   readonly initialTarget: boolean;
   readonly playing: boolean;
   readonly failed: boolean;
-  readonly blocked: string | null;
+  readonly blocked: QueueBlock | null;
   readonly summary: MediaSummary | null;
   readonly title: string;
   readonly send: Send;
@@ -71,7 +58,7 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
     void dispatch({ kind: "move-before", entry_id: entry.id, before_entry_id: beforeEntryId }, [entry.id]);
   };
   const action = (id: string, label: string, icon: ReactElement, onSelect: () => void): ActionDescriptor => ({
-    kind: "command", id, label, icon, disabled: blocked !== null, disabledReason: blocked ?? undefined, onSelect,
+    kind: "command", id, label, icon, disabled: blocked !== null, disabledReason: blocked?.reason, onSelect,
   });
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
@@ -99,10 +86,10 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
         onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null); }} />
       {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus} label={`more actions for “${title}”`}
         triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
-        triggerDisabled={blocked !== null} triggerDisabledReason={blocked ?? undefined}
+        triggerDisabled={blocked !== null} triggerDisabledReason={blocked?.reason}
         onOpenChange={open => menuChanged(entry.id, open)}
         renderTrigger={props => <Button {...props} iconOnly icon={<Ellipsis />} />}
-        source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${blocked}`, title: "queue actions",
+        source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${blocked?.reason}`, title: "queue actions",
           content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
     </>} />;
 });
@@ -119,7 +106,7 @@ export default function QueuePanel({ scrollport, runtime, onOpened, revealOnOpen
   liveCommands.current = commands;
   const header = queue.header;
   const manifest = queue.index.kind === "Ready" ? queue.index.snapshot : queue.index.previous;
-  const blocked = queueBlocked(queue, state, manifest?.queue_id === header?.queue_id && manifest?.revision === header?.revision);
+  const blocked = queueBlock(queue, state, "Rows");
   const ready = blocked === null;
   const authority = useRef({ ready, header });
   useLayoutEffect(() => {
