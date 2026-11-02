@@ -7,8 +7,8 @@
 // failed commit keeps its input visible and frozen until its retry lands the same
 // bytes. Once saved, the note keeps editing in place through its bound editor.
 // A save that didn't land puts the draft's words at risk until one does, while any words
-// or a frozen commit remain; a link whose commit may still land holds until it does or
-// its retry settles it.
+// or a frozen commit remain; a link whose commit may still land holds, and holds back the
+// save, until it lands or its retry settles it.
 import {useEffect, useRef, useState} from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -125,7 +125,7 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
   };
   const save = () => {
     const submitted = draft.read();
-    if (writing === null || submitted.state !== "editing") return;
+    if (writing === null || submitted.state !== "editing" || submitted.linking !== null) return;
     const frozen = submitted.unsaved?.retry ?? null;
     if (frozen) { void commit({ kind: "save" }, () => frozen.attempt(), frozen); return; }
     if (submitted.searching || !bodyHasContent(submitted.body)) return;
@@ -193,7 +193,7 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
     </>}
     {value.unsaved && (value.unsaved.retry !== null || bodyHasContent(value.body)) ? <Hold id={`ResourceComposer.unsaved:${value.noteRef}`} attempt={value.unsaved.attempt} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
       { label: "retry", commandKey: `ResourceComposer.save:${value.noteRef}`, run: save, busy: saving,
-        disabledReason: value.unsaved.retry === null && value.searching ? "finish the link first" : undefined },
+        disabledReason: value.linking !== null ? "retry the link first" : value.unsaved.retry === null && value.searching ? "finish the link first" : undefined },
       { label: "copy text", commandKey: `ResourceComposer.copy:${value.noteRef}`, run: copyText, copied: copied.occurrence ?? undefined },
     ]} /> : null}
     {value.linking ? <Hold id={`ResourceComposer.link:${value.noteRef}`} attempt={value.linking.attempt}

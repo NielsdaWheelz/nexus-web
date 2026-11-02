@@ -2,6 +2,8 @@
 
 // Target admission owns ten-row pages. Results are selectable only for the exact
 // settled query; active identity belongs to the input, never to presentation.
+// `loading` and `error` speak for the remote search only while no snapshot answers its
+// query, so a refresh over shown or empty matches paints nothing.
 import { useOptionalNoteEditorHost } from "@/lib/notes/editorHost";
 import { useAuthoredPages } from "@/lib/notes/hooks";
 import { authoredItem } from "@/lib/notes/presentation";
@@ -70,14 +72,14 @@ export function useLinkTargets(
     current,
     querySettled: raw === settled,
     minimum: query.length < 2,
-    loading: admitted && (raw !== settled || local.data === null && local.error === null || list.running !== null),
+    loading: admitted && (raw !== settled || local.data === null && local.error === null || list.requestedKey !== null && list.status === "loading"),
     localError: local.error,
     localOccurrence: local.occurrence,
     localPending: local.pending,
     retryLocal: local.retry,
     localComplete: local.data?.next_cursor === null,
     moreLocal: local.more,
-    error: admitted && raw === settled && list.failure?.op !== "More" ? (list.failure?.error ?? null) : null,
+    error: admitted && raw === settled && list.status === "failed" ? list.failure?.error ?? null : null,
     list,
     retry: list.retry,
   };

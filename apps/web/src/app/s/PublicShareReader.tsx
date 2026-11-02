@@ -5,7 +5,7 @@
 // highlight. Another `#share=` hash opens in place; any other hash change (an
 // in-document link) leaves the reading alone. What a read finds stands where the
 // reading would; slips stand at the page's root, over the viewport. Focus inside
-// the gate when the reading replaces it moves to the reading.
+// the share's main, gate or reading, moves to whichever main replaces it.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
@@ -76,14 +76,15 @@ export default function PublicShareReader() {
   }, []);
   const reread = () => setAttempt(value => value + 1);
   // A ref's cleanup runs before react removes its element, so focus is still where it was.
-  const gateHeldFocus = useRef(false);
-  const gate = useCallback((element: HTMLElement | null) => {
+  // Each kind has its own main, so every change of kind replaces it.
+  const mainHeldFocus = useRef(false);
+  const main = useCallback((element: HTMLElement | null) => {
     if (element === null) return;
-    return () => { gateHeldFocus.current = element.contains(document.activeElement); };
+    return () => { mainHeldFocus.current = element.contains(document.activeElement); };
   }, []);
   useLayoutEffect(() => {
-    if (state.kind !== "Ready" || !gateHeldFocus.current) return;
-    gateHeldFocus.current = false;
+    if (!mainHeldFocus.current) return;
+    mainHeldFocus.current = false;
     shell.current?.querySelector("main")?.focus({ preventScroll: true });
   }, [state.kind]);
 
@@ -137,10 +138,12 @@ export default function PublicShareReader() {
           token={state.token}
           share={state.share}
           onContentChanged={contentChanged}
+          mainRef={main}
         />
       ) : (
         <main
-          ref={gate}
+          key={state.kind}
+          ref={main}
           className={`${styles.header} ${styles.gate}`}
           style={readerSurfaceStyle(PUBLIC_PROFILE)}
           tabIndex={-1}
@@ -189,10 +192,12 @@ function SharedDocument({
   token,
   share,
   onContentChanged,
+  mainRef,
 }: {
   readonly token: string;
   readonly share: Share;
   readonly onContentChanged: (token: string) => void;
+  readonly mainRef: (element: HTMLElement | null) => (() => void) | undefined;
 }) {
   const highlight = share.highlight;
   const changed = useCallback(() => onContentChanged(token), [onContentChanged, token]);
@@ -293,6 +298,7 @@ function SharedDocument({
         </aside>
       ) : null}
       <main
+        ref={mainRef}
         className={epub ? `${styles.reader} ${styles.epub}` : styles.reader}
         tabIndex={-1}
       >

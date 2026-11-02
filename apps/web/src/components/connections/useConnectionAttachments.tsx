@@ -6,8 +6,9 @@
 // commit. A failed local commit retries its frozen command, never a fresh link.
 // What a stopped file still owes holds the task under the loss guard, with its one
 // verb, and so does an upload whose answer was lost; a file the server refused, or
-// whose guard read failed before anything was sent, ends the task, and its slip
-// carries the retry.
+// whose guard read failed before anything was sent, ends the task and any doubt it held,
+// and its slip carries the retry. A link step that fails other than in local storage is
+// a defect.
 import { useRef } from "react";
 import { Paperclip } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -20,7 +21,7 @@ import { captureErrorFeedback } from "@/lib/imports/copy";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { LocalCommitError } from "@/lib/notes/runtime";
+import { LocalCommitError, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { createLink } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -32,7 +33,7 @@ import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store
 type Owed =
   /** The link's local commit failed and may still land; `retryLink` replays it. */
   | "LinkUnsure"
-  /** Saved, then its link threw; linking again is safe. */
+  /** Saved, then local storage refused its link; linking again is safe. */
   | "Unlinked"
   /** The upload's acceptance is unknown; sending the same attempt again converges. */
   | "AddUnsure";
@@ -88,6 +89,7 @@ export function useConnectionAttachments(selfRef: string) {
   function endWithRefusal(task: Task, error: unknown) {
     const names = task.files.slice(task.index).map(({ file }) => file.name);
     const upload = task.files[task.index]!.upload;
+    task.owed = null;
     owner.set({ task: null, defect: null });
     const resume = { label: "retry", commandKey: `ConnectionAttachments.resume:${task.id}`, run: () => {
       if (owner.read().task !== null || writing === null) return;
@@ -168,7 +170,8 @@ export function useConnectionAttachments(selfRef: string) {
       if (task.retryLink !== null) { owe(task, "LinkUnsure"); return; }
       if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
       if (handleUnauthenticatedApiError(error)) return;
-      if (task.mediaId !== null) owe(task, "Unlinked");
+      if (task.mediaId !== null && isAuthoredStorageFailure(error)) owe(task, "Unlinked");
+      else if (task.mediaId !== null) owner.set(value => ({ ...value, defect: { error } }));
       // The guard read precedes every send, so a lost answer without a guard sent nothing.
       else if (error instanceof UploadSessionError ? error.outcome.kind === "Unresolved"
         : outcomeUnknown(error) && task.files[task.index]!.upload.guard !== null) owe(task, "AddUnsure");

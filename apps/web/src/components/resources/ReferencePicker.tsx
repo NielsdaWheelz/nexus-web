@@ -17,7 +17,7 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
   const { state, search, bindings } = input;
   if (!state) return null;
   return <div className={cx(collection.surface, styles.picker)}>
-    {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} />
+    {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} speak />
       : search.items.length ? null
       : search.loading ? <Ruling />
       : !search.error && !search.localError ? <Fact line={{ fact: "no matches." }} /> : null}
@@ -34,7 +34,7 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
     {search.error ? <Failed error={search.error} noun="library matches" retry={{ run: search.retry, busy: search.list.running !== null }} /> : null}
     <AuthoredReadFailure error={search.localError} occurrence={search.localOccurrence} pending={search.localPending} retry={search.retryLocal} title="couldn’t search notes on this device."/>
     {!search.localComplete ? <Button aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
-    {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }}
+    {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
       verbs={[{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }]} /> : null}
   </div>;
 }
