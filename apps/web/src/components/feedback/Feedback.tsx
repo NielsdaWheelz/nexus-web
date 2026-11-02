@@ -221,10 +221,11 @@ export function useOutcome(): Outcome {
 export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
   const stage = useStage();
   const address = useAddress();
+  const frame = useContext(OverlayContext);
   const [held, setHeld] = useState({ id, key: {} });
   if (held.id !== id) setHeld({ id, key: {} });
   const { key } = held;
-  useLayoutEffect(() => { stage.hold({ key, address, risk, line, verbs: verbs ?? null, attempt }); });
+  useLayoutEffect(() => { stage.hold({ key, address, frame, risk, line, verbs: verbs ?? null, attempt }); });
   useLayoutEffect(() => () => stage.dismiss(key), [stage, key]);
   return null;
 }

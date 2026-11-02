@@ -5,7 +5,9 @@
  *
  * Invariants: appearance never takes focus. A clock runs only while its row is displayed, unheld,
  * not typing and the document visible. Only Plain rows expire; a Held row tucks itself; Held and
- * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work. */
+ * Risk leave only when their owner does. Dismissal changes presentation, never the owner's work.
+ * Rows that have stood keep their places: only a row's first showing replaces, and only the plain
+ * row directly beneath it, once that row has stood there. Rows that land together stack. */
 import { createContext, useContext, useLayoutEffect } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
@@ -162,27 +164,29 @@ export function createStage() {
     modal = topModal();
     const world: World = { modal, ...workspace, panes: new Set(rooms.flatMap(({ anchor }) => anchor.kind === "Pane" ? [anchor.paneId] : [])) };
     const arrived = new Set<Slip>();
+    const stood = new Set<Slip>();
     for (const slip of slips) {
       const anchor = anchorOf(slip.row, world);
       const room = anchor === null ? null : roomOf(anchor);
       const yields = !slip.shown && typing !== null && slip.row.weight !== "Risk" && performance.now() - slip.raised < TYPING_WAIT_MS;
       const next = yields ? null : room;
-      if (next !== null && next !== slip.room) { arrived.add(slip); slip.replaced = null; }
+      if (next !== null && !slip.shown) arrived.add(slip);
+      if (next !== null && next === slip.room) stood.add(slip); else slip.replaced = null;
       slip.room = next;
       slip.shown ||= next !== null;
     }
     // An exit needs a frame to play in; without one it ends here, or the row would outlive it.
     for (const slip of slips.filter(slip => slip.leaving !== null && slip.room === null)) conclude(slip);
-    // Raise order: an arrival takes the place of the plain row before it, unless a hold keeps it.
-    const standing = new Map<Room, Slip>();
+    // Raise order, so `under` is the row directly beneath in its frame. A tucked row is in no frame.
+    const beneath = new Map<Room, Slip>();
     for (const slip of slips) {
-      if (slip.room === null || slip.row.weight !== "Plain") continue;
-      const under = standing.get(slip.room);
-      if (under !== undefined && arrived.has(slip) && slip.room.holds.size === 0) {
+      if (slip.room === null || slip.row.tucked) continue;
+      const under = beneath.get(slip.room);
+      if (under?.row.weight === "Plain" && stood.has(under) && slip.row.weight === "Plain" && arrived.has(slip) && slip.room.holds.size === 0) {
         remove(under);
         slip.replaced = under.row.line;
       }
-      standing.set(slip.room, slip);
+      beneath.set(slip.room, slip);
     }
     for (const slip of slips) {
       const clock = slip.clock;
@@ -237,8 +241,8 @@ export function createStage() {
     typing = setTimeout(pause, TYPING_PAUSE_MS);
     if (began || slips.some(slip => !slip.shown)) settle();
   };
-  const raise = (fields: Pick<Row, "key" | "address" | "weight" | "line" | "verbs" | "attempt">) => {
-    const row: Row = { ...fields, modal: topModal(), tucked: false };
+  const raise = (fields: Omit<Row, "tucked">) => {
+    const row: Row = { ...fields, tucked: false };
     const slip: Slip = { id: ++nextSlip, row, raised: performance.now(), room: null, shown: false, leaving: null, clock: null, replaced: null, spoken: null };
     renewClock(slip);
     slips = [...slips, slip];
@@ -256,7 +260,7 @@ export function createStage() {
       const raisedIn = topModal();
       const repeat = slips.find(({ row }) => row.weight === "Plain" && row.modal === raisedIn && sameAddress(row.address, address)
         && row.line.fact === line.fact && row.line.reason === line.reason);
-      const slip = repeat ?? raise({ key: {}, address, weight: "Plain", line, verbs, attempt: 0 });
+      const slip = repeat ?? raise({ key: {}, address, modal: raisedIn, weight: "Plain", line, verbs, attempt: 0 });
       if (repeat) {
         repeat.row = { ...repeat.row, verbs, attempt: repeat.row.attempt + 1 };
         repeat.leaving = null;
@@ -266,15 +270,20 @@ export function createStage() {
       settle();
       return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
     },
-    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. */
-    hold({ key, address, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { risk: boolean }): void {
+    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. `frame`
+     * is the modal the owner renders inside, which may not yet stand on the stack when both mount
+     * in one commit; an owner above its frame has none, and takes the topmost. Turning to risk
+     * presents and speaks whatever the row had settled into. */
+    hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { frame: Layer | null; risk: boolean }): void {
       const weight = risk ? "Risk" : "Held";
-      const slip = slipOf(key) ?? raise({ key, address, weight, line, verbs, attempt });
+      const slip = slipOf(key) ?? raise({ key, address, modal: frame ?? topModal(), weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
-      slip.row = { ...slip.row, address, weight, line, verbs, attempt };
+      const atRisk = risk && slip.row.weight !== "Risk";
+      slip.row = { ...slip.row, address, weight, line, verbs, attempt, tucked: slip.row.tucked && !atRisk };
       if (renewed) renewClock(slip);
+      if (atRisk) slip.spoken = null;
       // Effect replay dismisses a mounted owner's key and holds it again; the owner stands.
-      if (slip.leaving === "Dismissed") slip.leaving = null;
+      if (slip.leaving === "Dismissed" || atRisk) slip.leaving = null;
       settle();
     },
     /** A close, or a mounted owner's resolution. */
