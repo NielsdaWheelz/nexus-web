@@ -28,8 +28,8 @@ import Companion, {
   companionExpanded,
   createCompanionController,
   type CompanionController,
-  type CompanionPresentation,
 } from "@/components/workspace/Companion";
+import type { CompanionPresentation } from "@/components/workspace/companionPresentation";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { installedApp } from "@/lib/native/admission";

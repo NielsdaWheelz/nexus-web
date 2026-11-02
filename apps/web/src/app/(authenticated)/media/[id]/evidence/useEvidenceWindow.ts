@@ -64,12 +64,16 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
     if (!list || !scroll || !outside || aligned) return;
     const box = scroll.getBoundingClientRect(), bounds = outside.getBoundingClientRect();
     const top = Math.max(box.top, bounds.top), bottom = Math.min(box.bottom, bounds.bottom);
-    const row = [...list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].find(node => {
+    const seen = [...list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].filter(node => {
       const rect = node.getBoundingClientRect();
       return rect.bottom > top && rect.top < bottom;
     });
+    // A clipped row is the worst reference: rows above it, and its own removal, move what the reader sees.
+    const row = seen.find(node => node.getBoundingClientRect().top >= top) ?? seen[0];
     anchor.current = row?.dataset.group ? {key: row.dataset.group, offset: row.getBoundingClientRect().top - box.top} : null;
   }, [aligned, outer, port, root]);
+  /** Ends an external hold: the anchor is the row as it stands now, with no render needed. */
+  const release = useCallback(() => {previousDemand.current = null; capture();}, [capture]);
 
   // Rebind only admitted boxes. A resize may change a gap before the current row;
   // correct the same identity/offset after React commits the new geometry.
@@ -91,7 +95,8 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
       const saved = correction.current;
       const row = list.querySelector<HTMLElement>(`[data-window-key="${CSS.escape(saved.key)}"]`);
       if (row) {
-        scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
+        // A port at its origin stays there: rows landing above it are the list's start.
+        if (scroll.scrollTop > 0) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - saved.offset;
         correction.current = null;
       }
     }
@@ -141,5 +146,5 @@ export function useEvidenceWindow({scope, slots, aligned, placements, demand, fo
     document.addEventListener("selectionchange", changed);
     return () => document.removeEventListener("selectionchange", changed);
   }, [root]);
-  return {rendered, tail: gap, held, interact, pin};
+  return {rendered, tail: gap, held, interact, pin, release};
 }

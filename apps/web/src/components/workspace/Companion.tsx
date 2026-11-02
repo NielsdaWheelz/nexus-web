@@ -29,6 +29,7 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { TabList } from "@/components/ui/Tabs";
 import compact from "@/components/ui/CompactChrome.module.css";
+import { CompanionPresentationContext, type CompanionPresentation } from "@/components/workspace/companionPresentation";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import type { FindController } from "@/lib/find/useFind";
 import {
@@ -62,7 +63,6 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
-export type CompanionPresentation = "Column" | "Sheet" | "FullScreen";
 const ICONS: Record<TabId, LucideIcon> = {
   "resource-contents": ListTree,
   "resource-members": Users,
@@ -634,12 +634,14 @@ export default function Companion(props: {
         </MobileFullScreenTask>
       ) : null}
       {host && open && activeId !== null ? createPortal(
-        <OverlayContext value={portalParent}>
-          <div className={styles.contents} onKeyDown={columnKeyDown}>
-            {presentation === "Column" ? header(close) : null}
-            {panels}
-          </div>
-        </OverlayContext>,
+        <CompanionPresentationContext value={presentation}>
+          <OverlayContext value={portalParent}>
+            <div className={styles.contents} onKeyDown={columnKeyDown}>
+              {presentation === "Column" ? header(close) : null}
+              {panels}
+            </div>
+          </OverlayContext>
+        </CompanionPresentationContext>,
         host,
       ) : null}
     </>

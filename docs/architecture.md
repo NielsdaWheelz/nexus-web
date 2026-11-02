@@ -1132,8 +1132,8 @@ internal **Document Map** semantics:
 connections is a target-centered aggregate of highlights, source references,
 generated citations, links, and librarian links, separated into passage and
   whole-document scopes with typed one-hop associations. the evidence pane
-  follows the reading position and owns complete note content; *all items*
-  retains the full inventory. the narrow desktop rail shows aggregate marker
+  owns complete note content; its *margin* places anchored rows beside the text
+  and *all items* retains the full inventory. the narrow desktop rail shows aggregate marker
   positions and navigates only on explicit activation. the shared inspector
   action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile

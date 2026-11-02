@@ -228,12 +228,14 @@ override real saved progress.
   moves a transcript inspects without playback. the reader's chapter follows reading;
   a quiet segment marker follows audio without moving text. an explicit position
   action returns to the current audio passage once, retaining a way back.
-- **evidence has an explicit view choice**: following aligns items beside their
-  passages; all items uses normal-flow grouping. both choices remain visible on
-  desktop. sidebar scrolling inspects overflow without changing the choice;
-  moving the text resumes alignment, while a focused control stays pinned.
-  opening an exact item deliberately selects all items once, including on
-  mobile, so its destination is reachable without moving the reading position.
+- **evidence has an explicit view choice**: the margin aligns anchored items beside
+  their passages; all items is one flat normal-flow list. a margin needs a visible
+  text, so the choice exists only in a desktop column over a source that is not
+  absent. sidebar scrolling inspects overflow without changing the choice; moving
+  the text resumes alignment, while a focused control stays pinned. an exact item whose
+  passage is on screen stays in the margin; any other margin arrival deliberately
+  selects all items once, so its destination is reachable without moving the
+  reading position.
 - **pdf urls refresh on failure only**: pdf.js fetches the remaining ranges
   after open, so proactive refresh cannot help a loaded document; a failed fetch
   reopens with a fresh url at the placement.

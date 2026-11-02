@@ -694,25 +694,26 @@ mobile retains that connections sheet; its own layer may receive arrival focus.
 
 `MediaPaneBody` owns one transient evidence request. its identity, current visit
 and existing arrival signal fence preparation, sidebar revelation and completion.
-the pane commits all-items/root/type preparation before passing the request to
-a row. only the requested type is enabled; unrelated filters survive. delivery,
-unavailability, cancellation and replacement retire the request at its owner;
-map refresh and inspector remount cannot replay a completed request. row revelation
-scrolls only the sidebar; arrival focus keeps the existing permission fence.
+the pane commits view/root/type preparation before passing the request to a row.
+a margin arrival whose measured passage intersects the reader bounds stays in the
+margin; any other margin arrival selects all items once. without a view radio an
+arrival leaves the saved preference alone. only the requested type is enabled;
+unrelated filters survive. delivery, unavailability, cancellation and replacement
+retire the request at its owner; map refresh and inspector remount cannot replay a
+completed request. row revelation scrolls only the sidebar; arrival focus keeps
+the existing permission fence.
 
 filter identity uses the document-map count keys: `highlights`, `citations`,
 `links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
 `highlights`, `citations`, `links`, `librarian links`; controls read each count
 directly by its key. hidden filters, exact-fact reveals and marker classification
 share those keys; presentation labels never determine membership. each filter is
-a shared pressed `Button` named by its label alone: a decorative check holds a
-reserved slot whether or not it shows, and its exact count, zero included, shows
-as an aria-hidden numeral and is described separately (`1 item`, `{n} items`).
-zero never disables a filter. while inline reference linking holds a reference,
-both the view and the filters disable natively and one visible reason, "finish
-linking or return to prose first", describes each of them.
+a shared native `ChoiceField` checkbox named by its label alone. its count
+describes the current view; an exact count, zero included, shows as an aria-hidden
+numeral and is described separately (`1 item`, `{n} items`). zero never disables
+a filter.
 
-reader connections view is remembered in the pane-visit memento. filter and follow
+reader connections view is remembered in the pane-visit memento. filter and view
 preferences survive independently of publication. active row, normal-flow anchor
 and source-text disclosure belong to the body/generation/part publication key;
 source-text keys also identify source media and occurrence. native scroll writes
@@ -720,22 +721,28 @@ visit data without requiring a react render. initial layout, including failed
 detail reads, restores the same visible anchor until user input or an explicit
 arrival wins. publication replacement retires browsing geometry; a missing
 anchor starts the list naturally. writing and outline folds keep their owners.
-on desktop a segmented
-`RadioGroup` with a hidden legend shows `follow` and `all`, named natively
-`follow reading position` and `all items`, with no routine help; mobile derives a normal-flow list without
-changing that preference on scroll or layout changes. exact item navigation
-selects all items once on either layout. local sidebar scrolling preserves its
-offset through unchanged source placement, refresh and resize. entering effective
-alignment or changing the source placement realigns; focused controls remain
-pinned, including normal-flow document items whose preceding alignment changes
-height. outer sidebar scrolling is measured against its offset at the last
-source alignment; realignment adopts the current outer viewport without snapping
-the header back. the unpinned anchor stays inside the list when its header makes
-exact passage alignment inaccessible; existing displacement feedback reports it.
-radio selection of all items preserves a visible occurrence within native
-scroll bounds. both layouts retain the same keyed rows and their note drafts.
+a margin needs a visible text, so the view radio exists only in a column companion
+over a source that is not absent. there a segmented `RadioGroup` with a hidden
+legend shows `margin` and `all`, named natively `margin beside the text` and
+`all items`, with no routine help. mobile, the desktop sheet, unreadable media and
+failed documents derive a flat normal-flow list without changing that preference
+on scroll or layout changes. `Tab` is native in the margin, where off-screen
+anchored rows are unreachable by it; all items walks the logical order through
+`requestFocus`. local sidebar scrolling preserves its offset through unchanged
+source placement, refresh and resize. entering effective alignment or changing
+the source placement realigns; focused controls remain pinned. outer sidebar
+scrolling is measured against its offset at the last source alignment; realignment
+adopts the current outer viewport without snapping the header back. the unpinned
+anchor stays inside the list when its header makes exact passage alignment
+inaccessible; existing displacement feedback reports it. radio selection of all
+items preserves a visible occurrence within native scroll bounds. a held row
+outside the current view stays mounted, keyed and hidden with its note draft.
 empty feedback distinguishes a complete empty inventory from type-filtered or
-unavailable content; zero aligned placements alone is not an empty inventory.
+unavailable content and never claims absence while the document or a source is
+loading. a margin with nothing placed says `nothing in the margin`, or
+`no available connections in the margin` when incomplete, and offers
+`show all connections`, which lands in all items with focus on the list. a
+stretch with nothing nearby stays blank.
 
 | file | owns |
 | --- | --- |
@@ -746,7 +753,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, ephemeral input, online write/retry ownership and reselection sessions |
 | `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
-| `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
+| `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; all items uses normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
