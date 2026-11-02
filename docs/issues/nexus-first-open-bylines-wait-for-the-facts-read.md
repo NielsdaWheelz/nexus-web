@@ -1,6 +1,6 @@
 # the first open after load paints tab rows without bylines for ~200ms
 
-status: open · origin: 2026-11-02 palette s3 lab · area: web / workspace presentations (s2)
+status: repaired, browser verification pending · origin: 2026-11-02 palette s3 lab · area: web / workspace presentations (s2)
 
 criterion 10 wants every remote pane's byline in the palette's first frame. on a
 fresh page the strip shows titles from the catalog (`presentations.tsx`, the
@@ -21,5 +21,10 @@ row's second line appears then (36px → 52px), moving the rows below it.
 fix: the catalog branch of `forVisit` carries the catalog's contributors as the
 byline, so a title known before the canonical read already has its facts.
 
-resolved when: palette-10's byline test is green in both engines on three
-consecutive runs.
+repair: the account presentation read now revalidates its stable key through
+`stale`, retaining facts in the existing read owner without a render-mutated ref.
+the catalog media branch supplies contributor bylines alongside its title.
+
+resolved when: palette-10's first-frame byline test and palette-07's synchronous
+latch journey pass in both engines on the repaired source; a cold device without
+catalog or canonical facts must still expose its actual loading state.

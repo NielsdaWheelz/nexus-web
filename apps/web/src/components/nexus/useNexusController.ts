@@ -174,7 +174,7 @@ export function useNexusController() {
     : null;
   const retainedLocalTargets = list.rows.flatMap(row => row.localMatch
     ? [{ref: row.localMatch.resource.ref, field: row.localMatch.matchedField === "annotation" ? "annotation" as const : null}] : []);
-  const find = useNexusFind({ open: open && !composing, query: parsed, retainedLocalTargets });
+  const find = useNexusFind({ open, composing, query: parsed, retainedLocalTargets });
   const panes = useMemo<NexusPane[]>(
     () =>
       state.panes.map((pane) => ({
@@ -292,7 +292,7 @@ export function useNexusController() {
   const latched = parsed.text && find.usage ? latchedHref(normalizeQuery(parsed.text), find.usage) : null;
   const shape = JSON.stringify([parsed.text, reordering, panesExpanded, viewport.isMobile, useText]);
   const lastShape = useRef<string | null>(null);
-  const continuationRows = useMemo(() => continuations(parsed), [parsed]);
+  const continuationRows = useMemo(() => continuations(parsed, list.rows.length), [parsed, list.rows.length]);
   useLayoutEffect(() => {
     if (!open || page.kind !== "Root") { lastShape.current = null; return; }
     const fresh = lastShape.current !== shape;
@@ -303,40 +303,44 @@ export function useNexusController() {
     const sync = { query: parsed, panes, mru, recent: recentItems, usage, latched,
       reference: find.reference, referenceFailed: find.referenceFailed, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing };
     if (fresh) { retired.current = false; clearTimeout(pendingFire.current ?? undefined); }
-    setList(previous => {
-      let next = previous;
-      if (fresh || previous === EMPTY) {
-        if (!parsed.text) {
-          const rows = blankRows(blank);
-          // Open arms where you were (law 7); a rebuild the user caused keeps what they armed.
-          const kept = previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null;
-          const armed = kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
-          next = { identity: "", rows, held: rows.length, armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
-        } else {
-          // The blank list is law 7's context, not a query: the first keystroke holds nothing from it.
-          const from = previous.identity === "" ? EMPTY : previous;
-          const latchedKey = latched === null ? null : from.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
-          next = keystroke(from, parsed.text, syncRows(sync), latchedKey, now);
-          // Lookup arms nothing until the user does (target behaviour, `/`).
-          if (parsed.intent.kind === "CommandLookup") next = { ...next, armed: null, previous: null };
-        }
-      } else if (!parsed.text) next = arrive(previous, blankRows(blank), now);
-      if (parsed.text) next = arrive(next, arrivalRows({ ...sync, preview: find.preview, local: find.local, missingLocal: find.missingLocal, shown: next.rows }), now);
-      const gone = new Set<string>();
-      for (const row of next.rows) {
-        if (row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && !panes.some(pane => row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && pane.id === row.action.target.paneId)) gone.add(row.key);
-        if (row.localMatch && find.missingLocal.has(row.localMatch.resource.ref)) gone.add(row.key);
-        if (row.recentEntry && presentations.isRecentRemoved(row.recentEntry)) gone.add(row.key);
-        if (row.action.kind === "Available" && row.action.target.kind === "ResumeCurrentPlayback" && playbackItem === null) gone.add(row.key);
+    const previous = latestList.current;
+    let next = previous;
+    if (fresh || previous === EMPTY) {
+      if (!parsed.text) {
+        const rows = blankRows(blank);
+        // Open arms where you were (law 7); a rebuild the user caused keeps what they armed.
+        const kept = previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null;
+        const armed = kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
+        next = { identity: "", rows, held: rows.length, armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
+      } else {
+        const latchedKey = latched === null ? null : previous.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
+        next = keystroke(previous, parsed.text, syncRows(sync), latchedKey, now);
+        // Lookup arms nothing until the user does (target behaviour, `/`).
+        if (parsed.intent.kind === "CommandLookup") next = { ...next, armed: null, previous: null };
       }
-      if (next.armed !== null && gone.has(next.armed)) retired.current = true;
-      return remove(next, gone);
-    });
+    } else if (!parsed.text) next = arrive(previous, blankRows(blank), now);
+    if (parsed.text) next = arrive(next, arrivalRows({ ...sync, preview: find.preview, local: find.local, missingLocal: find.missingLocal, shown: next.rows }), now);
+    const gone = new Set<string>();
+    for (const row of next.rows) {
+      if (row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && !panes.some(pane => row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && pane.id === row.action.target.paneId)) gone.add(row.key);
+      if (row.localMatch && find.missingLocal.has(row.localMatch.resource.ref)) gone.add(row.key);
+      if (row.recentEntry && presentations.isRecentRemoved(row.recentEntry)) gone.add(row.key);
+      if (row.action.kind === "Available" && row.action.target.kind === "ResumeCurrentPlayback" && playbackItem === null) gone.add(row.key);
+    }
+    if (next.armed !== null && gone.has(next.armed)) retired.current = true;
+    latestList.current = remove(next, gone);
+    setList(latestList.current);
   }, [open, page.kind, shape, parsed, panes, mru, recentItems, playbackItem, useText, reordering, panesExpanded, latched, find.usage, find.reference, find.referenceFailed, find.localReference, find.localReferenceMissing, find.preview, find.local, find.missingLocal, presentations, previousPaneId]);
   const hereKey = currentPane && !reordering ? `Pane:${currentPane.id}` : null;
   const groups = useMemo(() => nexusGroups({ blank: rootMode === "Blank", rows: list.rows, hereKey, paneCount: panes.length, continuations: continuationRows }),
     [rootMode, list.rows, hereKey, panes.length, continuationRows]);
   const allRows = rootMode === "Blank" ? list.rows : [...list.rows, ...continuationRows];
+  useLayoutEffect(() => {
+    if (rail !== null && !list.rows.some(row => row.key === rail.key)) {
+      setRail(null);
+      setAnnouncement(RETIRED);
+    }
+  }, [rail, list.rows]);
   // Zero principals, or nothing armed for a typed query, lands on `search all results`.
   const fallbackKey = rootMode === "Typed" && !retired.current && parsed.intent.kind !== "CommandLookup" ? continuationRows[0]?.key ?? null : null;
   const armed = list.armed ?? fallbackKey;
@@ -353,6 +357,9 @@ export function useNexusController() {
   }
 
   function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
+    // An explicit activation supersedes a waiting enter; selecting a different row does not.
+    clearTimeout(pendingFire.current ?? undefined);
+    pendingFire.current = null;
     if (reorder.placement !== null && action.kind === "Available" && action.target.kind === "PaneOpen") {
       if (activation.disposition.kind === "Fork") return null;
       if (reorder.placement.kind === "ChoosePane") reorder.choosePane(action.target.paneId);
@@ -697,7 +704,6 @@ export function useNexusController() {
   /** Deliberate arming (law 3): arrows, tab, pointer travel, focus on a row's control. */
   function arm(key: string) {
     if (reorder.placement !== null && !paneRows.some((row) => row.key === key)) return;
-    clearTimeout(pendingFire.current ?? undefined);
     retired.current = false;
     setList(current => current.armed === key && current.deliberate ? current : select(current, key, performance.now()));
   }
@@ -727,8 +733,7 @@ export function useNexusController() {
       if (!visible.current) return;
       // The window has closed: the armed row once, whatever its age; nothing armed lands on the fallback.
       const list = latestList.current;
-      const later = fireTarget(list, performance.now());
-      latestFire.current(later.kind === "Fire" ? later.key : list.armed ?? (retired.current ? null : fallbackKey), activation);
+      latestFire.current(list.armed ?? (retired.current ? null : fallbackKey), activation);
     }, Math.max(0, target.until - now));
   }
 
@@ -874,6 +879,7 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     announcement,
+    announce: setAnnouncement,
     dialogLabel: page.kind === "Add" ? "Add content" : viewport.isMobile && page.kind !== "Root" ? "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${focusRevision}`,
     addSession,
@@ -952,7 +958,7 @@ export function useNexusController() {
         if (!viewport.isMobile) return container.querySelector<HTMLElement>('[role="combobox"]');
         return control(key) ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
       }
-      if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading], [data-add-heading], [data-mobile-nexus-search]");
+      if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading], [data-add-heading]");
       if (page.kind === "Add") {
         return resolveAddPanelInitialFocus(container, transfer === "Field" ? false : viewport.isMobile);
       }

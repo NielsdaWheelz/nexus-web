@@ -21,7 +21,7 @@ import { parseResourceRef, resourceIconForScheme } from "@/lib/resourceGraph/res
 import type { ResourceItem } from "@/lib/resources/items";
 import { itemMediaKind, paneGlyph, resourceType, resourceTypeGlyph } from "@/lib/resources/type";
 import type { LocalMatch } from "@/lib/search/localSearch";
-import { resourceMetadata, resourceMetadataText } from "@/lib/resources/metadata";
+import { resourceMetadata } from "@/lib/resources/metadata";
 import { emptySearchQuery } from "@/lib/search/query";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { NexusAction, NexusCommandId, NexusGroup, NexusPage, NexusPane, NexusRow, NexusStream, NexusTarget, RankTier, UsageMap } from "./model";
@@ -253,7 +253,9 @@ export function syncRows(input: Reference & {
   });
   for (const pane of panes) {
     const presentation = pane.presentation;
-    const tier = tierOf(pane.href, presentation.title, presentation.status === "Ready" && presentation.detail ? [presentation.detail] : []);
+    const href = pane.resourceRef !== null && resolvePaneRouteModel(pane.href).header.kind === "Resource"
+      ? resolvePaneRouteModel(pane.href).pathname : pane.href;
+    const tier = tierOf(href, presentation.title, presentation.status === "Ready" && presentation.detail ? [presentation.detail] : []);
     if (tier === null) continue;
     const recency = panes.length - input.mru.indexOf(pane.id);
     const row = paneRow(pane, tier, usage, recency);
@@ -264,8 +266,8 @@ export function syncRows(input: Reference & {
       if (at >= 0) places[at] = { ...places[at]!, state: row.state, secondary: targetMenu(null, [pane]) };
       else rows.push(row);
     } else if (plain && presentation.status !== "Unavailable") rows.push({
-      ...row, key: `Resource:${pane.resourceRef}`,
-      action: { kind: "Available", target: { kind: "InternalHref", href: resolvePaneRouteModel(pane.href).pathname, labelHint: presentation.title } },
+      ...row, key: `Resource:${pane.resourceRef}`, href, frecency: frecency(href, usage),
+      action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: presentation.title } },
       secondary: targetMenu(pane.resourceRef, panes.filter(candidate => candidate.resourceRef === pane.resourceRef)),
     });
   }
@@ -361,12 +363,15 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
 }
 
 /** `search all results` and `use this text…`; lookup keeps only its literal search. */
-export function continuations(query: NexusQuery): NexusRow[] {
+export function continuations(query: NexusQuery, principalCount: number): NexusRow[] {
   if (!query.text || query.intent.kind !== "Search" && query.intent.kind !== "CommandLookup") return [];
   const literal = query.intent.kind === "CommandLookup";
   const searchQuery = literal ? { ...emptySearchQuery(), text: query.text } : query.searchQuery;
   const search: NexusRow = {
     key: "Continuation:SeeAll", localMatch: null, label: literal ? `search for “${query.text}”` : "search all results",
+    // Arriving principals change copy without resizing this pinned row.
+    detail: !literal && principalCount === 0 ? "nothing matched here" : null,
+    reserveDetail: !literal,
     icon: Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
   };
   if (literal) return [search];
@@ -474,5 +479,11 @@ export function rowName(parts: readonly (string | null | undefined)[]): string {
 /** Only facts already in the supplied projection distinguish a target; `minimized` is the one state word. */
 export function rowFacts(row: NexusRow): string {
   const state = row.state === "Minimized" ? "minimized" : null;
-  return [row.item ? resourceMetadataText(row.item, row.matchMethod) : row.detail, state].filter(Boolean).join(" · ");
+  if (!row.item) return [row.detail, state].filter(Boolean).join(" · ");
+  const metadata = resourceMetadata({ item: row.item, matchMethod: row.matchMethod });
+  const sourceIsTitle = row.item.preview.body.kind === "passage" && parseResourceRef(row.item.ref)?.scheme !== "highlight";
+  const parts = [...metadata.bibliography, ...metadata.parts.filter(part => part.key !== "source" || !sourceIsTitle)];
+  const facts = parts.map(part => part.kind === "credits"
+    ? part.credits.flatMap(credit => creditName(credit)?.label ?? []).slice(0, 2).join(", ") : part.text);
+  return [...facts, state].filter(Boolean).join(" · ");
 }

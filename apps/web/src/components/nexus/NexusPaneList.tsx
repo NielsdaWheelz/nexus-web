@@ -94,7 +94,7 @@ export function NexusPaneDrag({ controller, scrollport, mobile, children }: {
     <PaneSensorRetirement epoch={controller.reorder.sensorEpoch} scrollport={scrollport} retired={retired} />
     {/* The sheet paints its list upward; slot geometry, not index direction, places its rows. */}
     <SortableContext items={controller.paneListComplete ? controller.panes.map(pane => pane.id) : []} strategy={mobile ? rectSortingStrategy : verticalListSortingStrategy}>{children}</SortableContext>
-    {overlay ? createPortal(<DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>{row ? <div className={styles.paneDragPreview} aria-hidden inert><NexusRowBody row={row} here={row.state === "Current"} /></div> : null}</DragOverlay>, overlay) : null}
+    {overlay ? createPortal(<DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>{row ? <div className={styles.paneDragPreview} aria-hidden inert><NexusRowBody row={row} here={row.state === "Current"} query={controller.query} /></div> : null}</DragOverlay>, overlay) : null}
   </DndContext>;
 }
 

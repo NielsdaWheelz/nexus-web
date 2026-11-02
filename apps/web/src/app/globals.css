@@ -80,7 +80,6 @@
   --z-overlay: 100; /* mobile chrome */
   --z-popover: 900; /* page menus, floating surfaces, previews */
   --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
-  --z-nexus: 1100; /* the quick-note handoff input, above every frame */
 
   --overlay-scrim-soft: rgb(0 0 0 / 0.24); /* the mobile secondary sheet */
 

@@ -1,7 +1,7 @@
 // The spine: a query's two bands, what is armed and when, and what enter fires. Pure; the
 // controller supplies `now`. Ranking is rank.ts's and rows are rows.ts's.
 import type { FireTarget, NexusList, NexusRow } from "./model";
-import { ARM_WINDOW_MS, PERCEIVED_MS } from "./policy";
+import { ARM_WINDOW_MS, PERCEIVED_MS, RESULT_CAP } from "./policy";
 import { compareRank, nameTier } from "./rank";
 
 const TIERS = ["ExplicitIntent", "Latched", "Exact", "PrefixOrToken", "Abbreviation", "Substring", "Lexical", "Semantic"] as const;
@@ -16,6 +16,8 @@ export const EMPTY: NexusList = { identity: "", rows: [], held: 0, armed: null, 
  * only its stream, frecency and recency.
  */
 export function keystroke(previous: NexusList, identity: string, sync: readonly NexusRow[], latchedKey: string | null, now: number): NexusList {
+  // Blank context is not a query band: its pane keys have different typed ownership.
+  if (previous.identity === "") previous = EMPTY;
   const held = previous.rows.flatMap(row => {
     if (row.evidence) return [];
     const tier = row.key === latchedKey ? "Latched" : nameTier(identity, row.label, row.keywords ?? []);
@@ -26,7 +28,7 @@ export function keystroke(previous: NexusList, identity: string, sync: readonly 
     const shown = byKey.get(row.key);
     byKey.set(row.key, shown ? { ...shown, rank: { ...row.rank, tier: shown.rank.tier }, frecency: row.frecency, recency: row.recency } : row);
   }
-  const rows = [...byKey.values()].sort(compareRank);
+  const rows = [...byKey.values()].sort(compareRank).slice(0, RESULT_CAP);
   const armed = rows[0]?.key ?? null;
   return {
     identity, rows, held: rows.length, armed, armedAt: now, deliberate: false,

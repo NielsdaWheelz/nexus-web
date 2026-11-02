@@ -58,7 +58,7 @@ function applyUses(map: UsageMap, uses: Applied["uses"]): UsageMap {
   return next;
 }
 
-export function useNexusFind({ open, query, retainedLocalTargets }: { open: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
+export function useNexusFind({ open, composing, query, retainedLocalTargets }: { open: boolean; composing: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
   const { accountId } = useAuthenticatedAccount();
   const live = useRef(true);
   useLayoutEffect(() => {
@@ -94,14 +94,14 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const text = query.text;
   const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
   const localRef = referenceRef !== null && WRITING_REF.test(referenceRef) ? referenceRef : null;
-  const localRead = useAuthoredQuery(open && localRef ? { kind: "resource", ref: localRef } : null);
+  const localRead = useAuthoredQuery(open && !composing && localRef ? { kind: "resource", ref: localRef } : null);
   const localRow = localRead.data?.rows[0]?.resource ?? null;
   // stable while its row is unchanged; the launcher merges rows on identity.
   const localReference = useMemo(() => localRow?.authored_by_viewer ? localResult(localRow, "") : null, [localRow]);
-  const local = useLocalSearchPreview(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
+  const local = useLocalSearchPreview(open && !composing && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
   const scopes = localSearchScopes(query.searchQuery.scope);
   const families: SearchFamily[] | null = query.searchQuery.requestedKinds === null ? null : [...query.searchQuery.requestedKinds].filter(kind => kind !== "web").sort();
-  const retainedLocal = useAuthoredQuery(open && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
+  const retainedLocal = useAuthoredQuery(open && !composing && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
     ? { kind: "search_admission", text: query.searchQuery.text.trim(), targets: [...retainedLocalTargets], scopes, families } : null);
   const localValidationReady = query.intent.kind === "Resource" ? localRead.data !== null
     : retainedLocal.data !== null && (local.storeRevision === null || BigInt(retainedLocal.data.store_revision) >= BigInt(local.storeRevision));
@@ -114,7 +114,7 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localValidationReady, retainedLocal.data, local.scopeAvailable]);
   const reference = usePaneFreeServerValue<ResourceItem>({
-    key: open && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
+    key: open && !composing && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
     stale: "",
     load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
@@ -126,9 +126,9 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   // Search must fit both its GET transport and its eventual workspace address.
   // Explicit authoring commands never send their arguments through discovery.
   const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
-  const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
+  const searchUnavailable = open && !composing && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
-  const identityKey = open && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
+  const identityKey = open && !composing && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
   const directAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.direct);
   const lexicalAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.lexical);
   const hybridAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.hybrid);
@@ -192,12 +192,12 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     return local.matches.filter(match => match.resource.authored_by_viewer || !remote.has(match.resource.ref));
   }, [local.matches, preview]);
   const remoteBusy = identityKey !== null && best?.phase !== "hybrid" && ((best?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
-    || (open && referenceRef !== null && localReference === null && reference.status === "loading");
+    || (open && !composing && referenceRef !== null && localReference === null && reference.status === "loading");
   const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending;
   const [incidents,setIncidents] = useState<ReadonlyMap<NexusSource,{identity: string; error: ApiError; occurrence: object}>>(() => new Map());
   const readFailures = new Map<NexusSource,{identity: string; error: ApiError; occurrence: object}>();
   const retrying = new Set<NexusSource>();
-  for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
+  for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&!composing&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
     if (!wanted) continue;
     if (source !== "Reference" && best !== null && PREVIEW_PHASE_RANK[best.phase] > PREVIEW_PHASE_RANK[source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid"]) continue;
     const identity = source === "Reference" ? `${accountId}:nexus-ref:${referenceRef}` : identityKey!;

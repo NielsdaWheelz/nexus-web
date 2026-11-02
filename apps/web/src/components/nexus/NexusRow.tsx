@@ -95,10 +95,18 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
 }
 
 /** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
-export function NexusRowBody({ row, here, position }: { row: NexusRow; here: boolean; position?: number }) {
+export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
   const Icon = row.icon;
   const title = nexusRowPrimaryText(row);
-  const inline = titleMatch(row, title);
+  let inline = titleMatch(row, title);
+  // Synchronous pane/recent names have no remote match window; mark their literal name match here.
+  const needle = query.trim().toLowerCase();
+  const at = needle ? title.toLowerCase().indexOf(needle) : -1;
+  if (inline === null && !row.item && at >= 0) {
+    const start = Array.from(title.slice(0, at)).length;
+    inline = { excerpt: { text: title, truncated_before: false, truncated_after: false },
+      ranges: [{ start, end: start + Array.from(title.slice(at, at + needle.length)).length }] };
+  }
   const evidence = rowEvidence(row, title);
   const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
   // An unavailable row keeps its facts and says why last, instead of any evidence.
@@ -109,12 +117,12 @@ export function NexusRowBody({ row, here, position }: { row: NexusRow; here: boo
       {position === undefined ? <Icon size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
     </span>
     <span className={styles.text}>
-      <span className={styles.title} dir="auto" title={title}>
+      <span className={styles.title} title={title}>
         {here ? <span className={styles.sub}>here</span> : null}
-        {inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}
+        <bdi>{inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}</bdi>
       </span>
       {shown ? <span className={styles.evidence}><ExcerptText excerpt={shown.excerpt} match={shown} /></span>
-        : facts ? <span className={styles.facts}>{facts}</span> : null}
+        : facts || row.reserveDetail ? <span className={styles.facts}>{facts || "\u00a0"}</span> : null}
     </span>
   </>;
 }
@@ -208,7 +216,7 @@ export function nexusRowVerbs(
     menu: resourceRef === null && occurrence.length === 0 ? null : {
       title: row.label, subjectKey: `nexus:${row.key}`, resourceRef: resourceRef ?? undefined,
       showSourceSubject: row.item !== undefined && row.item.action_ref !== row.item.ref,
-      navigation: { key: JSON.stringify([row.key, row.action, href]), fork: null },
+      navigation: { key: row.key, fork: null },
       sections: [{ id: "Occurrence", actions: occurrence }],
     },
     read: tab === null && resourceRef !== null,
@@ -231,7 +239,7 @@ export function NexusNotices({ controller, returnFocus, id }: {
   const { kind, text, action } = controller.searchProgress;
   const { blank, snapshot, readFailure, writeFailure, read } = controller.recentStatus;
   // Zero principals say so on `search all results`; the palette paints no empty notice.
-  const notice = kind === "Notice" && text !== "no results found.";
+  const notice = kind === "Notice";
   return <>
     <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending} />
     {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}

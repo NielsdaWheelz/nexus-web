@@ -72,7 +72,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const listed = new Set(controller.list.rows.map(row => row.key));
   const held = new Set(controller.list.rows.slice(0, controller.list.held).map(row => row.key));
   const lookup = controller.lookupGuidance !== null;
-  const nothing = typed && controller.list.rows.length === 0 && !controller.pending;
   const verbsOf = (row: NexusRow) => nexusRowVerbs(row, row.state === "Current", controller, paneRowName(controller, row), setExcerpt);
 
   // A row control that leaves the tree (a closed pane, a retired rail) hands focus back to the query.
@@ -125,8 +124,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     const selected = item.key === controller.armed;
     const here = item.state === "Current";
     const alias = nexusRowAlias(item, lookup);
-    const shown = item.key === "Continuation:SeeAll" && nothing ? { ...item, detail: "nothing matched here" } : item;
-    const name = group === "Open" && controller.paneListPresented ? paneCandidateName(controller, item, rowIndex) : nexusRowName(shown, here, alias);
+    const name = group === "Open" && controller.paneListPresented ? paneCandidateName(controller, item, rowIndex) : nexusRowName(item, here, alias);
     const reason = item.action.kind === "Unavailable" ? item.action.reason : undefined;
     const verbs = rail?.key === item.key ? verbsOf(item) : null;
     return (
@@ -194,7 +192,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               controller.activate(item.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, item);
             }}
           >
-            <NexusRowBody row={shown} here={here} position={controller.reorder.placement?.kind === "ChoosePosition" && group === "Open" ? rowIndex + 1 : undefined} />
+            <NexusRowBody row={item} here={here} query={controller.query} position={controller.reorder.placement?.kind === "ChoosePosition" && group === "Open" ? rowIndex + 1 : undefined} />
           </div>
           <div className={styles.trailing}>
             {alias ? <kbd className={styles.kbd} aria-hidden="true">{alias}</kbd> : null}

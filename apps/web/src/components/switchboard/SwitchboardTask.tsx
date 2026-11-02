@@ -91,7 +91,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const results = controller.list.rows.length;
   const rail = controller.rail;
   const lookup = controller.lookupGuidance !== null;
-  const nothing = typed && results === 0 && !controller.pending;
   const listed = new Set(controller.list.rows.map(row => row.key));
   const held = new Set(controller.list.rows.slice(0, controller.list.held).map(row => row.key));
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
@@ -135,8 +134,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const row = (item: NexusRow, group: NexusGroup["id"], rowIndex: number) => {
     const here = item.state === "Current";
     const alias = nexusRowAlias(item, lookup);
-    const shown = item.key === "Continuation:SeeAll" && nothing ? { ...item, detail: "nothing matched here" } : item;
-    const name = group === "Open" && controller.paneListPresented ? paneCandidateName(controller, item, rowIndex) : nexusRowName(shown, here, alias);
+    const name = group === "Open" && controller.paneListPresented ? paneCandidateName(controller, item, rowIndex) : nexusRowName(item, here, alias);
     const verbs = rail?.key === item.key ? nexusRowVerbs(item, here, controller, paneRowName(controller, item), setExcerpt) : null;
     const selected = item.key === controller.armed;
     return (
@@ -171,7 +169,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             onKeyDown={(event) => activate(item, event)}
             onKeyUp={event => { if (placementPress.current === event.key) { placementPress.current = null; event.preventDefault(); } }}
           >
-            <NexusRowBody row={shown} here={here} position={controller.reorder.placement?.kind === "ChoosePosition" && group === "Open" ? rowIndex + 1 : undefined} />
+            <NexusRowBody row={item} here={here} query={controller.query} position={controller.reorder.placement?.kind === "ChoosePosition" && group === "Open" ? rowIndex + 1 : undefined} />
           </button>
           <div className={cx(nexus.trailing, styles.trailing)}>
             {alias ? <kbd className={nexus.kbd} aria-hidden="true">{alias}</kbd> : null}
@@ -298,7 +296,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   </>;
 
   return (
-    <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available"
+    <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available" flushBottom={controller.page.kind === "Root"}
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>

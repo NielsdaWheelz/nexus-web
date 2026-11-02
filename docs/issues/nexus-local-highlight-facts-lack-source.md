@@ -1,6 +1,6 @@
 # a local highlight row has no source title in its facts line
 
-status: open · origin: 2026-11-02 palette s1 · area: web / nexus rows, notes presentation
+status: permitted omission, projection follow-up · origin: 2026-11-02 palette s1 · area: web / nexus rows, notes presentation
 
 `authoredItem` projects `preview.source: null` for every local resource
 (`apps/web/src/lib/notes/presentation.ts:61`), so `rowFacts` →
@@ -18,4 +18,9 @@ graph) into `authoredItem(..., source)`, or omit the fact. owner: s1's rows.ts
 for the row, `lib/notes/presentation.ts` for the projection (unowned by the
 split).
 
-resolved when a local highlight row's facts line shows its source title.
+the palette contract's content section explicitly permits omitting a source fact
+that the local projection cannot supply. this is a permitted limitation, not a
+palette acceptance blocker. no extra lookup decorates a row.
+
+resolved when a local highlight row's existing projection supplies its source
+title and the facts line uses it without a separate fetch.

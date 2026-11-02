@@ -36,7 +36,7 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
   readonly label: string;
   readonly verbs: NexusRowVerbs;
   readonly rail: NonNullable<Rail>;
-  readonly controller: Pick<NexusController, "focusRail" | "filterRail">;
+  readonly controller: Pick<NexusController, "focusRail" | "filterRail" | "announce">;
   readonly mobile: boolean;
   readonly className?: string;
   /** Close the rail; `restoreFocus` returns to where it was opened from. */
@@ -119,7 +119,11 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
       if (event.key !== "Enter") return;
       if (event.repeat) { event.preventDefault(); return; }
     }
-    if (verb.disabled || verb.busy) { event.preventDefault(); return; }
+    if (verb.disabled || verb.busy) {
+      event.preventDefault();
+      if ("key" in event && verb.disabledReason) controller.announce(verb.disabledReason);
+      return;
+    }
     const result = activateDescriptor(verb, event, event.currentTarget, onClose);
     if (result === "selected" || result === "consumed" || (result === "unhandled" && "key" in event)) return;
     onClose(result === "unhandled" && verb.restoreFocusOnClose !== false);

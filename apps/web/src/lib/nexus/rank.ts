@@ -62,7 +62,7 @@ export function abbreviation(query: string, label: string): number | null {
 
 /** The server's `_normalize_query`: lowercase, one space between words, 200 characters. */
 export function normalizeQuery(query: string | null): string {
-  return (query ?? "").toLowerCase().split(/\s+/).filter(Boolean).join(" ").slice(0, 200).trim();
+  return Array.from((query ?? "").toLowerCase().split(/[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/u).filter(Boolean).join(" ")).slice(0, 200).join("").replace(/ +$/u, "");
 }
 
 const unquote = (value: string): string => { try { return decodeURIComponent(value); } catch { return value; } };
@@ -101,12 +101,12 @@ export function canonicalHref(href: string): string {
  */
 export function latchedHref(queryNormalized: string, map: UsageMap): string | null {
   if (!queryNormalized) return null;
-  let best: { readonly query: string; readonly product: number; readonly lastUsed: string; readonly href: string } | null = null;
+  let best: { readonly query: string; readonly product: number; readonly lastUsed: number; readonly href: string } | null = null;
   for (const [query, targets] of Object.entries(map)) {
     if (!query || !(query.startsWith(queryNormalized) || queryNormalized.startsWith(query))) continue;
     for (const [href, use] of Object.entries(targets)) {
       if (use.use_count < LATCH_USES) continue;
-      const candidate = { query, product: use.use_count * use.points, lastUsed: use.last_used, href };
+      const candidate = { query, product: use.use_count * use.points, lastUsed: Date.parse(use.last_used), href };
       const better = best === null || query.length > best.query.length || query.length === best.query.length && (
         candidate.product > best.product || candidate.product === best.product && (
           candidate.lastUsed > best.lastUsed || candidate.lastUsed === best.lastUsed && href < best.href));
