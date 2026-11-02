@@ -11,9 +11,10 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { useFailedReadRepair, usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { MAY_HAVE } from "@/lib/chat/commands";
 import {
   createReading,
   platePath,
@@ -117,7 +118,8 @@ export default function OracleReadingPaneBody() {
   const [loads, setLoads] = useState(0);
   // Stream frames replace the loaded reading; each frame is the whole reading.
   const [streamed, setStreamed] = useState<OracleReading | null>(null);
-  const [lost, setLost] = useState<Error | null>(null);
+  /** The watch that went down, by the load that opened it: a later load is its reread, in flight. */
+  const [lost, setLost] = useState<{ error: Error; load: number } | null>(null);
   const [retrying, setRetrying] = useState(false);
   /** The frozen retry, and its attempts whose answer never came. */
   const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
@@ -153,7 +155,7 @@ export default function OracleReadingPaneBody() {
         setStreamed(next);
         setLost(null);
       },
-      error => { if (live) setLost(error); },
+      error => { if (live) setLost({ error, load: loads }); },
     );
     return () => {
       live = false;
@@ -172,7 +174,7 @@ export default function OracleReadingPaneBody() {
   });
 
   // a stream that ends without an api error is this system's defect
-  if (lost !== null && !isApiError(lost)) throw lost;
+  if (lost !== null && !isApiError(lost.error)) throw lost.error;
   usePaneReturnReady(reading !== null || detail.status === "failed" || lost !== null);
   usePaneChrome({
     resourceRef:
@@ -184,6 +186,9 @@ export default function OracleReadingPaneBody() {
     detail.refetch();
     setLoads((count) => count + 1);
   };
+  // reads wake: an unfinished reading's lost watch opens again on focus and reconnection
+  const watchLost = lost !== null && unfinishedId !== null;
+  useFailedReadRepair(watchLost, lost !== null && lost.load !== loads, reload);
   const retryReading = async (intent: OpenIntent) => {
     if (reading === null || retrying) return;
     const frozen = attempt.current === null
@@ -386,18 +391,18 @@ export default function OracleReadingPaneBody() {
 
           {reading?.status === "failed" && reading.error_code !== null && (
             <section className={styles.errorPanel}>
-              <Fact line={failureLine(reading.error_code)}
+              {/* a failure the stream brought is news; one loaded cold is not */}
+              <Fact speak={reading === streamed} line={failureLine(reading.error_code)}
                 verbs={[{ label: "retry", commandKey: `read again ${readingId}`, busy: retrying, run: intent => void retryReading(intent) }]} />
               {unknown ? <Hold id={unknown.id} attempt={unknown.attempt}
-                line={{ fact: "not sure the reading started.", reason: "it may have gone through." }}
+                line={{ fact: "not sure the reading started.", reason: MAY_HAVE }}
                 verbs={[{ label: "retry", commandKey: `read again ${readingId}`, busy: retrying, run: intent => void retryReading(intent) }]} /> : null}
             </section>
           )}
 
           {detail.status === "failed" ? detail.error.code === "E_NOT_FOUND" ? <Fact line={{ fact: "this reading doesn’t exist." }} />
             : <Failed error={detail.error} noun="readings" retry={{ run: reload, busy: detail.retrying }} />
-            : lost !== null && reading?.status !== "complete"
-              ? <Failed error={lost} noun="live updates" retry={{ run: reload }} /> : null}
+            : watchLost ? <Failed error={lost.error} noun="live updates" retry={{ run: reload, busy: lost.load !== loads }} /> : null}
         </article>
       </div>
     </OracleTheme>

@@ -8,6 +8,7 @@ import type { Line, Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { PENDING_CHANGE, sayRefusal } from "@/lib/chat/commands";
 import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
@@ -24,18 +25,21 @@ import styles from "./ChatSurface.module.css";
 
 type FailureCode = NonNullable<Schema<"TrustRunOut">["failure"]>["code"];
 const COULDNT = "couldn’t answer.";
+const CAUSES: Readonly<Record<FailureCode, Line>> = {
+  cancelled: { fact: "stopped." },
+  incomplete: { fact: "this answer ended early." },
+  assistant_unavailable: { fact: COULDNT, reason: "the model wasn’t available." },
+  context_too_large: { fact: COULDNT, reason: "this chat is too long for this model." },
+  invalid_output: { fact: COULDNT, reason: "the model’s reply was malformed." },
+  operator_defect: { fact: COULDNT, reason: "nexus hit a fault." },
+};
 /** A failed turn's line, by the server's failure card. Only what its owner classifies: never a
- * provider, a status or a code. A fault, or an errored run with no card, keeps its support id. */
+ * provider, a status or a code. An errored run with no card is a fault. An errored run's support
+ * id follows its cause. */
 function failureLine(code: FailureCode | null, supportId: string | null): Line {
-  switch (code) {
-    case "cancelled": return { fact: "stopped." };
-    case "incomplete": return { fact: "this answer ended early." };
-    case "assistant_unavailable": return { fact: COULDNT, reason: "the model wasn’t available." };
-    case "context_too_large": return { fact: COULDNT, reason: "this chat is too long for this model." };
-    case "invalid_output": return { fact: COULDNT, reason: "the model’s reply was malformed." };
-    case "operator_defect":
-    case null: return { fact: COULDNT, reason: supportId === null ? "nexus hit a fault." : `nexus hit a fault. support id ${supportId}.` };
-  }
+  const { fact, reason } = CAUSES[code ?? "operator_defect"];
+  return supportId === null ? { fact, reason }
+    : { fact, reason: reason === undefined ? `support id ${supportId}.` : `${reason} support id ${supportId}.` };
 }
 const PHASE: Record<string, string> = {
   Queued: "queued",
@@ -148,7 +152,9 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   // the transcript is a log, which speaks what lands in it. a stop is the viewer's own act, so it
   // stays silent; a failed link is `Failed`, which speaks for itself from the active region alone
   const linkFailed = pending && phase !== "Suspended" && link.kind === "Failed";
-  const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
+  // reads wake: a failed read of the run reads again on focus and reconnection
+  useFailedReadRepair(linkFailed, link.kind === "Reconnecting", reconnect);
+  const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, message.status === "error" ? run.support_id ?? null : null)} verbs={rerun} />
     : !pending ? null
     : phase === "Suspended" ? <Fact line={{ fact: "this answer stalled." }} verbs={link.kind === "Live" ? undefined : check} />
     : link.kind === "Failed" ? <Failed error={link.error} noun="live updates" retry={{ run: reconnect }} />
