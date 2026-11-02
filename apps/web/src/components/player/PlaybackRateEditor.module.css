@@ -1,0 +1,48 @@
+.editor {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.rateValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(3rem, 1fr));
+  gap: var(--space-2);
+}
+
+.preset {
+  width: 100%;
+}
+
+.adjuster {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rateRange {
+  width: 100%;
+  min-height: 44px;
+  min-width: 0;
+  accent-color: var(--accent);
+}

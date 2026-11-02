@@ -57,7 +57,7 @@ import {
 } from "@/lib/player/playerRuntime";
 import { DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
 import { ReaderSettingsFailure } from "@/lib/reader/ReaderContext";
-import { PlayerFailures, usePlayerFailurePresentation } from "@/components/player/GlobalPlayerSurfaces";
+import { PlayerFailures, usePlayerFailurePresentation } from "@/components/player/PlayerFailures";
 import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
 import { usePodcastCommands } from "@/lib/podcasts/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";

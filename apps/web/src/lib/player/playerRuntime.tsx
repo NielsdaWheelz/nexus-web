@@ -50,8 +50,6 @@ import {
   useAndroidShell,
   useViewportState,
 } from "@/lib/renderEnvironment/provider";
-import { isEditableTarget, isInteractiveTarget } from "@/lib/ui/eventTarget";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 
 export type PlayerDescriptor = Schema<"PlayerDescriptor">;
 export type PlayerPhase = "Buffering" | "Playing" | "Paused" | "Ended";
@@ -133,7 +131,7 @@ export type PlayerState =
     }
   | ({ readonly kind: "Loaded"; readonly source: NonNullable<EngineState["source"]> } & Omit<
       EngineState,
-      "source" | "playbackSubject" | "positionMs" | "durationMs" | "bufferedMs"
+      "source" | "playbackSubject" | "positionMs" | "durationMs" | "bufferedMs" | "shortenPausesSavedMs"
     >);
 /** Expected engine refusal; unexpected exceptions belong to the existing defect boundary. */
 export class PlaybackPreferenceError extends Error {}
@@ -185,7 +183,8 @@ export interface PlayerTimeline {
   readonly positionMs: number;
   readonly durationMs: number;
   readonly bufferedMs: number;
-  readonly chapter: Schema<"ChapterOut"> | null;
+  /** Silence skipped on this device; android accrues it every second while it skips. */
+  readonly savedSilenceMs: number;
 }
 export interface PlayerCommands {
   /** Without `recapture`, a play of the queue cursor's own media plays that entry, from
@@ -203,6 +202,8 @@ export interface PlayerCommands {
   /** Omission captures the confirmed load at admission; stale application is a silent no-op. */
   seekTo(input: { readonly positionMs: number; readonly expectedSubject?: string }): void;
   skipBy(deltaMs: number): void;
+  /** The observed position at the call; reading it subscribes to nothing. */
+  readPositionMs(): number;
   previous(): void;
   next(): void;
   setPlaybackRate(rate: number): void;
@@ -261,6 +262,7 @@ function queueCommandChangesPlayback(command: QueueCommand): boolean {
 
 const SessionContext = createContext<PlayerSession | null>(null);
 const TimelineContext = createContext<PlayerTimeline | null>(null);
+const CurrentChapterContext = createContext<{ readonly chapter: Schema<"ChapterOut"> | null } | null>(null);
 const CommandsContext = createContext<PlayerCommands | null>(null);
 
 export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
@@ -1149,13 +1151,15 @@ export function GlobalPlayerProvider({
 
   const commands = useMemo<PlayerCommands>(() => {
     const live = () => engineRef.current;
+    // A passive tab observes the owner's mirror; the owner and android observe their engine.
+    const observed = () => !androidShell && !ownership.current?.owner() ? mirroredEngine : live()?.state();
     const seekTo: PlayerCommands["seekTo"] = input => {
-      const observed = !androidShell && !ownership.current?.owner() ? mirroredEngine : live()?.state();
-      const subject = observed?.playbackSubject;
+      const subject = observed()?.playbackSubject;
       if (subject == null || unavailableRef.current || input.expectedSubject !== undefined && input.expectedSubject !== subject) return;
       retainCurrent(); retirePending();
       void route({ kind: "seek", position_ms: input.positionMs, expected_subject: input.expectedSubject ?? subject });
     };
+    const readPositionMs = () => (observed() ?? IDLE_ENGINE_STATE).positionMs;
     return {
       playAudio: input => { onExplicitPlay(); return play(input); },
       createQueue,
@@ -1194,10 +1198,9 @@ export function GlobalPlayerProvider({
       },
       pause: () => { retainCurrent(); retirePending(); void route({ kind: "pause" }); },
       seekTo,
-      skipBy: deltaMs => {
-        const observed = !androidShell && !ownership.current?.owner() ? mirroredEngine : live()?.state();
-        if (observed !== null && observed !== undefined) seekTo({ positionMs: observed.positionMs + deltaMs });
-      },
+      // With nothing observed, seekTo refuses whatever position it is given.
+      skipBy: deltaMs => seekTo({ positionMs: readPositionMs() + deltaMs }),
+      readPositionMs,
       previous() {
         const header = queueViewRef.current.header;
         if (!queueViewRef.current.known || header === null) return;
@@ -1276,51 +1279,8 @@ export function GlobalPlayerProvider({
     [engine],
   );
 
-  // Space plays/pauses, ←/→ skip, shift+←/→ previous/next; never inside controls or text.
-  const keyed = useRef({ commands, canPause: false, loaded: false });
-  keyed.current = {
-    commands,
-    canPause: pendingPlayback !== null || s.phase === "Playing" || s.phase === "Buffering",
-    loaded: s.source !== null || queueView.header?.current_entry_id != null,
-  };
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const { commands: c, canPause, loaded } = keyed.current;
-      const target = event.target;
-      if ((!loaded && !canPause) || event.defaultPrevented || event.isComposing || hasActiveInteractionOwner()) return;
-      if (
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        isEditableTarget(target)
-      )
-        return;
-      if (
-        target instanceof Element &&
-        (target.closest("[data-player-shortcuts-disabled]") ||
-          isInteractiveTarget(target))
-      ) {
-        return;
-      }
-      const shortcut = `${event.shiftKey ? "Shift+" : ""}${event.code === "Space" ? "Space" : event.key}`;
-      if (shortcut !== "Space" && !loaded) return;
-      const action = {
-        Space: canPause ? c.pause : c.resume,
-        ArrowLeft: () => c.skipBy(-PLAYER_SKIP_BACK_MS),
-        ArrowRight: () => c.skipBy(PLAYER_SKIP_FORWARD_MS),
-        "Shift+ArrowLeft": c.previous,
-        "Shift+ArrowRight": c.next,
-      }[shortcut];
-      if (action === undefined) return;
-      event.preventDefault();
-      action();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   // Session readers re-render on what they show, never on the clock.
-  const { positionMs, durationMs, bufferedMs, source, playbackSubject, ...display } = s;
+  const { positionMs, durationMs, bufferedMs, shortenPausesSavedMs, source, playbackSubject, ...display } = s;
   const derived: PlayerState =
     unavailable ??
     (source === null
@@ -1359,22 +1319,21 @@ export function GlobalPlayerProvider({
     },
     playbackSubject,
   }), [engine, state, pendingPlayback, playbackFailure, queueFailureOccurrence, playingEntryId, queueView, activePreferences, playbackSubject]);
-  const chapters = s.source?.descriptor.chapters;
   const timeline = useMemo<PlayerTimeline>(
-    () => ({
-      positionMs,
-      durationMs,
-      bufferedMs,
-      chapter: chapters?.findLast((c) => c.start_ms <= positionMs) ?? null,
-    }),
-    [chapters, positionMs, durationMs, bufferedMs],
+    () => ({ positionMs, durationMs, bufferedMs, savedSilenceMs: shortenPausesSavedMs }),
+    [positionMs, durationMs, bufferedMs, shortenPausesSavedMs],
   );
+  // A chapter is one object of the loaded descriptor, so its readers change only with it.
+  const chapter = source?.descriptor.chapters.findLast((c) => c.start_ms <= positionMs) ?? null;
+  const currentChapter = useMemo(() => ({ chapter }), [chapter]);
 
   return (
     <CommandsContext.Provider value={commands}>
       <SessionContext.Provider value={session}>
         <TimelineContext.Provider value={timeline}>
-          {children}
+          <CurrentChapterContext.Provider value={currentChapter}>
+            {children}
+          </CurrentChapterContext.Provider>
         </TimelineContext.Provider>
       </SessionContext.Provider>
     </CommandsContext.Provider>
@@ -1392,3 +1351,6 @@ export const usePlayerSession = () =>
   required(useContext(SessionContext), "usePlayerSession");
 export const usePlayerTimeline = () =>
   required(useContext(TimelineContext), "usePlayerTimeline");
+/** The chapter at the position. Its readers render when the chapter changes, never per tick. */
+export const useCurrentChapter = () =>
+  required(useContext(CurrentChapterContext), "useCurrentChapter").chapter;

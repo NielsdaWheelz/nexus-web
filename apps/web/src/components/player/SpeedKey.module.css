@@ -1,0 +1,15 @@
+.speed {
+  position: relative;
+  min-width: 56px;
+  padding: 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.marker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+}

@@ -1,0 +1,23 @@
+.transport {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.transport button {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.playPause { --control-radius: var(--radius-full); }
+.numberedSkip { display: inline-flex; position: relative; align-items: center; justify-content: center; }
+.numberedSkip > svg { width: 28px; height: 28px; stroke-width: 1.5; }
+.numberedSkip > span { position: absolute; top: 8px; font-family: var(--font-mono); font-size: calc(var(--text-xs) * 0.75); font-weight: var(--weight-semibold); line-height: 1; }
+
+/* the sheet spaces its keys wider around a larger disc. */
+.sheet { gap: var(--space-2); }
+.sheet .playPause { flex-basis: 56px; width: 56px; height: 56px; }

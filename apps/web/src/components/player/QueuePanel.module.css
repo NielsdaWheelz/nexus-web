@@ -1,0 +1,18 @@
+.queuePanel {
+  overflow-anchor: none;
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.queueGap {
+  flex: none;
+  pointer-events: none;
+}
