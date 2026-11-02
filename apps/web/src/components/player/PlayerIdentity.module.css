@@ -1,0 +1,76 @@
+.identity {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  height: auto;
+  border: 0;
+  padding: 0;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  text-align: start;
+  white-space: normal;
+}
+
+/* the mini's identity takes the row's free width. */
+.mini { flex: 1 1 auto; }
+
+/* Identity owns its content layout; the control owns its paint. */
+.identityContent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.artworkBox { position: relative; flex: 0 0 auto; display: inline-flex; }
+.identityStatus { position: absolute; right: -2px; bottom: -2px; display: inline-flex; padding: 2px; border-radius: var(--radius-full); background: var(--surface-1); color: var(--ink); }
+
+.artwork,
+.placeholder {
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
+.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  font-family: var(--font-serif);
+  font-size: var(--text-xl);
+}
+
+.identityCopy {
+  flex: 1 1 auto;
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.title,
+.subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: var(--text-base);
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+/* the sheet has the room to wrap what the bar and mini truncate. */
+.sheet .title,
+.sheet .subtitle { white-space: normal; overflow: visible; overflow-wrap: anywhere; }

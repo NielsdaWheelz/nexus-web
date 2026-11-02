@@ -1,135 +1,34 @@
 "use client";
 
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
-
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Minus, Plus } from "lucide-react";
 import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
-import ChoiceField from "@/components/ui/ChoiceField";
 import ActionMenu from "@/components/ui/ActionMenu";
+import collection from "@/components/ui/Collection.module.css";
+import { readerDestinationHref } from "@/app/(authenticated)/media/[id]/hostedReader";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { readerDocument, transcriptUnitAtTime } from "@/lib/documentReader/model";
-import { readerDestinationHref } from "@/app/(authenticated)/media/[id]/hostedReader";
+import { formatClock } from "@/lib/formatClock";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { useCurrentChapter, usePlayerSession, type PlayerState } from "@/lib/player/playerRuntime";
 import type { PreparationState } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { formatClock } from "@/lib/formatClock";
-import {
-  formatPlaybackRate,
-  PLAYBACK_RATE_MAX,
-  PLAYBACK_RATE_MIN,
-  PLAYBACK_RATE_PRESETS,
-  PLAYBACK_RATE_STEP,
-  snapPlaybackRate,
-  stepPlaybackRate,
-} from "@/lib/player/playbackRate";
-import {
-  usePlayerCommands,
-  usePlayerSession,
-  usePlayerTimeline,
-  type PlayerState,
-} from "@/lib/player/playerRuntime";
-import styles from "./Player.module.css";
-import collection from "@/components/ui/Collection.module.css";
+import styles from "./PlayerChapters.module.css";
 
-const same = (a: number, b: number) => Math.abs(a - b) < 0.0001;
-
-export function PlaybackRateEditor({
-  value,
-  onChange,
-  label,
-}: {
-  readonly value: number;
-  readonly onChange: (value: number) => void;
-  readonly label: string;
-}) {
-  return (
-    <div className={styles.editor}>
-      <div className={styles.summary}>
-        <span className={styles.eyebrow}>{label}</span>
-        <strong className={styles.rateValue}>
-          {formatPlaybackRate(value)}
-        </strong>
-      </div>
-      <div
-        className={styles.presets}
-        role="group"
-        aria-label={`${label} presets`}
-      >
-        {PLAYBACK_RATE_PRESETS.map((preset) => (
-          <Button
-            key={preset}
-            size="comfortable"
-            className={styles.preset}
-            aria-pressed={same(value, preset)}
-            onClick={() => onChange(preset)}
-          >
-            {formatPlaybackRate(preset)}
-          </Button>
-        ))}
-      </div>
-      <div className={styles.adjuster}>
-        <Button
-          size="comfortable"
-          iconOnly
-          icon={<Minus />}
-          disabled={value <= PLAYBACK_RATE_MIN}
-          aria-label={`Decrease ${label.toLocaleLowerCase()}`}
-          onClick={() => onChange(stepPlaybackRate(value, -1))}
-        />
-        <input
-          type="range"
-          className={styles.rateRange}
-          min={PLAYBACK_RATE_MIN}
-          max={PLAYBACK_RATE_MAX}
-          step={PLAYBACK_RATE_STEP}
-          value={value}
-          aria-label={label}
-          aria-valuetext={
-            same(value, 1)
-              ? "Normal speed"
-              : `${formatPlaybackRate(value).slice(0, -1)} times normal`
-          }
-          onChange={(event) =>
-            onChange(snapPlaybackRate(Number(event.currentTarget.value)))
-          }
-        />
-        <Button
-          size="comfortable"
-          iconOnly
-          icon={<Plus />}
-          disabled={value >= PLAYBACK_RATE_MAX}
-          aria-label={`Increase ${label.toLocaleLowerCase()}`}
-          onClick={() => onChange(stepPlaybackRate(value, 1))}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** The caller owns capability, live effects and saved defaults. */
-export function SkipSilenceField({
-  checked,
-  onChange,
-  label,
-}: {
-  readonly checked: boolean;
-  readonly onChange: (checked: boolean) => void;
-  readonly label: string;
-}) {
-  return <ChoiceField label={label} checked={checked} onChange={onChange}
-    description="shorten quiet gaps between speech." />;
-}
-
-/** Chapter navigation is shared by the desktop picker and now-playing sheet. */
-export function ChapterList({ state, presentation, onOpened }: {
-  readonly state: Extract<PlayerState, { kind: "Loaded" }>;
-  readonly presentation: "popup" | "embedded";
+/**
+ * The one chapters panel: a desktop popup or embedded in the sheet, in the same order with the
+ * same marks. It renders with the chapter, never with the clock. A row acts only for the subject
+ * it was rendered for; a plain activation seeks through `onSeek`.
+ */
+export default function PlayerChapters({ loaded, presentation, onSeek, onOpened }: {
+  readonly loaded: Extract<PlayerState, { kind: "Loaded" }>;
+  readonly presentation: "Popup" | "Embedded";
+  readonly onSeek: (startMs: number) => void;
   readonly onOpened: () => void;
 }) {
   const { playbackSubject } = usePlayerSession();
@@ -139,25 +38,30 @@ export function ChapterList({ state, presentation, onOpened }: {
     subject.current = playbackSubject;
     return () => { subject.current = null; };
   }, [playbackSubject]);
-  const { chapter: current } = usePlayerTimeline();
-  const episode = state.source.descriptor;
-  return <ol className={{ popup: collection.contentViewport, embedded: styles.chapters }[presentation]} data-collection-viewport={presentation === "popup" ? "" : undefined}>
-    {episode.chapters.map(chapter => <ChapterRow key={`${episode.media_id}:${chapter.start_ms}:${chapter.title}`} mediaId={episode.media_id} title={episode.title}
-      chapter={chapter} current={current?.start_ms === chapter.start_ms} subject={subject} expectedSubject={playbackSubject} onOpened={onOpened} />)}
-  </ol>;
+  const current = useCurrentChapter();
+  const episode = loaded.source.descriptor;
+  const popup = presentation === "Popup";
+  return <section className={cx(styles.panel, popup ? styles.popup : styles.embedded)} aria-label="chapters">
+    <h2 className={styles.panelTitle}>chapters</h2>
+    {current ? <p className={styles.eyebrow}>current chapter: {current.title}</p> : null}
+    <ol className={popup ? collection.contentViewport : styles.chapters} data-collection-viewport={popup ? "" : undefined}>
+      {episode.chapters.map(chapter => <ChapterRow key={`${episode.media_id}:${chapter.start_ms}:${chapter.title}`} mediaId={episode.media_id} title={episode.title}
+        chapter={chapter} current={current?.start_ms === chapter.start_ms} subject={subject} expectedSubject={playbackSubject} onSeek={onSeek} onOpened={onOpened} />)}
+    </ol>
+  </section>;
 }
 
 /** Only opening reads transcript availability; ordinary chapter activation remains a seek. */
-function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject, onOpened }: {
+function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject, onSeek, onOpened }: {
   readonly mediaId: string;
   readonly title: string;
   readonly chapter: Schema<"ChapterOut">;
   readonly current: boolean;
   readonly subject: RefObject<string | null>;
   readonly expectedSubject: string | null;
+  readonly onSeek: (startMs: number) => void;
   readonly onOpened: () => void;
 }) {
-  const commands = usePlayerCommands();
   const { ctx } = useActionRuntime();
   const [preparation, setPreparation] = useState<PreparationState>(null);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
@@ -187,7 +91,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
     event.preventDefault();
     if (activation.kind === "Consume" || expectedSubject === null || subject.current !== expectedSubject) return;
     if (activation.intent === "default") {
-      commands.seekTo({ positionMs: chapter.start_ms, expectedSubject });
+      onSeek(chapter.start_ms);
       return;
     }
     const originPaneId = ctx.workspace().state.active_primary_pane_id;

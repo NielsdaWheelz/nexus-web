@@ -5,7 +5,7 @@
  * Every edit captures the displayed manifest's authority; playback owns feedback. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
 import { ArrowDown, ArrowUp, Ellipsis, Pause, Play, Trash2, ListStart } from "lucide-react";
-import { PlayerFailures } from "./GlobalPlayerSurfaces";
+import { PlayerFailures } from "./PlayerFailures";
 import Button from "@/components/ui/Button";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
@@ -23,7 +23,7 @@ import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/playe
 import type { QueueCommand, QueueEntry, QueueManifest, QueueRequest } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { useQueueWindow } from "./useQueueWindow";
-import styles from "./Player.module.css";
+import styles from "./QueuePanel.module.css";
 
 type FocusRecovery = {
   readonly queueId: string;

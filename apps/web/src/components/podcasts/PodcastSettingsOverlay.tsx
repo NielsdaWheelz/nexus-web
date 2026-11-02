@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence, FeedbackState, type FeedbackContent } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { PlaybackRateEditor, SkipSilenceField } from "@/components/player/PlayerPlaybackControls";
+import PlaybackRateEditor from "@/components/player/PlaybackRateEditor";
+import { SkipSilenceField } from "@/components/player/PlaybackSettings";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";

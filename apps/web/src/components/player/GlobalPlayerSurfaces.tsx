@@ -2,242 +2,49 @@
 
 import {
   useCallback,
-  useContext,
   useEffect,
-  useLayoutEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
-  type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import { FeedbackFailure, FeedbackRecoveryControl, FeedbackNotice, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
 import Tooltip from "@/components/ui/Tooltip";
 import PickerSurface from "@/components/ui/PickerSurface";
-import MediaImage from "@/components/ui/MediaImage";
-import MobileSheet from "@/components/ui/MobileSheet";
 import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { assertNever } from "@/lib/assertNever";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { formatClock } from "@/lib/formatClock";
 import {
   useMobileViewport,
   useRootTextEntryFocused,
 } from "@/lib/mobileShell/viewport";
-import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
-import { OverlayContext, useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import QueuePanel from "./QueuePanel";
-import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useChangeStamp } from "@/lib/api/changes";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { getPodcastSettings, type PodcastSettings } from "@/lib/podcasts/api";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
-import { usePodcastSettingsSave } from "@/lib/podcasts/usePodcastSettingsSave";
-import styles from "./Player.module.css";
+import QueuePanel from "./QueuePanel";
+import PlayerIdentity from "./PlayerIdentity";
+import PlayerTransport from "./PlayerTransport";
+import PlayerSeek, { MiniProgress } from "./PlayerSeek";
+import PlayerUtilities from "./PlayerUtilities";
+import { PlaybackPanel, usePlaybackSettings } from "./PlaybackSettings";
+import PlayerChapters from "./PlayerChapters";
+import { unavailableMessages } from "./PlayerFailures";
+import PlayerSheet, { MobileDisclosure } from "./PlayerSheet";
+import PlayerKeys from "./PlayerKeys";
+import styles from "./GlobalPlayerSurfaces.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
 
-const unavailableMessages = {
-  UpdateRequired: "update nexus for android",
-  NotResponding: "player unavailable",
-} satisfies Record<Extract<Player.PlayerState, { kind: "Unavailable" }>["reason"], string>;
-
-const clock = (ms: number) => formatClock(ms / 1000);
-const percent = (part: number, whole: number) =>
-  `${whole > 0 ? (Math.min(part, whole) / whole) * 100 : 0}%`;
-
-/** Artwork, title and subtitle as one button. */
-function Identity({
-  state,
-  size,
-  label,
-  onOpen,
-  href,
-  buttonRef,
-  status,
-}: {
-  state: Loaded;
-  size: number;
-  label: string;
-  onOpen: (event: TargetActivationEvent) => void;
-  href?: string;
-  buttonRef?: Ref<HTMLButtonElement>;
-  status?: string | null;
-}) {
-  const statusId = useId();
-  const { descriptor } = state.source;
-  const box = { alt: "", width: size, height: size, className: styles.artwork };
-  const image = descriptor.artwork_url !== null && <MediaImage kind="proxied" remoteUrl={descriptor.artwork_url} {...box} />;
-  const subtitle = descriptor.subtitle;
-  const contents = <span className={styles.identityContent}>
-      <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Info size={12} /></span> : null}</span>
-      <span className={styles.identityCopy}>
-        <span className={styles.title}>{descriptor.title}</span>
-        {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
-      </span>
-      {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
-    </span>;
-  return href ? <ButtonLink href={href} className={styles.identity} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</ButtonLink>
-    : <Button ref={buttonRef} className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
-}
-
-/** queue admission and loaded-source controls have independent preconditions. */
-function Transport({ compact = false }: { compact?: boolean }) {
-  const commands = Player.usePlayerCommands();
-  const { state, queue, pendingPlayback, playbackSubject } = Player.usePlayerSession();
-  const loaded = state.kind === "Loaded" ? state : null;
-  const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
-  const preparingPlayback = pendingPlayback !== null && !queueBusy;
-  const offerPause = pendingPlayback !== null || loaded?.phase === "Playing" || loaded?.phase === "Buffering";
-  const queueReady = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
-  const header = queue.header;
-  const canPlay = offerPause || loaded !== null || (queueReady && header !== null && header.current_entry_id !== null);
-  const canSkip = loaded !== null && playbackSubject !== null;
-  return <div className={styles.transport} role="group" aria-label="media player controls">
-    {compact ? null : <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous}
-      disabled={!queueReady || header === null || header.count === 0} />}
-    {compact ? null : <Button size="comfortable" iconOnly aria-label="back 15 seconds" disabled={!canSkip}
-      onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
-      icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />}
-    <Button emphasis="strong" size="comfortable" iconOnly className={styles.playPause}
-      onClick={offerPause ? commands.pause : commands.resume} disabled={!canPlay}
-      data-player-play="true" aria-busy={loaded?.phase === "Buffering" || preparingPlayback || undefined}
-      aria-description={preparingPlayback ? "preparing playback…" : loaded?.phase === "Buffering" ? "buffering" : undefined}
-      aria-label={offerPause ? "pause media player" : "play media player"}
-      icon={offerPause ? <Icon.Pause fill="currentColor" /> : <Icon.Play fill="currentColor" />} />
-    {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds" disabled={!canSkip}
-      onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
-      icon={<span className={styles.numberedSkip}><Icon.RotateCw /><span>30</span></span>} />}
-    {compact ? null : <Button size="comfortable" iconOnly icon={<Icon.SkipForward />} aria-label="next" onClick={commands.next}
-      disabled={!queueReady || header === null || header.current_index === null || header.current_index + 1 >= header.count} />}
-  </div>;
-}
-
-/** A captured scrub belongs to one confirmed load; cancellation never seeks. */
-function Seek({ active = true }: { readonly active?: boolean }) {
-  const { positionMs, durationMs, bufferedMs } = Player.usePlayerTimeline();
-  const { state, playbackSubject } = Player.usePlayerSession();
-  const commands = Player.usePlayerCommands();
-  const scrub = useRef<{ readonly pointerId: number; readonly subject: string; value: number; cancelled: boolean } | null>(null);
-  const [draft, setDraft] = useState<number | null>(null);
-  const available = active && state.kind === "Loaded" && playbackSubject !== null && durationMs > 0;
-  useLayoutEffect(() => {
-    if (scrub.current !== null) scrub.current.cancelled = true;
-    setDraft(null);
-  }, [playbackSubject, available]);
-  useEffect(() => () => { scrub.current = null; }, []);
-  const shown = Math.max(0, Math.min(draft ?? positionMs, durationMs));
-  const track = {
-    "--progress": percent(shown, durationMs),
-    "--buffered": percent(Math.max(shown, bufferedMs), durationMs),
-  } as CSSProperties;
-  return <div className={styles.seek} style={track}>
-    <span className={styles.time}>{state.kind === "Loaded" ? clock(shown) : "—"}</span>
-    <span className={styles.track} aria-hidden="true" />
-    <input type="range" className={styles.seekInput}
-      min={0} max={durationMs} step={1000} value={shown} disabled={!available}
-      aria-label="seek playback position" aria-valuetext={`${clock(shown)} of ${durationMs > 0 ? clock(durationMs) : "unknown duration"}`}
-      onPointerDown={event => {
-        if (!event.isPrimary || event.button !== 0 || !available || playbackSubject === null) return;
-        scrub.current = { pointerId: event.pointerId, subject: playbackSubject, value: Number(event.currentTarget.value), cancelled: false };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerUp={event => {
-        const captured = scrub.current;
-        if (captured?.pointerId !== event.pointerId) return;
-        scrub.current = null;
-        setDraft(null);
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-        if (available && !captured.cancelled && captured.subject === playbackSubject) commands.seekTo({ positionMs: captured.value, expectedSubject: captured.subject });
-      }}
-      onPointerCancel={event => {
-        if (scrub.current?.pointerId === event.pointerId) scrub.current.cancelled = true;
-        setDraft(null);
-      }}
-      onLostPointerCapture={event => {
-        if (scrub.current?.pointerId === event.pointerId) scrub.current.cancelled = true;
-        setDraft(null);
-      }}
-      onKeyDown={event => {
-        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
-          scrub.current = null;
-          setDraft(null);
-        }
-        // Native step rounding can leave the DOM at an endpoint already.
-        if (event.key === "Home" || event.key === "End") {
-          event.preventDefault();
-          if (available && playbackSubject !== null) commands.seekTo({
-            positionMs: event.key === "Home" ? 0 : durationMs,
-            expectedSubject: playbackSubject,
-          });
-        }
-      }}
-      onChange={event => {
-        const value = Number(event.currentTarget.value);
-        if (scrub.current !== null) {
-          if (!scrub.current.cancelled) { scrub.current.value = value; setDraft(value); }
-        }
-        else if (available && playbackSubject !== null) commands.seekTo({ positionMs: value, expectedSubject: playbackSubject });
-      }}
-    />
-    <span className={styles.time}>{state.kind === "Loaded" && durationMs > 0 ? clock(durationMs) : "—"}</span>
-  </div>;
-}
-
-/** Plain mobile content; the overlay kernel owns Escape, Back and focus. */
-function MobileDisclosure({ kind, id, close, trigger, skipReturnFocus, children }: {
-  readonly kind: "Playback" | "Chapters";
-  readonly id: string;
-  readonly close: () => void;
-  readonly trigger: () => HTMLElement | null;
-  readonly skipReturnFocus: () => boolean;
-  readonly children: ReactNode;
-}) {
-  const region = useRef<HTMLDivElement>(null);
-  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  const modal = useContext(OverlayContext);
-  const setRegion = useCallback((element: HTMLDivElement | null) => {region.current = element; setBounds(element);}, []);
-  const {layer} = useOverlay(true, { kind: "transient", onDismiss: close, returnFocus: true,
-    returnFocusTo: trigger, tabContinuation: () => region.current,
-    skipReturnFocus: () => {
-      if (skipReturnFocus()) return true;
-      const active = document.activeElement;
-      return active instanceof HTMLElement && active !== document.body && !region.current?.contains(active);
-    },
-  });
-  useEffect(() => {
-    if (wasOverlayInvokedByTouch()) return;
-    const panel = region.current;
-    const target = kind === "Playback" ? panel?.querySelector<HTMLInputElement>('input[type="range"]')
-      : panel?.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel?.querySelector<HTMLButtonElement>('ol button');
-    target?.focus({ preventScroll: true });
-  }, [kind]);
-  return <div ref={setRegion} id={id} role="region" aria-label={kind === "Playback" ? "playback" : "chapters"}>
-    <FeedbackSurface bounds={bounds} interaction={layer} modal={modal} active
-      protectedTargets={() => [trigger(), bounds?.querySelector<HTMLElement>('input:focus, button:focus') ?? null].filter((element): element is HTMLElement => element !== null)}
-      returnFocus={() => trigger() ?? bounds}><FeedbackRecoveryControl />{children}<PlayerFailures /></FeedbackSurface>
-  </div>;
-}
-
-function ChapterContext() {
-  const { chapter } = Player.usePlayerTimeline();
-  return chapter ? <p className={styles.eyebrow}>current chapter: {chapter.title}</p> : null;
-}
+const PICKER_DIALOGS = '[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]';
 
 /**
  * presentation hides desktop chrome without retiring settings or announcements.
@@ -283,48 +90,12 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded?.source.descriptor.media_id ?? null;
   const { accountId } = useAuthenticatedAccount();
-  const podcastId = loaded?.source.descriptor.podcast_id ?? null;
-  const stamp = useChangeStamp("Podcasts");
-  const settingsRead = usePaneFreeServerValue({
-    key: podcastId === null ? null : `podcast-settings:${accountId}:${podcastId}:${playbackSubject}`,
-    stale: `${stamp}:${opening}`,
-    load: signal => {
-      if (podcastId === null) throw new Error("a podcast read requires a podcast");
-      return getPodcastSettings(podcastId, signal);
-    },
-  });
-  const settingsReadOccurrence = useFeedbackOccurrence(settingsRead.status !== "loading" && settingsRead.error !== null, podcastId);
-  const save = usePodcastSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
+  const settings = usePlaybackSettings({ loaded, playbackSubject, preferences, opening });
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded !== null && loaded.playbackFailed
     && queue.failure?.kind === "Episode" && queue.failure.entry_id === queue.header?.current_entry_id;
   const status = loaded === null || queuePlaybackFailure ? null : loaded.error ??
     (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
-  const operation = save.state;
-  let settingsStatus: string | null = null;
-  let settingsFailed = false;
-  if (operation !== null) {
-    switch (operation.kind) {
-      case "Saving": break;
-      case "Reading": break;
-      case "Unknown":
-      case "ReadFailed": settingsStatus = "save not confirmed. open playback settings to check."; settingsFailed = true; break;
-      case "Rejected": settingsStatus = "couldn’t save podcast defaults. open playback settings to try again."; settingsFailed = true; break;
-      case "Review":
-      case "Replaced":
-      case "Absent": settingsStatus = "saved settings need review. open playback settings."; settingsFailed = true; break;
-      case "Accepted": break;
-      default: assertNever(operation);
-    }
-  }
-  if (preferences !== null) {
-    switch (preferences.application.kind) {
-      case "Ready": break;
-      case "Applying": break;
-      case "Failed": settingsStatus = "couldn’t apply playback settings. open playback settings to try again."; settingsFailed = true; break;
-      default: assertNever(preferences.application);
-    }
-  }
   const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
   const sheetShown = !modeChanged && isMobile && sheetOpen;
   const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
@@ -347,6 +118,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     setSheetOpen(false);
     setQueueOpen(false);
   };
+  /** A closing desktop picker returns focus unless it moved on to anything outside these dialogs. */
+  const skipReturnFocus = (dialogs: string) => () => sourceOpened.current || (document.activeElement instanceof HTMLElement
+    && document.activeElement !== document.body && !document.activeElement.closest(dialogs));
 
   useMobileChromeSurface(footerRef, isMobile);
   useLayoutEffect(() => {
@@ -425,9 +199,16 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       }
       default: assertNever(state);
     }
-  }, [state, identity, title, status, unavailable, settingsStatus, queuePlaybackFailure]);
+  }, [state, identity, title, status, unavailable, settings.status, queuePlaybackFailure]);
 
-  const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.ListMusic />} aria-label="up next"
+  const toggle = (kind: "Playback" | "Chapters") => {
+    if (shownPicker === kind) { setPicker(null); return; }
+    if (kind === "Playback") { settings.save.reset(); setOpening(value => value + 1); }
+    if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
+  };
+  const utilities = { picker: shownPicker, playbackId, chaptersId, rateRef, chaptersRef, onToggle: toggle,
+    settings: { status: settings.status, failed: settings.failed, busy: settings.save.busy } };
+  const openQueue = <Button ref={queueRef} size="comfortable" className={styles.upNext} icon={<Icon.ListMusic />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
     aria-busy={queueBusy || undefined}
     aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined}
@@ -435,12 +216,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const absentCopy = pendingPlayback !== null || !queue.known ? ""
     : retained ? queue.header?.current_entry_id === null ? "queue finished" : "playback stopped" : "nothing queued";
   let desktopSource: ReactNode = <p className={styles.emptyIdentity}>{absentCopy}</p>;
-  let utilities: ReactNode = <>
-    {openQueue}
-    <Button size="comfortable" className={styles.rateBadge} aria-label="playback settings" disabled>speed</Button>
-    <Button size="comfortable" iconOnly aria-label="chapters" icon={<Icon.ListMusic />} disabled />
-    <Button size="comfortable" iconOnly aria-label="stop playback" icon={<Icon.Square />} disabled />
-  </>;
   let contents: ReactNode = null;
   let overlays: ReactNode = null;
   let sheetPlayerContent: ReactNode = null;
@@ -449,11 +224,11 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       const openLectern = (event: TargetActivationEvent) => activateTargetLink({
         event, runtime: linkRuntime, target: { href: "/lectern", labelHint: "lectern" },
       });
-      if (pendingPlayback !== null) sheetPlayerContent = <><p>{absentCopy}</p><Transport compact /></>;
+      if (pendingPlayback !== null) sheetPlayerContent = <><p>{absentCopy}</p><PlayerTransport variant="Sheet" /></>;
       contents = <div className={styles.idle}>
         <Icon.Headphones className={styles.idleGlyph} aria-hidden="true" />
         <span className={styles.idleCopy}>{absentCopy}</span>
-        {pendingPlayback !== null ? <Transport compact /> : <>
+        {pendingPlayback !== null ? <PlayerTransport variant="Mini" /> : <>
           {retained ? <Button iconOnly size="comfortable" icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous} disabled={queue.phase !== "Ready"} /> : null}
           {retained ? <Button onClick={commands.resume} disabled={queue.phase !== "Ready" || queue.header?.current_entry_id === null}>resume</Button> : null}
         </>}
@@ -474,8 +249,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         content={{ tone: "Warning", title: unavailableMessages[state.reason] }} announcement="None"
         actions={[{ label: "update", href: "/android" }]} /> : null;
       desktopSource = warning;
-      if (pendingPlayback !== null) sheetPlayerContent = <>{warning}<Transport compact /></>;
-      contents = <div className={styles.unavailable}>{warning}{pendingPlayback !== null ? <Transport compact /> : null}{openQueue}</div>;
+      if (pendingPlayback !== null) sheetPlayerContent = <>{warning}<PlayerTransport variant="Sheet" /></>;
+      contents = <div className={styles.unavailable}>{warning}{pendingPlayback !== null ? <PlayerTransport variant="Mini" /> : null}{openQueue}</div>;
       break;
     }
     case "Loaded": {
@@ -487,156 +262,45 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         });
         if (handled === "handled-default" || handled === "handled-new-pane") opened();
       };
-      const identityButton = <Identity state={state} size={44}
-        label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={(queuePlaybackFailure ? null : state.error) ?? settingsStatus ?? status} />;
-
-      const stop = <Button size="comfortable" iconOnly icon={<Icon.Square />} aria-label="stop playback" onClick={commands.stop} />;
-      desktopSource = identityButton;
-      const episode = source.descriptor;
-      const podcast = episode.subtitle ?? "this podcast";
-      const saved = settingsRead.status === "ready" ? settingsRead.data : null;
-      let playbackPanel: ReactNode = null;
-      if (preferences !== null && playbackSubject !== null) {
-        const defaults = (rate: number | null, mode: PodcastSettings["pause_shortening_mode"]) =>
-          `speed ${rate === null ? "not set (1×)" : formatPlaybackRate(rate)} · android default: skip silence ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
-        const operation = save.state;
-        const reviewed = operation?.kind === "Review" ? operation.current : null;
-        const baseline = reviewed ?? saved;
-        const confirmedMissing = (settingsRead.status === "failed" || settingsRead.status === "ready") && settingsRead.error?.code === "E_NOT_FOUND";
-        const replaced = !confirmedMissing && (operation?.kind === "Replaced" || Boolean(operation && saved && operation.command.patch.id !== saved.id && saved.id !== null));
-        const missing = confirmedMissing || (!replaced && operation?.kind === "Absent");
-        const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
-        const readReady = settingsRead.status === "ready" && settingsRead.error === null && !settingsRead.refreshing;
-        const remember = () => {
-          if (!baseline || !readReady || preferences.application.kind !== "Ready" || save.busy || needsCheck || missing || replaced) return;
-          void save.save({
-            id: baseline.id ?? crypto.randomUUID(),
-            expected_settings_version: baseline.settings_version,
-            default_playback_speed: preferences.rate,
-            pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
-          });
-        };
-        let feedback: FeedbackContent | null = null;
-        if (replaced) {
-          feedback = { tone: "Warning", title: "playback defaults changed. reopen settings before saving." };
-        } else if (missing) {
-          feedback = { tone: "Warning", title: "this podcast is unavailable. current playback is unchanged." };
-        } else if (operation) {
-          const patch = operation.command.patch;
-          const captured = `${podcast}: ${defaults(patch.default_playback_speed, patch.pause_shortening_mode)}`;
-          switch (operation.kind) {
-            case "Saving":
-
-              break;
-            case "Reading":
-
-              break;
-            case "Accepted":
-            case "Rejected":
-            case "Unknown":
-            case "ReadFailed":
-              break;
-            case "Review":
-              feedback = { tone: "Warning", title: operation.reason === "Conflict" ? "podcast defaults changed elsewhere." : "the saved settings do not confirm this request.", message: captured };
-              break;
-            case "Absent":
-            case "Replaced":
-              break;
-            default:
-              assertNever(operation);
-          }
-        }
-        playbackPanel = <section className={styles.panel} aria-label="playback">
-          <div className={styles.panelHeading}>
-            <h2>playback</h2>
-            <p className={styles.podcastName}>{podcast}</p>
-          </div>
-          <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />
-          {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
-            : <p className={styles.eyebrow}>skip silence · android app only</p>}
-          {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
-          <PlayerFailures />
-          {save.feedback}
-          {podcastId !== null ? <div className={styles.panelRow}>
-            {!missing && !replaced ? <Button reserveIcon busyKey={operation?.command} size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
-              {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
-            </Button> : null}
-            {feedback ? <FeedbackNotice content={feedback} announcement="None" /> : null}
-            {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}
-            {reviewed && !replaced ? <div className={styles.comparison}>
-              <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
-              <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
-            </div> : null}
-            {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
-            {!missing && ((settingsRead.status === "failed") || (settingsRead.status === "ready" && settingsRead.error)) ? <FeedbackFailure scope="Local" occurrence={settingsReadOccurrence} content={podcastErrorMessage(settingsRead.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: settingsRead.refetch }]} /> : null}
-          </div> : null}
-        </section>;
-      }
-      const chaptersPanel = <section className={styles.panel} aria-label="chapters">
-        <h2 className={styles.panelTitle}>chapters</h2>
-        <ChapterContext />
-        <ChapterList state={state} presentation="embedded" onOpened={opened} />
-      </section>;
-      const toggle = (kind: "Playback" | "Chapters") => {
-        if (shownPicker === kind) { setPicker(null); return; }
-        if (kind === "Playback") { save.reset(); setOpening(value => value + 1); }
-        if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
+      const identityStatus = (queuePlaybackFailure ? null : state.error) ?? settings.status ?? status;
+      desktopSource = <PlayerIdentity variant="Bar" loaded={state} label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />;
+      const playbackPanel = (presentation: "Popup" | "Embedded") => preferences === null || playbackSubject === null ? null
+        : <PlaybackPanel loaded={state} preferences={preferences} supportsSilenceSkipping={supportsSilenceSkipping} settings={settings} presentation={presentation} />;
+      const seekChapter = (startMs: number) => {
+        if (playbackSubject !== null) commands.seekTo({ positionMs: startMs, expectedSubject: playbackSubject });
       };
-      utilities = <>
-        {isMobile ? null : openQueue}
-        {preferences !== null && playbackSubject !== null ? <Button ref={rateRef} size="comfortable" className={styles.rateBadge}
-          aria-label={`playback settings, ${formatPlaybackRate(state.rate)}`} aria-description={settingsStatus ?? undefined}
-          aria-busy={preferences.application.kind === "Applying" || save.busy || undefined}
-          aria-expanded={panelOpen} aria-controls={playbackId} aria-haspopup={isMobile ? undefined : "dialog"}
-          onClick={() => toggle("Playback")}>
-          {formatPlaybackRate(state.rate)}{settingsStatus ? <span className={styles.controlMarker} aria-hidden="true">{settingsFailed ? "!" : "·"}</span> : null}
-        </Button> : isMobile ? null : <Button size="comfortable" className={styles.rateBadge} aria-label="playback settings" disabled>speed</Button>}
-        {!isMobile || (episode.chapters.length > 0 && playbackSubject !== null) ? <Button ref={chaptersRef} size="comfortable" iconOnly
-          aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
-          disabled={episode.chapters.length === 0 || playbackSubject === null}
-          onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}
-        {stop}
-      </>;
       contents = isMobile ? <>
         <MiniProgress />
         <div className={styles.miniRow}>
-          <Identity state={state} size={44} buttonRef={openerRef} status={(queuePlaybackFailure ? null : state.error) ?? settingsStatus ?? status}
+          <PlayerIdentity variant="Mini" loaded={state} buttonRef={openerRef} status={identityStatus}
             label={`open now playing: ${source.descriptor.title}`}
             onOpen={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
-          <Transport compact />
+          <PlayerTransport variant="Mini" />
           {openQueue}
         </div>
       </> : null;
       sheetPlayerContent = <>
-        {identityButton}
-        <Transport />
-        <Seek active={sheetShown} />
-        <div className={styles.options}>{utilities}</div>
-            {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
+        <PlayerIdentity variant="Sheet" loaded={state} label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />
+        <PlayerTransport variant="Sheet" />
+        <PlayerSeek active={sheetShown} />
+        <PlayerUtilities variant="Sheet" {...utilities} />
+        {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
           id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
           trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
           skipReturnFocus={() => sourceOpened.current || !currentSurface.current.sheetShown || picker?.subject !== currentSurface.current.playbackSubject}>
-          {shownPicker === "Playback" ? playbackPanel : chaptersPanel}
+          {shownPicker === "Playback" ? playbackPanel("Embedded") : <PlayerChapters loaded={state} presentation="Embedded" onSeek={seekChapter} onOpened={opened} />}
         </MobileDisclosure> : null}
       </>;
       overlays = <>
         <PickerSurface active={!isMobile && presentation.visible && panelOpen} onClose={() => { focusedControl.current = null; setPicker(null); }} title="playback" panelId={playbackId}
-          anchor={() => returnFocus(rateRef.current)} returnFocusFallback={() => returnFocus(null)}
-          skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
-            && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
+          anchor={() => returnFocus(rateRef.current)} returnFocusFallback={() => returnFocus(null)} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
-          {playbackPanel}
+          {playbackPanel("Popup")}
         </PickerSurface>
         <PickerSurface active={!isMobile && presentation.visible && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId} heightLimit="available"
-          anchor={() => returnFocus(chaptersRef.current)} returnFocusFallback={() => returnFocus(null)}
-          skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
-            && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
+          anchor={() => returnFocus(chaptersRef.current)} returnFocusFallback={() => returnFocus(null)} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
-          <section className={`${styles.panel} ${styles.chapterPanel}`} aria-label="chapters">
-            <h2 className={styles.panelTitle}>chapters</h2>
-            <ChapterContext />
-            <ChapterList state={state} presentation="popup" onOpened={opened} />
-          </section>
+          <PlayerChapters loaded={state} presentation="Popup" onSeek={seekChapter} onOpened={opened} />
         </PickerSurface>
       </>;
       break;
@@ -646,18 +310,14 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
 
   if (!isMobile) contents = <>
     <div className={styles.source}>{desktopSource}</div>
-    <div className={styles.desktopTransport}><Transport /></div>
-    <div className={styles.listening}><Seek active={presentation.visible} /></div>
-    <div className={styles.options}>
-      {utilities}
-      <Button size="comfortable" iconOnly icon={<Icon.X />} aria-label="hide player"
-        tooltip={{ text: loaded?.phase === "Playing" || loaded?.phase === "Buffering" ? "hide player; playback continues" : "hide player" }}
-        onClick={presentation.hide} />
-    </div>
+    <div className={styles.desktopTransport}><PlayerTransport variant="Bar" /></div>
+    <div className={styles.listening}><PlayerSeek active={presentation.visible} /></div>
+    <PlayerUtilities variant="Bar" className={styles.options} upNext={openQueue} {...utilities} />
   </>;
 
   return <>
-    <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+    <PlayerKeys />
+    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     <div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
       onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>
@@ -668,8 +328,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       {overlays}
       <PickerSurface active={!isMobile && presentation.visible && queueOpen} onClose={() => setQueueOpen(false)} title="up next"
         anchor={() => returnFocus(queueRef.current)} returnFocusFallback={() => returnFocus(null)} placement="above"
-        skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-          && !document.activeElement.closest('[role="dialog"][aria-label="up next"]'))}
+        skipReturnFocus={skipReturnFocus('[role="dialog"][aria-label="up next"]')}
         className={styles.queuePicker} initialFocus={panel => {
           const target = panel.querySelector<HTMLElement>('[data-queue-initial-target="true"] [data-row-focusable]') ?? panel.querySelector<HTMLHeadingElement>("h2");
           target?.focus({ preventScroll: true });
@@ -677,55 +336,14 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         }}>
         <div className={styles.queueScrollport}><QueuePanel announce={setAnnouncement} scrollport={section => section.parentElement} runtime={linkRuntime} onOpened={opened} revealOnOpen /></div>
       </PickerSurface>
-      <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }} ariaLabel="now playing" handleLabel="collapse player"
+      <PlayerSheet active={sheetShown} target={sheetTarget} contentRef={sheetContentRef}
+        onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }}
         skipReturnFocus={() => sourceOpened.current}
         returnFocusTo={() => returnFocus(loaded !== null ? openerRef.current ?? queueRef.current : queueRef.current)}
         returnFocusFallback={() => returnFocus(null)}
-        initialFocus={sheet => {
-          const target = sheetTarget === "Queue"
-            ? sheet.querySelector<HTMLElement>('[data-queue-initial-target="true"] [data-row-focusable]') ?? sheet.querySelector<HTMLHeadingElement>('[aria-label="up next"] h2')
-            : sheet.querySelector<HTMLButtonElement>('[data-player-play="true"]') ?? sheet.querySelector<HTMLHeadingElement>("h2");
-          if (sheetTarget === "Player") target?.scrollIntoView({ block: "start" });
-          target?.focus({ preventScroll: true });
-          return target;
-        }}>
-        <div ref={sheetContentRef} className={styles.sheetContent} role="region" aria-label="media player">
-          {sheetPlayerContent}
-          <QueuePanel key="queue" announce={setAnnouncement} scrollport={section => section.parentElement?.parentElement ?? null} runtime={linkRuntime} onOpened={opened} revealOnOpen={sheetTarget === "Queue"} />
-        </div>
-      </MobileSheet>
+        announce={setAnnouncement} runtime={linkRuntime} onOpened={opened}>
+        {sheetPlayerContent}
+      </PlayerSheet>
     </div>
   </>;
-}
-
-function MiniProgress() {
-  const { positionMs, durationMs } = Player.usePlayerTimeline();
-  return (
-    <span className={styles.miniProgress} aria-hidden="true">
-      <span className={styles.miniFill} style={{ width: percent(positionMs, durationMs) }} />
-    </span>
-  );
-}
-
-/** One account-level presentation identity over the existing player state owners. */
-export function usePlayerFailurePresentation() {
-  const {preferences, playbackFailure, queueFailureOccurrence, state, queue} = Player.usePlayerSession();
-  const commands = Player.usePlayerCommands();
-  const unavailableOccurrence = useFeedbackOccurrence(state.kind === "Unavailable");
-  const applicationFailure = preferences?.application.kind === "Failed" ? preferences.application
-    : preferences?.application.kind === "Applying" ? preferences.application.failure : null;
-  return <>
-    {state.kind === "Unavailable" && state.reason === "NotResponding" ? <FeedbackFailure scope="Local" occurrence={unavailableOccurrence} content={{tone: "Warning", title: unavailableMessages[state.reason]}} announcement="Polite" /> : null}
-    {playbackFailure !== null ? <FeedbackFailure scope="Local" occurrence={playbackFailure.occurrence} content={{tone: "Warning", title: playbackFailure.message}}
-      announcement="Polite" actions={[{label: "retry", onClick: commands.resume, busy: state.kind === "Loaded" && state.phase === "Buffering"}]} /> : null}
-    {applicationFailure ? <FeedbackFailure scope="Local" occurrence={applicationFailure.occurrence}
-      content={{tone: "Warning", title: "couldn’t apply playback settings", message: applicationFailure.message}}
-      announcement="Polite" actions={[{label: "try again", onClick: commands.retryPlaybackPreferences, busy: preferences?.application.kind === "Applying"}]} /> : null}
-    {queue.error !== null ? <FeedbackFailure scope="Local" occurrence={queueFailureOccurrence} content={{tone: "Warning", title: queue.error}}
-      announcement="Polite" actions={[{label: "check playback", onClick: commands.checkQueue, busy: queue.phase === "Preparing" || queue.phase === "Saving"}]} /> : null}
-  </>;
-}
-
-export function PlayerFailures() {
-  return useActionRuntime().playerFeedback;
 }

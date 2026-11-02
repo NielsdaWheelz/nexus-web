@@ -1,0 +1,112 @@
+/* the stationary slot is measured; only the inner surface retreats. */
+.slot {
+  container: player / inline-size;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.slot[data-reader-composition="true"] {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.slot[data-reader-composition="true"] > .surface {
+  pointer-events: auto;
+}
+
+.slot[hidden] {
+  display: none;
+}
+
+.surface {
+  --control-min-size: 44px;
+  --mobile-chrome-offset: var(--space-2);
+  color: var(--ink);
+  background: var(--surface-1);
+  border-top: var(--stroke-hairline) solid var(--edge);
+}
+
+/* utility wrapping and identity copy may grow either desktop layout. */
+.bar {
+  --player-seek-height: 28px;
+  display: grid;
+  grid-template-columns: minmax(44px, 1fr) minmax(0, auto);
+  grid-template-rows: minmax(44px, auto) minmax(44px, auto) minmax(var(--player-seek-height), auto);
+  grid-template-areas: "source options" "transport transport" "seek seek";
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  min-height: 128px;
+  padding: 2px var(--space-4) calc(2px - var(--stroke-hairline));
+}
+
+.source { grid-area: source; display: flex; min-width: 0; }
+.desktopTransport { grid-area: transport; min-width: 0; }
+.listening { grid-area: seek; min-width: 0; }
+.options { grid-area: options; }
+.emptyIdentity { margin: 0; color: var(--ink-muted); font-size: var(--text-base); overflow-wrap: anywhere; }
+
+/* the bar's one text key sits flush in its row, as the icon keys do. */
+.options > .upNext { padding: 0; }
+
+.idle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.unavailable { min-width: 0; }
+
+.idleGlyph { flex: 0 0 auto; color: var(--ink-muted); }
+.idleCopy { flex: 1 0 7em; min-width: 0; color: var(--ink-muted); font-size: var(--text-base); }
+
+@container player (min-width: 64rem) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 20rem) minmax(0, 1fr);
+    grid-template-rows: minmax(44px, auto) minmax(var(--player-seek-height), auto);
+    grid-template-areas: "source transport options" ". seek .";
+    column-gap: var(--space-4);
+    row-gap: 0;
+    min-height: 80px;
+    padding-block: var(--space-1) calc(var(--space-1) - var(--stroke-hairline));
+  }
+}
+
+@media (any-pointer: coarse) {
+  .bar { --player-seek-height: 44px; min-height: 144px; }
+  @container player (min-width: 64rem) { .bar { min-height: 96px; } }
+}
+
+/* A decorative edge never consumes another row of the 64px mini. */
+.mini {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: calc(64px + var(--viewport-safe-bottom));
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + var(--viewport-safe-bottom));
+}
+
+.miniRow { display: flex; align-items: center; gap: var(--space-2); min-width: 0; width: 100%; }
+.mini > .idle { flex: 1; }
+
+.picker {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.queuePicker {
+  inline-size: min(42rem, var(--anchored-max-width, 100%));
+  overflow: hidden;
+}
+
+.queueScrollport {
+  max-block-size: min(36rem, var(--anchored-max-height, 70dvh));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
