@@ -72,7 +72,9 @@ export const SeekForward30: Glyph = /*#__PURE__*/ createLucideIcon("nexus-seek-f
 ]);
 
 // Playback's own glyphs: parametric, so lucide's Icon draws the node list a prop selects.
-// Their module keeps the disc's and the dial's strokes scaling and animates them.
+// Their module keeps the disc's and the dial's strokes scaling and animates them. The dial is
+// the one export that paints more than currentColor: away from 1× its needle and hub take
+// `--ink` and its sweep `--accent`.
 type PlaybackGlyphProps = Pick<LucideProps, "className" | "size">;
 
 const PAUSE_POSE: IconNode = [
