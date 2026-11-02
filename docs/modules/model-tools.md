@@ -175,9 +175,11 @@ read-only snapshot. media retains its read map; a visible library supplies its
 id, name, exact decimal `order_revision`, viewer `removal_revision` and
 `can_manage`. all remains unmanageable. admitted scope and visibility still apply.
 
-`nexus.library.add` requires a named `library_id`, resource uri and both frozen
-revisions. it uses the public absolute placement owner; conflicts map to the tool's
-`Conflict` refusal and require review, never refreshed-token retries. an actual
+`nexus.library.add` requires a named `library_id`, resource uri and the frozen
+removal revision. media filing also requires the inspected order revision and uses
+the public absolute placement owner; a podcast passes null, because its admission
+appends and compares no library order. conflicts map to the tool's `Conflict`
+refusal and require review, never refreshed-token retries. an actual
 named insertion records its exact entry id and final revision. a no-op records
 no undo ownership. filing personally retains media; undo removes only the named
 filing. account history uses the same receipt eligibility predicate as execution.

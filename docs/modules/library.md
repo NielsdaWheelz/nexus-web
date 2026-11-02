@@ -65,16 +65,20 @@ io occurs in these transactions; low-level physical writers never take viewer lo
 
 `libraries.order_revision` comes from `collection_order_revision_seq`; every
 physical change and accepted placement intent advances it, including present/absent
-no-ops. wire revisions are exact decimal strings. commands validate authority and
-captured revision BEFORE desired-state equality. stale intent is 409 without
-effects. frozen retries may conflict after landing; fresh review is explicit.
+no-ops. wire revisions are exact decimal strings. placement, move and lectern
+commands validate authority and captured revision BEFORE desired-state equality: a
+toggle depends on what was reviewed. stale intent is 409 without effects. frozen
+retries may conflict after landing; fresh review is explicit. acquisition compares
+no order revision: appends commute, so n additions into one library in one submit
+all land, and only an actual insert advances the revision.
 
 `users.removal_revision` fences acquisition. workspace removal, library deletion,
 podcast stop, accepted episode removal and import cancellation advance it;
 acquisition/sync do not. an inert already-absent episode retry returns the current
 revision without a new write. ordinary `validate_acquisition_destinations` locks
-default plus all selected named libraries and checks every fence. podcast bulk
-admission files one guarded destination. the placement route additionally permits
+default plus all selected named libraries, requires admin authority over each named
+one and compares the removal fence. podcast bulk admission files one fenced
+destination. the placement route additionally permits
 canonical episode inclusion in the actor's actual default; default exclusion
 through that route remains forbidden.
 

@@ -21,9 +21,15 @@ http (all authenticated repeatable reads, `Data{data}`; the web under `/api`):
 | route | request | answer |
 |---|---|---|
 | `GET /imports/summary` | none | `ImportSummary{observed_at, needs_attention_count, active_count, unfinished_work_count}` |
-| `GET /imports` | `view` (NeedsAttention \| InProgress \| History), `q`, `media_kind`, `stage`, `failure_code`, `state`, `had_failures`, `from`, `before`, `cursor`, `limit` 1..100 = 50 | `ImportPage{matched_count, items, next_cursor}`; 400 `E_INVALID_REQUEST` for a filter the view cannot correlate (In progress: `failure_code`; any non-History view: `state`, `had_failures`, `from`, `before`), `failure_code` with `had_failures=false`, a date without an offset or an unknown parameter; 400 `E_INVALID_CURSOR` |
+| `GET /imports` | `view` (NeedsAttention \| InProgress \| History \| Recent), `q`, `media_kind`, `stage`, `failure_code`, `state`, `had_failures`, `from`, `before`, `cursor`, `limit` 1..100 = 50 | `ImportPage{matched_count, items, next_cursor}`; 400 `E_INVALID_REQUEST` for a filter the view cannot correlate (In progress: `failure_code`; Recent: `stage`, `failure_code`; any non-History view: `state`, `had_failures`, `from`, `before`), `failure_code` with `had_failures=false`, a date without an offset or an unknown parameter; 400 `E_INVALID_CURSOR` |
 | `GET /imports/{ref}` | none | `ImportDetail{item, source_issues, related_imports, pending_captures, original_source}`; 400 for a malformed ref, 404 `E_IMPORT_NOT_FOUND` |
 | `GET /imports/{ref}/history` | `cursor`, `limit` 1..100 = 50 | `HistoryPage{entries, next_cursor}`, newest first by `(occurred_at, id)`; 400, 404, 400 `E_INVALID_CURSOR` |
+
+Recent is the viewer's own imports, every classification, newest accepted first: an
+`upload:` row, or a `media:` row with a source attempt the viewer created that is not
+a podcast transcript request. shared media and metadata-only rows are not their
+imports. it matches no obligation, so complete imports stay, and its `matched_count`
+is the page's own, sparing a second pass over the read model.
 
 `ImportItem{ref, media_id, title, original_filename, media_kind, source_label, can_read, can_play, text_search_ready, classification, primary, accepted_at, updated_at, matched_event, obligations{source, search, metadata}, source_issue_count}`; `primary` is null exactly when complete. source and search are `ImportObligation{classification, stage, status, waiting_reason, progress, next_retry_at, failure_code, recovery, unavailable_reason}` (status, waiting reason, progress and next retry describe active work, the code attention); metadata is `MetadataEnrichmentView`. `HistoryEntry{id: upload:|processing:|metadata:<uuid>, occurred_at, stage, failure_code, facts}` with `facts` one stored kind or `MetadataOperation`. a list cursor binds the viewer, the view and `ImportListQuery.normalized()`; a history cursor binds the viewer and the ref.
 
