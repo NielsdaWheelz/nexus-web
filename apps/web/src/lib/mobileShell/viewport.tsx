@@ -139,7 +139,6 @@ function createMobileViewport() {
     // the shown envelope, so retreating chrome never moves a slip. the keyboard stays out of
     // platformBand: there it would change content clearance.
     const stageBottom = [...shownBottom, new DOMRect(0, viewport.height - stageKeyboardPx, viewport.width, stageKeyboardPx)];
-    root.setProperty("--stage-bottom-clearance", `${envelope(stageBottom, viewport, "Bottom")}px`);
     for (const element of stageAnchors) {
       element.style.setProperty("--stage-bottom-clearance", `${envelope(stageBottom, element.getBoundingClientRect(), "Bottom")}px`);
     }

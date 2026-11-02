@@ -96,16 +96,22 @@ function useRoom(anchor: Anchor, floor = false) {
   return element;
 }
 
-function RootAnchor() {
-  return <div ref={useRoom(ROOT)} className={styles.anchor} />;
-}
-
-/** Its floor can stand above the viewport's, so what covers it is projected onto it. */
-function PaneAnchor({ paneId, floor }: { paneId: string; floor?: true }) {
-  const element = useRoom(useMemo(() => ({ kind: "Pane", paneId }), [paneId]), floor);
+/** An anchor's floor can stand above the viewport's, so what covers it is projected onto it. */
+function useProjection(element: RefObject<HTMLElement | null>) {
   const viewport = useMobileViewport();
   // justify-type-assertion: the anchor's own element, committed before this layout effect.
   useLayoutEffect(() => viewport.registerStageAnchor(element.current!), [viewport, element]);
+}
+
+function RootAnchor() {
+  const element = useRoom(ROOT);
+  useProjection(element);
+  return <div ref={element} className={styles.anchor} />;
+}
+
+function PaneAnchor({ paneId, floor }: { paneId: string; floor?: true }) {
+  const element = useRoom(useMemo(() => ({ kind: "Pane", paneId }), [paneId]), floor);
+  useProjection(element);
   return <div ref={element} className={styles.anchor} />;
 }
 

@@ -7,12 +7,8 @@
   --stage-ceiling: 100dvb;
 }
 
-/* A modal anchor uses its floor alone, and its panel clips. */
-.modalAnchor {
-  --stage-bottom-clearance: 0px;
-  --reader-feedback-occlusion-bottom: 0px;
-  --stage-ceiling: 100%;
-}
+/* A modal anchor is portaled clear of every projection: it uses its floor alone, and its panel clips. */
+.modalAnchor { --stage-ceiling: 100%; }
 
 /* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
