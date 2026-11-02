@@ -81,7 +81,7 @@ export default function ContributorFilter({
   const suggestions = live && search.current
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
-  const failure = live && search.failure?.op !== "More" ? search.failure : null;
+  const failure = live && !search.current ? search.failure : null;
   const readFeedback = useCollectionReadFeedback({
     list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null,
     outcome: null,

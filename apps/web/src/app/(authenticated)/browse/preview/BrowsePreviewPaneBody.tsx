@@ -12,7 +12,7 @@ import { ContributorRoleGroups } from "@/components/contributors/ContributorCred
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import type { Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type Verbs } from "@/components/feedback/stage";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
@@ -120,7 +120,8 @@ export default function BrowsePreviewPaneBody() {
       <PaneSurface
         state={
           opening.failure !== null ? <Fact line={{ fact: opening.failure.title, reason: opening.failure.message }}
-            verbs={[{ label: "retry", commandKey: "retry opening", run: resolve, busy: opening.running !== null }]} />
+            verbs={opening.failure.reload ? transportVerbs("Update", { signIn: null }) ?? undefined
+              : [{ label: "retry", commandKey: "retry opening", run: resolve, busy: opening.running !== null }]} />
             : <Ruling />
         }
       />

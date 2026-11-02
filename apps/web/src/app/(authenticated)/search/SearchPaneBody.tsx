@@ -322,11 +322,11 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
         { label: "clear content types", commandKey: "clear content types", run: () => commit({ ...query, requestedKinds: null }) },
       ]} />
       : <Fact line={{ fact: "these filters leave no content types to search." }} verbs={clearFilters} />
+    : count > 0 ? null
     : unfixable !== undefined ? <Fact line={{ fact: unfixable.code === "E_INVALID_REQUEST" ? "nexus can’t run this search." : "the item this search is inside isn’t available." }} />
     : textFailed && phaseIncidents.lexical !== null
       ? <Failed error={phaseIncidents.lexical} noun={noun} retry={{ run: retrySearch, busy: lexical.running !== null || hybrid.running !== null }} />
     : visit.adopted === null ? stale && previous.length === 0 ? <Ruling /> : null
-    : count > 0 ? null
     : visit.adopted.phase === "lexical" && hybridState === "pending" ? <Ruling />
     : visit.adopted.phase === "lexical" && phaseIncidents.hybrid !== null ? <Fact line={{ fact: "no text matches for this search." }} speak={active} />
     : <Fact line={{ fact: local.matches?.length ? "no other results match this search." : query.view === "passages" ? "no passages match this search." : "no results match this search." }}
@@ -344,7 +344,7 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
         {rows.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(rows.slice(index + 1))} />)}
       </ResourceList> : null}
     </div>
-    {visit.adopted?.phase === "lexical" && phaseIncidents.hybrid !== null && hybrid.failure?.op !== "More"
+    {visit.adopted?.phase === "lexical" && phaseIncidents.hybrid !== null && hybrid.failure?.op !== "More" && (unfixable === undefined || count > 0)
       ? <Failed error={phaseIncidents.hybrid} noun="related matches" retry={{ run: () => { returning.current = false; retryPhase("hybrid"); }, busy: hybrid.running !== null }} />
       : null}
     {readFeedback.notice}
