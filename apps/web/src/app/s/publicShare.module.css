@@ -121,5 +121,10 @@
   }
 }
 
-.header { position: relative; padding-inline-end: var(--size-xl); }
-.recoverySlot { position: absolute; inset-inline-end: 0; inset-block-start: var(--space-5); }
+/* The page scrolls, so the stage's root stands over the viewport, not the document. */
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-popover) - 1);
+  pointer-events: none;
+}
