@@ -111,6 +111,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const ms = (seconds: number) =>
     Number.isFinite(seconds) ? Math.floor(seconds * 1000) : 0;
   const atEnd = () => audio.ended || episode?.restsAtEnd === true;
+  /** A natural end's terminal settle carries its last sample, so nothing samples it again. A rest
+   * has no terminal; its sample is an ordinary one. */
+  const endedNaturally = (current: Episode) => audio.ended && !current.restsAtEnd;
   const phase = (): EngineState["phase"] =>
     atEnd()
       ? "Ended"
@@ -142,7 +145,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const path = (mediaId: string) =>
     `/api/media/${mediaId}/listening-state` as const;
   const news = (current: Episode) =>
-    !atEnd() &&
+    !endedNaturally(current) &&
     (!audio.paused ||
       audio.seeking ||
       current.writing !== null ||
@@ -153,7 +156,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   const write = (current: Episode | null = episode): Promise<void> => {
     if (current === null || current.stopped || current.fenced || !current.active)
       return current?.writing ?? Promise.resolve();
-    if (current === episode && (!audio.ended || current.restsAtEnd))
+    if (current === episode && !endedNaturally(current))
       current.queued = listening(current);
     if (current.writing === null && current.queued !== null)
       current.writing = send(current);
@@ -438,7 +441,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const outgoing = episode;
       if (outgoing?.descriptor.media_id === descriptor.media_id && outgoing.resetEpoch === descriptor.reset_epoch && news(outgoing)) {
         const local = listening(outgoing);
-        descriptor = { ...descriptor, position_ms: local.position_ms,
+        // A rest's next play replays it, as the server's own descriptor of a finished episode does.
+        descriptor = { ...descriptor, position_ms: outgoing.restsAtEnd ? 0 : local.position_ms,
           playback_rate: local.episode_playback_rate ?? descriptor.playback_rate };
       }
       if (requestedPositionMs !== null) descriptor = { ...descriptor, position_ms: requestedPositionMs };
@@ -531,6 +535,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
       if (current?.restsAtEnd) {
         current.restsAtEnd = false;
+        metadataPositionMs = 0;
         audio.currentTime = 0;
       }
       const subject = state.playbackSubject!;
