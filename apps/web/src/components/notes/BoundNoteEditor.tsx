@@ -32,7 +32,7 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, h
   },[document,session]);
   const history=suppliedHistory ?? (openedHistory?.document===document&&openedHistory.session===session?openedHistory.history:undefined);
   return <>
-    {pending && !document ? <Ruling/> : null}
+    {pending && !document && error === null ? <Ruling/> : null}
     <AuthoredReadFailure error={error} pending={pending} retry={retry} noun={`this ${kind}`}/>
     {document && (!session || history) ? <AuthoredNoteEditor focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} document={document} label={label} editable={editable} onSplit={onSplit} onJoin={onJoin} history={history} structuralKeys={structuralKeys} inspection={inspection} reference={reference} /> : null}
   </>;
