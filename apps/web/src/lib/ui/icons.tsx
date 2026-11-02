@@ -79,10 +79,11 @@ function needle(theta: number): IconNode[number] {
   return ["path", { d: "M12 12.5V6", transform: `rotate(${theta.toFixed(2)} 12 12.5)`, className: styles.needle, key: "needle" }];
 }
 
-/** θ = 90·log2(rate) at hundredths: ½× at nine, 1× at twelve, 2× at three. the sweep is a dash on a
+/** θ = 90·log2(rate): ½× at nine, 1× at twelve, 2× at three. the caller passes the rate its control
+ * prints, so needle and figure agree; playbackRate.ts owns rounding. the sweep is a dash on a
  * 360-unit circle, so the dial scales its stroke. */
 export function Speed({ rate }: { rate: number }) {
-  const theta = 90 * Math.log2(Math.round(rate * 100) / 100);
+  const theta = 90 * Math.log2(rate);
   const sweep: IconNode[number] = ["circle", {
     cx: "12", cy: "12.5", r: "9", pathLength: "360", strokeLinecap: "butt",
     strokeDasharray: `${Math.abs(theta).toFixed(2)} 360`,
@@ -90,7 +91,7 @@ export function Speed({ rate }: { rate: number }) {
     className: styles.sweep, key: "sweep",
   }];
   return <LucideGlyph iconNode={[RIM, sweep, TICKS, needle(theta), HUB]}
-    className={cx("lucide-speed", styles.speed, theta !== 0 && styles.altered)} />;
+    className={cx("lucide-speed", styles.speed, rate !== 1 && styles.altered)} />;
 }
 
 /** the speed dial's drawing; the needle spans nine to three across the choices. */
