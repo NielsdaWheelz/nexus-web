@@ -186,13 +186,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             current.queued = null; // sampled under the old epoch
             adoptInto(current, { position_ms: server.position_ms ?? 0, reset_epoch: server.reset_epoch,
               consumption_override_revision: server.consumption_override_revision });
-          } else if (status === 0 || status >= 500) {
-            // The attached episode retries on the tick or `online`.
+          } else if (status === 0 || status >= 500 || !remoteAttemptAllowed()) {
+            // The attached episode retries on the tick or `online`, unsent while admission refuses.
             return;
           } else {
             // Standing error keeps the sample for an explicit retry (`play`), which resumes it.
             current.stopped = true;
-            if (current === episode && remoteAttemptAllowed()) set({ error: PROGRESS_UNSAVED });
+            if (current === episode) set({ error: PROGRESS_UNSAVED });
             console.warn("listening_write_refused", { status });
             return;
           }
