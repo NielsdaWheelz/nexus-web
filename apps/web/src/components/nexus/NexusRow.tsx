@@ -1,197 +1,218 @@
 "use client";
 
+// What both presenters share about a row: its gutter and two text lines, its spoken name, its verbs,
+// and the notices that follow the candidates.
 import { X } from "lucide-react";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-
-// Row parts: resource bodies, menus, and visible search status.
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
-import type { ComponentProps } from "react";
-import { FeedbackFailure, FeedbackBusy, FeedbackNotice, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, FeedbackNotice } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
+import { ExcerptText } from "@/components/resources/ResourceBody";
 import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { excerptTextParts } from "@nexus/authored/excerpt";
-import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
-import ActionMenu from "@/components/ui/ActionMenu";
-import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
-import ResourceBody, { ExcerptText, ResourceIndexBody, ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
-import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import type { ResourceItem } from "@/lib/resources/items";
-import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
+import type { ContextualActionsInput } from "@/lib/actions/useContextualActions";
 import type { NexusRow } from "@/lib/nexus/model";
-import { resourceAction, rowFacts } from "@/lib/nexus/rows";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { NEXUS_COMMANDS } from "@/lib/nexus/query";
+import { resourceAction, rowFacts, rowName } from "@/lib/nexus/rows";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceItem } from "@/lib/resources/items";
+import { resourceMetadataText } from "@/lib/resources/metadata";
+import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { PANE_TITLES_FAILED, useWorkspacePresentations } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
-import collection from "@/components/ui/Collection.module.css";
 
-type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
-type RowActions = Pick<NexusController, "activate" | "closePane" | "destinationHref"> & { mobile: boolean; picker: boolean };
-type Body = Schema<"ResourceItemOut">["preview"]["body"];
+type Match = Schema<"SearchMatchOut">;
+export type NexusVerb = Extract<ActionDescriptor, { kind: "command" | "link" }>;
+/** Codepoints of context the evidence line keeps before its first matched range. */
+const EVIDENCE_LEAD = 24;
 
-/** A capture's displayed literal: its selected text and selection omission marks. null paints a placeholder. */
-function selectedLiteral(body: Extract<Body, { kind: "passage" }>): Schema<"ExcerptOut"> | null {
-  if (body.excerpt.kind !== "content") return null;
-  const exact = excerptTextParts(body.excerpt.body).exact;
-  return exact ? { text: exact, truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after } : null;
+/** Passage-bodied items other than highlights are titled by their work and always show their window. */
+function isPassage(item: ResourceItem): boolean {
+  return item.preview.body.kind === "passage" && parseResourceRef(item.ref)?.scheme !== "highlight";
 }
 
-/** Compact rows paint a capture's selected literal, with ranges when the match is that literal; the full excerpt is an explicit disclosure. */
-function RowContent({ body, match }: { body: Body; match: Schema<"SearchMatchOut"> | null }) {
-  if (body.kind !== "passage") return <ResourceBody body={body} match={match} />;
-  const literal = selectedLiteral(body);
-  return <span data-resource-primary>{literal ? <ExcerptText excerpt={literal} match={match} /> : <ResourceIndexBody body={body} />}</span>;
-}
-
-/** Mobile rows are one native button, so only phrasing content belongs here; evidence follows it. */
-export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
-  const Icon = row.icon;
-  const Content = desktop ? "div" : "span";
-  const facts = rowFacts(row);
-  return (
-    <>
-      <span className={`${collection.adornment} ${styles.rowIcon}`} aria-hidden="true">
-        <Icon size={18} aria-hidden="true" />
-      </span>
-      <Content className={`${collection.content} ${styles.rowBody}`}>
-        {row.item && desktop ? <NexusResourceContent item={row.item} row={row} facts={facts} /> : <>
-          <span className={styles.rowLabel} title={nexusRowPrimaryText(row)}>{row.item ? <RowContent body={row.item.preview.body} match={row.match ?? null} /> : row.label}</span>
-          {facts ? <span className={collection.detail}>{facts}</span> : null}
-        </>}
-        {row.action.kind === "Unavailable" ? <span className={collection.detail}>{row.action.reason}</span> : null}
-      </Content>
-    </>
-  );
-}
-
-/** Names and tooltips describe the literal primary content the row actually paints. */
+/** The row's title: a highlight's literal in quotes, a passage's work, a note's first line, else its name. */
 export function nexusRowPrimaryText(row: NexusRow): string {
   const literal = (excerpt: Schema<"ExcerptOut">) => `${excerpt.truncated_before ? "…" : ""}${excerpt.text}${excerpt.truncated_after ? "…" : ""}`;
-  const body = row.item?.preview.body;
-  if (!body) return row.label;
+  const item = row.item;
+  if (!item) return row.label;
+  const body = item.preview.body;
   switch (body.kind) {
     case "named": return body.title || "untitled";
-    case "prose": return body.excerpt.text ? literal(body.excerpt) : row.label;
-    case "passage": return body.excerpt.kind === "content" ? literal({ text: excerptTextParts(body.excerpt.body).exact || "selected region",
-      truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }) : "table excerpt";
+    case "prose": return parseResourceRef(item.ref)?.scheme === "note_block" || !body.excerpt.text ? row.label : literal(body.excerpt);
+    case "passage":
+      if (isPassage(item)) return item.preview.source?.title?.trim() || "source";
+      return `“${body.excerpt.kind === "content" ? literal({ text: excerptTextParts(body.excerpt.body).exact || "selected region",
+        truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }) : "table excerpt"}”`;
     case "images": return [body.count === 1 ? "image" : `${body.count} images`, ...body.alts.flatMap(alt => alt ? [literal(alt)] : [])].join("\n");
     case "reference": return body.label?.text ? `reference · ${literal(body.label)}` : "embedded resource";
     case "media": return body.media_summary.title;
   }
 }
 
-/** Evidence is separate unless it is exactly the literal `RowContent` already paints with its ranges. */
-function bodyEvidence(body: Body, match: Schema<"SearchMatchOut"> | null): Schema<"SearchMatchOut"> | null {
-  if (body.kind === "media" && match?.excerpt.text === body.media_summary.title
-    && !match.excerpt.truncated_before && !match.excerpt.truncated_after) return null;
-  if (body.kind === "passage" && match?.excerpt.text && match.excerpt.text === selectedLiteral(body)?.text) return null;
-  return separateMatchEvidence(body, match);
+/** A match whose window lies inside the title underlines there and adds no line (the row never repeats its title). */
+function titleMatch(row: NexusRow, title: string): Match | null {
+  const match = row.match;
+  if (!row.item || isPassage(row.item) || !match?.excerpt.text) return null;
+  const at = title.indexOf(match.excerpt.text);
+  if (at < 0) return null;
+  const offset = Array.from(title.slice(0, at)).length;
+  return { excerpt: { text: title, truncated_before: false, truncated_after: false },
+    ranges: match.ranges.map(range => ({ start: range.start + offset, end: range.end + offset })) };
 }
 
-/** A matching passage replaces the row's own evidence. */
-function rowEvidence(row: NexusRow): Schema<"SearchMatchOut"> | null {
-  if (row.matchingPassage) return bodyEvidence(row.matchingPassage.item.preview.body, row.matchingPassage.match);
-  return row.item ? bodyEvidence(row.item.preview.body, row.match ?? null) : null;
+/** The evidence line: an absorbed passage's window, else the row's own window outside its title. */
+function rowEvidence(row: NexusRow, title: string): Match | null {
+  const occurrence = row.matchingPassage;
+  if (occurrence) return occurrence.match ?? { excerpt: { text: occurrence.item.label, truncated_before: false, truncated_after: false }, ranges: [] };
+  if (!row.match?.excerpt.text || titleMatch(row, title)) return null;
+  return row.match;
 }
 
-/** Supplemental evidence excludes a complete literal already spoken as the primary name. */
-export function nexusRowEvidenceText(row: NexusRow): string | null {
-  if (row.matchingPassage) return row.matchingPassage.match?.excerpt.text ?? row.matchingPassage.item.label;
-  return rowEvidence(row)?.excerpt.text ?? null;
+/** One line shows only its start: open the window a few words before the first range so the matched words paint. */
+function windowed(match: Match): Match {
+  const first = match.ranges[0];
+  if (!first || first.start <= EVIDENCE_LEAD) return match;
+  const points = Array.from(match.excerpt.text);
+  const space = points.indexOf(" ", first.start - EVIDENCE_LEAD);
+  const start = space >= 0 && space < first.start ? space + 1 : first.start - EVIDENCE_LEAD;
+  return {
+    excerpt: { ...match.excerpt, text: points.slice(start).join(""), truncated_before: true },
+    ranges: match.ranges.map(range => ({ start: range.start - start, end: range.end - start })),
+  };
 }
 
-function RowEvidence({ row, evidence }: { row: NexusRow; evidence: Schema<"SearchMatchOut"> | null }) {
-  return evidence ? <ResourceMatchEvidence match={evidence} />
-    : row.matchingPassage ? <RowContent body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /> : null;
+/** In `/` lookup, a command row's first alias, shown and spoken after its title. */
+export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
+  if (!lookup) return null;
+  return Object.entries(NEXUS_COMMANDS).find(([id]) => row.key === `QuickAction:${id}`)?.[1].aliases[0] ?? null;
 }
 
-function NexusResourceContent({ item, row, facts }: { item: ResourceItem; row: NexusRow; facts: string }) {
-  const evidence = rowEvidence(row);
+/** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
+export function NexusRowBody({ row, here, position }: { row: NexusRow; here: boolean; position?: number }) {
+  const Icon = row.icon;
+  const title = nexusRowPrimaryText(row);
+  const inline = titleMatch(row, title);
+  const evidence = rowEvidence(row, title);
+  const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
+  // An unavailable row keeps its facts and says why last, instead of any evidence.
+  const facts = [rowFacts(row), reason].filter(Boolean).join(" · ");
+  const shown = evidence && reason === null ? windowed(evidence) : null;
   return <>
-    <div className={styles.rowLabel} title={nexusRowPrimaryText(row)}><RowContent body={item.preview.body} match={row.match ?? null} /></div>
-    {facts || row.matchingPassage || evidence ? <div className={styles.rowSupplement}>
-      {facts ? <span className={styles.rowMetadata} title={facts}>{facts}</span> : null}
-      {row.matchingPassage || evidence ? <div className={styles.rowSnippet}><RowEvidence row={row} evidence={evidence} /></div> : null}
-    </div> : null}
+    <span className={styles.gutter} aria-hidden="true">
+      {position === undefined ? <Icon size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
+    </span>
+    <span className={styles.text}>
+      <span className={styles.title} dir="auto" title={title}>
+        {here ? <span className={styles.sub}>here</span> : null}
+        {inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}
+      </span>
+      {shown ? <span className={styles.evidence}><ExcerptText excerpt={shown.excerpt} match={shown} /></span>
+        : facts ? <span className={styles.facts}>{facts}</span> : null}
+    </span>
   </>;
 }
 
-/** The row's capture: its matching passage when one was absorbed, else its own item. */
-export function nexusRowExcerptItem(row: NexusRow): ResourceItem | null {
-  return row.matchingPassage?.item ?? row.item ?? null;
+/** The row's spoken name: `here`, the title, facts, evidence and reason; a lookup command is its title and alias. */
+export function nexusRowName(row: NexusRow, here: boolean, alias: string | null): string {
+  const title = nexusRowPrimaryText(row);
+  if (alias !== null) return rowName([title, alias]);
+  return rowName([here ? "here" : null, title, rowFacts(row), rowEvidence(row, title)?.excerpt.text,
+    row.matchingPassage ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method) : null,
+    row.action.kind === "Unavailable" ? row.action.reason : null]);
 }
 
-/** The visible copy stays "show excerpt"; its name carries the row's complete primary identity. */
-export function nexusRowExcerptName(row: NexusRow): string {
-  return `show excerpt for ${nexusRowPrimaryText(row)}`;
+export interface NexusRowVerbs {
+  /** `open` (`run` on commands) and `new pane`, as far as the target takes a disposition. */
+  readonly pair: readonly NexusVerb[];
+  /** `close pane` on `here` and tab rows, after the read verbs, named for its pane. */
+  readonly close: { readonly verb: NexusVerb; readonly name: string } | null;
+  /** The source of the read verbs and of `more`; null when the row has no menu. */
+  readonly menu: ContextualActionsInput | null;
+  /** Opening the rail prepares the menu's read; a tab's rail never reads. */
+  readonly read: boolean;
 }
 
-/** Mobile evidence is selectable flow content after the native activation button and its options. */
-export function NexusRowEvidence({ row }: { row: NexusRow }) {
-  if (!row.item) return null;
-  const evidence = rowEvidence(row);
-  return <div className={styles.mobileEvidence}>
-    {row.matchingPassage || evidence ? <div className={styles.rowSnippet} id={`mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}><RowEvidence row={row} evidence={evidence} /></div> : null}
-    <ExcerptDisclosure item={nexusRowExcerptItem(row)} triggerAttributes={{ "aria-label": nexusRowExcerptName(row) }} />
-  </div>;
-}
-
-function TargetMenu({ row, menuProps, activate, closePane, destinationHref, mobile, picker }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
-  const secondary = row.secondary;
-  const ownOptions: ActionDescriptor[] = [];
-  if (row.matchingPassage) {
-    const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
-    const href = action.kind === "Available" && action.target.kind === "Resource" && (action.target.activation.kind === "route" || (!picker && action.target.activation.kind === "external")) ? action.target.activation.href : null;
-    if (href) ownOptions.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
-      onActivate: action.kind === "Available" && action.target.kind === "Resource" && action.target.activation.kind === "external" ? undefined : (event) => {
-        const intent = workspaceTargetActivationIntent(event);
-        if (intent.kind === "Unowned") return "unhandled";
-        event.preventDefault();
-        if (intent.kind === "Consume") return "consumed";
-        const fork = picker || intent.intent === "new_pane";
-        const result = activate(action, { disposition: { kind: fork ? "Fork" : "Follow" } });
-        return result && result.kind !== "Cancelled" ? fork ? "handled-new-pane" : "handled-default" : "consumed";
-      },
-    });
-    else if (action.kind === "Unavailable") ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage", icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />,
-      disabled: true, disabledReason: action.reason, onSelect: () => undefined,
-    });
-  }
-  if (!picker && secondary?.kind === "TargetMenu") for (const pane of secondary.closePanes)
-    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => closePane(pane.id) });
-  const href = destinationHref(row);
-  const fork: Extract<ActionDescriptor, { kind: "link" }> | null = mobile && !picker && href ? {
-    kind: "link", id: "Nexus.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label.toLowerCase(), href,
-    icon: <ACTION_CATALOG.OpenInNewPane.icon size={16} aria-hidden="true" />,
-    onActivate: (event) => {
+/**
+ * A row's verbs: the palette's own descriptors (`Nexus.Open`, `Nexus.OpenInNewPane`,
+ * `Nexus.OpenMatchingPassage`, `Nexus.ShowExcerpt`, `Nexus.ClosePane:*`) and the input of its existing
+ * contextual menu. Continuations and `resume` have none. Only the pair goes through `activate`, so only
+ * the pair learns.
+ */
+export function nexusRowVerbs(
+  row: NexusRow,
+  here: boolean,
+  controller: Pick<NexusController, "activate" | "closePane" | "destinationHref" | "panes">,
+  paneName: string,
+  showExcerpt: (item: ResourceItem) => void,
+): NexusRowVerbs | null {
+  if (row.key.startsWith("Continuation:") || row.key === "Resource:Playback:Current") return null;
+  const href = controller.destinationHref(row);
+  const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
+  const run = /^(QuickAction|ImportUrl|Intent):/.test(row.key);
+  // Add ignores disposition, so import has no `new pane`.
+  const imports = row.key === "QuickAction:Nexus.Quick.Import" || row.key.startsWith("ImportUrl:");
+  const verb = (fork: boolean): NexusVerb => {
+    const id = fork ? "Nexus.OpenInNewPane" : "Nexus.Open";
+    const label = fork ? "new pane" : run ? "run" : "open";
+    const activation = (newPane: boolean) => ({ disposition: { kind: fork || newPane ? "Fork" as const : "Follow" as const } });
+    if (reason !== null) return { kind: "command", id, label, icon: null, disabled: true, disabledReason: reason, onSelect: () => undefined };
+    if (href === null) return { kind: "command", id, label, icon: null, onSelect: detail => { controller.activate(row.action, activation(detail.openIntent === "new_pane"), row); } };
+    return { kind: "link", id, label, href, icon: null, onActivate: event => {
       const intent = workspaceTargetActivationIntent(event);
       if (intent.kind === "Unowned") return "unhandled";
       event.preventDefault();
       if (intent.kind === "Consume") return "consumed";
-      const result = activate(row.action, { disposition: { kind: "Fork" } }, row);
-      return result && result.kind !== "Cancelled" ? "handled-new-pane" : "consumed";
+      const result = controller.activate(row.action, activation(intent.intent === "new_pane"), row);
+      return result && result.kind !== "Cancelled" ? fork || intent.intent === "new_pane" ? "handled-new-pane" : "handled-default" : "consumed";
+    } };
+  };
+  const tab = row.secondary?.kind === "ClosePane" ? row.secondary.paneId : null;
+  const closing = tab ?? (here ? controller.panes.find(pane => pane.current)?.id ?? null : null);
+  const occurrence: MenuOption[] = [];
+  if (row.matchingPassage) {
+    const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
+    const target = action.kind === "Available" && action.target.kind === "Resource" ? action.target : null;
+    const passageHref = target && (target.activation.kind === "route" || target.activation.kind === "external") ? target.activation.href : null;
+    const icon = <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />;
+    if (passageHref && target) occurrence.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href: passageHref, icon,
+      onActivate: target.activation.kind === "external" ? undefined : (event) => {
+        const intent = workspaceTargetActivationIntent(event);
+        if (intent.kind === "Unowned") return "unhandled";
+        event.preventDefault();
+        if (intent.kind === "Consume") return "consumed";
+        const result = controller.activate(action, { disposition: { kind: intent.intent === "new_pane" ? "Fork" : "Follow" } });
+        return result && result.kind !== "Cancelled" ? intent.intent === "new_pane" ? "handled-new-pane" : "handled-default" : "consumed";
+      },
+    });
+    else if (action.kind === "Unavailable") occurrence.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage", icon,
+      disabled: true, disabledReason: action.reason, onSelect: () => undefined });
+  }
+  const capture = row.matchingPassage?.item ?? row.item;
+  if (capture?.preview.body.kind === "passage" && capture.preview.body.capture_revision !== null)
+    occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
+  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) if (pane.id !== closing)
+    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
+  const paneRef = tab === null ? null : controller.panes.find(pane => pane.id === tab)?.resourceRef ?? null;
+  const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : paneRef === null ? null : assumeCanonicalResourceRef(paneRef);
+  return {
+    pair: [...(here ? [] : [verb(false)]), ...(imports ? [] : [verb(true)])],
+    close: closing === null ? null : { name: `close ${paneName}`,
+      verb: { kind: "command", id: `Nexus.ClosePane:${closing}`, label: "close pane", icon: null, onSelect: () => controller.closePane(closing) } },
+    menu: resourceRef === null && occurrence.length === 0 ? null : {
+      title: row.label, subjectKey: `nexus:${row.key}`, resourceRef: resourceRef ?? undefined,
+      showSourceSubject: row.item !== undefined && row.item.action_ref !== row.item.ref,
+      navigation: { key: JSON.stringify([row.key, row.action, href]), fork: null },
+      sections: [{ id: "Occurrence", actions: occurrence }],
     },
-  } : null;
-  if (picker && ownOptions.length === 0) return null;
-  const resourceRef = !picker && secondary?.kind === "TargetMenu" ? secondary.resourceRef : null;
-  return <ContextualActionMenu {...menuProps} title={row.label} subjectKey={`nexus:${row.key}`}
-    resourceRef={resourceRef ?? undefined}
-    showSourceSubject={row.item !== undefined && row.item.action_ref !== row.item.ref}
-    navigation={{ key: JSON.stringify([row.key, row.action, href]), fork }}
-    sections={[{ id: "Occurrence", actions: ownOptions }]} />;
-}
-
-export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
-  return row.secondary?.kind === "TargetMenu" || (actions.picker && row.matchingPassage)
-    ? <TargetMenu row={row} menuProps={menuProps} {...actions} />
-    : null;
-}
-
-/** The compact query keeps one permanently reserved recovery/busy control. */
-export function NexusQueryStatus() {
-  return <span className={styles.queryStatus}><FeedbackRecoveryControl className={styles.queryStatusButton} /></span>;
+    read: tab === null && resourceRef !== null,
+  };
 }
 
 function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
@@ -209,6 +230,8 @@ export function NexusNotices({ controller, returnFocus, id }: {
   const admission = useRemoteAdmission();
   const { kind, text, action } = controller.searchProgress;
   const { blank, snapshot, readFailure, writeFailure, read } = controller.recentStatus;
+  // Zero principals say so on `search all results`; the palette paints no empty notice.
+  const notice = kind === "Notice" && text !== "no results found.";
   return <>
     <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending} />
     {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}
@@ -223,9 +246,9 @@ export function NexusNotices({ controller, returnFocus, id }: {
           onClick: () => { if (admission !== "Ready") void checkSession(); else controller.retry(source); }, busy: controller.retrying.has(source)}]} />;
     })}
     <NexusTitleFailure returnFocus={returnFocus} />
-    {controller.noticeText !== null ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
+    {controller.noticeText !== null && (controller.lookupGuidance !== null || notice || blank) ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
       {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
-      {kind === "Notice" ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
+      {notice ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
         actions={action === null ? undefined : [{label: SEARCH_ACTION_LABELS[action], onClick: () => {
           if (action === "related") controller.retryRelated();
           else controller.retrySearch();

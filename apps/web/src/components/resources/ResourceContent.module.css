@@ -23,15 +23,13 @@
 .source:hover {
   text-decoration: underline;
 }
+/* A match underlines at the room's hairline; nothing changes weight, so a match never reflows its line. */
 .match {
-  font-weight: var(--weight-semibold);
   text-decoration: underline;
   text-decoration-color: var(--accent);
+  text-decoration-thickness: var(--stroke-hairline);
   text-underline-offset: 2px;
-}
-.matchEvidence {
-  margin-top: var(--space-1);
-  color: var(--ink-muted);
+  text-decoration-skip-ink: auto;
 }
 
 .bibliography { color: var(--ink-muted); font-size: inherit; }
