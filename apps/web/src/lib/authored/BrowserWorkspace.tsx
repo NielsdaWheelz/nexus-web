@@ -1,13 +1,17 @@
 "use client";
 /** Desktop adapter for the shared installed shell. A confirmed local binding
  * opens without credentials; first provisioning requires verified server data. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
-import { FeedbackState } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
+import { apiFetch, isApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
+import { subscribeAdmission, subscribeRepair, updateRemedy } from "@/lib/native/admission";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
@@ -15,6 +19,7 @@ import { enterWorkspace } from "@/lib/workspace/model";
 import { readBrowserAdmission, beginBrowserSignIn, browserSignedOut, readBrowserRetiring, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
 import { finishBrowserRetirement, type BrowserRetirementPending } from "./signOut";
+const OPEN_FAILED = "couldn’t open your workspace.";
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string }) | null>(null);
@@ -72,23 +77,25 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     window.addEventListener("nexus:authored-retired", retired);
     return () => { live = false; window.removeEventListener("nexus:authored-retired", retired); };
   }, [attempt]);
+  // A failed read heals: a repair (focus, back online) reads again.
+  useEffect(() => failure !== null && isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
-  if (retiring) return <FeedbackState
-    content={{
-      tone: failure === null ? "Neutral" : "Danger",
-      title: failure !== null ? "sign out not completed" : retirementPending === null ? "signing out on this device…" : "waiting to finish sign out",
-      message: failure?.message ?? (retirementPending === "blocked_database"
-        ? "close other nexus tabs to finish removing local notes. this page will continue automatically."
-        : retirementPending === "another_tab"
-          ? "another nexus tab is finishing removal. close other nexus tabs if removal is blocked; this page will continue automatically."
-          : undefined),
-    }}
-    announcement="Polite"
-    actions={failure === null ? undefined : [{ label: "retry sign out", onClick: () => retry(value => value + 1) }]}
-  />;
-  if (signedOut) return <FeedbackState content={{ tone: "Neutral", title: "signed out on this device", message: failure?.message }} announcement="None" actions={[{ label: "sign in", onClick: signIn }]} />;
-  if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your workspace", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: "sign in", onClick: signIn }]} />;
-  if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;
+  const signInVerb: CommandVerb = { label: "sign in", commandKey: "BrowserSignIn", run: signIn };
+  const retryVerb: CommandVerb = { label: "retry", commandKey: "RetryBrowserWorkspace", run: () => retry(value => value + 1) };
+  const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
+  // Retiring is no opening: a ruling's `still opening` would be false here.
+  if (retiring) return failure !== null ? fact({ fact: "couldn’t finish signing out." }, [retryVerb])
+    : retirementPending === "blocked_database" ? fact({ fact: "sign out is waiting on other nexus tabs.", reason: "close them to finish." })
+    : retirementPending === "another_tab" ? fact({ fact: "another nexus tab is finishing sign out.", reason: "this page continues when it’s done." })
+    : <Fact line={{ fact: "signing out on this device." }} />;
+  if (signedOut) return <Fact line={{ fact: "signed out on this device." }} verbs={[signInVerb]} />;
+  if (failure) {
+    if (!isApiError(failure)) return fact({ fact: OPEN_FAILED }, [retryVerb, signInVerb]);
+    const transport = transportOf(failure);
+    return fact(TRANSPORT_LINES[transport].command(OPEN_FAILED), transportVerbs(transport, { retry: retryVerb, signIn: signInVerb }) ?? undefined);
+  }
+  if (!binding) return <Ruling />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
     browserLifetime={binding.lifetime} readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}

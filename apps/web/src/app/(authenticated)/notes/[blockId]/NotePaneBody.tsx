@@ -5,9 +5,11 @@
 import { matchScopeQuote, normalizeScopeText } from "@nexus/authored/scope";
 import {bodyPassageRange} from "@/lib/notes/inspection";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import {useLocalOutlineRoot, type LocalOutlineHandle} from "@/components/notes/LocalOutline";
-import {FeedbackFailure, FeedbackBusy, useFeedbackOccurrence} from "@/components/feedback/Feedback";
+import {useOutcome} from "@/components/feedback/Feedback";
+import {Fact} from "@/components/feedback/Fact";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -24,15 +26,19 @@ export default function NotePaneBody() {
   const rootField = useMemo(() => ({label: "note body", inspection: inspection?.view ?? null}), [inspection]);
   const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField});
   const resource = read.rootRead.resource;
-  const [error, setError] = useState<unknown | null>(null);
+  const {say} = useOutcome();
+  const [defect, setDefect] = useState<{error: unknown} | null>(null);
   usePaneReturnReady(read.rootRead.known || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
     const handle = outline.current;
     if (delivery?.entry.kind === "EditNoteBody" && read.rootRead.known && !resource) {claim(delivery); return;}
     if (delivery?.entry.kind !== "EditNoteBody" || !resource || !read.rootReady || !handle || !claim(delivery)) return;
-    void handle.focusRoot().catch(setError);
-  }, [resource, read.rootRead.known, read.rootReady, delivery, claim]);
+    void handle.focusRoot().catch(error => {
+      if (isAuthoredStorageFailure(error)) say({fact: "couldn’t start writing in this note."});
+      else if (!(error instanceof LocalCommitError)) setDefect({error});
+    });
+  }, [resource, read.rootRead.known, read.rootReady, delivery, claim, say]);
   const arrival = useSourceArrival({
     ready: resource !== null && read.rootReady,
     sourceIdentity: resource?.body_text ?? null,
@@ -89,15 +95,16 @@ export default function NotePaneBody() {
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
   usePaneChrome({resourceRef, editor: resource ? read.rootEditor ?? undefined : undefined, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
     header: resource ? {kind: "Resource", resource: {status: "Ready", creditGroups: []}} : undefined});
-  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null, ref);
-  const entryOccurrence = useFeedbackOccurrence(error !== null, ref);
+  // An arrival's failure is its command's outcome: one slip, retracted when it clears.
+  const arrivalFailure = arrival.failure?.title ?? null;
+  useEffect(() => arrivalFailure === null ? undefined : say({fact: arrivalFailure}), [arrivalFailure, say]);
+  if (defect) throw defect.error;
   if (!resource) {
-    if (!read.rootRead.known) return <>{read.view}<FeedbackBusy subject={ref} pending={read.error === null}/></>;
-    return <p>this note is no longer available.</p>;
+    // Until the root is known, the outline's view owns the empty region: its ruling or its failure.
+    if (!read.rootRead.known) return <>{read.view}</>;
+    return <Fact line={{fact: "this note is no longer available."}}/>;
   }
   return <div>
-    {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
-    {error ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{tone: "Warning", title: "couldn’t open this note"}} announcement="Polite"/> : null}
     {read.view}
   </div>;
 }

@@ -8,7 +8,7 @@ import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {NoteEdit, FocusSelection} from "./editorTypes";
 import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineHistory, OutlineOccurrence, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
-import {LocalCommitError, type LocalCommit, type WritingDocument} from "./runtime";
+import type {LocalCommit, WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
 import {noteBodySchema} from "@nexus/authored/body";
 import {planRange, type InputBookmark, type Placement, type RangePlan, type RangeReason, type RangeSnapshot} from "./outlineSelection";
@@ -45,15 +45,21 @@ export class OutlinePendingInput {
   private owner: InputOwner | null = null;
   private notify = () => {};
   private inflight = 0;
-  private finishing = false;
+  private finishing: Promise<void> | null = null;
   private resumeAgain = false;
+  /** The latest failure. It stands through a retry, which clears it only if nothing fails meanwhile. */
   error: unknown | null = null;
+  /** Failures so far; each is an onset its owner speaks. */
+  failures = 0;
+  /** From a retry's press until the resume it started settles. */
+  retrying = false;
   connect(owner: InputOwner): () => void {
     if (this.owner?.history !== owner.history)
       for (const [id, field] of this.fields) this.fields.set(id, {...field, origin: owner.history.typingOrigin()});
     this.owner = owner; this.notify = owner.notify; this.resume();
     return () => {if (this.owner === owner) this.owner = null;};
   }
+  private fail(error: unknown): void {this.error = error; this.failures++; this.notify();}
   private current(): InputOwner {if (!this.owner) throw new Error("outline input is not mounted"); return this.owner;}
   risk() {return {changed: [...this.fields.values()].some(field => field.pending), unconfirmed: this.inflight > 0, stopsBrowserWork: false};}
   retainedRefs(): ReadonlySet<string> {return new Set([...this.fields.values()].filter(field => (field.pending || field.relocating || this.rangeHeld(field.row_id)) && field.ref !== null).map(field => field.ref!));}
@@ -101,7 +107,7 @@ export class OutlinePendingInput {
         field.ref !== row.ref || field.parent_ref !== row.parent_ref || field.parent_id !== row.parent_id) return;
       retained.link = value;
       const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);
-    }).catch(error => {this.error = error; this.notify();});
+    }).catch(error => this.fail(error));
   }
   private occurrence(id: string): OutlineOccurrence {
     const row = this.row(id), bound = this.bound.get(id), link = bound?.link ?? row.link;
@@ -142,7 +148,7 @@ export class OutlinePendingInput {
     }
     for (const [id, link] of links) this.restoreRelationship(id, link);
     this.inflight++; this.notify();
-    void admission.result.catch(error => {this.error = error; this.notify();});
+    void admission.result.catch(error => this.fail(error));
     void admission.committed.then(async receipt => {
       await Promise.all(links.values());
       for (const id of ids) {
@@ -156,7 +162,7 @@ export class OutlinePendingInput {
           if (graphOnly && !bound.captureBytes && !bound.reservations && !bound.next) {bound.release(); this.bound.delete(id);}
         } else this.owner?.identity(this.fields.get(id)!);
       }
-    }).catch(error => {this.error = error;}).finally(() => {
+    }).catch(error => this.fail(error)).finally(() => {
       this.inflight--; this.notify(); this.resume();
     });
     return token;
@@ -291,7 +297,7 @@ export class OutlinePendingInput {
             bound.next = undefined; bound.link = value.link;
             if (!bound.captureBytes && !bound.reservations && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
           }
-        }).catch(error => {this.error = error; this.notify();});
+        }).catch(error => this.fail(error));
       };
       return {
         snapshot: displayed,
@@ -344,7 +350,7 @@ export class OutlinePendingInput {
             }
             if (repaired || JSON.stringify(final.plan.selection_after) !== JSON.stringify(accepted.selection_after)) this.owner?.installRange(final.plan, mayFocus, action);
             this.resume(); this.notify();
-          }).catch(error => {this.error = error; this.notify();}).finally(finish);
+          }).catch(error => this.fail(error)).finally(finish);
           release(); this.owner?.installRange(accepted, mayFocus, action);
         },
       };
@@ -402,9 +408,8 @@ export class OutlinePendingInput {
   resume(): void {
     if (this.finishing) {this.resumeAgain = true; return;}
     if (![...this.bound].some(([id, bound]) => bound.settled && this.fields.get(id)?.pending)) return;
-    this.finishing = true;
     let changed = false;
-    void (async () => {
+    this.finishing = (async () => {
       for (const [id, bound] of this.bound) {
         const row = this.fields.get(id);
         if (!row?.pending || !bound.settled) continue;
@@ -424,8 +429,8 @@ export class OutlinePendingInput {
         if (!bound.captureBytes && !bound.reservations && !bound.next) {bound.release(); this.bound.delete(id);}
         this.owner?.identity(this.fields.get(id)!);
       }
-    })().catch(error => {this.error = error; this.resumeAgain = false; changed = true;}).finally(() => {
-      const again = this.resumeAgain; this.resumeAgain = false; this.finishing = false;
+    })().catch(error => {this.resumeAgain = false; this.fail(error);}).finally(() => {
+      const again = this.resumeAgain; this.resumeAgain = false; this.finishing = null;
       if (changed) this.notify();
       if (again) this.resume();
     });
@@ -446,11 +451,18 @@ export class OutlinePendingInput {
       const bound = this.bound.get(row_id); if (bound) bound.settled = true;
       else this.fields.set(row_id, {...this.fields.get(row_id)!, pending: false});
       this.resume(); this.notify();
-    }).catch(error => {this.error = error; this.notify();});
+    }).catch(error => this.fail(error));
   }
+  /** Finishes what settled writing still owes; a failed commit is the runtime's to resend. */
   retry(): void {
-    const error = this.error; this.error = null;
-    if (error instanceof LocalCommitError) void error.retry().catch(next => {this.error = next; this.notify();});
+    if (this.retrying) return;
+    const failures = this.failures;
+    this.retrying = true; this.notify();
     this.resume();
+    void (async () => {while (this.finishing) await this.finishing;})().then(() => {
+      this.retrying = false;
+      if (this.failures === failures) this.error = null;
+      this.notify();
+    });
   }
 }

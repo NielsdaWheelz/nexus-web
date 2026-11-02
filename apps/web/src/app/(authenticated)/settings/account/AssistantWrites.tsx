@@ -1,18 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { apiFetch, outcomeUnknown, type ApiPath } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import type { ApiJson } from "@/lib/api/wire";
-import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { undoAssistantWrite } from "@/lib/assistantWrites";
 import styles from "./AssistantWrites.module.css";
 
 type Page = ApiJson<"/assistant-writes", "get">;
@@ -21,7 +21,7 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<Write>>("Settings.AssistantWri
 const UNIT = { singular: "write", plural: "writes" };
 
 function writeStatus(write: Write): string {
-  if (write.error_type !== null) return "Write failed";
+  if (write.error_type !== null) return "couldn’t complete";
   if (write.created_refs.length === 0) return "No new item created";
   return write.reverted_at ? "Undone" : "Assistant-created";
 }
@@ -36,9 +36,9 @@ export default function AssistantWrites({
 }) {
   const [revision, setRevision] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [undoFailure, setUndoFailure] = useState<
-    { message: string } | { defect: unknown } | null
-  >(null);
+  const { fail } = useOutcome();
+  // The server's undo is idempotent, so an unknown outcome's retry resends it.
+  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
   const focused = useRef<HTMLLIElement | null>(null);
   const didFocus = useRef(false);
   const landmark = useRef<HTMLElement>(null);
@@ -61,8 +61,6 @@ export default function AssistantWrites({
     },
   });
   const writes = list.items;
-  const readOccurrence = useFeedbackOccurrence(list.failure !== null, filter);
-  const undoOccurrence = useFeedbackOccurrence(undoFailure !== null || busyId !== null);
   const readFeedback = useCollectionReadFeedback({
     list, unit: UNIT, waiting: false, outcome: null, returnFocus: () => landmark.current,
   });
@@ -78,22 +76,21 @@ export default function AssistantWrites({
     setBusyId(id);
     try {
       await undoAssistantWrite(id);
-      setUndoFailure(null);
+      setUnknown(null);
       setRevision((current) => current + 1);
     } catch (caught) {
-      if (!handleUnauthenticatedApiError(caught)) {
-        try {
-          setUndoFailure({ message: undoFailureMessage(caught) });
-        } catch (defect) {
-          setUndoFailure({ defect });
-        }
+      if (outcomeUnknown(caught) && caught.code !== "E_UNAUTHENTICATED") {
+        setUnknown(current => ({ id, attempt: current?.id === id ? current.attempt + 1 : 0 }));
+        return;
       }
+      setUnknown(null);
+      // The row's `undo write` is the retry.
+      fail(caught, "couldn’t undo that write.");
     } finally {
       setBusyId(null);
     }
   };
 
-  if (undoFailure && "defect" in undoFailure) throw undoFailure.defect;
   return (
     <PaneSection
       id="assistant-writes"
@@ -114,32 +111,13 @@ export default function AssistantWrites({
         </Button>
       }
     >
-      {undoFailure ? (
-        <FeedbackFailure scope="Local" occurrence={undoOccurrence} content={{ tone: "Warning", title: "undo not confirmed", message: undoFailure.message }} announcement="Assertive" />
-      ) : null}
-      {list.status === "loading" ? (
-        <PaneLoadingState />
-      ) : list.status === "failed" && list.failure !== null ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          announcement="Polite"
-          content={{
-            tone: "Warning",
-            title: "Assistant writes are unavailable.",
-            message: undoFailureMessage(list.failure.error),
-          }}
-          actions={[{ label: "Try again", onClick: list.retry, busy: list.running !== null }]}
-        />
-      ) : list.complete && writes.length === 0 ? (
-        <p className={styles.current}>
-          {generationId
-            ? "Creation history is no longer available."
-            : "No assistant writes yet."}
-        </p>
-      ) : toolCallId && !found && list.complete ? (
-        <p className={styles.current}>
-          The selected creation record is no longer available.
-        </p>
-      ) : null}
+      {unknown === null ? null : <Hold id={`assistant-write-undo:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
+        verbs={[{ label: "retry", commandKey: "RetryUndoWrite", busy: busyId === unknown.id, run: () => void undo(unknown.id) }]} />}
+      {list.status === "loading" ? <Ruling />
+        : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="assistant writes" retry={{ run: list.retry, busy: list.running !== null }} />
+        : list.complete && writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this generation." : "no assistant writes yet." }} />
+        : toolCallId && !found && list.complete ? <Fact line={{ fact: "that write isn’t in this list." }} />
+        : null}
       {writes.length ? (
         <ol className={styles.effectsList}>
           {writes.map((write) => (
@@ -175,7 +153,6 @@ export default function AssistantWrites({
                 ? <p className={styles.effectStatus}>undo unavailable for this older filing</p> : null}
               {write.undo_allowed ? (
                 <Button
-                  reserveIcon
                   aria-busy={busyId === write.id || undefined}
                   disabled={busyId !== null}
                   onClick={() => void undo(write.id)}
@@ -186,14 +163,6 @@ export default function AssistantWrites({
             </li>
           ))}
         </ol>
-      ) : null}
-      {list.status === "ready" && list.failure !== null && list.failure.op !== "More" ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={{ tone: "Warning", title: "couldn’t refresh writes", message: undoFailureMessage(list.failure.error), requestId: list.failure.error.requestId }}
-          announcement="Polite"
-          actions={[{ label: "try again", onClick: list.retry, busy: list.running !== null }]}
-          returnFocus={() => landmark.current}
-        />
       ) : null}
       {readFeedback.notice}
       {readFeedback.announcement}
