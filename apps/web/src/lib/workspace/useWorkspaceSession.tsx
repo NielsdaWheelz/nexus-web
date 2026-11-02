@@ -1,6 +1,7 @@
 "use client";
-/** Local workspace metadata saves independently of remote credentials. The
- * cloud mirror remains best effort; its failures never veto authored commits. */
+/** Local workspace metadata saves independently of remote credentials. The cloud mirror
+ * is best effort: a local failure alone presents. A 5xx leaves the state unsaved, so the next
+ * change, hide or admission generation sends it again; nothing resends on a clock. */
 import { useEffect, useState } from "react";
 import { FeedbackFailure } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -17,7 +18,7 @@ export function useWorkspaceSession(store: WorkspaceStore) {
   const local = useDeviceWorkspace();
   const nativeFailure = useDeviceWorkspaceSave(store, local);
   const generation = useRemoteGeneration();
-  const [failure, setFailure] = useState<{ local: boolean; retry(): void; busy: boolean; occurrence: object } | null>(null);
+  const [failure, setFailure] = useState<{ retry(): void; busy: boolean; occurrence: object } | null>(null);
   useEffect(() => {
     let live = true;
     let saved: WorkspaceState | null = null;
@@ -39,8 +40,10 @@ export function useWorkspaceSession(store: WorkspaceStore) {
         saved = state;
         if (live) setFailure(null);
       } catch (error) {
-        if (localSaved && isApiError(error) && [0, 401, 426].includes(error.status)) { saved = state; if (live) setFailure(null); }
-        else if (live) setFailure(previous => ({ local: !localSaved, retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
+        if (localSaved) {
+          if (!isApiError(error) || error.status < 500) saved = state;
+          if (live) setFailure(null);
+        } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
       } finally {
         sending = false;
         if (live && again) { again = false; void save(); }
@@ -54,5 +57,5 @@ export function useWorkspaceSession(store: WorkspaceStore) {
     window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", hidden);
     return () => { live = false; clearTimeout(timer); unsubscribe(); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); };
   }, [account.accountId, generation, store]);
-  return <>{nativeFailure}{failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} announcement="Polite" content={{ tone: "Warning", title: failure.local ? "couldn’t confirm workspace changes on this device" : "workspace cloud copy couldn’t be updated", message: failure.local ? "keep this page open and retry." : "your workspace remains saved on this device." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null}</>;
+  return <>{nativeFailure}{failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} announcement="Polite" content={{ tone: "Warning", title: "couldn’t confirm workspace changes on this device", message: "keep this page open and retry." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null}</>;
 }

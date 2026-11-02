@@ -10,8 +10,9 @@
 //   read in flight, superseding its success or failure, and calls made meanwhile
 //   share one reread. A change of `stale` under the same key refetches.
 // - Each page commits immediately, then continuation runs sequentially while
-//   `active` and the document is visible; settled failure requires `retry()`.
-//   Failure latches for this mounted read owner; snapshots retain data only.
+//   `active` and the document is visible; a settled failure waits for `retry()`
+//   or a repair. Failure latches for this mounted read owner; snapshots retain
+//   data only.
 //   A remount has fresh admission under its existing route/open/query owner.
 // - `revalidate()` coalesces periodic observations behind traversal and strict
 //   refresh. It never supersedes a read or clears a settled failure.
@@ -28,11 +29,12 @@ import { remoteReady, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { isApiError, ApiError } from "@/lib/api/client";
+import { admissionRefusal, isApiError, ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
   type ReadPolicy,
+  useFailedReadRepair,
   useServerSeed,
   useReadOwner,
   useThrowLater,
@@ -310,7 +312,7 @@ function useList<T, M>(
         }
         if (!remoteAttemptAllowed()) {
           if (base !== null && base.cursor === null) { for (const waiter of settle) waiter.resolve(); return null; }
-          throw localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
+          throw localError ?? admissionRefusal();
         }
         const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
           op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
@@ -410,6 +412,16 @@ function useList<T, M>(
     if (remoteReady()) void refetch().catch(() => {});
   }, [admissionGeneration, refetch]);
 
+  const retry = () => {
+    if (input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
+    if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
+      run("More");
+    } else if (failure !== null) {
+      refetch().catch(() => {});
+    }
+  };
+  useFailedReadRepair(failure !== null, retry);
+
   const revalidate = useCallback(() => {
     if (latest.current.key === null || pendingObservation.current) return;
     pendingObservation.current = true;
@@ -447,14 +459,7 @@ function useList<T, M>(
     failure,
     active,
     revalidate,
-    retry: () => {
-      if (input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
-      if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
-        run("More");
-      } else if (failure !== null) {
-        refetch().catch(() => {});
-      }
-    },
+    retry,
     refetch,
     more: () => run("More"),
   };

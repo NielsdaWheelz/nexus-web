@@ -8,10 +8,16 @@ import { Persistence } from "./persistence";
 import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL, syncDetail, type SyncFacts } from "./status";
 import { ScopeTextNormalizer, type ScopeInputsPage, type ScopeTextPage, type ScopeNormalizationInterval, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
+/** A failure of the connection or its answer carries a numeric `status` and, where the answer
+ * names one, its `code`. Status 0 is a lost connection, including a body that died mid-read.
+ * A failure with no status is a broken local invariant. */
 export interface Transport {
   json<T>(path: string, body: unknown | null, signal: AbortSignal): Promise<T>;
   snapshot(signal: AbortSignal): Promise<ReadableStream<Uint8Array>>;
 }
+/** A later attempt can answer these differently. 409 is here because the api answers a busy
+ * row lock with it, and no wire field separates that from a permanent conflict. */
+const TRANSIENT_4XX: ReadonlySet<number> = new Set([409, 429]);
 export class Sync {
   private readonly abort = new AbortController();
   private completion: Promise<void> = Promise.resolve();
@@ -26,7 +32,7 @@ export class Sync {
   private scopeCheckedAt = 0;
   private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
   last_error: string | null = null;
-  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
+  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", failure: null, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
   get detail(): string | null { return syncDetail(this.facts, this.last_error); }
   constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
   wake() {
@@ -40,6 +46,7 @@ export class Sync {
   stopped(): Promise<void> { return this.completion; }
   private local<T>(operation: () => Promise<T>): Promise<T> { return this.serialize(() => { if (this.retired) throw new DOMException("authored synchronization stopped", "AbortError"); return operation(); }); }
   close() { this.retired = true; this.abort.abort(); if (this.timer !== null) clearTimeout(this.timer); }
+  /** `facts.online` is the platform's word, reported by the page; a turn's outcome never sets it. */
   private async run() {
     this.running = true;
     this.rerun = false;
@@ -52,16 +59,18 @@ export class Sync {
       const registration = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/replicas", { replica_id: state.replica_id, format_revision: FORMAT_REVISION }, this.abort.signal);
       if (this.retired) return;
       this.facts.admission = "ready";
-      this.facts.online = true;
       this.facts.head = registration.data.head_cursor;
       await this.local(() => this.persistence.acknowledge(registration.data.accepted_command_seq));
-      const outcomes = await Promise.allSettled([this.upload(), this.download(), this.scopeStep()]);
+      const [upload, download, scope] = await Promise.allSettled([this.upload(), this.download(), this.scopeStep()]);
       const progress = await this.local(() => this.persistence.scopeProgress());
       this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
       this.facts.scope_progress = progress.staging_revision === null ? null : progress;
-      for (const [index, outcome] of outcomes.entries()) if (outcome.status === "rejected") { failed = true; this.failure(outcome.reason, index === 2); break; }
-      if (!failed) { this.facts.local_error = this.commitError; this.last_error = null; this.facts.sync_error = false; this.facts.admission = "ready"; this.facts.online = true; this.failures = 0; }
-    } catch (error) { failed = true; if (!this.retired) this.failure(error, false); }
+      const writing = upload.status === "rejected" ? upload : download.status === "rejected" ? download : null;
+      failed = writing !== null || scope.status === "rejected";
+      if (writing !== null) this.fail(writing.reason);
+      else { this.facts.local_error = this.commitError; this.last_error = null; this.facts.failure = null; }
+      if (!failed) this.failures = 0;
+    } catch (error) { failed = true; this.fail(error); }
     finally {
       this.running = false;
       this.changed();
@@ -74,19 +83,20 @@ export class Sync {
       }
     }
   }
-  private failure(error: unknown, scope: boolean) {
-    if (error && typeof error === "object" && "code" in error && error.code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
+  /** One writing turn failed. Sign-in and update wait on admission, and disconnection is no
+   * failure; anything else is a `SyncFailure`, Refused unless another attempt could answer
+   * differently. Scope hydration never reaches here: it retries on the same schedule and
+   * leaves writing status alone. */
+  private fail(error: unknown) {
+    if (this.retired) return;
+    const code = error && typeof error === "object" && "code" in error ? error.code : null;
     const status = error && typeof error === "object" && "status" in error ? Number(error.status) : null;
-    this.last_error = status === 401 || status === 403 ? SIGN_IN_SYNC_DETAIL
-      : status === 426 ? UPDATE_SYNC_DETAIL
-      : status === 0 ? this.facts.ready ? "changes are saved on this device." : "connect to finish preparing your notes."
-      : status === 503 ? scope ? "nexus is busy. reading search preparation will retry." : this.facts.ready ? "nexus is busy. saved changes remain on this device; syncing will retry." : "nexus is busy. preparing your notes will retry."
-      : scope ? "couldn’t finish preparing reading search; it will retry automatically."
-      : "your notes could not finish syncing. retry; saved changes remain on this device.";
-    if (status === 401 || status === 403) this.facts.admission = "auth";
-    else if (status === 426) this.facts.admission = "format";
-    else if (status === 0) this.facts.online = false;
-    else this.facts.sync_error = true;
+    if (status === 401 || code === "E_ACCOUNT_MISMATCH") { this.facts.admission = "auth"; this.facts.failure = null; this.last_error = SIGN_IN_SYNC_DETAIL; return; }
+    if (status === 426) { this.facts.admission = "format"; this.facts.failure = null; this.last_error = UPDATE_SYNC_DETAIL; return; }
+    const kind = status === null || status >= 400 && status < 500 && !TRANSIENT_4XX.has(status) ? "Refused" : "Retrying";
+    this.facts.failure = status === 0 && !this.facts.online ? null : { kind, since: this.facts.failure?.kind === kind ? this.facts.failure.since : Date.now() };
+    if (code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
+    this.last_error = this.facts.ready ? null : status === 0 && !this.facts.online ? "connect to finish preparing your notes." : status === 503 ? "nexus is busy. preparing your notes will retry." : "your notes couldn’t finish preparing.";
   }
   private async upload() {
     while (!this.retired && this.foreground) {
@@ -282,7 +292,7 @@ export class Sync {
         }
       }
       await flush();
-      if (buffered.trim() || !complete || !header) throw new Error("incomplete authored snapshot");
+      if (buffered.trim() || !complete || !header) throw Object.assign(new Error("incomplete authored snapshot"), { status: 0 });
       if (this.retired) return;
       const cursor = header.head_cursor;
       await this.local(() => this.persistence.finishProvisioning(cursor, counts, header!.lamport));

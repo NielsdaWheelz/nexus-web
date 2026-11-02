@@ -10,6 +10,8 @@
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
  * and retains the sample, with the existing player retry for an explicitly refused write.
+ * A refused write stands beside playing audio: it gates neither a seek nor a resume, and says
+ * so only where admission can send that retry.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -28,6 +30,7 @@ import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { apiFetch, ApiError, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { remoteAttemptAllowed } from "@/lib/native/admission";
 import {
   registerActivityObserver,
   type ActivityObservation,
@@ -63,6 +66,7 @@ export interface BrowserEngineDeps {
 
 const WRITE_EVERY_MS = 15_000;
 const LAST_WRITE_BOUND_MS = 2_000;
+const PROGRESS_UNSAVED = "Progress couldn’t be saved. Retry to sync progress.";
 const ERRORS: Record<number, string> = {
   1: "Playback was interrupted.",
   2: "Network error. Check your connection.",
@@ -119,6 +123,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     (episode?.descriptor.duration_ms != null
       ? episode.descriptor.duration_ms
       : 0);
+
+  /** Playback broke, or a fence needs the player's retry; a refused write is neither. */
+  const playbackHeld = (current: Episode) =>
+    state.playbackFailed || (state.error !== null && !current.stopped);
 
   // ---- listening ----
   /** The attached episode's sample, read from the element. */
@@ -182,7 +190,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             // The attached episode retries on the tick or `online`.
             return;
           } else {
+            // Standing error keeps the sample for an explicit retry (`play`), which resumes it.
             current.stopped = true;
+            if (current === episode && remoteAttemptAllowed()) set({ error: PROGRESS_UNSAVED });
             console.warn("listening_write_refused", { status });
             return;
           }
@@ -569,7 +579,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           ? "listening progress is unavailable. retry to synchronize it."
           : "listening progress synchronized. press play to resume.");
       }
-      if (state.error !== null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "retry playback in the player before resuming this episode.");
+      if (playbackHeld(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "retry playback in the player before resuming this episode.");
       const admission = ++asked;
       advanceAllowed = true;
       capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), expectedSubject, generation, admission);
@@ -586,7 +596,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
       if (current.fenced)
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
-      if (state.error !== null)
+      if (playbackHeld(current))
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "playback failed. retry in the player, then choose this time again.");
       const admission = ++asked;
       advanceAllowed = true;
@@ -632,7 +642,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       await draining;
       if (current.queued !== null) {
         current.fenced = false;
-        if (current === episode) set({ error: "Progress couldn’t be saved. Retry to sync progress.", synced: false });
+        if (current === episode) set({ error: PROGRESS_UNSAVED, synced: false });
         throw new ProgressPreparationError();
       }
       current.active = false;

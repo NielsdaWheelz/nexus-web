@@ -3,12 +3,12 @@
 import { bindingQueries, excerptQuery, searchQuery, sourceAliasQuery, type CompiledQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
-import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncStatus } from "@nexus/authored/types";
+import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
 import { nativeQueryPlan, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
-import { syncStatus } from "./status";
+import { syncStatus, uploadStall } from "./status";
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: string }) => void) | null };
 let nextId = 0;
 let installedPort: Port | null = null;
@@ -33,7 +33,8 @@ function nativePort(): Port {
     if (reply.kind === "authored_hint") { for (const wake of hints) wake(); return; }
     const waiting = pending.get(reply.id); pending.delete(reply.id);
     if (reply.ok) waiting?.resolve(reply.result);
-    else waiting?.reject(Object.assign(new Error(reply.error.message), { status: reply.error.status, code: reply.error.code }));
+    // the bridge sends its own code; the origin's survives only in NexusOriginError's message.
+    else waiting?.reject(Object.assign(new Error(reply.error.message), { status: reply.error.status, code: reply.error.message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : reply.error.code }));
   };
   }
   return port;
@@ -46,7 +47,7 @@ async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); pending.delete(id); };
     const cancel = () => port.postMessage(JSON.stringify({ id: ++nextId, op: "cancel", target_id: id }));
     const abort = () => { cleanup(); cancel(); reject(signal?.reason ?? new DOMException("cancelled", "AbortError")); };
-    const timer = setTimeout(() => { cleanup(); cancel(); reject(new Error("native authored operation did not acknowledge completion")); }, timeout);
+    const timer = setTimeout(() => { cleanup(); cancel(); reject(Object.assign(new Error("native authored operation did not acknowledge completion"), { status: 504 })); }, timeout);
     pending.set(id, { resolve: value => { cleanup(); resolve(value as T); }, reject: error => { cleanup(); reject(error); } });
     signal?.addEventListener("abort", abort, { once: true });
     port.postMessage(JSON.stringify({ id, op, ...input }));
@@ -94,8 +95,8 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const queries = new Set<(corpusChanged?: boolean) => void>();
   const annotations = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
-  const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
-  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail); for (const listener of queries) listener(corpusChanged); };
+  const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
+  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       const result = await call<QueryResult>("query", {query,...await nativeQueryPlan(query)});
@@ -179,12 +180,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     },
   }, serialize, changed, () => { for (const listener of annotations) listener(); });
   sync.facts.ready = replica.provisioning_complete; sync.facts.cursor = replica.server_cursor; sync.facts.pending = (await persistence.pending()).length > 0;
-  const wake = () => sync.wake();
-  const foreground = () => sync.setForeground(nativeForeground && document.visibilityState === "visible");
+  sync.facts.online = navigator.onLine;
+  const wake = () => { sync.facts.online = navigator.onLine; sync.wake(); };
+  const foreground = () => { sync.facts.online = navigator.onLine; sync.setForeground(nativeForeground && document.visibilityState === "visible"); };
   const nativeVisibility = (active: boolean) => sync.setForeground(active && document.visibilityState === "visible");
   foregroundListeners.add(nativeVisibility);
   hints.add(wake);
-  window.addEventListener("online", wake); document.addEventListener("visibilitychange", foreground);
+  window.addEventListener("online", wake); window.addEventListener("offline", wake); document.addEventListener("visibilitychange", foreground);
   sync.setForeground(nativeForeground && document.visibilityState === "visible");
   return {
     withCommand: async work => {
@@ -197,11 +199,9 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); closedWaiters.delete(aborted); if (error !== null) reject(error); else resolve(); };
       const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
       const check = () => { void call<{ uploaded: boolean }>("uploaded", { command_seq: commandSeq }).then(result => {
-        if (result.uploaded) finish(null);
-        else {
-          const status = syncStatus(sync.facts);
-          if (["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && sync.last_error !== null) finish(new Error(sync.last_error ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced. retry syncing before continuing.")));
-        }
+        if (result.uploaded) { finish(null); return; }
+        const stall = uploadStall({ status: syncStatus(sync.facts), detail: sync.last_error, failure: sync.facts.failure }, Date.now());
+        if (stall !== null) finish(stall);
       }, finish); };
       if (signal.aborted) { aborted(); return; }
       queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
@@ -227,12 +227,12 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       return () => { live = false; queries.delete(read); };
     },
     annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
-    sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail); return () => { statuses.delete(listener); }; },
+    sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); return () => { statuses.delete(listener); }; },
     close: async () => {
       closed = true; sync.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
       queries.clear(); statuses.clear(); annotations.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
-      window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", foreground);
+      window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
       await sync.stopped(); await queue;
     },
   };

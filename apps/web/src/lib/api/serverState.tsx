@@ -6,6 +6,7 @@
 // Strict refetch is awaitable and rejects on failure/retirement; ignored event
 // promises are observed here because failure already renders. Arrival records
 // transfer one prepared read to the first committed reader, never a cache.
+// A failed read rereads on a repair (lib/native/admission.ts); a healthy one never.
 // usePaneFreeServerValue is the same read for code no pane visit owns (the
 // shell above the panes, a dialog, a read that restores nothing). Lists live in
 // useServerList.
@@ -19,12 +20,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
-import { remoteReady, remoteAttemptAllowed } from "@/lib/native/admission";
+import { remoteReady, remoteAttemptAllowed, repairGeneration, subscribeRepair } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
+  admissionRefusal,
   ApiError,
   isApiError,
   isSameSystemApiDefect,
@@ -250,8 +253,10 @@ export function useReadOwner(key: string | null, policy: string, stale: string, 
 /**
  * The GET retry policy: three attempts with cancellable jittered backoff
  * (250 ms doubling, at most 2 s). Only transport failures and non-defect 5xx
- * retry; a 401 and same-system defects never do. Capacity mode retries only
- * unadmitted database-busy responses; its backoff is outside each attempt's timer.
+ * retry; a 401 and same-system defects never do. A browser status 0 has already
+ * flipped admission to Unavailable, which still admits these attempts; an installed
+ * client stops at remoteReady. Capacity mode retries only unadmitted database-busy
+ * responses, while Ready; its backoff is outside each attempt's timer.
  */
 export async function requestWithRetry<T>(
   request: (signal: AbortSignal) => Promise<T>,
@@ -268,8 +273,8 @@ export async function requestWithRetry<T>(
           : await request(ownedSignal);
       } catch (error) {
         const retryable =
-          !ownedSignal.aborted && remoteReady() && isApiError(error) &&
-          (capacity ? error.code === "E_DATABASE_BUSY" : policy.retry !== "manual" &&
+          !ownedSignal.aborted && isApiError(error) &&
+          (capacity ? remoteReady() && error.code === "E_DATABASE_BUSY" : remoteAttemptAllowed() && policy.retry !== "manual" &&
             (error.code === "E_NETWORK" || (!isSameSystemApiDefect(error) && error.status >= 500)));
         if (!retryable || !capacity && attempt === 3) throw error;
         const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
@@ -290,6 +295,26 @@ export async function requestWithRetry<T>(
   };
   return capacity || policy.timeoutMs === undefined ? run(signal)
     : requestWithDeadline({ request: run, signal, timeoutMs: policy.timeoutMs });
+}
+
+const unobserved = () => () => {};
+
+/**
+ * Runs `repair` for each repair generation after a read failed, until it stops failing.
+ * Only a failed owner subscribes, so a healthy read neither renders nor rereads for one.
+ */
+export function useFailedReadRepair(failed: boolean, repair: () => void): void {
+  const generation = useSyncExternalStore(failed ? subscribeRepair : unobserved, repairGeneration, repairGeneration);
+  const answered = useRef<number | null>(null);
+  const latest = useRef(repair);
+  latest.current = repair;
+  useEffect(() => {
+    if (!failed) { answered.current = null; return; }
+    if (answered.current === null) { answered.current = generation; return; }
+    if (answered.current === generation) return;
+    answered.current = generation;
+    latest.current();
+  }, [failed, generation]);
 }
 
 /** Rethrows an async defect during the next render, at the pane boundary. */
@@ -389,8 +414,8 @@ function ensureArrival(seeds: SeedOwner, scope: ArrivalScope, descriptor: ReadDe
     claims: 0, claimed: false,
     outcome: seeded ? { status: "success", data: seededData } : { status: "pending" },
     promise: seeded ? Promise.resolve(seededData)
-      : remoteReady() ? owner.read("value", signal => requestWithRetry(descriptor.load, signal, descriptor), controller.signal)
-        : Promise.reject(new ApiError(0, "E_NETWORK", "this view needs a connection")),
+      : remoteAttemptAllowed() ? owner.read("value", signal => requestWithRetry(descriptor.load, signal, descriptor), controller.signal)
+        : Promise.reject(admissionRefusal()),
   };
   records.set(key, record);
   // Both outcomes are held. A failed arrival is not a seed miss or a retry.
@@ -657,7 +682,7 @@ function useServerState<D>(
             finally { claimed.release(); prepared = null; }
           } else {
             if (!remoteAttemptAllowed()) {
-              const error = localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
+              const error = localError ?? admissionRefusal();
               update(h => ({ ...h, error: h.data === null ? error : null }));
               settle(error);
               current.observe = false;
@@ -673,8 +698,8 @@ function useServerState<D>(
           if (controller.signal.aborted) return;
           if (superseded()) continue;
           const modeled = modeledApiError(error, fail, signIn);
-          if (modeled !== null && !(modeled.code === "E_NETWORK" && !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null))
-            update(h => ({ ...h, error: modeled }));
+          const overSavedRows = !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null;
+          if (modeled !== null && !overSavedRows) update(h => ({ ...h, error: modeled }));
           settle(error);
           current.observe = false;
           break;
@@ -752,6 +777,7 @@ function useServerState<D>(
     admittedGeneration.current = admissionGeneration;
     void refetch().catch(() => { /* A modeled read failure is rendered by this owner. */ });
   }, [admissionGeneration, refetch]);
+  useFailedReadRepair(held.error !== null, () => { void refetch().catch(() => { /* As above. */ }); });
 
   return valueOf(held, stale, refetch, revalidate);
 }
