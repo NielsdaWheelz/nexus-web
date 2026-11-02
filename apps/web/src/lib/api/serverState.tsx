@@ -698,8 +698,8 @@ function useServerState<D>(
           if (controller.signal.aborted) return;
           if (superseded()) continue;
           const modeled = modeledApiError(error, fail, signIn);
-          if (modeled !== null && !(modeled.code === "E_NETWORK" && !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null))
-            update(h => ({ ...h, error: modeled }));
+          const overSavedRows = !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null;
+          if (modeled !== null && !overSavedRows) update(h => ({ ...h, error: modeled }));
           settle(error);
           current.observe = false;
           break;

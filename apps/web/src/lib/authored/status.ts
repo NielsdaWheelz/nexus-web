@@ -28,12 +28,26 @@ export function syncStatus(facts: SyncFacts): SyncStatus {
   return facts.pending || facts.scope_pending || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
 }
 /** Why a command waiting on upload stops waiting, or null while a retry can still land it.
- * A failure one retry heals never reaches a waiter; lag does, because nothing else ends the wait. */
+ * A failure one retry heals never reaches a waiter; lag does, because nothing else ends the wait.
+ * The error names what the stall waits on, so a caller's verb can be true. */
 export function uploadStall({ status, detail, failure }: { status: SyncStatus; detail: string | null; failure: SyncFailure }, now: number): ApiError | null {
   const stalled = ["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && detail !== null
     || failure?.kind === "Retrying" && now - failure.since >= LAGGING_AFTER_MS;
   if (!stalled) return null;
-  return new ApiError(0, "E_NETWORK", detail ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced yet."));
+  const message = detail ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced yet.");
+  switch (status) {
+    case "sign_in_required": return new ApiError(401, "E_UNAUTHENTICATED", message);
+    case "update_required": return new ApiError(426, "E_WIRE_MISMATCH", message);
+    case "sync_error":
+    case "local_error":
+      return new ApiError(400, "E_SYNC_REFUSED", message);
+    case "preparing":
+    case "saving":
+    case "offline":
+    case "syncing":
+    case "current":
+      return new ApiError(0, "E_NETWORK", message);
+  }
 }
 /** Preparation is independent of local saving and verified authored catch-up.
  * Progress reports durable rows, never an estimated total or completion time. */
