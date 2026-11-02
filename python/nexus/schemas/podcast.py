@@ -171,7 +171,6 @@ class PodcastImportOut(BaseModel):
     updated_at: datetime
     can_cancel: bool
     can_retry: bool
-    order_revision: OrderRevision
 
     model_config = _CLOSED
 
@@ -289,7 +288,6 @@ class LibraryPodcastOut(BaseModel):
     subscription: PodcastSubscriptionOut | None
     import_: PodcastImportOut | None = Field(alias="import")
     episode_count: int = Field(ge=0)
-    order_revision: OrderRevision
     removal_revision: OrderRevision
     can_add_content: bool
 

@@ -36,7 +36,7 @@ _ROW_SQL = """
 
 
 def import_from_row(
-    row: RowMapping | Mapping[str, Any], *, can_manage: bool, order_revision: int | str
+    row: RowMapping | Mapping[str, Any], *, can_manage: bool
 ) -> wire.PodcastImportOut:
     from nexus.schemas.podcast import PodcastImportOut
 
@@ -76,7 +76,6 @@ def import_from_row(
         and row["subscription_id"] is None
         and state in ("pending", "running", "failed"),
         can_retry=can_manage and state == "failed",
-        order_revision=str(order_revision),
     )
 
 
@@ -97,11 +96,7 @@ def get_import(
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast import not found")
-    return import_from_row(
-        row,
-        can_manage=library.out(viewer_id).can_add_content,
-        order_revision=library.order_revision,
-    )
+    return import_from_row(row, can_manage=library.out(viewer_id).can_add_content)
 
 
 def mark_processed(db: Session, *, library_ids: Sequence[UUID], media_id: UUID) -> None:

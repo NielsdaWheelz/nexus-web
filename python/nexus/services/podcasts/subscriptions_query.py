@@ -226,7 +226,7 @@ def _snapshot(db: Session, viewer_id: UUID, library_id: UUID):
             JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
             JOIN users u ON u.id=:viewer_id WHERE l.id=:library_id
         ), destinations AS (
-            SELECT l.id,l.name,l.is_default,l.order_revision,
+            SELECT l.id,l.name,l.is_default,
                    l.system_key IS NULL AND ((l.is_default AND l.owner_user_id=:viewer_id)
                        OR (NOT l.is_default AND lm.role='admin')) AS can_manage
             FROM libraries l JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
@@ -240,7 +240,7 @@ def _snapshot(db: Session, viewer_id: UUID, library_id: UUID):
                 'name',d.name,'is_default',d.is_default,'can_manage',d.can_manage))
                 FROM library_podcast_subscriptions s JOIN destinations d ON d.id=s.library_id),'[]') AS rules,
             COALESCE((SELECT jsonb_agg(to_jsonb(r)||to_jsonb(i)||jsonb_build_object(
-                'podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',d.name,'library_is_default',d.is_default,'updated_at',r.updated_at,'order_revision',d.order_revision,
+                'podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',d.name,'library_is_default',d.is_default,'updated_at',r.updated_at,
                 'can_manage',d.can_manage,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id)))
                 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
                 JOIN podcasts p ON p.id=r.podcast_id JOIN destinations d ON d.id=i.library_id
@@ -297,10 +297,7 @@ def _library_podcasts[T: (wire.LibraryPodcastsOut, wire.LibraryPodcastIndexOut)]
             )
         )
     operations = [
-        imports.import_from_row(
-            row, can_manage=row["can_manage"], order_revision=row["order_revision"]
-        )
-        for row in snapshot["imports"]
+        imports.import_from_row(row, can_manage=row["can_manage"]) for row in snapshot["imports"]
     ]
     followed_imports: dict[UUID, list[wire.PodcastImportOut]] = {}
     standalone_imports = []
@@ -334,7 +331,7 @@ def read_library_podcast(
     row = (
         db.execute(
             text("""
-        SELECT l.order_revision,u.removal_revision,
+        SELECT u.removal_revision,
             l.system_key IS NULL AND ((l.is_default AND l.owner_user_id=:viewer_id)
                 OR (NOT l.is_default AND lm.role='admin')) AS can_manage,
             (SELECT to_jsonb(s) FROM library_podcast_subscriptions s
@@ -362,11 +359,8 @@ def read_library_podcast(
             "subscription": row["subscription"],
             "import": None
             if row["import"] is None
-            else imports.import_from_row(
-                row["import"], can_manage=row["can_manage"], order_revision=row["order_revision"]
-            ),
+            else imports.import_from_row(row["import"], can_manage=row["can_manage"]),
             "episode_count": row["episode_count"],
-            "order_revision": str(row["order_revision"]),
             "removal_revision": str(row["removal_revision"]),
             "can_add_content": row["can_manage"],
         }
@@ -518,9 +512,7 @@ def read_catalog(
         )
     operations: dict[UUID, list[wire.PodcastImportOut]] = {}
     for row in snapshot["imports"]:
-        operation = imports.import_from_row(
-            row, can_manage=row["can_manage"], order_revision=row["order_revision"]
-        )
+        operation = imports.import_from_row(row, can_manage=row["can_manage"])
         operations.setdefault(operation.podcast_id, []).append(operation)
     details = {
         podcast_id: wire.PodcastDetailOut(

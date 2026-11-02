@@ -7522,7 +7522,6 @@ export interface components {
              * Format: uuid
              */
             library_id: string;
-            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
@@ -9916,7 +9915,6 @@ export interface components {
             library_is_default: boolean;
             /** Library Name */
             library_name: string;
-            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
