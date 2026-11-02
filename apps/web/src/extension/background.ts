@@ -462,6 +462,12 @@ async function describe(error: unknown, credential = token): Promise<CaptureFail
   };
 }
 
+/** The page script answered outside its contract: a defect, whose detail goes to the console. */
+function outsideContract(detail: string): CaptureFailureError {
+  console.error(`capture page script ${detail}`);
+  return failure("E_CAPTURE_CONTENT", "nexus capture stopped unexpectedly.");
+}
+
 function requireSession(): NonNullable<typeof session> {
   if (session === null)
     throw failure("E_CAPTURE_SIGNED_OUT", "sign in to nexus first.");
@@ -658,12 +664,7 @@ async function activate(): Promise<void> {
       injection.close();
     }
     if (reply.kind === "unreadable") return setDraft(null, reply.message);
-    if (reply.kind !== "article") {
-      throw failure(
-        "E_CAPTURE_CONTENT",
-        `The page script answered ${reply.kind}.`,
-      );
-    }
+    if (reply.kind !== "article") throw outsideContract(`answered ${reply.kind}`);
     const bytes = serializePacket(reply.packet);
     // a url may carry signed access parameters: the host stands in for a title
     const host = new URL(reply.packet.url).hostname;
@@ -838,19 +839,13 @@ async function inject(
   }
   if (result === undefined || result.error !== undefined) {
     contentWaiter = null;
-    throw failure(
-      "E_CAPTURE_CONTENT",
-      `The page script failed: ${String(result?.error ?? "no result")}`,
-    );
+    throw outsideContract(`failed: ${String(result?.error ?? "no result")}`);
   }
   const port = await arrival;
   const documentId = port.sender?.documentId;
   if (typeof documentId !== "string") {
     port.disconnect();
-    throw failure(
-      "E_CAPTURE_CONTENT",
-      "Firefox attached no document identity to the page script.",
-    );
+    throw outsideContract("arrived with no document identity");
   }
   return {
     documentId,
@@ -1134,12 +1129,7 @@ async function acquireDocument(
     url: target.url,
     limits,
   });
-  if (reply.kind !== "document" && reply.kind !== "failed") {
-    throw failure(
-      "E_CAPTURE_CONTENT",
-      `The page script answered ${reply.kind}.`,
-    );
-  }
+  if (reply.kind !== "document" && reply.kind !== "failed") throw outsideContract(`answered ${reply.kind}`);
   return reply;
 }
 

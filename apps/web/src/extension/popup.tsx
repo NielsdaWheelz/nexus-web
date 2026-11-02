@@ -9,7 +9,7 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { FeedbackProvider, Hold, useFeedbackOccurrence, useOutcome } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
@@ -54,12 +54,15 @@ async function command(sent: Command): Promise<CommandResult> {
 }
 
 /** The popup's sign-in asks the background, which owns the flow. */
-const SHELL: Shell = { signIn: { label: "sign in", commandKey: "CaptureSignIn", run: () => { void command({ kind: "login" }); } } };
+const SIGN_IN: CommandVerb = { label: "sign in", commandKey: "CaptureSignIn", run: () => { void command({ kind: "login" }); } };
+const SHELL: Shell = { signIn: SIGN_IN };
+/** Refusals that a sign-in answers carry it. */
+const SIGN_IN_CODES = new Set(["E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
 
 /** What a failed save's recovery means: its line and the verbs that act on it. */
 const RECAPTURE: Partial<Record<string, string>> = {
   E_CAPTURE_TARGET_CHANGED: "this import changed since capture.",
-  E_UPLOAD_EXPIRED: "this upload expired.",
+  E_UPLOAD_CAPABILITY_EXPIRED: "this upload expired.",
   E_WIRE_MISMATCH: "nexus updated.",
 };
 
@@ -70,6 +73,7 @@ const patternHost = (pattern: string) =>
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
   const { say } = useOutcome();
+  const tell = useCallback((failure: CaptureFailure) => { say({ fact: failure.message }, SIGN_IN_CODES.has(failure.code) ? [SIGN_IN] : undefined); }, [say]);
   const [disconnected, setDisconnected] = useState(false);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
@@ -85,7 +89,7 @@ function Popup() {
     setRetryFailure((sent.kind === "retry" || sent.kind === "review") && state?.draft?.phase.kind === "failed" ? state.draft.phase : null);
     void command(sent).then((result) => {
       if (result.kind === "failure") {
-        say({ fact: result.failure.message });
+        tell(result.failure);
         setRetryFailure(null);
       }
     });
@@ -105,7 +109,7 @@ function Popup() {
       setState(message.state);
       const phase = message.state.draft?.phase.kind;
       if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
-      if (message.failure !== null) say({ fact: message.failure.message });
+      if (message.failure !== null) tell(message.failure);
     });
     port.onDisconnect.addListener(() => {
       if (connection.current !== current) return;
@@ -117,14 +121,14 @@ function Popup() {
     });
     void command({ kind: "activate" }).then((result) => {
       if (connection.current !== current) return;
-      if (result.kind === "failure") say({ fact: result.failure.message });
+      if (result.kind === "failure") tell(result.failure);
     });
     return () => {
       if (connection.current === current) connection.current = null;
       port.disconnect();
     };
-    // `say` is one value for the stage's life, so the port connects once.
-  }, [say]);
+    // `say`, and so `tell`, is one value for the stage's life, so the port connects once.
+  }, [tell]);
 
   const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null } | { kind: "save" }): boolean => {
     const current = connection.current;

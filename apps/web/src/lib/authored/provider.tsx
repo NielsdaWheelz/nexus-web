@@ -148,7 +148,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
     else if (host === "share") window.location.assign("nexus-share://open?path=%2Fdownloads");
     else void discardFailedAuthoredSetup(accountId).catch(fail);
   } };
-  const recover: Verbs = host === "workspace" ? [retryVerb, leaveVerb] : [retryVerb];
+  const recover: Verbs = [retryVerb, leaveVerb];
   const signInVerbs: Verbs = host === "workspace" ? [{ ...signInVerb, busy: signingIn || opening }, leaveVerb] : [signInVerb];
   const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
   return <section className={styles.setup}>{
@@ -183,12 +183,12 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   const copied = useCopyFeedback(writing.error_occurrence);
   const commitFailed = useRef(false);
   useLayoutEffect(() => { commitFailed.current = writing.error !== null; });
+  const restart = useMemo<CommandVerb>(() => ({ label: "restart nexus", commandKey: "RestartNexus", run: () => { if (guard.confirmDocumentExit()) window.location.reload(); } }), [guard]);
   useEffect(() => {
     if (condition !== "SyncLocal" && condition !== "Update" && condition !== "SignIn" && condition !== "Refused") return;
-    const restart: CommandVerb = { label: "restart nexus", commandKey: "RestartNexus", run: () => { if (guard.confirmDocumentExit()) window.location.reload(); } };
     const verbs = condition === "SyncLocal" ? [restart] as const : condition === "Update" ? transportVerbs("Update", { signIn: null }) : condition === "SignIn" ? [signIn] as const : null;
     return say(conditionLine(condition, commitFailed.current), verbs ?? undefined);
-  }, [say, guard, signIn, condition, remedy]);
+  }, [say, restart, signIn, condition, remedy]);
   if (defect) throw defect.error;
   if (writing.error === null) return null;
   const stopped = writingStoreStopped(writing.error);
@@ -198,13 +198,11 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
       catch (error) { if (error instanceof ClipboardWriteUnavailableError) setManualCopy(text); else setDefect({ error }); }
     }, error => setDefect({ error }));
   } };
-  const first: CommandVerb = stopped
-    ? { label: "restart nexus", commandKey: "RestartNexus", run: () => { if (guard.confirmDocumentExit()) window.location.reload(); } }
-    : { label: "retry", commandKey: "RetryCommit", busy: retrying, run: () => {
-      if (retrying) return;
-      setRetrying(true);
-      void runtime.retry().catch(() => setIncident(current => ({ ...current, attempt: current.attempt + 1 }))).finally(() => setRetrying(false));
-    } };
+  const first: CommandVerb = stopped ? restart : { label: "retry", commandKey: "RetryCommit", busy: retrying, run: () => {
+    if (retrying) return;
+    setRetrying(true);
+    void runtime.retry().catch(() => setIncident(current => ({ ...current, attempt: current.attempt + 1 }))).finally(() => setRetrying(false));
+  } };
   return <>
     <Hold id={`authored-writing:${incident.serial}:${stopped ? "stopped" : "failed"}`} attempt={incident.attempt} risk
       line={stopped ? conditionLine("Stopped", true) : WORDS_AT_RISK} verbs={runtime.hasUncommittedText() ? [first, copyText] : [first]} />
