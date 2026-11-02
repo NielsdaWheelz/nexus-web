@@ -1204,6 +1204,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         var localRepair: LocalStateError? = null
         try { offline.openEpisode(mediaId)?.let { it.close(); return null } }
         catch (failure: LocalStateError) { localRepair = failure }
+        // Every play starts a session recheck, so an end soon after meets Checking, which waits (device-startup.md).
+        if (device.remoteAdmission == "Checking") device.checkSession()
         if (!device.remotelyAdmitted()) return localRepair?.let { RemoteActivation(mediaId, owner, generation, null, false, it) }
         return try { RemoteActivation(mediaId, owner, generation, descriptorReads.withPermit { origin.player(mediaId) }, false, localRepair) }
         catch (_: IOException) {
