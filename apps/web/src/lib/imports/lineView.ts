@@ -105,6 +105,9 @@ function refusalView(line: IntakeLine, refusal: LineRefusal): Said {
     case "Handoff": return { two: transportLine(refusal.transport, "couldn’t import this."), tone: "Warning", verb: transportVerb(refusal.transport) };
     case "Offline": return { two: "you’re offline. this hasn’t been sent.", tone: "Warning", verb: RETRY };
     case "NoStart": return { two: transportLine(refusal.transport, "couldn’t start."), tone: "Warning", verb: transportVerb(refusal.transport) };
+    // the bytes went, so nothing failed to start: nexus was never asked to check them
+    case "CheckHeld": return { two: transportLine(refusal.transport, "couldn’t check the file."), tone: "Warning",
+      verb: refusal.transport === "Offline" ? RETRY : transportVerb(refusal.transport) };
     case "WrongType": return { two: "pdf or epub only", tone: "Danger", verb: null };
     case "TooBig": return { two: refusal.fileKind === "Pdf" ? "too big · pdfs up to 100 mb" : "too big · epubs up to 50 mb", tone: "Danger", verb: null };
     case "Empty": return { two: "this file is empty", tone: "Danger", verb: null };
@@ -183,7 +186,8 @@ const OUTCOMES: readonly (readonly [Outcome, string])[] = [
   ["Refused", "refused"], ["NotSent", "not sent"], ["AlreadyHere", "already here"], ["RemovedSince", "removed since"],
 ];
 
-const NOT_SENT: ReadonlySet<LineRefusal["kind"]> = new Set(["Offline", "NoStart", "BytesLost", "NotPrepared", "Unreadable"]);
+/** Nexus was never asked to publish: a held confirm's bytes wait in storage, unpublished. */
+const NOT_SENT: ReadonlySet<LineRefusal["kind"]> = new Set(["Offline", "NoStart", "CheckHeld", "BytesLost", "NotPrepared", "Unreadable"]);
 
 /** A settled line's part in its batch's ledger. */
 function outcome(stage: LineStage): Outcome {

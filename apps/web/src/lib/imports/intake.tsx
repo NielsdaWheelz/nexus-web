@@ -70,6 +70,9 @@ export type LineRefusal =
   | { readonly kind: "Offline" }
   /** Not sent: enter's destinations read failed, or admission held the send. */
   | { readonly kind: "NoStart"; readonly transport: Exclude<Transport, "Offline"> }
+  /** The bytes are in storage, but admission held the confirm at its turn: nexus was asked
+   * nothing, and the same session's confirm can still go. */
+  | { readonly kind: "CheckHeld"; readonly transport: Transport }
   | { readonly kind: "WrongType" }
   | { readonly kind: "TooBig"; readonly fileKind: UploadFileKind }
   | { readonly kind: "Empty" }
@@ -163,9 +166,9 @@ const sameLibraries = (a: readonly LibraryDestination[], b: readonly LibraryDest
   a.length === b.length && a.every(library => b.some(other => other.id === library.id));
 const fileOf = (line: Entry) => line.source.kind === "File" ? line.source.file : null;
 
-/** An upload's confirm that admission held at its turn: nothing left. */
+/** An upload's confirm that admission held at its turn: the confirm never left. */
 class ConfirmHeld extends Error {
-  constructor(readonly refusal: LineRefusal) { super("confirm held unsent"); }
+  constructor(readonly transport: Transport) { super("confirm held unsent"); }
 }
 
 function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<typeof createDestinationCreation>) {
@@ -181,6 +184,10 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   /** The open visit: `endVisit` replaces it, so a create that outlives its visit never
    * writes the next one's `into`. */
   let visit = {};
+  /** The visit each library create's latest send began in, keyed by the `onCreated` the
+   * intake gave it, which its attempt carries: a retry or a retyped name in a later visit
+   * sends for that visit. */
+  const sentIn = new WeakMap<(destination: LibraryDestination) => void, object>();
   let viewers = 0;
   let lifetime: AbortController | null = null;
   let host: Host | null = null;
@@ -258,15 +265,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     return turn;
   }
 
-  /** A line that never left, read as `transportOf` reads the failure that held it. */
-  function notSent(failure: ApiError): LineRefusal {
-    const transport = transportOf(failure);
-    return transport === "Offline" ? { kind: "Offline" } : { kind: "NoStart", transport };
-  }
+  /** A line that never left, by the transport that held it. */
+  const notSent = (transport: Transport): LineRefusal => transport === "Offline" ? { kind: "Offline" } : { kind: "NoStart", transport };
   /** Why a send must not go out now: offline, or the refusal `apiFetch` would throw unsent. */
-  function unsent(): LineRefusal | null {
-    if (navigator.onLine === false) return { kind: "Offline" };
-    return remoteAttemptAllowed() ? null : notSent(admissionRefusal());
+  function held(): Transport | null {
+    if (navigator.onLine === false) return "Offline";
+    return remoteAttemptAllowed() ? null : transportOf(admissionRefusal());
   }
 
   function pump() {
@@ -296,7 +300,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       if (!alive(scope)) return;
       const failure = modeled(error);
       if (failure === null) return;
-      for (const id of ids) if (get(id)?.stage.kind === "Waiting") refuse(id, notSent(failure));
+      for (const id of ids) if (get(id)?.stage.kind === "Waiting") refuse(id, notSent(transportOf(failure)));
     } finally {
       if (alive(scope)) { freezing = false; pump(); }
     }
@@ -308,8 +312,8 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       await exclusive(async () => {
         const line = get(id);
         if (!alive(scope) || line === null || line.stage.kind !== "Waiting" || line.guard === null || line.source.kind !== "Link") return;
-        const refusal = unsent();
-        if (refusal !== null) return refuse(id, refusal);
+        const holding = held();
+        if (holding !== null) return refuse(id, notSent(holding));
         const { source: { url }, guard, attemptId } = line;
         update(id, current => ({ ...current, stage: { kind: "Sending" } }));
         try {
@@ -335,14 +339,14 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const line = get(id);
       const file = line === null ? null : fileOf(line);
       if (!alive(scope) || line === null || file === null || line.upload === null || line.guard === null) return;
-      const refusal = unsent();
-      if (refusal !== null) return refuse(id, refusal);
+      const holding = held();
+      if (holding !== null) return refuse(id, notSent(holding));
       const at = (stage: LineStage) => { if (alive(scope) && !stop.signal.aborted) update(id, current => ({ ...current, stage })); };
       at({ kind: "Sending" });
       try {
         const accepted = await uploadIngestFile({ file, attempt: line.upload, guard: line.guard,
           // the confirm may start long after the put, so its turn asks admission again
-          exclusive: run => exclusive(() => { const held = unsent(); return held === null ? run() : Promise.reject(new ConfirmHeld(held)); }),
+          exclusive: run => exclusive(() => { const holding = held(); return holding === null ? run() : Promise.reject(new ConfirmHeld(holding)); }),
           signal: AbortSignal.any([scope.signal, stop.signal]),
           onPhaseChange: phase => at(phase === "Uploading" ? { kind: "Uploading", sentBytes: 0 } : phase === "Verifying" ? { kind: "Verifying" } : { kind: "Sending" }),
           onProgress: sentBytes => at({ kind: "Uploading", sentBytes }) });
@@ -382,7 +386,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   async function fail(id: string, error: unknown, scope: AbortController) {
     const line = get(id);
     if (line === null || isAbortError(error)) return;
-    if (error instanceof ConfirmHeld) return refuse(id, error.refusal);
+    if (error instanceof ConfirmHeld) return refuse(id, { kind: "CheckHeld", transport: error.transport });
     const confirming = line.stage.kind === "Verifying";
     if (error instanceof UploadSessionError) return uploadFail(line, error.outcome, confirming, scope);
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
@@ -568,6 +572,9 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (input.open !== undefined && first?.stage.kind === "Waiting") added[0] = { ...first, openOnAccept: input.open };
     entries = [...added, ...entries];
     queue = [...queue, ...added.filter(entry => entry.stage.kind === "Waiting").map(entry => entry.id)];
+    // a batch settled at admission (files refused at the door) is its door's to show, since
+    // every door shows what it admits, the page before it has mounted: no slip
+    if (added.every(entry => linePhase(entry.stage) === "Settled")) settledBatches.add(batch);
     publish();
     pump();
   }
@@ -629,16 +636,18 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     },
     snapshot: () => state,
     creation,
-    /** The `onCreated` of a library create starting now: the library joins `into` while
-     * this visit lasts, and this visit's waiting admissions either way. */
+    /** A new library create's `onCreated`: the library joins `into` while the visit its
+     * latest send began in lasts, and that visit's waiting admissions either way. */
     created() {
-      const during = visit;
-      return (destination: LibraryDestination) => {
+      const joined = (destination: LibraryDestination) => {
+        const during = sentIn.get(joined);
+        sentIn.delete(joined);
         const join = (libraries: readonly LibraryDestination[]) => libraries.some(library => library.id === destination.id) ? libraries : [...libraries, destination];
         if (during === visit) into = join(into);
         deferred = deferred.map(waiting => waiting.visit === during ? { ...waiting, input: { ...waiting.input, into: join(waiting.input.into) } } : waiting);
         publish();
       };
+      return joined;
     },
     setOutcome(next: Outcome) { outcome = next; },
     start() {
@@ -657,9 +666,15 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
           stopsBrowserWork: state.running > 0,
         }),
       });
-      // the creation publishes, then calls onCreated, which joins the library to the waiting
-      // admissions, so they run a microtask later
-      const unsubscribe = creation.subscribe(() => queueMicrotask(admitDeferred));
+      // a send publishes as it begins, so its visit is the open one. a create that lands
+      // leaves the snapshot, keeping its entry, then calls onCreated, which joins the library
+      // to the waiting admissions, so they run a microtask later
+      const unsubscribe = creation.subscribe(() => {
+        for (const attempt of creation.getSnapshot().pending)
+          if (!attempt.sending) sentIn.delete(attempt.onCreated);
+          else if (!sentIn.has(attempt.onCreated)) sentIn.set(attempt.onCreated, visit);
+        queueMicrotask(admitDeferred);
+      });
       return () => {
         scope.abort();
         release();
@@ -698,11 +713,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       switch (line.stage.refusal.kind) {
         // one reread re-freezes the batch: a removal must not cost a press per line
         case "Changed": return enqueue(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting" && !other.replay).map(refrozen));
-        // nothing left, so one press sends the batch's held lines again. an id goes out with
-        // one guard only, so a line holding one resends what it may have sent before, perhaps
-        // as an unknown's replay; a line whose freeze failed holds none and reads afresh
-        case "Offline": case "NoStart":
-          return enqueue(batch.filter(other => refusalOf(other) === "Offline" || refusalOf(other) === "NoStart")
+        // nothing left, so one press sends the batch's held lines again: a held confirm sends
+        // its session's confirm. an id goes out with one guard only, so a line holding one
+        // resends what it may have sent before, perhaps as an unknown's replay; a line whose
+        // freeze failed holds none and reads afresh
+        case "Offline": case "NoStart": case "CheckHeld":
+          return enqueue(batch.filter(other => refusalOf(other) === "Offline" || refusalOf(other) === "NoStart" || refusalOf(other) === "CheckHeld")
             .map(other => other.guard === null ? refrozen(other) : resent(other)));
         case "LibraryGone": return enqueue([refrozen(line)]);
         case "Active": case "Undeclared": case "BytesLost": case "NotPrepared": case "NotChecked": return enqueue([resent(line)]);
@@ -732,11 +748,13 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const session = line.upload?.session ?? null;
       if (session !== null) removeSession(session.session_id, pointer(line));
     },
-    /** A waiting or settled line leaves; forgetting an unknown one asks first. */
+    /** A waiting or settled line leaves; forgetting an unknown one, or its waiting replay,
+     * asks first. */
     remove(id: string) {
       const line = get(id);
       if (line === null) return;
-      if (line.stage.kind === "Unknown" && !window.confirm(`dismiss “${pointer(line)}”? it may not have gone through.`)) return;
+      const forgets = line.stage.kind === "Unknown" ? "dismiss" : line.stage.kind === "Waiting" && line.replay ? "remove" : null;
+      if (forgets !== null && !window.confirm(`${forgets} “${pointer(line)}”? it may not have gone through.`)) return;
       if (line.stage.kind === "Waiting" || linePhase(line.stage) === "Settled") drop(id);
     },
     arm(id: string, disposition: "Follow" | "Fork") {
@@ -797,7 +815,8 @@ export function useImportIntake() {
 }
 
 /** A surface showing lines registers while mounted. A batch that settles while any does
- * never raises a slip, then or later: that surface speaks its settle. */
+ * never raises a slip, then or later: that surface speaks its settle. A batch settled at
+ * admission raises none either, so a door need not register before it admits. */
 export function useImportLinesShown(): void {
   const intake = useIntake();
   useLayoutEffect(() => intake.view(), [intake]);

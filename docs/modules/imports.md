@@ -125,15 +125,17 @@ for every surface and for the intake's slips. nothing survives a reload.
   parses with `extractLinks` and holds `ADMIT_LIMIT`). a link already listed adds none.
   type, emptiness, the size limits and create's name rule refuse a file before any request.
   an admission into the visit's `into` waits while a library create is sending, keeping that
-  `into`. a created library joins `into` while its visit lasts, and its visit's waiting
-  admissions either way, so a create that outlives the visit never sets the next one's.
+  `into`. a created library joins the `into` of the visit its latest send began in, while
+  that visit lasts, and that visit's waiting admissions either way: a create that outlives
+  its visit never sets the next one's, and one retried in a later visit files for that one.
 - **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
   revision and its libraries. a failed read is `no start`, or `offline`, and so is a send
-  the shell's admission holds, at its start or at a confirm's turn, since nothing left. links
-  go one at a time and file puts two at a time; a link's accept and an upload's confirm,
-  both serializable under the viewer lock, take one slot between them. every send answers
-  within 30 s, the put within its upload window. acceptance drops a file's `File`: nothing
-  sends it again.
+  the shell's admission holds at its start, since nothing left. a confirm it holds at its
+  turn reads `couldn’t check the file.` with the transport's reason: the bytes are up and
+  nexus was asked nothing. links go one at a time and file puts two at a time; a link's
+  accept and an upload's confirm, both serializable under the viewer lock, take one slot
+  between them. every send answers within 30 s, the put within its upload window.
+  acceptance drops a file's `File`: nothing sends it again.
 - **answers.** a line is unknown only where an answer was lost after the server could act:
   a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
   stopped`. 401 and 426 answer before any route: handoff. a storage failure at a first
@@ -144,7 +146,7 @@ for every surface and for the intake's slips. nothing survives a reload.
 - **replay.** `retry` sends the same id, guard and session again. `changed` takes one reread
   for the batch's changed lines and its waiting lines that replay no unknown, and `library
   gone` one for its own line, whatever the line's verb. a reread gives a link a fresh id.
-  `offline` and `no start` send the batch's lines that never left again: a line holding a
+  `offline`, `no start` and a held check send the batch's held lines again: a line holding a
   guard keeps it and its id, since an id only goes out with one guard; a line whose freeze
   failed rereads. `retryWithout` drops every library the refusal's reread found missing.
   `reselect` starts a fresh session; the expired one stays in imports.
@@ -158,7 +160,11 @@ for every surface and for the intake's slips. nothing survives a reload.
 - **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
   raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
   `retry` replays that batch's unknown lines. a batch that settles while a surface shows
-  lines never slips, then or later: that surface speaks its settle.
+  lines never slips, then or later: that surface speaks its settle. nor does a batch admit
+  settles at once (files refused at the door): every door shows what it admits, so a door
+  need not register before it admits.
+- **`×`** removes a waiting or settled line. forgetting an unknown line, or a waiting replay
+  of one, asks `window.confirm` first, since either may have landed.
 - **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
   removed lines leave. everything else stays until `×`.
 
