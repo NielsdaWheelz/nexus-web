@@ -1,8 +1,8 @@
 import type { Schema } from "@/lib/api/wire";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
-import { mediaKindLabel } from "@/lib/media/kind";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "./items";
+import { itemMediaKind, resourceType, resourceTypeName } from "./type";
 
 type MatchMethod = Schema<"SearchOccurrenceOut">["match_method"];
 export type ResourceMetadataPart =
@@ -28,9 +28,8 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
   const body = item.preview.body;
   const source = item.preview.source;
   const parsed = parseResourceRef(item.ref);
-  const mediaKind = body.kind === "media" ? body.media_summary.media_kind : source?.media_kind ?? (body.kind === "named" ? body.media_kind : null);
-  const mediaLabel = mediaKind === null ? null : mediaKindLabel(mediaKind);
-  const identity = parsed?.scheme === "media" && mediaLabel !== null ? mediaLabel : parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "resource";
+  const mediaKind = itemMediaKind(item);
+  const identity = parsed !== null ? resourceTypeName(resourceType(parsed.scheme, mediaKind)) : "resource";
   const credits = body.kind === "media" ? body.media_summary.contributors : source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
   const bibliography = bibliographyMetadata(
     mediaKind !== null ? selectMediaAuthors(credits) : credits,

@@ -2,7 +2,8 @@ import { ContributorCreditList } from "@/components/contributors/ContributorCred
 import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { itemMediaKind, resourceType, resourceTypeName } from "@/lib/resources/type";
 import ResourceBody from "./ResourceBody";
 import ResourceLink from "./ResourceLink";
 import { ResourceTypeIcon } from "./ResourceType";
@@ -33,21 +34,21 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
     default:
       assertNever(body);
   }
-  const ref = parseResourceRef(item.ref);
-  const sourceRef = source?.ref ? parseResourceRef(source.ref) : null;
-  const attributedRef = source ? sourceRef : ref;
+  const attributedRef = source ? source.ref ? parseResourceRef(source.ref) : null : parseResourceRef(item.ref);
+  const type = attributedRef ? resourceType(attributedRef.scheme, itemMediaKind(item)) : null;
   const sourceTitle = source
-    ? source.title?.trim() ? source.title : sourceRef ? resourceTypeLabel(sourceRef.scheme) : "source"
-    : ref ? resourceTypeLabel(ref.scheme) : "source";
+    ? source.title?.trim() ? source.title : "untitled"
+    : type ? resourceTypeName(type) : "source";
   const title = identity ? identity.title.trim() ? identity.title : "untitled" : sourceTitle;
   const authors = selectMediaAuthors(identity ? identity.contributors ?? [] : source?.contributors ?? [])
     .filter(credit => creditName(credit) !== null);
   const distinctSource = identity !== null && source !== null && source.ref !== item.ref;
   const sourceAuthors = selectMediaAuthors(distinctSource ? source.contributors ?? [] : [])
     .filter(credit => creditName(credit) !== null);
-  const glyph = attributedRef ? <span className={styles.glyph}>
-    <ResourceTypeIcon scheme={attributedRef.scheme} />
-    <span className="sr-only">{resourceTypeLabel(attributedRef.scheme)}: </span>
+  // With neither identity nor source the title is the noun itself, so it takes no prefix.
+  const glyph = type ? <span className={styles.glyph}>
+    <ResourceTypeIcon type={type} />
+    {identity === null && source === null ? null : <span className="sr-only">{resourceTypeName(type)}: </span>}
   </span> : null;
   const role = body.kind === "prose" && body.role?.trim() ? body.role : null;
 

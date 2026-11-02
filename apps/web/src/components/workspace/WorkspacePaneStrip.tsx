@@ -31,7 +31,8 @@ import compact from "@/components/ui/CompactChrome.module.css";
 import selection from "@/components/ui/Selection.module.css";
 import { cx } from "@/lib/ui/cx";
 import { assertNever } from "@/lib/assertNever";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
+import type { MediaKind } from "@/lib/media/kind";
+import { paneGlyph } from "@/lib/resources/type";
 import { NEW_PANE_HINT, PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
@@ -46,6 +47,7 @@ interface StripItem {
   readonly paneId: string;
   readonly href: string;
   readonly label: string;
+  readonly mediaKind: MediaKind | undefined;
   readonly isActive: boolean;
   readonly isInView: boolean;
   readonly minimized: boolean;
@@ -65,10 +67,10 @@ const SILENT_DRAG = {
 };
 
 function ChipIdentity({ item }: { readonly item: StripItem }) {
-  const RouteIcon = getPaneRouteIcon(item.href);
+  const Glyph = paneGlyph(item.href, item.mediaKind);
   return (
     <>
-      <RouteIcon aria-hidden size={16} strokeWidth={1.75} className={styles.icon} />
+      <Glyph aria-hidden size={16} strokeWidth={1.75} className={styles.icon} />
       <span className={styles.title}>{item.label}</span>
     </>
   );

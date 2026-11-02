@@ -1,5 +1,6 @@
 "use client";
 
+import type { MediaKind } from "./kind";
 import { useMediaSummaries } from "./MediaSummaryProvider";
 import type { ResourceItem } from "@/lib/resources/items";
 import type { Schema } from "@/lib/api/wire";
@@ -17,7 +18,7 @@ export function useResolvedResourceItem(item: ResourceItem, historical = false):
   return summary === null ? {
     ...item, missing: true, label: "Resource unavailable",
     activation: { ...item.activation, kind: "none", href: null, unavailable_reason: "source_unavailable" },
-    preview: { ...item.preview, source: null, body: { kind: "named", title: "Resource unavailable", media_kind: null, contributors: null, image_url: null } },
+    preview: { ...item.preview, source: null, body: { kind: "named", title: "Resource unavailable", media_kind: seed.media_kind, contributors: null, image_url: null } },
   } : { ...item, label: summary.title, preview: { ...item.preview, body: { kind: "media", media_summary: summary } } };
 }
 
@@ -31,3 +32,6 @@ export type MediaSubject =
       readonly title: string;
       readonly contributors: readonly Schema<"ContributorCreditOut">[];
     };
+
+export const mediaSubjectKind = (subject: MediaSubject): MediaKind =>
+  subject.kind === "Stored" ? subject.summary.media_kind : subject.media_kind;
