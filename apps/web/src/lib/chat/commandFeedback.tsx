@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Hold } from "@/components/feedback/Feedback";
+import { transportVerbs, type CommandVerb } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
@@ -52,9 +53,9 @@ function PendingDeletion({ observation, remove, fail }: {
   }, [current, id, remove]);
   if (current === null || current.standing === null || current.command.kind !== "DeleteChat") return null;
   const { standing, command } = current;
-  // Unconfirmed resends the frozen deletion: a gone chat settles. A changed chat is read again first.
-  const verb = {
-    label: standing.kind === "Unknown" ? "retry" : "check",
+  // Unknown resends the frozen deletion: a gone chat settles. Changed reads the chat; Unread reads it again.
+  const verb: CommandVerb = {
+    label: standing.kind === "Changed" ? "check" : "retry",
     commandKey: `${standing.kind} ${key}`,
     busy: current.kind === "Busy",
     run: (intent: OpenIntent) => {
@@ -64,8 +65,11 @@ function PendingDeletion({ observation, remove, fail }: {
     },
   };
   const refused = `couldn’t delete “${command.title}”.`;
+  const transport = standing.kind === "Unread" ? transportOf(standing.error) : null;
   const line = standing.kind === "Unknown" ? { fact: unsureFact(command), reason: MAY_HAVE }
-    : standing.kind === "Changed" ? { fact: refused, reason: "it changed meanwhile." }
-    : TRANSPORT_LINES[transportOf(standing.error)].command(refused);
-  return <Hold id={`${key}:${standing.kind}`} attempt={current.attempt} line={line} verbs={[verb]} />;
+    : transport === null ? { fact: refused, reason: "it changed meanwhile." }
+    : TRANSPORT_LINES[transport].command(refused);
+  // a stale build offers reload alone
+  const verbs = transport === null ? [verb] as const : transportVerbs(transport, { retry: verb, signIn: null }) ?? undefined;
+  return <Hold id={`${key}:${standing.kind}`} attempt={current.attempt} line={line} verbs={verbs} />;
 }
