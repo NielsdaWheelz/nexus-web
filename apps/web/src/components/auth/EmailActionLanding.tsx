@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useId, useState } from "react";
 import { Fact, Field } from "@/components/feedback/Fact";
+import { Announcement } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
@@ -38,7 +39,8 @@ export default function EmailActionLanding({
 }) {
   const copy = COPY[purpose];
   const [invalid, setInvalid] = useState(tokenHash === null);
-  // A refusal stands under the submit, which is its retry.
+  // A refusal stands under the submit, which is its retry. The submit is disabled while it runs,
+  // so focus leaves it: each refusal speaks once as it lands.
   const [failure, setFailure] = useState<Line | null>(null);
   const failureId = useId();
   const { pending, submit } = useAuthForm<
@@ -88,7 +90,10 @@ export default function EmailActionLanding({
             aria-describedby={failure ? failureId : undefined}>
             {copy.action}
           </Button>
-          {failure ? <Field id={failureId} line={failure} /> : null}
+          {failure ? <>
+            <Field id={failureId} line={failure} />
+            <Announcement text={failure.reason ? `${failure.fact} ${failure.reason}` : failure.fact} level="Polite" occurrence={failure} />
+          </> : null}
         </form>
         {back}
       </div>

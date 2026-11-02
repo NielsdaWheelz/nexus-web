@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { useId, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
 import { Field } from "@/components/feedback/Fact";
-import { Hold } from "@/components/feedback/Feedback";
+import { Announcement, Hold } from "@/components/feedback/Feedback";
 import { transportVerbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
@@ -30,7 +30,8 @@ export default function CreateLibraryPanel({
   const failure = submit.kind === "Ready" || submit.kind === "Acknowledged" ? null : submit.failure ?? null;
   const fieldId = useId();
   // A refusal stands under the name, and `create` is its retry. A transport's verb is the
-  // transport's own: reload for a stale build.
+  // transport's own: reload for a stale build. The inputs are disabled while it runs, so focus
+  // leaves them: each refusal speaks once as it lands, keyed by its failure.
   const transport = failure?.kind === "Transport" ? transportOf(failure.error) : null;
   const refusal = failure?.kind === "Refused" ? failure.line
     : failure?.kind === "Transport" && transport !== null ? TRANSPORT_LINES[transport].command(failure.fact) : null;
@@ -66,7 +67,10 @@ export default function CreateLibraryPanel({
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {refusal ? <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport, { signIn: null }) ?? undefined : undefined} /> : null}
+        {refusal && failure ? <>
+          <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport, { signIn: null }) ?? undefined : undefined} />
+          <Announcement text={refusal.reason ? `${refusal.fact} ${refusal.reason}` : refusal.fact} level="Polite" occurrence={failure} />
+        </> : null}
         {failure?.kind === "Unknown" ? <Hold id="create-library" line={{ fact: "not sure the library was created.", reason: "it may have gone through." }} /> : null}
         <Button emphasis="strong" type="submit" aria-busy={running || undefined}
           disabled={!name.trim() || running} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
