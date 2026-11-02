@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import type { Intent } from "@nexus/authored/commands";
 import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
-import { getWritingRuntime, type DocumentReadSnapshot, type WritingDocument, type WritingRuntime } from "./runtime";
+import { getWritingRuntime, type WritingDocument, type WritingRuntime } from "./runtime";
 export function useWritingRuntime(): WritingRuntime | null {
   const accountId = useAuthoredAccountId();
   return useMemo(() => accountId === null ? null : getWritingRuntime(accountId), [accountId]);
@@ -44,12 +44,6 @@ export function useAuthoredQuery(query: AuthoredQuery | null) {
   const retry = useCallback(() => setAttempt(n => n + 1), []);
   const current = state.key === key && state.accountId === accountId;
   return { data: current ? state.data : null, error: current ? state.error : null, occurrence: current ? state.occurrence : null, pending: query !== null && (!current || state.pending), retry };
-}
-const NO_READ: DocumentReadSnapshot = {retrying: false, error: null, occurrence: null};
-const noSubscribe = () => () => {};
-const noRead = () => NO_READ;
-export function useWritingDocumentRead(document: WritingDocument | null): DocumentReadSnapshot {
-  return useSyncExternalStore(document?.subscribeRead ?? noSubscribe, document?.readSnapshot ?? noRead, noRead);
 }
 export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []) {
   const runtime = useWritingRuntime();
