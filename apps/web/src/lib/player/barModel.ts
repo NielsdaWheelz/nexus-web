@@ -182,7 +182,7 @@ export function positionAt(x: number, width: number, durationMs: number, snaps: 
     const distance = Math.abs((startMs / durationMs) * width - clamped);
     if (distance <= reachPx && (nearest === null || distance < nearest.distance)) nearest = { startMs, distance };
   }
-  return nearest !== null ? { positionMs: nearest.startMs, snapped: true } : { positionMs: (clamped / width) * durationMs, snapped: false };
+  return nearest !== null ? { positionMs: nearest.startMs, snapped: true } : { positionMs: (clamped * durationMs) / width, snapped: false };
 }
 
 /** Time left in your time: media time at `rate`, ceiled to the minute as the server ceils

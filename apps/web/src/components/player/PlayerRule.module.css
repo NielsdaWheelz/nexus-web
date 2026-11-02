@@ -232,5 +232,4 @@
   .cut { forced-color-adjust: none; background: Canvas; }
   .mark { forced-color-adjust: none; color: CanvasText; }
   .bubble { background: Canvas; border-color: CanvasText; }
-  .input { opacity: 1; }
 }

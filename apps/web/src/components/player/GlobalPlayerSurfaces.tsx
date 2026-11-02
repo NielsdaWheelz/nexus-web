@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { assertNever } from "@/lib/assertNever";
@@ -15,7 +13,6 @@ import { useMobileViewport, useRootTextEntryFocused } from "@/lib/mobileShell/vi
 import { barClock, barMode, barSubjectId, liveKeys, miniKeys } from "@/lib/player/barModel";
 import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
-import type { ActionDescriptor, PreparationState } from "@/lib/ui/actionDescriptor";
 import * as Icon from "@/lib/ui/icons";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
@@ -33,15 +30,13 @@ import PlayerChapters from "./PlayerChapters";
 import { unavailableMessages } from "./PlayerFailures";
 import PlayerSheet, { MobileDisclosure } from "./PlayerSheet";
 import PlayerKeys from "./PlayerKeys";
+import PlayerMore from "./PlayerMore";
 import { usePlayerOrigin } from "./usePlayerOrigin";
 import styles from "./GlobalPlayerSurfaces.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
 
 const PICKER_DIALOGS = '[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]';
-/** the keys a narrow bar sheds to more, in bar order. */
-type Shed = "previous" | "next" | "chapters" | "upNext";
-const SHED: readonly Shed[] = ["previous", "next", "chapters", "upNext"];
 
 /** Shown: connected, outside a hidden or inert subtree, laid out and visible. */
 const shown = (element: HTMLElement | null): element is HTMLElement => element !== null && element.isConnected
@@ -57,7 +52,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const session = Player.usePlayerSession();
   const { state, queue, preferences, playbackSubject, supportsSilenceSkipping } = session;
   const presentation = usePlayerPresentation();
-  const commands = Player.usePlayerCommands();
   const latestWorkspace = useLatestWorkspace();
   const isMobile = useIsMobileViewport();
   const priorMode = useRef(isMobile);
@@ -81,7 +75,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const [sheetOpen, setSheetOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"Player" | "Queue">("Player");
-  const [shed, setShed] = useState<{ readonly request: AbortSignal; readonly keys: readonly Shed[] } | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
@@ -100,8 +93,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const announced = useRef<{ source: string | null; phase: Loaded["phase"] | null; unavailable: string | null; stopped: string | null }>({ source: null, phase: null, unavailable: null, stopped: null });
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded?.source.descriptor.media_id ?? null;
-  const liveMedia = useRef(identity);
-  liveMedia.current = identity;
   const { accountId } = useAuthenticatedAccount();
   const settings = usePlaybackSettings({ loaded, playbackSubject, preferences, opening });
   const title = loaded?.source.descriptor.title;
@@ -231,35 +222,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const upNext = <Button ref={queueRef} size="comfortable" iconOnly icon={<Icon.UpNext />} aria-label="up next" className={styles.key}
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen} aria-busy={queue.phase === "Preparing" || queue.phase === "Saving" || undefined}
     aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined} onClick={openQueue} />;
-  // more lists each live key the bar has shed, read from the rects when it opens, then the player's own acts.
-  const shedRow = (key: Shed): ActionDescriptor => {
-    const disabled = keys.get(key) !== "Enabled";
-    switch (key) {
-      case "previous": return { kind: "command", id: key, label: "previous", icon: <Icon.Previous />, disabled, onSelect: commands.previous };
-      case "next": return { kind: "command", id: key, label: "next", icon: <Icon.Next />, disabled, onSelect: commands.next };
-      case "chapters": return { kind: "command", id: key, label: "chapters", icon: <Icon.Chapters />, hasPopup: "dialog", disabled, onSelect: () => toggle("Chapters") };
-      case "upNext": return { kind: "command", id: key, label: "up next", icon: <Icon.UpNext />, hasPopup: "dialog", disabled, onSelect: openQueue };
-      default: return assertNever(key);
-    }
-  };
-  const shedRefs = { previous: previousRef, next: nextRef, chapters: chaptersRef, upNext: queueRef } as const;
-  const moreState: PreparationState = shed === null ? null : { kind: "Ready", request: shed.request, content: { sections: [{ id: "player", label: null, options: [
-    ...shed.keys.map(shedRow),
-    { kind: "command", id: "stop", label: "stop playback", icon: <Icon.Stop />, separatorBefore: shed.keys.length > 0 || undefined, onSelect: commands.stop },
-    { kind: "command", id: "hide", label: "hide player", icon: <Icon.Hide />, onSelect: presentation.hide },
-    { kind: "command", id: "open", label: "open episode", icon: null, onSelect: ({ openIntent }) => {
-      const workspace = latestWorkspace();
-      if (liveMedia.current === null) return;
-      workspace.activateWorkspaceTarget({ target: { href: `/media/${liveMedia.current}` }, originPaneId: workspace.state.active_primary_pane_id,
-        disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } });
-      opened();
-    } },
-  ] }] } };
-  const more = <ActionMenu label="more player actions" placement="above" triggerDisabled={keys.get("more") === "Disabled"}
-    triggerRef={setMoreRef} returnFocusTo={() => returnFocus([moreRef.current])}
-    source={{ kind: "Prepared", subjectKey: "player", title: "player actions", initial: { sections: [] }, state: moreState,
-      prepare: request => setShed({ request, keys: SHED.filter(key => keys.has(key) && shedRefs[key].current?.getClientRects().length === 0) }) }}
-    renderTrigger={binding => <OverflowMenuButton {...binding} className={styles.key} />} />;
+  const more = <PlayerMore keys={keys} shedRefs={{ previous: previousRef, next: nextRef, chapters: chaptersRef, upNext: queueRef }}
+    onChapters={() => toggle("Chapters")} onUpNext={openQueue} onOpened={opened} triggerRef={setMoreRef}
+    returnFocusTo={() => returnFocus([moreRef.current])} className={styles.key} />;
 
   const playbackPanel = (surface: "Popup" | "Embedded") => loaded === null || preferences === null || playbackSubject === null ? null
     : <PlaybackPanel loaded={loaded} preferences={preferences} supportsSilenceSkipping={supportsSilenceSkipping} settings={settings} presentation={surface} />;
