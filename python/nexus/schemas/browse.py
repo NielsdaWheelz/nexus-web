@@ -185,7 +185,6 @@ class EpisodePreviewFacts(_Out):
     podcast_ref: str
     episode_ref: str
     podcast_title: str
-    audio_href: str
     duration_seconds: int | None
 
 

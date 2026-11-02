@@ -19,7 +19,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useLocalContent } from "@/lib/offline/localContent";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
+import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import type { QueueCommand, QueueEntry, QueueManifest, QueueRequest } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { useQueueWindow } from "./useQueueWindow";
@@ -132,7 +132,7 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
   const online = useRemoteAdmission() === "Ready";
   const catalog = useCatalogState();
   const downloads = useLocalContent();
-  const loadedDescriptor = state.kind === "Loaded" && state.source.kind === "Episode" ? state.source.descriptor : null;
+  const loadedDescriptor = playingEpisode(state);
   const downloadTitles = useMemo(() => new Map(downloads.index?.items.map(item => [item.media_id, item.title]) ?? []), [downloads.index]);
   const mediaIds = queueWindow.demand.map(entry => entry.media_id);
   const currentEntry = header?.current_entry_id === null || header === null ? null : entries.get(header.current_entry_id)?.entry;

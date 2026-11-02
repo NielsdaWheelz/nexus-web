@@ -85,7 +85,7 @@ export default function DownloadsPaneBody() {
       (root.current?.querySelector<HTMLElement>("[data-row-focusable]") ?? heading.current)?.focus({ preventScroll: true });
   }
   function play(item: LocalItem) {
-    if (player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === item.media_id && player.phase === "Playing") return pause();
+    if (player.kind === "Loaded" && player.source.descriptor.media_id === item.media_id && player.phase === "Playing") return pause();
     run({ ref: `media:${item.media_id}`, id: "Playback", label: "play", title: item.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: item.media_id, knownDescriptor: null, positionMs: null, source: null, recapture: false }) });
   }
@@ -110,7 +110,7 @@ export default function DownloadsPaneBody() {
     {index.items.length === 0 ? <FeedbackState content={{ tone: "Neutral", title: "no downloads", message: "download episodes or reading copies from their action menus." }} announcement="None" /> :
       <ResourceList ariaLabel="downloads">{index.items.map(item => {
         const local = listening.facts?.episodes.get(item.media_id)?.local;
-        const playing = player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === item.media_id && player.phase === "Playing";
+        const playing = player.kind === "Loaded" && player.source.descriptor.media_id === item.media_id && player.phase === "Playing";
         const supplemental = extras(item);
         const missing = item.extras !== null && Object.values(item.extras).some(extra => extra.kind === "Failed" && extra.reason !== "Changed" && extra.reason !== "TooLarge" && extra.reason !== "E_MEDIA_NOT_READY");
         return <ResourceRow key={item.media_id} rootProps={{ "data-download-id": item.media_id }}

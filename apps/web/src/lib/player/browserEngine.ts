@@ -44,7 +44,6 @@ import {
   type EngineState,
   type PlayerDescriptor,
   type PlayerCommands,
-  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 
 type ListeningIn = Schema<"ListeningIn">;
@@ -278,13 +277,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     if (!session) return;
     const source = state.source;
     for (const [action, handler] of handlers) {
-      const unsupported =
-        source?.kind === "Preview" && action.endsWith("track");
       try {
-        session.setActionHandler(
-          action,
-          source === null || unsupported ? null : handler,
-        );
+        session.setActionHandler(action, source === null ? null : handler);
       } catch {
         // justify-ignore-error: browsers support subsets of the actions.
       }
@@ -294,18 +288,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       session.playbackState = "none";
       return;
     }
-    const { kind, descriptor } = source;
-    const art =
-      kind === "Episode"
-        ? descriptor.artwork_url !== null &&
-          buildMediaImageProxySrc(descriptor.artwork_url)
-        : descriptor.imageUrl !== null && descriptor.imageUrl;
-    const artist =
-      kind === "Preview"
-        ? descriptor.source
-        : descriptor.subtitle !== null
-          ? descriptor.subtitle
-          : undefined;
+    const { descriptor } = source;
+    const art = descriptor.artwork_url !== null && buildMediaImageProxySrc(descriptor.artwork_url);
+    const artist = descriptor.subtitle ?? undefined;
     session.metadata = new MediaMetadata({
       title: descriptor.title,
       artist,
@@ -428,40 +413,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     audio.addEventListener("loadedmetadata", apply, { once: true });
   };
 
-  /** Retire the current source and play from `url`; null when a later start won. */
-  const start = async (
-    url: string,
-    rate: number,
-    positionMs: number,
-    next: Episode | null,
-    play: boolean,
-  ) => {
-    const mine = ++generation;
-    asked += 1;
-    advanceAllowed = false;
-    const admission = asked;
-    set({ playbackSubject: null });
-    await closeEpisode();
-    if (mine !== generation || admission !== asked) return null;
-    episode = next;
-    advanceAllowed = play;
-    audio.src = url;
-    audio.defaultPlaybackRate = rate;
-    audio.playbackRate = rate;
-    seekOnceLoaded(positionMs);
-    set({
-      error: null,
-      playbackFailed: false,
-      synced: true,
-      positionMs,
-      durationMs: 0,
-      bufferedMs: 0,
-      rate,
-    });
-    const playing = play ? audio.play().then(() => true, () => { sync(); return false; }) : null;
-    return { mine, admission, playing };
-  };
-
   const capturePlayback = (playing: Promise<boolean>, subject: string, mine: number, admission: number) => {
     void playing.then(accepted => {
       if (accepted && mine === generation && admission === asked && state.playbackSubject === subject && !audio.paused) deps.onExplicitPlayback(state);
@@ -503,8 +454,30 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         fenced: false,
         active: false,
       };
-      const started = await start(streamUrl, playbackRate, positionMs, next, play);
-      if (started === null || started.mine !== generation) return;
+      // Retire the current source and play this one, unless a later start wins the close.
+      const mine = ++generation;
+      asked += 1;
+      advanceAllowed = false;
+      const admission = asked;
+      set({ playbackSubject: null });
+      await closeEpisode();
+      if (mine !== generation || admission !== asked) return;
+      episode = next;
+      advanceAllowed = play;
+      audio.src = streamUrl;
+      audio.defaultPlaybackRate = playbackRate;
+      audio.playbackRate = playbackRate;
+      seekOnceLoaded(positionMs);
+      set({
+        error: null,
+        playbackFailed: false,
+        synced: true,
+        positionMs,
+        durationMs: 0,
+        bufferedMs: 0,
+        rate: playbackRate,
+      });
+      const playing = play ? audio.play().then(() => true, () => { sync(); return false; }) : null;
       if (outgoing?.descriptor.media_id === mediaId && outgoing.resetEpoch === next.resetEpoch &&
           (outgoing.overrideRevision ?? 0) > (next.overrideRevision ?? 0)) next.overrideRevision = outgoing.overrideRevision;
       next.observer = registerActivityObserver(
@@ -513,16 +486,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         observation(false),
       );
       const subject = crypto.randomUUID();
-      set({ source: { kind: "Episode", descriptor, packageId: null }, playbackSubject: subject });
-      if (explicit && started.playing) capturePlayback(started.playing, subject, started.mine, started.admission);
-      showSession();
-    },
-    async preview(descriptor: PreviewAudioDescriptor) {
-      const started = await start(descriptor.audioUrl, 1, 0, null, true);
-      if (started === null || started.mine !== generation) return;
-      const subject = crypto.randomUUID();
-      set({ source: { kind: "Preview", descriptor }, playbackSubject: subject });
-      if (started.playing) capturePlayback(started.playing, subject, started.mine, started.admission);
+      set({ source: { descriptor, packageId: null }, playbackSubject: subject });
+      if (explicit && playing) capturePlayback(playing, subject, mine, admission);
       showSession();
     },
     async play(given) {
@@ -560,8 +525,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     },
     async resumeLoaded(expectedSubject) {
       const current = episode;
-      if (current === null || state.source?.kind !== "Episode" || state.playbackSubject !== expectedSubject ||
-          state.phase === "Ended" || state.playbackFailed)
+      if (current === null || state.playbackSubject !== expectedSubject || state.phase === "Ended" || state.playbackFailed)
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
       if (current.fenced) {
         await engine.reconcileProgressFence(current.descriptor.media_id);

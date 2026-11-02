@@ -2145,23 +2145,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/preview-position": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Install Preview Position */
-        post: operations["install_preview_position_media__media_id__preview_position_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/progress/reset": {
         parameters: {
             query?: never;
@@ -6040,8 +6023,6 @@ export interface components {
         };
         /** EpisodePreviewFacts */
         EpisodePreviewFacts: {
-            /** Audio Href */
-            audio_href: string;
             /** Duration Seconds */
             duration_seconds: number | null;
             /** Episode Ref */
@@ -10390,13 +10371,6 @@ export interface components {
         Position: {
             /** After */
             after: string | null;
-        };
-        /** PreviewPositionIn */
-        PreviewPositionIn: {
-            /** Duration Ms */
-            duration_ms: number | null;
-            /** Position Ms */
-            position_ms: number;
         };
         /** PreviewResolution */
         PreviewResolution: {
@@ -18680,39 +18654,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_PlayerActivationOut_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    install_preview_position_media__media_id__preview_position_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PreviewPositionIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

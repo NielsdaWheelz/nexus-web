@@ -190,9 +190,8 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
   const player = ctx.player.state;
-  const loaded = player.kind === "Loaded" && player.source.kind === "Episode" &&
-    player.source.descriptor.media_id === mediaId;
-  const pending = ctx.player.pendingPlayback?.kind === "Episode" && ctx.player.pendingPlayback.mediaId === mediaId;
+  const loaded = player.kind === "Loaded" && player.source.descriptor.media_id === mediaId;
+  const pending = ctx.player.pendingPlayback?.mediaId === mediaId;
   const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
   const pausing = phase === "Playing" || phase === "Buffering";
   const state = ACTION_CATALOG.Playback.states[phase];
@@ -917,8 +916,8 @@ export function projectResourceActions(
   const player = ctx.player.state;
   const pendingPlayback = ctx.player.pendingPlayback;
   if (!facts.missing && ref.startsWith("media:") && !byId.has("Playback") && (
-    player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === id ||
-    pendingPlayback?.kind === "Episode" && pendingPlayback.mediaId === id
+    player.kind === "Loaded" && player.source.descriptor.media_id === id ||
+    pendingPlayback?.mediaId === id
   )) byId.set("Playback", projectPlaybackAction({ mediaId: id, title: facts.label, descriptor: null, blocked: null, playbackSource, ctx, run }));
   const menu: ActionDescriptor[] = [];
   let group: string | undefined;

@@ -46,7 +46,6 @@ import {
   createNativeEngine,
   nativePlayerAvailable,
 } from "@/lib/player/nativeEngine";
-import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import {
   useAndroidShell,
   useViewportState,
@@ -54,31 +53,13 @@ import {
 import { isEditableTarget, isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 
-/**
- * Browse preview audio. It carries no media identity because a preview never
- * acquires; its json fields are the Android bridge's frozen wire.
- */
-export interface PreviewAudioDescriptor {
-  readonly target: string;
-  readonly previewHref: string;
-  readonly title: string;
-  readonly source: string;
-  readonly sourceHref: string;
-  readonly audioUrl: string;
-  readonly imageUrl: MediaImageProxySrc | null;
-  readonly durationMs: number | null;
-}
-
 export type PlayerDescriptor = Schema<"PlayerDescriptor">;
-export type PlayerSource =
-  /** `packageId`: the downloaded recording the native engine loaded; null when streaming. */
-  | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor; readonly packageId: string | null }
-  | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor };
 export type PlayerPhase = "Buffering" | "Playing" | "Paused" | "Ended";
 
 /** What an engine reports; the native adapter maps bridge load_id to playbackSubject. */
 export interface EngineState {
-  readonly source: PlayerSource | null;
+  /** `packageId`: the downloaded recording the native engine loaded; null when streaming. */
+  readonly source: { readonly descriptor: PlayerDescriptor; readonly packageId: string | null } | null;
   readonly queue: QueueHeader | null;
   /** Engine-owned load occurrence; independent of preferences and transport availability. */
   readonly playbackSubject: string | null;
@@ -122,7 +103,6 @@ export interface Engine {
   /** Explicit time overrides ordinary resume, including a newer outgoing sample.
    * Resolves after the outgoing session's last write (bounded at 2 s). */
   load(descriptor: PlayerDescriptor, play: boolean, positionMs: number | null, explicit?: boolean): Promise<void>;
-  preview(descriptor: PreviewAudioDescriptor): Promise<void>;
   /** A resume asks the server unless this device holds a newer sample; `given` (the page's
    * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
   play(given?: PlayerDescriptor): Promise<void>;
@@ -151,7 +131,7 @@ export type PlayerState =
       readonly kind: "Unavailable";
       readonly reason: "UpdateRequired" | "NotResponding";
     }
-  | ({ readonly kind: "Loaded"; readonly source: PlayerSource } & Omit<
+  | ({ readonly kind: "Loaded"; readonly source: NonNullable<EngineState["source"]> } & Omit<
       EngineState,
       "source" | "playbackSubject" | "positionMs" | "durationMs" | "bufferedMs"
     >);
@@ -173,11 +153,6 @@ interface PreferenceIntent extends PlaybackPreferences {
   readonly subject: string;
 }
 
-/** An admitted start can still be paused while descriptor or installation awaits. */
-export type PendingPlayback =
-  | { readonly kind: "Episode"; readonly mediaId: string }
-  | { readonly kind: "Preview"; readonly target: string };
-
 export type QueueFailure =
   | { readonly kind: "Episode"; readonly entry_id: string; readonly title: string | null }
   | { readonly kind: "Preparation" | "Save" | "Coordination" };
@@ -196,7 +171,8 @@ export interface PlayerQueue {
 export interface PlayerSession {
   readonly supportsSilenceSkipping: boolean;
   readonly state: PlayerState;
-  readonly pendingPlayback: PendingPlayback | null;
+  /** An admitted start can still be paused while descriptor or installation awaits. */
+  readonly pendingPlayback: { readonly mediaId: string } | null;
   readonly playingEntryId: string | null;
   readonly queue: PlayerQueue;
   readonly preferences: PlaybackPreferences | null;
@@ -219,7 +195,6 @@ export interface PlayerCommands {
   stop(): void;
   checkQueue(): void;
   cancelQueuePreparation(): void;
-  playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded">;
   resume(): void;
   pause(): void;
   /** Omission captures the confirmed load at admission; stale application is a silent no-op. */
@@ -268,8 +243,8 @@ function admitQueueCommand(queue: PlayerQueue, request: QueueRequest): QueueEntr
 function playingQueueEntry(state: EngineState, header: QueueHeader | null,
   loaded: { readonly queueId: string; readonly entryId: string; readonly subject: string | null } | null): string | null {
   return header !== null && loaded?.queueId === header.queue_id && loaded.entryId === header.current_entry_id &&
-    loaded.subject !== null && loaded.subject === state.playbackSubject && state.source?.kind === "Episode" &&
-    state.source.descriptor.media_id === header.current_entry?.media_id && !state.playbackFailed &&
+    loaded.subject !== null && loaded.subject === state.playbackSubject &&
+    state.source?.descriptor.media_id === header.current_entry?.media_id && !state.playbackFailed &&
     (state.phase === "Playing" || state.phase === "Buffering") ? loaded.entryId : null;
 }
 
@@ -286,9 +261,7 @@ const TimelineContext = createContext<PlayerTimeline | null>(null);
 const CommandsContext = createContext<PlayerCommands | null>(null);
 
 export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
-  return state.kind === "Loaded" && state.source.kind === "Episode"
-    ? state.source.descriptor
-    : null;
+  return state.kind === "Loaded" ? state.source.descriptor : null;
 }
 
 /** The browser engine's current descriptor within the existing load deadline. */
@@ -318,9 +291,8 @@ export function GlobalPlayerProvider({
   const { use: recordRecent } = useRecent();
   const recordPlayback = useCallback((state: EngineState) => {
     if (androidShell || state.playbackSubject === null || state.playbackFailed || state.source === null) return;
-    const source = state.source;
-    const href = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
-    const value = recentValueForHref(href, source.descriptor.title);
+    const { media_id, title } = state.source.descriptor;
+    const value = recentValueForHref(`/media/${media_id}`, title);
     if (value) void recordRecent(value);
   }, [androidShell, recordRecent]);
   const viewport = useViewportState();
@@ -386,7 +358,7 @@ export function GlobalPlayerProvider({
   const pendingLoad = useRef<number | null>(null);
   const descriptorRead = useRef<AbortController | null>(null);
   const preparationRetry = useRef<(() => Promise<"Applied" | "Superseded">) | null>(null);
-  const [pendingPlayback, setPendingPlayback] = useState<PendingPlayback | null>(null);
+  const [pendingPlayback, setPendingPlayback] = useState<PlayerSession["pendingPlayback"]>(null);
   const intent = useRef<PreferenceIntent | null>(null);
   const [preferenceState, setPreferenceState] = useState<PreferenceIntent | null>(null);
   const applying = useRef(false);
@@ -597,8 +569,8 @@ export function GlobalPlayerProvider({
       // A resume can refresh this occurrence inside the engine. Its new load
       // subject belongs to the same queue entry, never another copy of the media.
       if (engine === engineRef.current && engine.queue === null && state.playbackSubject !== null &&
-          state.source?.kind === "Episode" && loaded !== null && header !== null && loaded.queueId === header.queue_id &&
-          loaded.entryId === header.current_entry_id && state.source.descriptor.media_id === header.current_entry?.media_id)
+          loaded !== null && header !== null && loaded.queueId === header.queue_id &&
+          loaded.entryId === header.current_entry_id && state.source?.descriptor.media_id === header.current_entry?.media_id)
         loadedOccurrence.current = { ...loaded, subject: state.playbackSubject };
       syncPreferences();
       ownership.current?.publish();
@@ -612,26 +584,25 @@ export function GlobalPlayerProvider({
     () => IDLE_ENGINE_STATE,
   );
   const s = !androidShell && !queueView.owner && mirroredEngine !== null ? mirroredEngine : observed;
-  const episode = s.source?.kind === "Episode" ? s.source.descriptor : null;
   useEffect(syncPreferences, [engine, syncPreferences]);
   useEffect(() => {
     const header = queueViewRef.current.header;
     if (header?.current_entry_id === null || header === null) return;
     if (!s.playbackFailed) {
-      if (s.phase === "Playing" && s.source?.kind === "Episode" && s.source.descriptor.media_id === header.current_entry?.media_id) {
+      if (s.phase === "Playing" && s.source?.descriptor.media_id === header.current_entry?.media_id) {
         failedOccurrence.current = null;
         if (queueViewRef.current.failure?.kind === "Episode") publishQueue({ ...queueViewRef.current, error: null, failure: null });
       }
       return;
     }
     if (androidShell ? s.queue?.current_entry_id !== header.current_entry_id : loadedOccurrence.current?.entryId !== header.current_entry_id) return;
-    const title = s.source?.kind === "Episode" && s.source.descriptor.media_id === header.current_entry?.media_id ? s.source.descriptor.title : null;
+    const title = s.source !== null && s.source.descriptor.media_id === header.current_entry?.media_id ? s.source.descriptor.title : null;
     publishQueue({ ...queueViewRef.current, error: title === null ? "episode unavailable" : `couldn’t play “${title}”`,
       failure: { kind: "Episode", entry_id: header.current_entry_id, title } });
   }, [androidShell, s.playbackFailed, s.phase, s.source, s.queue, publishQueue]);
 
   // ---- loads: one at a time, the latest request wins ----
-  const enqueue = useCallback((work: (generation: number) => Promise<void>, playback: PendingPlayback | null) => {
+  const enqueue = useCallback((work: (generation: number) => Promise<void>, playback: PlayerSession["pendingPlayback"]) => {
     ownership.current?.cancelAcquisition();
     const mine = ++latest.current;
     const engineAtAdmission = engineRef.current;
@@ -834,7 +805,7 @@ export function GlobalPlayerProvider({
       const current = currentQueueEntry(saved.state);
       if (current !== null) await activate(current, play, mine, knownDescriptor, positionMs);
       else await target.dismiss();
-    }, state.current_entry_id === null ? null : { kind: "Episode", mediaId: currentQueueEntry(state)!.media_id });
+    }, state.current_entry_id === null ? null : { mediaId: currentQueueEntry(state)!.media_id });
   }, [activate, enqueue, nativeRefresh, publishQueue]);
 
   const createQueue = useCallback(async ({ entry }: { entry: QueueEntry }) => {
@@ -889,7 +860,7 @@ export function GlobalPlayerProvider({
         }
         const generation = latest.current;
         if (request.command.kind === "select" && request.command.play && entry !== null)
-          setPendingPlayback({ kind: "Episode", mediaId: entry.media_id });
+          setPendingPlayback({ mediaId: entry.media_id });
         try {
           await enqueueQueueEdit(async () => {
             admitQueueCommand(queueViewRef.current, request);
@@ -909,7 +880,7 @@ export function GlobalPlayerProvider({
         retainedCursor.current = null;
         retirePending();
         const mine = latest.current;
-        setPendingPlayback({ kind: "Episode", mediaId: entry.media_id });
+        setPendingPlayback({ mediaId: entry.media_id });
         try {
           const expected = { queue_id: request.queue_id, expected_revision: request.expected_revision };
           if (!(await ownership.current?.acquire(true, expected)) || mine !== latest.current || target !== engineRef.current) return;
@@ -950,7 +921,7 @@ export function GlobalPlayerProvider({
       : target?.queue !== null && target?.queue !== undefined
         ? state?.queue?.queue_id === header?.queue_id && state?.queue?.current_entry_id === current?.id
         : loaded?.queueId === header?.queue_id && loaded?.entryId === current?.id && loaded?.subject === state?.playbackSubject;
-    const sameOccurrence = ownsOccurrence && state?.source?.kind === "Episode" && state.source.descriptor.media_id === mediaId && state.playbackSubject !== null;
+    const sameOccurrence = ownsOccurrence && state?.source?.descriptor.media_id === mediaId && state.playbackSubject !== null;
     if (!recapture && current?.media_id === mediaId && (positionMs === null || sameOccurrence && state?.phase !== "Ended")) {
       if (positionMs !== null) retainCurrent();
       retirePending();
@@ -974,13 +945,13 @@ export function GlobalPlayerProvider({
           void nativeRefresh(owner, await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
             command: { kind: "select", entry_id: current.id, play: true, position_ms: null } }));
         } else await activate(current, true, mine, knownDescriptor, null);
-      }, { kind: "Episode", mediaId });
+      }, { mediaId });
     }
     let frozen: QueueState | null = null;
     const attempt = async (): Promise<"Applied" | "Superseded"> => {
       ownership.current?.cancelAcquisition();
       const mine = ++latest.current;
-      setPendingPlayback({ kind: "Episode", mediaId });
+      setPendingPlayback({ mediaId });
       descriptorRead.current?.abort();
       engineRef.current?.cancelPendingPlayback();
       let committing = false;
@@ -1055,14 +1026,13 @@ export function GlobalPlayerProvider({
         case "stop": await target.dismiss(); return;
         case "resume": {
           if (mine !== latest.current) return;
-          if (target.state().source?.kind === "Preview") { await target.play(); return; }
           if (session?.uncertain()) throw new QueueCommandError("couldn’t confirm queue change");
           if (before === null || before === undefined) { await target.play(); return; }
           const entry = currentQueueEntry(before.state);
           if (entry !== null) {
             const source = target.state().source;
             const loaded = loadedOccurrence.current;
-            if (source?.kind === "Episode" && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) { await target.play(); }
+            if (source !== null && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) { await target.play(); }
             else await activate(entry, true, mine);
           }
           return;
@@ -1102,8 +1072,8 @@ export function GlobalPlayerProvider({
             const observed = target.state();
             const loaded = loadedOccurrence.current;
             if (loaded?.queueId === before.state.queue_id && loaded.entryId === previous.id && loaded.subject !== null &&
-                loaded.subject === observed.playbackSubject && observed.source?.kind === "Episode" &&
-                observed.source.descriptor.media_id === previous.media_id && !observed.playbackFailed && observed.phase !== "Ended") {
+                loaded.subject === observed.playbackSubject &&
+                observed.source?.descriptor.media_id === previous.media_id && !observed.playbackFailed && observed.phase !== "Ended") {
               if (operation.play) { await target.resumeLoaded(loaded.subject); } else await target.pause();
               return;
             }
@@ -1111,7 +1081,7 @@ export function GlobalPlayerProvider({
           const state = editQueue(before.state, operation);
           const next = currentQueueEntry(state);
           const observed = target.state();
-          const playing = observed.source?.kind === "Episode" && (observed.phase === "Playing" || observed.phase === "Buffering");
+          const playing = observed.source !== null && (observed.phase === "Playing" || observed.phase === "Buffering");
           const addingFromEnd = previous === null && (operation.kind === "append" || operation.kind === "insert-next");
           const play = operation.kind === "select" ? operation.play : operation.kind === "remove" || addingFromEnd ? false : playing;
           if (state !== before.state) await session?.save(state);
@@ -1129,14 +1099,13 @@ export function GlobalPlayerProvider({
       const entry = browser.current?.snapshot().saved?.state.entries.find(item => item.id === selection.entry_id);
       if (entry === undefined) throw new QueueCommandError("episode is no longer queued");
       retirePending();
-      await enqueue(work, { kind: "Episode", mediaId: entry.media_id });
+      await enqueue(work, { mediaId: entry.media_id });
     } else if (command.kind === "resume") {
       const saved = browser.current?.snapshot().saved;
       const source = target.state().source;
       const entry = saved == null ? null : currentQueueEntry(saved.state);
-      const playback: PendingPlayback | null = source?.kind === "Preview" ? { kind: "Preview", target: source.descriptor.target }
-        : entry !== null ? { kind: "Episode", mediaId: entry.media_id }
-        : saved == null && source?.kind === "Episode" ? { kind: "Episode", mediaId: source.descriptor.media_id } : null;
+      const playback = entry !== null ? { mediaId: entry.media_id }
+        : saved == null && source !== null ? { mediaId: source.descriptor.media_id } : null;
       retirePending();
       await enqueue(work, playback);
     } else await enqueueQueueEdit(work, selection?.kind !== "restore" && changesPlayback);
@@ -1159,12 +1128,11 @@ export function GlobalPlayerProvider({
         if (command.kind === "silence") { requestPreferences({ skipSilence: command.on }); return; }
         if (command.kind === "resume") {
           const source = target.state().source;
-          if (source?.kind !== "Preview" && header !== null && header.current_entry_id !== null)
+          if (header !== null && header.current_entry_id !== null)
             await queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play: true, position_ms: null } });
           else if (source !== null) {
             retirePending();
-            await enqueue(async () => { await target.play(); }, source.kind === "Preview"
-              ? { kind: "Preview", target: source.descriptor.target } : { kind: "Episode", mediaId: source.descriptor.media_id });
+            await enqueue(async () => { await target.play(); }, { mediaId: source.descriptor.media_id });
           } else await target.play();
           return;
         }
@@ -1213,47 +1181,12 @@ export function GlobalPlayerProvider({
         else void route({ kind: "check" });
       },
       cancelQueuePreparation: () => { preparationRetry.current = null; retirePending(); browser.current?.preparing(false); publishQueue({ ...queueViewRef.current, phase: "Ready" }); },
-      async playPreviewAudio({ target: previewTarget, resolveDescriptor }) {
-        onExplicitPlay();
-        const target = live();
-        const result = await enqueue(async mine => {
-          if (target === null || target !== live()) return;
-          const source = target.state().source;
-          if (source?.kind === "Preview" && source.descriptor.target === previewTarget) {
-            await target.play();
-            return;
-          }
-          let descriptor: PreviewAudioDescriptor;
-          try { descriptor = await resolveDescriptor(); }
-          catch (error) {
-            if (mine !== latest.current || target !== live()) return;
-            throw error;
-          }
-          if (mine !== latest.current || target !== live()) return;
-          if (!androidShell && !(await ownership.current?.acquire(true, null))) return;
-          if (mine === latest.current && target === live()) {
-            pendingLoad.current = mine; publishPreferences(null);
-            try { await target.preview(descriptor); }
-            finally { if (pendingLoad.current === mine) pendingLoad.current = null; syncPreferences(); }
-          }
-        }, { kind: "Preview", target: previewTarget });
-        return result === "Applied" ? "Installed" : result;
-      },
       resume: () => {
         onExplicitPlay();
         if (!androidShell && !ownership.current?.owner()) {
-          const source = mirroredEngine?.source;
-          if (source?.kind === "Preview") {
-            void enqueue(async mine => {
-              const target = live();
-              if (target === null || !(await ownership.current?.acquire(true, null)) || mine !== latest.current) return;
-              await target.preview(source.descriptor);
-              }, { kind: "Preview", target: source.descriptor.target }).catch(report);
-          } else {
-            const header = queueViewRef.current.header;
-            if (header?.current_entry_id != null) void queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
-              command: { kind: "select", entry_id: header.current_entry_id, play: true, position_ms: null } }).catch(() => {});
-          }
+          const header = queueViewRef.current.header;
+          if (header?.current_entry_id != null) void queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
+            command: { kind: "select", entry_id: header.current_entry_id, play: true, position_ms: null } }).catch(() => {});
         } else void route({ kind: "resume" });
       },
       pause: () => { retainCurrent(); retirePending(); void route({ kind: "pause" }); },
@@ -1276,7 +1209,7 @@ export function GlobalPlayerProvider({
       setShortenPauses: on => { if (!androidShell && !ownership.current?.owner()) void route({ kind: "silence", on }); else requestPreferences({ skipSilence: on }); },
       retryPlaybackPreferences: () => requestPreferences({}),
     };
-  }, [enqueue, play, createQueue, queueCommand, onExplicitPlay, publishPreferences, publishQueue, syncPreferences, androidShell, mirroredEngine, requestPreferences, retainCurrent, retirePending, route, report, readNativeQueue, fail]);
+  }, [play, createQueue, queueCommand, onExplicitPlay, publishQueue, androidShell, mirroredEngine, requestPreferences, retainCurrent, retirePending, route, report, readNativeQueue, fail]);
   navigation.current = { ...commands, failure: report, terminal: async input => {
     const target = engineRef.current;
     const before = browser.current?.snapshot().saved;
@@ -1423,7 +1356,7 @@ export function GlobalPlayerProvider({
     },
     playbackSubject,
   }), [engine, state, pendingPlayback, playbackFailure, queueFailureOccurrence, playingEntryId, queueView, activePreferences, playbackSubject]);
-  const chapters = episode?.chapters;
+  const chapters = s.source?.descriptor.chapters;
   const timeline = useMemo<PlayerTimeline>(
     () => ({
       positionMs,

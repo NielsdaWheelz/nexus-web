@@ -99,7 +99,7 @@ function useTranscriptPlayback(mediaId: string, reader: Reader, expectedKey: str
   const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
   const doc = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc : null);
-  const loaded = state.kind === "Loaded" && state.source.kind === "Episode" && state.source.descriptor.media_id === mediaId;
+  const loaded = state.kind === "Loaded" && state.source.descriptor.media_id === mediaId;
   const unit = loaded && state.error === null && doc?.kind === "text" && doc.format === "transcript"
     && (expectedKey === null || doc.transcriptNavigation?.key === expectedKey)
     ? transcriptUnitAtTime(doc.units, positionMs) : null;

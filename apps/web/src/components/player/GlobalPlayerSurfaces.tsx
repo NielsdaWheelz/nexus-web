@@ -80,28 +80,10 @@ function Identity({
   status?: string | null;
 }) {
   const statusId = useId();
-  const { kind, descriptor } = state.source;
+  const { descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
-  const image =
-    kind === "Episode"
-      ? descriptor.artwork_url !== null && (
-          <MediaImage
-            kind="proxied"
-            remoteUrl={descriptor.artwork_url}
-            {...box}
-          />
-        )
-      : descriptor.imageUrl !== null && (
-          <MediaImage
-            kind="proxy-src"
-            src={descriptor.imageUrl}
-            {...box}
-          />
-        );
-  const subtitle =
-    kind === "Preview"
-      ? `preview from ${descriptor.source}`
-      : descriptor.subtitle;
+  const image = descriptor.artwork_url !== null && <MediaImage kind="proxied" remoteUrl={descriptor.artwork_url} {...box} />;
+  const subtitle = descriptor.subtitle;
   const contents = <span className={styles.identityContent}>
       <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Info size={12} /></span> : null}</span>
       <span className={styles.identityCopy}>
@@ -120,16 +102,15 @@ function Transport({ compact = false }: { compact?: boolean }) {
   const { state, queue, pendingPlayback, playbackSubject } = Player.usePlayerSession();
   const loaded = state.kind === "Loaded" ? state : null;
   const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
-  const preparingPlayback = pendingPlayback?.kind === "Preview" || (pendingPlayback?.kind === "Episode" && !queueBusy);
+  const preparingPlayback = pendingPlayback !== null && !queueBusy;
   const offerPause = pendingPlayback !== null || loaded?.phase === "Playing" || loaded?.phase === "Buffering";
   const queueReady = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const header = queue.header;
-  const episode = !compact && loaded?.source.kind !== "Preview";
   const canPlay = offerPause || loaded !== null || (queueReady && header !== null && header.current_entry_id !== null);
   const canSkip = loaded !== null && playbackSubject !== null;
   return <div className={styles.transport} role="group" aria-label="media player controls">
-    {episode ? <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous}
-      disabled={!queueReady || header === null || header.count === 0} /> : null}
+    {compact ? null : <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous}
+      disabled={!queueReady || header === null || header.count === 0} />}
     {compact ? null : <Button size="comfortable" iconOnly aria-label="back 15 seconds" disabled={!canSkip}
       onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
       icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />}
@@ -142,8 +123,8 @@ function Transport({ compact = false }: { compact?: boolean }) {
     {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds" disabled={!canSkip}
       onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
       icon={<span className={styles.numberedSkip}><Icon.RotateCw /><span>30</span></span>} />}
-    {episode ? <Button size="comfortable" iconOnly icon={<Icon.SkipForward />} aria-label="next" onClick={commands.next}
-      disabled={!queueReady || header === null || header.current_index === null || header.current_index + 1 >= header.count} /> : null}
+    {compact ? null : <Button size="comfortable" iconOnly icon={<Icon.SkipForward />} aria-label="next" onClick={commands.next}
+      disabled={!queueReady || header === null || header.current_index === null || header.current_index + 1 >= header.count} />}
   </div>;
 }
 
@@ -300,13 +281,9 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const announcedPhase = useRef<Loaded["phase"] | null>(null);
   const announcedUnavailable = useRef<string | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
-  const identity = loaded === null ? null : `${loaded.source.kind}:${
-    loaded.source.kind === "Episode"
-      ? loaded.source.descriptor.media_id
-      : loaded.source.descriptor.target
-  }`;
+  const identity = loaded?.source.descriptor.media_id ?? null;
   const { accountId } = useAuthenticatedAccount();
-  const podcastId = loaded?.source.kind === "Episode" ? loaded.source.descriptor.podcast_id : null;
+  const podcastId = loaded?.source.descriptor.podcast_id ?? null;
   const stamp = useChangeStamp("Podcasts");
   const settingsRead = usePaneFreeServerValue({
     key: podcastId === null ? null : `podcast-settings:${accountId}:${podcastId}:${playbackSubject}`,
@@ -319,7 +296,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const settingsReadOccurrence = useFeedbackOccurrence(settingsRead.status !== "loading" && settingsRead.error !== null, podcastId);
   const save = usePodcastSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
-  const queuePlaybackFailure = loaded?.source.kind === "Episode" && loaded.playbackFailed
+  const queuePlaybackFailure = loaded !== null && loaded.playbackFailed
     && queue.failure?.kind === "Episode" && queue.failure.entry_id === queue.header?.current_entry_id;
   const status = loaded === null || queuePlaybackFailure ? null : loaded.error ??
     (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
@@ -503,7 +480,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     }
     case "Loaded": {
       const source = state.source;
-      const sourceHref = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
+      const sourceHref = `/media/${source.descriptor.media_id}`;
       const openSource = (event: TargetActivationEvent) => {
         const handled = activateTargetLink({ event, runtime: linkRuntime,
           target: { href: sourceHref, labelHint: source.descriptor.title },
@@ -515,8 +492,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
 
       const stop = <Button size="comfortable" iconOnly icon={<Icon.Square />} aria-label="stop playback" onClick={commands.stop} />;
       desktopSource = identityButton;
-      const episode = source.kind === "Episode" ? source.descriptor : null;
-      const podcast = episode?.subtitle ?? "this podcast";
+      const episode = source.descriptor;
+      const podcast = episode.subtitle ?? "this podcast";
       const saved = settingsRead.status === "ready" ? settingsRead.data : null;
       let playbackPanel: ReactNode = null;
       if (preferences !== null && playbackSubject !== null) {
@@ -572,14 +549,12 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         playbackPanel = <section className={styles.panel} aria-label="playback">
           <div className={styles.panelHeading}>
             <h2>playback</h2>
-            {episode ? <p className={styles.podcastName}>{podcast}</p> : null}
+            <p className={styles.podcastName}>{podcast}</p>
           </div>
           <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />
-          {episode ? <>
-            {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
-              : <p className={styles.eyebrow}>skip silence · android app only</p>}
-            {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
-          </> : null}
+          {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
+            : <p className={styles.eyebrow}>skip silence · android app only</p>}
+          {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
           <PlayerFailures />
           {save.feedback}
           {podcastId !== null ? <div className={styles.panelRow}>
@@ -616,7 +591,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           onClick={() => toggle("Playback")}>
           {formatPlaybackRate(state.rate)}{settingsStatus ? <span className={styles.controlMarker} aria-hidden="true">{settingsFailed ? "!" : "·"}</span> : null}
         </Button> : isMobile ? null : <Button size="comfortable" className={styles.rateBadge} aria-label="playback settings" disabled>speed</Button>}
-        {episode && (!isMobile || (episode.chapters.length > 0 && playbackSubject !== null)) ? <Button ref={chaptersRef} size="comfortable" iconOnly
+        {!isMobile || (episode.chapters.length > 0 && playbackSubject !== null) ? <Button ref={chaptersRef} size="comfortable" iconOnly
           aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
           disabled={episode.chapters.length === 0 || playbackSubject === null}
           onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}

@@ -140,7 +140,6 @@ export function ChapterList({ state, presentation, onOpened }: {
     return () => { subject.current = null; };
   }, [playbackSubject]);
   const { chapter: current } = usePlayerTimeline();
-  if (state.source.kind !== "Episode") return null;
   const episode = state.source.descriptor;
   return <ol className={{ popup: collection.contentViewport, embedded: styles.chapters }[presentation]} data-collection-viewport={presentation === "popup" ? "" : undefined}>
     {episode.chapters.map(chapter => <ChapterRow key={`${episode.media_id}:${chapter.start_ms}:${chapter.title}`} mediaId={episode.media_id} title={episode.title}

@@ -217,7 +217,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const fraction = episodeProgress(effective ?? { status: observation.state.consumption_override_status, position_ms: observation.state.position_ms,
     duration_ms: observation.state.duration_ms ?? manifest.audio.duration_ms ?? capture.rendition.duration_ms, lectern_member: observation.state.lectern_member });
   const sourceUnavailable = entry?.local?.disposition === "SourceUnavailable";
-  const loaded = player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === id;
+  const loaded = player.kind === "Loaded" && player.source.descriptor.media_id === id;
   const play = useCallback((ms: number | null) => {
     run({ ref: `media:${id}`, id: "Playback", label: "play", title: capture.rendition.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: id, knownDescriptor: null, positionMs: ms, source: null, recapture: false }) });
@@ -252,7 +252,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     <h1>{capture.rendition.title}</h1>
     {capture.rendition.subtitle === null ? null : <p>{capture.rendition.subtitle}</p>}
     <p>downloaded · {formatByteCount(manifest.audio.byte_count)}</p>
-    {loaded && player.source.kind === "Episode" && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
+    {loaded && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
     <div className={styles.savedActions}><Button onClick={() => { if (loaded && player.phase === "Playing") pause(); else play(null); }}>{loaded && player.phase === "Playing" ? "pause" : "play"}</Button>
       {extrasFailed ? <Button reserveIcon aria-busy={retrying} disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
       {sourceUnavailable ? <Button onClick={() => void retryNativeListening(id).catch(() => setFailure("listening sync not confirmed · try again"))}>retry listening sync</Button> : null}
