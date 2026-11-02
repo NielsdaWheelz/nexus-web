@@ -1711,7 +1711,8 @@ and bibliography; detail/catalog capabilities keep their full representations.
 old rows, metadata and targets. same-query refresh retains its accepted snapshot
 until atomic replacement or failure. `fresh` requires live data and the accepted
 invalidation token to match the requested token; commands additionally require
-no running read/failure and their domain authority. strict `refetch()` is
+no running read other than a passive observation, no failure, and their domain
+authority. strict `refetch()` is
 awaitable and supersedes older work; `revalidate()` coalesces one observation
 behind current work without discarding a useful result. failure stops passive
 observation until explicit recovery. podcast work/transcript polling reads the
