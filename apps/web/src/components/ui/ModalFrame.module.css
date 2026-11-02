@@ -1,4 +1,6 @@
-/* Zero specificity: a panel's own position wins. The stage's modal anchor needs a positioned box. */
+/* Zero specificity: a panel's own position wins. The stage's modal anchor needs a positioned box,
+   and stands on the panel's floor only while the panel clips: a body scrolls inside it, never the
+   panel itself, or the anchor scrolls away with the content. */
 :where(.panel) {
   position: relative;
 }
