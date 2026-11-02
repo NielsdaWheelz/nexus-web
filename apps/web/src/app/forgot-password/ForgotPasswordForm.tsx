@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
 import { Announcement } from "@/components/feedback/Feedback";
 import { Fact, Field } from "@/components/feedback/Fact";
-import type { Line } from "@/components/feedback/stage";
+import { sentence, type Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -16,6 +16,8 @@ const NOT_SENT = "couldn’t send a reset link.";
 export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
   const [emailError, setEmailError] = useState<Line | null>(null);
   const [outcome, setOutcome] = useState<Line | null>(null);
+  // focus already in the email reads nothing, so a refusal it would carry speaks.
+  const [spoken, setSpoken] = useState<{ line: Line } | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const { pending, submit } = useAuthForm<"RateLimited" | "ServiceUnavailable">(
     (kind) => {
@@ -40,7 +42,7 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
         : null;
     setEmailError(error);
     setOutcome(null);
-    if (error) email.focus();
+    if (error) { setSpoken(document.activeElement === email ? { line: error } : null); email.focus(); }
     return !error;
   }
 
@@ -92,10 +94,11 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
           />
           {emailError ? <Field id="password-recovery-email-error" line={emailError} /> : null}
         </label>
+        {emailError !== null && spoken?.line === emailError ? <Announcement text={sentence(emailError)} level="Polite" occurrence={spoken} /> : null}
         {/* outside the label, which names the input. focus stays where the submit left it, so each outcome speaks once */}
         {outcome ? <>
           <Field id="password-recovery-outcome" line={outcome} />
-          <Announcement text={outcome.reason ? `${outcome.fact} ${outcome.reason}` : outcome.fact} level="Polite" occurrence={outcome} />
+          <Announcement text={sentence(outcome)} level="Polite" occurrence={outcome} />
         </> : null}
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           Send reset link

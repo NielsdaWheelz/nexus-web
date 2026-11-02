@@ -9,7 +9,7 @@ import authStyles from "@/components/auth/AuthForms.module.css";
 import AuthSurface from "@/components/auth/AuthSurface";
 import { Announcement } from "@/components/feedback/Feedback";
 import { Field } from "@/components/feedback/Fact";
-import type { Line } from "@/components/feedback/stage";
+import { sentence, type Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -98,7 +98,8 @@ function ProviderButton({
   handoff: HandoffContext | null;
   disabled: boolean;
 }) {
-  const [localFailure, setLocalFailure] = useState(false);
+  // a new object per failure: focus stays on the button, so each failure speaks.
+  const [localFailure, setLocalFailure] = useState<object | null>(null);
   const failureId = useId();
   const href = disabled || nextPath === null ? null : handoff && provider === "google"
     ? nativeGoogleDeepLink(nextPath, handoff)
@@ -110,7 +111,7 @@ function ProviderButton({
       onClick={() => {
         if (href === null) return;
         if (handoff !== null) { window.location.assign(href); return; }
-        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(() => setLocalFailure(true));
+        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(() => setLocalFailure({}));
       }}
       emphasis={provider === "google" ? "strong" : undefined}
       size="comfortable"
@@ -120,7 +121,10 @@ function ProviderButton({
     >
       {`Continue with ${PROVIDER_NAMES[provider]}`}
     </Button>
-    {localFailure ? <Field id={failureId} line={{ fact: "couldn’t prepare sign-in on this device." }} /> : null}
+    {localFailure ? <>
+      <Field id={failureId} line={{ fact: "couldn’t prepare sign-in on this device." }} />
+      <Announcement text="couldn’t prepare sign-in on this device." level="Polite" occurrence={localFailure} />
+    </> : null}
   </>;
 }
 
@@ -163,10 +167,15 @@ export default function LoginPageClient({
   const [revealed, setRevealed] = useState(false);
   const [emailError, setEmailError] = useState<Line | null>(null);
   const [passwordError, setPasswordError] = useState<Line | null>(null);
-  // A failed submit focuses the password, which its outcome describes; one the page opened with
-  // has no focus to ride, so it speaks.
   const initialOutcome = initial && initial !== "session_ended" ? INITIAL[initial] : null;
   const [outcome, setOutcome] = useState<Line | null>(initialOutcome);
+  // Focus moving onto an input reads the lines that describe it; focus already there reads
+  // nothing, and an outcome the page opened with has no focus to ride, so those lines speak.
+  const [spoken, setSpoken] = useState<{ line: Line } | null>(() => initialOutcome && { line: initialOutcome });
+  const show = (input: HTMLInputElement | null, line: Line) => {
+    setSpoken(document.activeElement === input ? { line } : null);
+    input?.focus();
+  };
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -175,15 +184,17 @@ export default function LoginPageClient({
     "InvalidCredentials" | "RateLimited" | "ServiceUnavailable"
   >((kind) => {
     // `incorrect` would be false for a banned or unconfirmed account, which the server folds in.
-    if (kind === "InvalidCredentials") setOutcome({ fact: "couldn’t sign in with that email and password." });
-    else if (kind === "RateLimited") setOutcome({ fact: "too many sign-in attempts.", reason: "wait a while, then try again." });
-    else if (kind === "Unreachable") setOutcome(TRANSPORT_LINES[connectivity === "Offline" ? "Offline" : "Unavailable"].command(SIGN_IN_FAILED));
-    else if (kind === "ServiceUnavailable") setOutcome(TRANSPORT_LINES.Busy.command(SIGN_IN_FAILED));
-    else if (kind === "Forbidden") setOutcome(WRONG_ADDRESS_LINE);
+    let line: Line;
+    if (kind === "InvalidCredentials") line = { fact: "couldn’t sign in with that email and password." };
+    else if (kind === "RateLimited") line = { fact: "too many sign-in attempts.", reason: "wait a while, then try again." };
+    else if (kind === "Unreachable") line = TRANSPORT_LINES[connectivity === "Offline" ? "Offline" : "Unavailable"].command(SIGN_IN_FAILED);
+    else if (kind === "ServiceUnavailable") line = TRANSPORT_LINES.Busy.command(SIGN_IN_FAILED);
+    else if (kind === "Forbidden") line = WRONG_ADDRESS_LINE;
     else throw new Error(`Unexpected sign-in outcome ${kind}`);
+    setOutcome(line);
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
-    passwordRef.current?.focus();
+    show(passwordRef.current, line);
   });
   const completedTarget = target.kind === "Ready" ? target.target : null;
   const controlsPending = pending || completedTarget === null;
@@ -202,8 +213,8 @@ export default function LoginPageClient({
       : { fact: "enter your password." };
     setEmailError(nextEmailError);
     setPasswordError(nextPasswordError);
-    if (nextEmailError) email.focus();
-    else if (nextPasswordError) password.focus();
+    if (nextEmailError) show(email, nextEmailError);
+    else if (nextPasswordError) show(password, nextPasswordError);
     return !nextEmailError && !nextPasswordError;
   }
 
@@ -223,9 +234,10 @@ export default function LoginPageClient({
             aria-hidden={pending || undefined}
           >
             <Field id="password-sign-in-outcome" line={outcome} />
-            {outcome === initialOutcome ? <Announcement text={outcome.fact} level="Polite" /> : null}
           </div>
         ) : null}
+        {spoken !== null && (spoken.line === outcome || spoken.line === emailError || spoken.line === passwordError)
+          ? <Announcement text={sentence(spoken.line)} level="Polite" occurrence={spoken} /> : null}
 
         <ProviderButton
           provider="google"

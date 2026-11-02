@@ -73,9 +73,9 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
-import type { CommandVerb, Line } from "@/components/feedback/stage";
+import { sentence, type CommandVerb, type Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
@@ -244,7 +244,8 @@ interface LinkDialog {
   text: string;
   query: string;
   baseline: string;
-  error: string | null;
+  /** each refusal is a new line, so a repeated one speaks again */
+  error: Line | null;
   left: number;
   top: number;
 }
@@ -557,14 +558,14 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!href)
       return setLink({
         ...link,
-        error: "Enter a web address, email address, or local path.",
+        error: { fact: "enter a web address, email address or local path." },
       });
     const field = link.row_id === null ? editingField(view.state) : editingRow(view.state.doc, link.row_id);
     if (
       !field || field.kind === "title" || link.to > field.node.content.size ||
       field.node.textBetween(link.from, link.to, " ", " ") !== link.text
     ) {
-      return setLink({ ...link, error: "the selected text changed. select it again to add this link; your address is kept." });
+      return setLink({ ...link, error: { fact: "the selected text changed. select it again; your address is kept." } });
     }
     const mark = schema.marks.link!.create({ href });
     const tr = view.state.tr.setMeta(SOURCE, "format");
@@ -610,7 +611,9 @@ function NoteEditorContent(props: NoteEditorProps) {
       const abort = () => controller.abort();
       signal.addEventListener("abort", abort, { once: true });
       const unsubscribe = uploadHost.subscribe(() => { if (!uploadHost.is_owned()) controller.abort(); });
-      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), unconfirmed: retained?.unconfirmed ?? null, attempt: retained === null ? 0 : retained.attempt + 1 };
+      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), unconfirmed: retained?.unconfirmed ?? null, attempt: retained?.attempt ?? 0 };
+      // Each failure that holds is a new attempt, so the hold speaks when a retry fails, not when it is pressed.
+      const hold = (unconfirmed: Line) => setAttachment({ ...task, pending: false, unconfirmed, attempt: task.attempt + 1 });
       setAttachment(task);
       busy.current = true;
       view.setProps({ editable: () => false });
@@ -629,13 +632,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         // Unresolved holds and its retry replays the same attempt: an unknown outcome, or bytes
         // that never landed. Review: a resend re-reads the guard. A final refusal clears, saying
         // its upload outcome's reason, else the transport's. A malformed intent is a defect.
-        if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") setAttachment({ ...task, pending: false, unconfirmed: UNKNOWN });
-        else if (task.upload.review_required) setAttachment({ ...task, pending: false, unconfirmed: { fact: NOT_ADDED } });
+        if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") hold(UNKNOWN);
+        else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
           const line = { fact: NOT_ADDED, reason: captureErrorFeedback(error, "AddAttachment").message };
-          if (error.outcome.kind === "Unresolved") setAttachment({ ...task, pending: false, unconfirmed: UNKNOWN });
-          else if (error.outcome.kind === "BytesMissing") setAttachment({ ...task, pending: false, unconfirmed: line });
+          if (error.outcome.kind === "Unresolved") hold(UNKNOWN);
+          else if (error.outcome.kind === "BytesMissing") hold(line);
           else { setAttachment(null); say(line); }
         }
         else { setAttachment(null); if (!handleUnauthenticated(error)) fail(error, NOT_ADDED); }
@@ -649,10 +652,17 @@ function NoteEditorContent(props: NoteEditorProps) {
     [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost, schema.nodes.body, schema.nodes.resource_embed, say, fail],
   );
 
+  // An uploaded attachment inserts itself where it can. Only a body it declined holds the
+  // `insert` instruction, so an insertion that succeeds never flashes or speaks one.
+  const [declined, setDeclined] = useState<NoteBody | null>(null);
   useEffect(() => {
     const task = attachmentValue;
+    if (!task?.body) return;
     const view = viewRef.current, field = view && editingField(view.state);
-    if (!task?.body || !props.editable || !referenceReady || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) return;
+    if (!props.editable || !referenceReady || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) {
+      setDeclined(task.body);
+      return;
+    }
     reportEdit({ before: fieldBody(field), after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 1, head: 1 }, source: "attachment" }, task.row_id);
     setAttachment(null);
   }, [attachmentValue, setAttachment, props, referenceReady, reportEdit]);
@@ -1495,7 +1505,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           const task = readAttachment(), view = viewRef.current;
           if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
         } }, discardVerb]} /> : null}
-      {attachmentValue?.body ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
+      {attachmentValue?.body && attachmentValue.body === declined ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
         label: "insert", commandKey: "InsertAttachment", run: () => {
           const task = readAttachment(), view = viewRef.current;
           if (!view || view.composing || compositionBase.current !== null) return;
@@ -1621,7 +1631,8 @@ function NoteEditorContent(props: NoteEditorProps) {
               Add link
             </Button>
           </div>
-          {link.error ? <Field id={linkErrorId} line={{ fact: link.error }} /> : null}
+          {/* focus is already in the address input, so its description is not read again: the refusal speaks */}
+          {link.error ? <><Field id={linkErrorId} line={link.error} /><Announcement text={sentence(link.error)} level="Polite" occurrence={link.error} /></> : null}
         </div>
       ) : null}
     </div>

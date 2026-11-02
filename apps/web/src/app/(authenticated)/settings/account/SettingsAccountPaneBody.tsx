@@ -3,7 +3,7 @@
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
-import type { Line } from "@/components/feedback/stage";
+import { sentence, type Line } from "@/components/feedback/stage";
 import { Check, Copy } from "lucide-react";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
@@ -102,7 +102,8 @@ function ProfileForm(props: {
             aria-describedby={outcome?.kind === "Refused" ? lineId : undefined}
           />
         </label>
-        {outcome?.kind === "Refused" ? <Field id={lineId} line={outcome.line} /> : null}
+        {/* a save never moves focus to its input, so its refusal speaks */}
+        {outcome?.kind === "Refused" ? <><Field id={lineId} line={outcome.line} /><Announcement text={sentence(outcome.line)} level="Polite" occurrence={outcome} /></> : null}
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
         <Button
           type="submit"

@@ -5,7 +5,7 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import * as Y from "yjs";
 import { textReplacement } from "@nexus/authored/documents";
-import { useWritingDocument } from "@/lib/notes/hooks";
+import { useWordsAtRisk, useWritingDocument } from "@/lib/notes/hooks";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
 import {Field} from "@/components/feedback/Fact";
@@ -23,6 +23,8 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   const { platform } = useRenderEnvironment();
   const { document: opened, error, pending, retry } = useWritingDocument(suppliedDocument ? null : pageRef);
   const failureId = useId();
+  // a failed commit of this title turns its caret, echoing the risk slip.
+  const atRisk = useWordsAtRisk([pageRef]);
   const document = suppliedDocument ?? opened;
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? ownRef;
@@ -169,6 +171,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   if (error !== null && !isAuthoredStorageFailure(error)) throw error;
   return <>
     <Textarea bare autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
+    style={atRisk ? {caretColor: "var(--danger)"} : undefined}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
     onSelect={() => {inputIntent.current++; const at = selection(); beforeSelection.current = at; onSelectionChange?.(at);}}

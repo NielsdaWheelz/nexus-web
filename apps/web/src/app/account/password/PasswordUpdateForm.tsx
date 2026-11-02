@@ -4,8 +4,9 @@
 import { Eye, EyeOff } from "lucide-react";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
+import { Announcement } from "@/components/feedback/Feedback";
 import { Fact, Field } from "@/components/feedback/Fact";
-import type { Line } from "@/components/feedback/stage";
+import { sentence, type Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
@@ -31,12 +32,15 @@ export default function PasswordUpdateForm({
 }) {
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<Line | null>(null);
+  // focus moving onto the password reads its line; focus already there reads nothing, so it speaks.
+  const [spoken, setSpoken] = useState<{ line: Line } | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   function fail(line: Line) {
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
     setError(line);
+    setSpoken(document.activeElement === passwordRef.current ? { line } : null);
     passwordRef.current?.focus();
   }
 
@@ -129,6 +133,7 @@ export default function PasswordUpdateForm({
             Use at least 15 characters.
           </p>
           {error ? <Field id="password-update-error" line={error} /> : null}
+          {error !== null && spoken?.line === error ? <Announcement text={sentence(error)} level="Polite" occurrence={spoken} /> : null}
         </div>
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           Save password
