@@ -22,7 +22,8 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/links";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { useWritingRuntime } from "@/lib/notes/hooks";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceType, resourceTypeName } from "@/lib/resources/type";
 import { useContextItem } from "@/lib/chat/contextItems";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
@@ -118,7 +119,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const parsed = parseResourceRef(entry.item.ref);
   // justify-defect: admitted context refs must satisfy the canonical resource grammar.
   if (parsed === null) throw new Error(`Invalid context ref: ${entry.item.ref}`);
-  const type = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const type = resourceTypeName(resourceType(parsed.scheme, null));
   const label = item?.label ?? entry.item.label;
   const status = authored?.data ? `${type} unavailable` : type;
   const supporting = <>

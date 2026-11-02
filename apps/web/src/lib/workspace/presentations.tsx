@@ -13,7 +13,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
-import { mediaKindLabel } from "@/lib/media/kind";
+import { mediaKindLabel, type MediaKind } from "@/lib/media/kind";
 import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
 import { pageTitle } from "@nexus/authored/queries";
 import { useRecent } from "@/lib/recent/store";
@@ -25,7 +25,7 @@ import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
 export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
-export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
+export interface PanePresentation { title: string; name:string|null; detail: string | null; mediaKind?: MediaKind; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
 interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; holdRecent(entries: readonly RecentEntry[]): void; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void; titleFailure: {error: ApiError; occurrence: object; pending: boolean} | null }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
@@ -117,6 +117,16 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   } });
   const captureFacts = captures.status === "ready" && !captures.error ? captures.data : null;
   const remoteFacts = remote.status === "ready" ? remote.data : null;
+  // A media's kind never changes, so one seen holds for the session, through every refetch that blanks remoteFacts.
+  const [kinds, setKinds] = useState<ReadonlyMap<string, MediaKind>>(() => new Map());
+  useEffect(() => {
+    if (remoteFacts === null) return;
+    setKinds(prev => {
+      const fresh = [...remoteFacts].flatMap(([key, facts]): [string, MediaKind][] =>
+        facts !== null && facts.media_kind !== null && !prev.has(key) ? [[key, facts.media_kind]] : []);
+      return fresh.length === 0 ? prev : new Map([...prev, ...fresh]);
+    });
+  }, [remoteFacts]);
   const remoteStatus = remote.status;
   const titleError = remote.status === "loading" ? null : remote.error;
   const remoteFailed = titleError !== null;
@@ -139,9 +149,10 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
     const canonical: Canonical | null | undefined = remoteFacts?.get(key);
     let saved: string | null = null;
+    let catalogKind: MediaKind | undefined;
     if (canonical === undefined && catalog && locator.kind === "resource_ref") {
       const [scheme, id] = locator.ref.split(":");
-      if (scheme === "media") saved = catalog.media.get(id)?.summary.title ?? null;
+      if (scheme === "media") { const summary = catalog.media.get(id)?.summary; saved = summary?.title ?? null; catalogKind = summary?.media_kind; }
       else if (scheme === "library") saved = catalog.libraries.get(id)?.value.name ?? null;
       else if (scheme === "podcast") saved = catalog.shows.get(id)?.detail.podcast.title ?? null;
       else if (scheme === "conversation") saved = catalog.chats.get(id)?.title ?? null;
@@ -149,19 +160,20 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     const rawName=canonical?.title ?? saved ?? visit.title_hint;
     const name=rawName?.trim()?rawName:null;
     const title=rawName??kind;
+    const mediaKind = canonical?.media_kind ?? kinds.get(key) ?? catalogKind;
+    const noun = mediaKind !== undefined ? mediaKindLabel(mediaKind) : kind;
     if (canonical) {
-      const noun = canonical.media_kind ? mediaKindLabel(canonical.media_kind) : kind;
       const authors = selectMediaAuthors(canonical.contributors).flatMap(credit => { const name = creditName(credit); return name ? [name.label] : []; });
       const byline = authors.slice(0, 2).join(", ") || canonical.source_label;
-      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, status: "Ready" };
+      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, mediaKind, status: "Ready" };
     }
-    if (saved !== null) return { title, name, detail: kind, status: "Ready" };
-    if (remoteFailed) return { title, name, detail: kind, status: "Failed" };
-    if (remoteStatus !== "ready") return { title, name, detail: kind, status: "Loading" };
-    return { title, name, detail: "removed or no longer accessible", status: "Unavailable" };
+    if (saved !== null) return { title, name, detail: noun, mediaKind, status: "Ready" };
+    if (remoteFailed) return { title, name, detail: noun, mediaKind, status: "Failed" };
+    if (remoteStatus !== "ready") return { title, name, detail: noun, mediaKind, status: "Loading" };
+    return { title, name, detail: "removed or no longer accessible", mediaKind, status: "Unavailable" };
     // Facts change only with semanticRevision; newer watermarks keep this callback's facts equivalent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [local.semanticRevision, remoteFacts, remoteStatus, remoteFailed, catalog]);
+  }, [local.semanticRevision, remoteFacts, remoteStatus, remoteFailed, catalog, kinds]);
   const resourceRefForVisit = useCallback((visit: PaneVisit) => {
     const locator = resolvePaneRouteModel(visit.href).titleLocator;
     if (!locator) return null;
@@ -178,7 +190,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return { title: entry.title_hint ?? fact?.title ?? fallback, name: entry.title_hint ?? fact?.title ?? null, detail: entry.detail_hint ?? "post", status: fact === null ? "Unavailable" : fact ? "Ready" : "Loading" };
     }
     const presentation = forVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
-    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint ?? fallback.toLowerCase() };
+    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint ?? (presentation.mediaKind !== undefined ? mediaKindLabel(presentation.mediaKind) : fallback.toLowerCase()) };
     return presentation;
   }, [forVisit, captureFacts]);
   const isRecentRemoved = useCallback((entry: RecentEntry): boolean => {

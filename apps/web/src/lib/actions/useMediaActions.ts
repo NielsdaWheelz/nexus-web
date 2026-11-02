@@ -10,7 +10,7 @@ import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
 import { compareRevision } from "@/lib/collections/order";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
-import type { MediaSubject } from "@/lib/media/mediaSummary";
+import { mediaSubjectKind, type MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import { continuationRecoveryLabel } from "./mediaContinuation";
 
@@ -23,7 +23,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const admittedId = subject.kind === "External" && operation?.phase === "complete" ? operation.finalMediaId : null;
   const mediaId = subject.kind === "Stored" ? subject.summary.media_id : admittedId;
   const title = subject.kind === "Stored" ? subject.summary.title : subject.title;
-  const kind = subject.kind === "Stored" ? subject.summary.media_kind : subject.media_kind;
+  const kind = mediaSubjectKind(subject);
   if (knownDescriptor !== null && (subject.kind !== "Stored" || knownDescriptor.media_id !== subject.summary.media_id))
     throw new Error("media actions descriptor does not match stored subject");
   const ref = subject.kind === "Stored" ? `media:${subject.summary.media_id}`

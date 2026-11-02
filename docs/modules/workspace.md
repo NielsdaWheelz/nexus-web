@@ -221,10 +221,13 @@ for deleted media shows the body's own not-found. editors that open a typed link
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
 account-scoped projection for nexus, pane chrome and the document title.
-`useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
-status; `name` is the real name the title shows, or null while the title is a
-placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
-refreshes the shared read. readers never publish canonical titles.
+`useWorkspacePresentations().forVisit(visit)` returns its title, name, detail,
+status and, where the media's kind is known, that kind; `name` is the real name the
+title shows, or null while the title is a placeholder (kind noun, loading,
+unavailable, untitled). `retryTitles()` refreshes the shared read. readers never
+publish canonical titles. a media kind, once a canonical read returns it for a
+locator, stays in memory until a page reload or account change, because
+`media.kind` never changes; a later read that blanks the facts never reverts it.
 
 current authored locators retain singular resource and semantic daily subscriptions.
 each locator has a keyed subscription lifetime; sibling pane changes do not restart

@@ -22,7 +22,7 @@ conversation messages retain their message layout.
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
-| `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
+| `lib/resourceGraph/resourceRef.ts` / `lib/resources/type.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact byline (observed author names, or an episode's show) and first-publication year; complete credits remain in existing metadata |
 | `lib/media/mediaByline.ts` | a media row's byline, an episode's show in the authors' slot and none on the show's own page, and the names its list filter matches |
 | `components/media/MediaIdentity.tsx` | shared index bibliography and provenance: draws `mediaByline` for the show page its rows sit in (`ShowPage`); `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
@@ -35,7 +35,7 @@ conversation messages retain their message layout.
 | `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |
 | `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
-| `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
+| `lib/media/kind.ts` | the medium and noun of each kind |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
 | `lib/reader/sourceArrival.ts` | cancellation, source checks and focus authority at the destination |
@@ -91,18 +91,22 @@ never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
-type derives from the displayed canonical ref, never its body grammar, action
-subject or source. non-note index titles have one passive type prefix inside
+type is the displayed identity's scheme, narrowed for `media` by that media's own
+kind where the surface already holds it; never its body grammar or another
+resource's source. a collection row's media subject is that row's displayed
+identity. non-note index titles have one passive type prefix inside
 their existing activation; notes reserve no prefix space. rendered podcast
 artwork, including its initials tile, substitutes for that prefix. canonical
 collection `resourceRef` names the displayed resource and its menu subject;
-null-ref external/command rows retain their presentation. generated `identity`
+null-ref command rows retain their presentation. null-ref external media and
+shows draw their type and share the title edge of stored rows. generated `identity`
 metadata is omitted only when the glyph/artwork supplies type. provenance, role,
 location and status remain. accessible title composition names type once among
 generated fragments; literal titles are unchanged, including a title `page`.
 
-`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map. all passage schemes
-use `TextQuote`; media retains its generic glyph even when subtype is known.
+`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map; `kind.ts` owns the
+medium and noun of each kind; `lib/resources/type.ts` composes them. all passage
+schemes use `TextQuote`. media of unheld kind keeps `FileText` and the noun `source`.
 resource-specific pane icons consume this vocabulary; a passage's source pane
 still describes its source. invalid canonical refs are defects. availability,
 loading and terminal occurrences do not change type. markers fetch nothing and

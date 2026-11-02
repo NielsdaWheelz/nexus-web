@@ -275,7 +275,7 @@ function LocalAnnotations({ mediaId }: { readonly mediaId: string }) {
 }
 
 function UnavailableSavedMedia({ error }: { readonly error: { readonly code: string } }) {
-  usePaneChrome({ displayTitle: "media", header: { kind: "Resource", resource: { status: "Unavailable" } } });
+  usePaneChrome({ displayTitle: "source", header: { kind: "Resource", resource: { status: "Unavailable" } } });
   usePaneReturnReady(true);
   return <FeedbackState content={catalogErrorFeedback(error) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" }} announcement="Polite" />;
 }
