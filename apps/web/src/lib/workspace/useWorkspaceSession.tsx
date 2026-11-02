@@ -1,10 +1,12 @@
 "use client";
 /** Local workspace metadata saves independently of remote credentials. The cloud mirror
- * is best effort: a local failure alone presents. A 5xx leaves the state unsaved, so the next
- * change, hide or admission generation sends it again; nothing resends on a clock. */
+ * is best effort: a local failure alone presents. A 5xx of any code leaves the state unsaved,
+ * so the next change, hide or admission generation sends it again; nothing resends on a clock.
+ * A modeled refusal is dropped, and any other defect throws to the boundary. */
 import { useEffect, useState } from "react";
 import { FeedbackFailure } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
@@ -19,6 +21,8 @@ export function useWorkspaceSession(store: WorkspaceStore) {
   const nativeFailure = useDeviceWorkspaceSave(store, local);
   const generation = useRemoteGeneration();
   const [failure, setFailure] = useState<{ retry(): void; busy: boolean; occurrence: object } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  if (defect !== null) throw defect.error;
   useEffect(() => {
     let live = true;
     let saved: WorkspaceState | null = null;
@@ -41,6 +45,7 @@ export function useWorkspaceSession(store: WorkspaceStore) {
         if (live) setFailure(null);
       } catch (error) {
         if (localSaved) {
+          if (isApiError(error) ? isSameSystemApiDefect(error) && error.status < 500 : !isAbortError(error)) setDefect({ error });
           if (!isApiError(error) || error.status < 500) saved = state;
           if (live) setFailure(null);
         } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
