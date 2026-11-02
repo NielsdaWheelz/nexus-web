@@ -61,6 +61,12 @@ traversal, including back within a retained modal; a frame's own closing
 traversal is excluded.
 citation previews close with pane deactivation or a new destination/entry.
 
+`getOverlayOpeners()` lists the trigger each open interactive layer recorded at
+open ([return focus](#focus)), whether or not it still holds focus; tooltips
+record none. a host that holds still while a layer it opened is up reads this,
+not focus: a press that never focused its trigger still holds, and light dismiss
+releases.
+
 a tooltip requires `trigger()`, `inside()` and `eligible()`: false means pending,
 true means visible. its options forbid command scope and return focus. it never
 captures an opener, moves focus or owns Back/history. fresh engagement arms help
@@ -388,7 +394,7 @@ citation, Escape, an outside press and focus moving away close it. touch never
 hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
-**Tooltip**: plain-text help for native buttons and links. callers spread its
+**Tooltip**: plain-text help for native buttons, links and inputs. callers spread its
 callback ref, handlers and description onto the actual control, preserving the
 control's name and activation semantics. `triggerRef` composes its native ref
 without dropping react callback cleanup; callers combine existing description
@@ -428,8 +434,9 @@ z-indices.
 
 ## browser floor
 
-chromium 110+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
-`findLast`/`toReversed`, `:focus-visible` and `visualViewport`. the native android
+chromium 118+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
+`findLast`/`toReversed`, `:focus-visible`, `visualViewport` and logical `float` values.
+the native android
 shell requires system webview 144+ for its edge-to-edge safe-area and keyboard
 viewport contract; the android os version alone does not establish that floor.
 
