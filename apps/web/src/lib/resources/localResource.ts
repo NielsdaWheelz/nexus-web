@@ -51,6 +51,6 @@ export function localResourceLabel(resource: ResourceProjection): string {
       if (resource.excerpt === null) throw new TypeError("Highlight has no excerpt projection");
       return resource.excerpt.kind === "content" ? excerptTextParts(resource.excerpt.body).exact.trim() || "highlight" : "table excerpt";
     }
-    case "source": return resource.title?.trim() || resource.ref;
+    case "source": return resource.title?.trim() || "source";
   }
 }

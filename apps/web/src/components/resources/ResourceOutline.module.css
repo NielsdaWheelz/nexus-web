@@ -103,6 +103,8 @@
 }
 .quote {display: block;}
 .quote:hover {text-decoration: none;}
+/* an unnamed resource still holds its one line. */
+.pending:empty::before {content: "\00a0";}
 .metadata {
   display: flex;
   flex-wrap: wrap;

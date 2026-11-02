@@ -87,7 +87,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   if (entry.kind === "highlight") {
     const { annotation } = entry;
     const placement = annotation.placement.kind;
-    return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed}
+    return <ResourceOutlineRow resource={annotation.projection} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed}
       omitResourceActions={actions.sourceContext ? ["EditHighlightAnnotation"] : ["EditHighlightAnnotation", "Share"]}
       rowActions={[{ kind: "command", id: "EditHighlightAnnotation", label: annotation.body === null ? "annotate" : "edit annotation",
         icon: <ACTION_CATALOG.EditHighlightAnnotation.icon aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
@@ -102,7 +102,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
   }
   if (entry.kind === "link") {
     const { resource, link } = entry.link;
-    return <ResourceOutlineRow resourceRef={resource.ref} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} onChanged={actions.refresh}
+    return <ResourceOutlineRow resource={resource} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} onChanged={actions.refresh}
       incoming={link ? { kind: "link", linkId: link.link_id, parentLabel: actions.mediaLabel, unlink: () => onUnlink(link.link_id, row.current) } : null}
       occurrenceLabel={link ? undefined : "mentions this document"} />;
   }

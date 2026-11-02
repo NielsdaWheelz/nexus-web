@@ -5,7 +5,7 @@
 // writing: unresolved captures remain beside their literal quotation.
 import { createHighlightIntent, type Intent } from "@nexus/authored/commands";
 import { emptyBody, type NoteBody } from "@nexus/authored/body";
-import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
+import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, excerptClipped, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
 import type { AuthoredStore, HighlightColor, Locator, PassageState, QueryResult, SelectionCapture, SelectionLocation, ResourceProjection } from "@nexus/authored/types";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
@@ -28,7 +28,7 @@ export interface ReaderAnnotation {
   readonly sourceRef: string;
   readonly color: HighlightColor;
   readonly selection: SelectionLocation;
-  readonly excerpt: ExcerptView;
+  /** The row's data; its excerpt is non-null, and full once a clipped quote is filled. */
   readonly projection: ResourceProjection;
   readonly readingRef: string;
   readonly placement: Placement;
@@ -284,6 +284,9 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
   let reading: Promise<void> | null = null;
   let again = false;
   let generation = 0;
+  // full quotes for clipped rows; a capture revision is content addressed, so a hit never goes stale.
+  const quotes = new Map<string, ExcerptView>();
+  const known = (resource: ResourceProjection) => `${resource.ref}:${resource.capture_revision}`;
 
   function project() {
     const annotations: ReaderAnnotation[] = [];
@@ -326,12 +329,30 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
         if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, excerpt: resource.excerpt, projection: resource, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
+        const excerpt = quotes.get(known(resource)) ?? resource.excerpt;
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, projection: { ...resource, excerpt }, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
       }
     }
     if (current !== generation) return;
     loaded = next;
     state = { ...state, status: "ready", error: null };
+    // marks never wait: publish, then fill the clipped quotes once per capture.
+    project();
+    let filled = false;
+    for (const entry of next) {
+      if (!excerptClipped(entry.projection.excerpt!)) continue;
+      const full = (await store.query({ kind: "excerpt", ref: entry.ref, reading_ref: entry.readingRef })).rows[0]?.resource.excerpt;
+      // kept before the abort, so a finished quote serves whichever read builds next. a refused scope stays
+      // compact, and retries on the next read.
+      if (full) { quotes.set(known(entry.projection), full); filled = true; }
+      // a newer read owns the rest.
+      if (current !== generation || again) return;
+    }
+    if (!filled) return;
+    loaded = loaded.map(entry => {
+      const full = quotes.get(known(entry.projection));
+      return full ? { ...entry, projection: { ...entry.projection, excerpt: full } } : entry;
+    });
     project();
   }
 

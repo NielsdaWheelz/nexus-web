@@ -28,7 +28,7 @@ export function AnnotationList({ annotations }: { readonly annotations: readonly
     <ul>
       {annotations.map(annotation => <li key={annotation.ref}>
         <AnnotationQuote annotation={annotation} />
-        <HighlightAnnotation highlightRef={annotation.ref} occurrenceKey={`unplaced:${annotation.ref}`} />
+        <HighlightAnnotation highlightRef={annotation.ref} resource={annotation.projection} occurrenceKey={`unplaced:${annotation.ref}`} />
       </li>)}
     </ul>
   </section>;
