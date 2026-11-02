@@ -8,7 +8,7 @@ sheet gives `import`, `/i` and pasted urls `run ↵` only: no `new pane` (add
 ignores disposition), no read verbs, no menu, so no `more`. `nexusRowVerbs`
 follows the sheet (`NexusRow.tsx:205` pair `[run]`, `:208` menu null), so
 `NexusVerbRail` composes one chip, `run`, disabled with its reason
-(`NexusVerbRail.tsx:66-71`); initial focus falls to it and enter consumes
+(`NexusVerbRail.tsx:70-75`); initial focus falls to it and enter consumes
 silently (`nexus-rail-disabled-verb-is-silent.md`).
 
 the sheet and the criterion cannot both hold for this row kind: the sheet's

@@ -5,7 +5,7 @@ status: open · origin: 2026-11-02 palette s3/s4 repair · area: lab case (s0), 
 the case's `ITEM` is `:is(button, [role="menuitem"], [role="option"],
 [role="button"])`. a resource row's `open` and `new pane` are link descriptors,
 and the rail renders an enabled link descriptor as `<a href>`, as the menu does
-(`NexusVerbRail.tsx:132`; the verb sheet: attributes mirror `ActionMenu`). so
+(`NexusVerbRail.tsx:152`; the verb sheet: attributes mirror `ActionMenu`). so
 on a book row the case counts only `more` until the read verbs settle (the
 count runs as soon as the rail is visible; inferred), and `the rail holds verbs
 plus more` (`:42`) fails.
