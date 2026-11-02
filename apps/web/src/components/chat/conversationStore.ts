@@ -7,6 +7,7 @@ import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   confirmChatDeletion,
+  failed,
   getConversationCommands,
   getNewChatCommands,
   repeatMessage,
@@ -47,6 +48,10 @@ export type ChatState = Readonly<{
   gone: boolean;
   /** The cold tree read's failure, while no tree has landed. */
   unread: ApiError | null;
+  /** A tree read is in flight. */
+  readingTree: boolean;
+  /** The pane that holds this chat's pending command, from its command owner. */
+  holder: string | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
   /** Bumps whenever a read settles a pending answer (its context refs commit with it). */
@@ -56,7 +61,7 @@ export type ChatStore = ReturnType<typeof createChatStore>;
 
 /** A command before the pane holds a tree: `fact` is the command's. */
 const unloaded = (fact: string): Promise<CommandOutcome> =>
-  Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: fact, message: "this chat hasn’t loaded." }, rejection: null });
+  Promise.resolve(failed({ line: { fact, reason: "this chat hasn’t loaded." }, error: null }));
 
 export function createChatStore(accountId: string, conversationId: string | null, viewId: string) {
   const commands = conversationId ? getConversationCommands(accountId, conversationId) : getNewChatCommands(accountId, viewId);
@@ -69,6 +74,8 @@ export function createChatStore(accountId: string, conversationId: string | null
     command: commands.getSnapshot(),
     gone: false,
     unread: null,
+    readingTree: false,
+    holder: null,
     defect: null,
     contextVersion: 0,
   };
@@ -213,15 +220,17 @@ export function createChatStore(accountId: string, conversationId: string | null
           for (const [id, live] of Object.entries(state.live)) if (live.link.kind === "Lost") store.reconnect(id);
         };
         window.addEventListener("online", online);
+        const heard = () => set({ command: commands.getSnapshot(), holder: commands.holder() });
         cleanups.push(
           () => window.removeEventListener("online", online),
-          commands.subscribe(() => set({ command: commands.getSnapshot() }), applyTree),
+          commands.subscribe(heard, { paneId: viewId, settled: applyTree }),
         );
-        set({ command: commands.getSnapshot() });
+        heard();
       }
       if (conversationId === null || state.gone) return;
       loading?.abort();
       const controller = (loading = new AbortController());
+      set({ readingTree: true });
       try {
         const { data } = await requestWithRetry(
           (signal) => apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(`/api/conversations/${conversationId}/tree`, { signal }),
@@ -235,7 +244,10 @@ export function createChatStore(accountId: string, conversationId: string | null
         if (failure.kind === "Defect") set({ defect: { error: failure.error } });
         else if (failure.kind !== "Handled" && state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
       } finally {
-        if (loading === controller) loading = null;
+        if (loading === controller) {
+          loading = null;
+          if (active) set({ readingTree: false });
+        }
       }
     },
 

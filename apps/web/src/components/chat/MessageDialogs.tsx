@@ -1,11 +1,11 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { Field } from "@/components/feedback/Fact";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { recoveryOf, sayRefusal } from "@/lib/chat/commands";
+import { changedLine, recoveryOf, sayRefusal } from "@/lib/chat/commands";
 import { routeOf, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
@@ -109,7 +109,9 @@ function Information({ message }: { message: Message }) {
 /**
  * "rerun with…" / "regenerate with…": an explicit model, frozen while its command is pending.
  * A shifted menu choice or button lands the answer in a new pane; nothing downgrades that. A
- * refusal is said while the dialog is topmost, so it shows here; an unknown outcome is the pane's.
+ * refusal is said while the dialog is topmost, so it shows here; an unknown outcome is the pane's,
+ * whose held slip shows here too. A changed chat, or the read after it, is the pane's lane, which
+ * this dialog covers, so it also stands here while the press reads.
  */
 function Repeat({ message, operation, openIntent, onClose }: {
   message: Message;
@@ -133,7 +135,7 @@ function Repeat({ message, operation, openIntent, onClose }: {
       return route ? { ...current, route } : current;
     });
   }, [catalog, own]);
-  const { say } = useOutcome();
+  const slips = useOutcome();
   const reasonId = useId();
   const [busyCaption, setBusyCaption] = useState<string>(operation);
   const caption = own?.kind === "Busy" ? busyCaption
@@ -151,12 +153,15 @@ function Repeat({ message, operation, openIntent, onClose }: {
     const outcome = own !== null ? await store.retryCommand(intent)
       : draft.kind === "Selected" ? await store.repeat(operation, message.id, { selection: draft.selection, route: draft.route }, intent) : null;
     if (outcome?.kind === "Gone" || outcome?.kind === "Accepted") onClose();
-    else if (outcome) sayRefusal(say, outcome);
+    else if (outcome) sayRefusal(slips, outcome);
   };
+  const refresh = own !== null && own.standing !== null && own.standing.kind !== "Unknown" ? { command: own.command, standing: own.standing } : null;
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
       {reason ? <Field id={reasonId} line={{ fact: reason }} /> : null}
+      {refresh?.standing.kind === "Changed" ? <Fact speak line={changedLine(refresh.command)} />
+        : refresh?.standing.kind === "Unread" ? <Failed error={refresh.standing.error} noun="messages" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button

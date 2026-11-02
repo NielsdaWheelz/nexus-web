@@ -136,7 +136,11 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   onRename(userId: string, title: string | null, expectedTitle: string | null): Promise<ChatFailure | { kind: "Missing" } | null>;
   onDelete(userId: string): Promise<CommandOutcome>;
 }) {
-  const { say, fail } = useOutcome();
+  const slips = useOutcome();
+  const { say, fail } = slips;
+  // a refused deletion's retry deletes again, through the same confirmation
+  const remove = (id: string) => void onDelete(id)
+    .then((outcome) => sayRefusal(slips, outcome, { label: "retry", commandKey: `delete fork ${id}`, run: () => remove(id) }));
   const runtime = requirePaneRuntime(usePaneRuntime(), "ForksPanel");
   const conversationId = usePaneParam("id");
   const rows = useMemo(() => outline(tree, pathIds), [tree, pathIds]);
@@ -235,7 +239,7 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                     <Button aria-label={`Rename fork ${title}`} onClick={() => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set({ id, title: row.user.fork_title ?? "", baseline: row.user.fork_title, pending: false, request: null, unknown: 0 }); }}>
                       Rename
                     </Button>
-                    <Button tone="danger" aria-label={`Delete fork ${title}`} onClick={() => void onDelete(id).then((outcome) => sayRefusal(say, outcome))}>
+                    <Button tone="danger" aria-label={`Delete fork ${title}`} onClick={() => remove(id)}>
                       Delete
                     </Button>
                   </span>

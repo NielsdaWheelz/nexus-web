@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { Fact, Field } from "@/components/feedback/Fact";
-import { Hold, useOutcome, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -13,7 +13,7 @@ import { useChatDraft } from "@/lib/chat/drafts";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import type { ChatView } from "@/lib/chat/tree";
-import type { Execution, RejectionCode } from "@/lib/chat/wire";
+import type { Execution, Refusal, RejectionCode } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
 import { usePaneEntryDelivery } from "@/lib/panes/paneRuntime";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -94,7 +94,7 @@ export default function ChatComposer(props: {
   const fieldId = useId();
   const waitsId = useId();
   /** A send's refusal, until the input changes. */
-  const [refusal, setRefusal] = useState<FeedbackContent | null>(null);
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stopUnknown, setStopUnknown] = useState<{ runId: string; attempt: number } | null>(null);
   useEffect(() => {
@@ -140,7 +140,7 @@ export default function ChatComposer(props: {
   };
   const present = (outcome: CommandOutcome) => {
     if (!mounted.current || outcome.kind !== "Failed") return;
-    setRefusal(outcome.feedback);
+    setRefusal(refusalOf(outcome));
     if (outcome.rejection === null) return;
     catalogRead.refetch(); // a rejection may mean the catalog changed; rereading is cheap
     props.onRejected(outcome.rejection);
@@ -186,7 +186,9 @@ export default function ChatComposer(props: {
     store.discardCommand();
     if (owned && store.getState().command.kind === "Idle") textarea.current?.focus({ preventScroll: true });
   };
-  const field: { line: Line; verbs?: Verbs } | null = refusal ? refusalOf(refusal)
+  // send is the retry: a refusal's transport adds only what send can't do, a stale build's reload
+  const field: { line: Line; verbs?: Verbs } | null = refusal
+    ? { line: refusal.line, verbs: refusal.error === null ? undefined : transportVerbs(transportOf(refusal.error), { signIn: null }) ?? undefined }
     : blocked === "ReplyTargetUnavailable" ? { line: { fact: "you can reply only to a complete answer." } }
     : reason && (!recallRequired || !recallPending) ? { line: { fact: reason } }
     : null;

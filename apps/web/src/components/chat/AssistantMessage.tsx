@@ -84,7 +84,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsId = useId();
   const detailsTrigger = useRef<HTMLButtonElement>(null);
-  const { say } = useOutcome();
+  const slips = useOutcome();
   const reconnect = () => store.reconnect(id);
 
   const answer = useRef<HTMLDivElement>(null);
@@ -141,7 +141,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
     commandKey: `rerun ${id}`,
     busy: repeating,
     disabledReason: command.kind !== "Idle" && !repeating ? PENDING_CHANGE : undefined,
-    run: (intent: OpenIntent) => void store.repeat("rerun", id, null, intent).then((outcome) => sayRefusal(say, outcome)),
+    run: (intent: OpenIntent) => void store.repeat("rerun", id, null, intent).then((outcome) => sayRefusal(slips, outcome)),
   }] : undefined;
   // `check` reads the same run and tails it again; it never reruns
   const check: Verbs = [{ label: "check", commandKey: `check ${id}`, busy: link.kind === "Reconnecting", run: reconnect }];

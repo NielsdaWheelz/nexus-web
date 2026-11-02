@@ -6,15 +6,15 @@ import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
-import { remoteReady, subscribeRepair } from "@/lib/native/admission";
+import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { CHANGED, commandKey, MAY_HAVE, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
+import { changedLine, commandKey, MAY_HAVE, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -288,7 +288,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     seed(delivery.entry.text);
     claim(delivery);
   }, [delivery, claim, seed, enterMemory]);
-  const { say } = useOutcome();
+  const slips = useOutcome();
+  const { say } = slips;
   const workspace = useLatestWorkspace();
   useEffect(() => {
     if (delivery === null || !("messageId" in delivery.entry) || !ready) return;
@@ -303,7 +304,10 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     if (!claim(delivery)) return;
     if (!message) return void say({ fact: "couldn’t find that message." });
     if (entry.kind === "DeleteMessage") {
-      void store.deleteMessage(message.id).then((outcome) => sayRefusal(say, outcome));
+      // a refusal's retry deletes again, through the same confirmation
+      const remove = () => void store.deleteMessage(message.id)
+        .then((outcome) => sayRefusal(slips, outcome, { label: "retry", commandKey: `delete ${message.id}`, run: remove }));
+      remove();
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
@@ -313,7 +317,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         quote: "",
       });
     }
-  }, [fork, clearArrival, claim, delivery, say, messages, ready, runtime, store, view.path]);
+  }, [fork, clearArrival, claim, delivery, say, slips, messages, ready, runtime, store, view.path]);
   useEffect(() => {
     if (!state.gone || conversationId === null) return;
     settleDeletedResourcePanes({
@@ -414,16 +418,19 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
 
-  // The pane holds every pending command of its chat, whoever raised it, but a send its own composer
-  // made: the composer holds that one beside its draft. An unknown outcome is a held slip whose
-  // verbs stand in the lane too; a changed chat, or the failed read after it, is the lane's alone,
-  // and that read wakes on focus and reconnection. While no pane shows the chat, the workspace
-  // holds what a menu or the reader raised (lib/chat/commandFeedback.tsx).
+  // Every pane that shows the chat shows a pending command's lane, but the pane whose composer sent
+  // it: that composer holds it beside its draft. One pane holds it as a slip, the command owner's
+  // `holder`, so two panes on one chat hold it once; while none shows the chat, the workspace holds
+  // what a menu or the reader raised (lib/chat/commandFeedback.tsx). An unknown outcome is a held
+  // slip whose verbs stand in the lane too; a changed chat, or the failed read after it, is the
+  // lane's alone, and the holder rereads that read on focus and reconnection. Only the active pane
+  // speaks a lane.
   const pending = state.command.kind === "Idle" ? null : state.command;
   const composed = pending?.command.kind === "Send" && pending.command.viewId === runtime.paneId;
-  const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(say, outcome)), [paneStore, say]);
-  const unread = pending?.standing?.kind === "Unread";
-  useEffect(() => unread ? subscribeRepair(() => again("default")) : undefined, [unread, again]);
+  const holds = state.holder === runtime.paneId;
+  const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(slips, outcome)), [paneStore, slips]);
+  useFailedReadRepair(holds && pending?.standing?.kind === "Unread", pending?.kind === "Busy", () => again("default"));
+  useFailedReadRepair(history === "Unavailable" && !state.gone, state.readingTree, () => void store.load());
 
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
@@ -431,32 +438,37 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     const absent = saved !== null ? null
       : catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" });
     return <div className={styles.pane}>
-      {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
-      <Fact speak line={saved !== null ? { fact: "this chat’s messages aren’t saved on this device." }
-        : absent !== null ? { fact: absent.title, reason: absent.message } : { fact: "couldn’t open saved chats." }} />
+      <div className={styles.lanes}>
+        {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
+        <Fact speak={isPaneActive} line={saved !== null ? { fact: "this chat’s messages aren’t saved on this device." }
+          : absent !== null ? { fact: absent.title, reason: absent.message } : { fact: "couldn’t open saved chats." }} />
+      </div>
     </div>;
   }
 
-  const held = pending?.standing?.kind === "Unknown" && !composed ? pending : null;
-  const heldKey = held === null ? null : commandKey(held.command);
-  const heldRetry: CommandVerb | null = held && { label: "retry", commandKey: `retry ${heldKey}`, busy: held.kind === "Busy", run: again };
-  const heldVerbs: Verbs | undefined = heldRetry === null ? undefined : held?.command.kind === "Send"
-    ? [heldRetry, { label: "discard send", commandKey: `discard ${heldKey}`, run: () => store.discardCommand() }]
-    : [heldRetry];
+  const unknown = pending?.standing?.kind === "Unknown" && !composed ? pending : null;
+  const unknownKey = unknown === null ? null : commandKey(unknown.command);
+  const unknownRetry: CommandVerb | null = unknown && { label: "retry", commandKey: `retry ${unknownKey}`, busy: unknown.kind === "Busy", run: again };
+  const unknownVerbs: Verbs | undefined = unknownRetry === null ? undefined : unknown?.command.kind === "Send"
+    ? [unknownRetry, { label: "discard send", commandKey: `discard ${unknownKey}`, run: () => store.discardCommand() }]
+    : [unknownRetry];
   const lane = pending?.standing?.kind === "Changed"
-    ? <Fact speak line={{ fact: CHANGED }} verbs={[{ label: "check", commandKey: `check ${commandKey(pending.command)}`, busy: pending.kind === "Busy", run: again }]} />
+    ? <Fact speak={isPaneActive} line={changedLine(pending.command)}
+      verbs={[{ label: "check", commandKey: `check ${commandKey(pending.command)}`, busy: pending.kind === "Busy", run: again }]} />
     : pending?.standing?.kind === "Unread"
       ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
       // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
-      : held !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={heldVerbs} />
+      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknownVerbs} />
       : null;
   return (
     <div className={styles.pane}>
-      {unavailableBranch ? <Fact speak line={{ fact: "can’t find this branch." }}
-        verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
-      {intent.kind === "invalid" ? <Fact speak line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
-      {lane}
-      {held ? <Hold id={heldKey!} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }} verbs={heldVerbs} /> : null}
+      {unavailableBranch || intent.kind === "invalid" || lane !== null ? <div className={styles.lanes}>
+        {unavailableBranch ? <Fact speak={isPaneActive} line={{ fact: "can’t find this branch." }}
+          verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
+        {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
+        {lane}
+      </div> : null}
+      {unknown && holds ? <Hold id={unknownKey!} attempt={unknown.attempt} line={{ fact: unsureFact(unknown.command), reason: MAY_HAVE }} verbs={unknownVerbs} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}
@@ -466,7 +478,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         loading={loading}
         absent={loading ? <Ruling />
           : state.gone ? <Fact line={{ fact: "this chat doesn’t exist." }} />
-          : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load() }} />
+          : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load(), busy: state.readingTree }} />
           : null}
         store={paneStore}
         fork={fork}

@@ -1,7 +1,7 @@
 "use client";
 
 import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
+import type { Line, Verb } from "@/components/feedback/stage";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, type ApiError, type ApiPath } from "@/lib/api/client";
@@ -14,12 +14,14 @@ import { readCatalog } from "./catalog";
 import { isSelectable, type Route } from "./selection";
 import {
   failureOf,
+  feedbackContent,
   rejected,
   refusal,
   type AcceptedReceipt,
   type Conversation,
   type Message,
   type Receipt,
+  type Refusal,
   type RejectionCode,
   type RunCreateRequest,
   type Selection,
@@ -71,7 +73,15 @@ export type ChatCommand =
 export type CommandOutcome =
   | { readonly kind: "Settled" | "Gone" | "Pending" | "Handled" }
   | { readonly kind: "Accepted"; readonly receipt: AcceptedReceipt }
-  | { readonly kind: "Failed"; readonly feedback: FeedbackContent; readonly rejection: RejectionCode | null };
+  | {
+      readonly kind: "Failed";
+      /** Until L7 the line travels as content, `title` its fact and `message` its reason: L1 builds
+       * one, and L1 and L2 read it. Here only `failed` writes it and `refusalOf` reads it. */
+      readonly feedback: FeedbackContent;
+      /** The failure whose transport gave the reason; a domain or local reason has none. */
+      readonly error?: ApiError;
+      readonly rejection: RejectionCode | null;
+    };
 /**
  * What a pending command waits on: an answer that never came, so it may have landed; a chat that
  * changed under it and must be read before anything else is sent; or that read, failed.
@@ -96,13 +106,33 @@ export type CommandState =
   | Pending & { readonly kind: "Unconfirmed"; readonly standing: Extract<Standing, { kind: "Unknown" }> }
   | Pending & { readonly kind: "RefreshRequired"; readonly standing: Exclude<Standing, { kind: "Unknown" }> };
 export type ConversationCommands = ReturnType<typeof createCommands>;
+/** A pane showing the chat: it adopts each canonical tree a command reads. */
+type Viewer = { readonly paneId: string; settled(tree: ConversationTree | null): void };
 
 export const IDLE_COMMAND: CommandState = { kind: "Idle" };
 export const PENDING_CHANGE = "another change to this chat isn’t finished.";
 export const CHANGED = "this chat changed meanwhile.";
 export const MAY_HAVE = "it may have gone through.";
 const UNREAD = "couldn’t load messages.";
-const BUSY: CommandOutcome = { kind: "Failed", feedback: { tone: "Warning", title: PENDING_CHANGE }, rejection: null };
+
+/** A refused outcome. */
+export const failed = (answer: Refusal, rejection: RejectionCode | null = null): CommandOutcome =>
+  ({ kind: "Failed", feedback: feedbackContent(answer), ...(answer.error === null ? {} : { error: answer.error }), rejection });
+
+/** What a refused outcome says: its line, and the failure whose transport gave its reason. */
+export const refusalOf = ({ feedback, error }: Extract<CommandOutcome, { kind: "Failed" }>): Refusal =>
+  ({ line: { fact: feedback.title, reason: feedback.message }, error: error ?? null });
+
+/** Says a refused outcome where it was asked, a plain slip or the topmost modal's: a domain line
+ * alone, a transport's reason with its verbs, `retry` among them where the caller has one. */
+export function sayRefusal({ say, fail }: Outcome, outcome: CommandOutcome, retry?: Verb): void {
+  if (outcome.kind !== "Failed") return;
+  const { line, error } = refusalOf(outcome);
+  if (error === null) say(line);
+  else fail(error, line.fact, retry);
+}
+
+const BUSY = failed({ line: { fact: PENDING_CHANGE }, error: null });
 
 /** What a refused command says first. */
 export function refusedFact(command: ChatCommand): string {
@@ -134,23 +164,16 @@ export function commandKey(command: ChatCommand): string {
   }
 }
 
-/** A refused outcome as a slip or a field tells it: the fact, its reason, and a stale build's reload. */
-export function refusalOf({ title, message, reload }: FeedbackContent): { line: Line; verbs?: Verbs } {
-  return { line: { fact: title, reason: message }, verbs: reload ? transportVerbs("Update", { signIn: null }) ?? undefined : undefined };
-}
+/** What a changed chat says to whoever holds the command it stopped: a menu's deletion names itself. */
+export const changedLine = (command: ChatCommand): Line => command.kind === "DeleteChat"
+  ? { fact: `couldn’t delete “${command.title}”.`, reason: "it changed meanwhile." } : { fact: CHANGED };
 
-/** Says a refused outcome where it was asked: a plain slip, or the topmost modal's. */
-export function sayRefusal(say: Outcome["say"], outcome: CommandOutcome): void {
-  if (outcome.kind !== "Failed") return;
-  const { line, verbs } = refusalOf(outcome.feedback);
-  say(line, verbs);
-}
-
+/** Until L7, the reader dock (L2) reads the standing as content. */
 function told(command: ChatCommand, standing: Standing): FeedbackContent {
   switch (standing.kind) {
-    case "Unknown": return { tone: "Warning", title: unsureFact(command), message: MAY_HAVE };
-    case "Changed": return { tone: "Warning", title: CHANGED };
-    case "Unread": return refusal(UNREAD, standing.error);
+    case "Unknown": return feedbackContent({ line: { fact: unsureFact(command), reason: MAY_HAVE }, error: null });
+    case "Changed": return feedbackContent({ line: changedLine(command), error: null });
+    case "Unread": return feedbackContent(refusal(UNREAD, standing.error));
   }
 }
 const MISSING = new Set(["E_CONVERSATION_NOT_FOUND", "E_MESSAGE_NOT_FOUND"]);
@@ -250,7 +273,7 @@ export function repeatMessage(
 ): Promise<CommandOutcome> {
   const selection = explicit?.selection ?? message.trust_trail?.run.run_selection.selection;
   if (!selection)
-    return Promise.resolve({ kind: "Failed", feedback: { tone: "Warning", title: `couldn’t ${operation}.`, message: "its model wasn’t recorded." }, rejection: null });
+    return Promise.resolve(failed({ line: { fact: `couldn’t ${operation}.`, reason: "its model wasn’t recorded." }, error: null }));
   return getConversationCommands(accountId, conversation.id).execute({
     kind: "Repeat",
     messageId: message.id,
@@ -291,7 +314,7 @@ export async function confirmChatDeletion(
     // nothing was sent: the read precedes the confirmation
     return failure.kind === "Handled" || !owner.isActive()
       ? { kind: "Handled" }
-      : { kind: "Failed", feedback: refusal(target.kind === "Message" ? "couldn’t delete this message." : "couldn’t delete this chat.", failure.error), rejection: null };
+      : failed(refusal(target.kind === "Message" ? "couldn’t delete this message." : "couldn’t delete this chat.", failure.error));
   }
   if (!owner.isActive()) return { kind: "Handled" };
   if (owner.getSnapshot().kind !== "Idle") return BUSY; // another command started during the read
@@ -327,11 +350,18 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   let running: Promise<CommandOutcome> | null = null;
   let cleared = false;
   let handoff: { tree: ConversationTree | null } | null = null;
-  const listeners = new Set<{ changed(): void; settled: ((tree: ConversationTree | null) => void) | null }>();
+  const listeners = new Set<{ changed(): void; viewer: Viewer | null }>();
   const isActive = () => !cleared && accountActive();
   const PENDING: CommandOutcome = { kind: "Pending" };
-  /** A pane that shows this chat subscribes its store with `settled`. */
-  const isViewed = () => [...listeners].some((listener) => listener.settled !== null);
+  /** A pane that shows this chat subscribes its store as a viewer. */
+  const isViewed = () => [...listeners].some((listener) => listener.viewer !== null);
+  /** The one pane that holds the pending command: a send's own pane while it shows the chat, else
+   * the first pane to show it; null while none does, and the workspace holds it then. */
+  const holder = (): string | null => {
+    const viewers = [...listeners].flatMap((listener) => listener.viewer ? [listener.viewer.paneId] : []);
+    const sender = state.kind !== "Idle" && state.command.kind === "Send" ? state.command.viewId : null;
+    return sender !== null && viewers.includes(sender) ? sender : viewers[0] ?? null;
+  };
   /** A pane's arrival or departure moves where a pending command is held, so every other listener hears it. */
   const viewersChanged = (except: object | null) => { for (const listener of listeners) if (listener !== except) listener.changed(); };
 
@@ -355,7 +385,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     standing: state.kind === "Idle" ? null : state.standing, feedback: state.kind === "Idle" ? null : state.feedback });
   const deliver = (tree: ConversationTree | null) => {
     handoff = { tree };
-    for (const listener of listeners) listener.settled?.(tree);
+    for (const listener of listeners) listener.viewer?.settled(tree);
   };
   const settle = (tree: ConversationTree | null): CommandOutcome => {
     if (!isActive()) return { kind: "Handled" };
@@ -396,17 +426,17 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       const failure = failureOf(error);
       if (failure.kind === "Defect") throw failure.error;
       if (failure.kind === "Handled") return { kind: "Handled" };
-      return attempt ? stand({ kind: "Unread", error: failure.error }) : { kind: "Failed", feedback: refusal(UNREAD, failure.error), rejection: null };
+      return attempt ? stand({ kind: "Unread", error: failure.error }) : failed(refusal(UNREAD, failure.error));
     }
   };
   /** A later refusal never decides an earlier attempt still in flight. */
-  const refuse = async (feedback: FeedbackContent, rejection: RejectionCode | null, missing: boolean): Promise<CommandOutcome> => {
+  const refuse = async (answer: Refusal, rejection: RejectionCode | null, missing: boolean): Promise<CommandOutcome> => {
     const attempt = pending;
     if (!attempt) throw new Error("Chat refusal without a pending command");
     if (!attempt.unconfirmed && !missing) {
       pending = null;
       set(IDLE_COMMAND);
-      return { kind: "Failed", feedback, rejection };
+      return failed(answer, rejection);
     }
     if (conversationId !== null) {
       try {
@@ -449,7 +479,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
           const catalog = await readCatalog(null);
           if (!isActive() || pending !== attempt) return { kind: "Handled" };
           if (!isSelectable(catalog, command.selection))
-            return refuse({ tone: "Warning", title: refusedFact(command), message: "its model isn’t available now." }, null, false);
+            return refuse({ line: { fact: refusedFact(command), reason: "its model isn’t available now." }, error: null }, null, false);
         }
         submitted = true;
         const path = command.kind === "Send" ? "/api/chat-runs" : `/api/messages/${command.messageId}/${command.operation}` as const;
@@ -489,7 +519,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       return reconcile();
     } catch (error) {
       if (!isActive() || pending !== attempt) return { kind: "Handled" };
-      if (error instanceof AuthoredContextError) return refuse({ tone: "Warning", title: refusedFact(command), message: error.message }, null, false);
+      if (error instanceof AuthoredContextError) return refuse({ line: { fact: refusedFact(command), reason: error.message }, error: null }, null, false);
       if (isApiError(error) && error.code === "E_CONVERSATION_CHANGED") return conflict();
       const failure = failureOf(error);
       if (failure.kind === "Defect") {
@@ -535,15 +565,16 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     isActive,
     hasUnconfirmed: () => pending !== null && pending.accepted === null,
     getSnapshot: () => state,
-    subscribe(changed: () => void, settled: ((tree: ConversationTree | null) => void) | null = null) {
-      const listener = { changed, settled };
+    subscribe(changed: () => void, viewer: Viewer | null = null) {
+      const listener = { changed, viewer };
       listeners.add(listener);
-      if (handoff) settled?.(handoff.tree);
-      if (settled) viewersChanged(listener);
-      return () => { if (listeners.delete(listener) && settled) viewersChanged(null); };
+      if (handoff) viewer?.settled(handoff.tree);
+      if (viewer) viewersChanged(listener);
+      return () => { if (listeners.delete(listener) && viewer) viewersChanged(null); };
     },
-    /** Whether a pane shows this chat: it holds the pending command, so the workspace need not. */
+    /** Whether a pane shows this chat: a pane holds the pending command, so the workspace need not. */
     isViewed,
+    holder,
     /**
      * `onAcceptance` belongs to the command, not to a surface: it runs once, when the
      * server admits it, whichever surface retried (the draft's spend). Routing is the
