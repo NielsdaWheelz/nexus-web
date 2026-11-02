@@ -113,14 +113,6 @@ export function useSourceArrival(input: {
     remember(null);
     publishStatus(null);
   }, [publishStatus, remember]);
-  const dismissFailure = useCallback((expected: SourceArrivalFailure) => {
-    const status = currentStatus.current;
-    const intent = captured.current;
-    if (!intent || status?.visitId !== latest.current.runtime.visitId ||
-        status.activationId !== intent.activationId || status.failure !== expected) return;
-    remember({ ...intent, phase: "Retired" });
-    publishStatus(null);
-  }, [publishStatus, remember]);
   const supersede = useCallback(({ preserveSignal, retireFailure }: {
     preserveSignal: AbortSignal | null;
     retireFailure: boolean;
@@ -349,7 +341,6 @@ export function useSourceArrival(input: {
     pending: status?.visitId === runtime.visitId && status.activationId === activationId && status.pending,
     failure: status?.visitId === runtime.visitId && status.activationId === activationId ? status.failure : null,
     clear,
-    dismissFailure,
     supersede,
   };
 }

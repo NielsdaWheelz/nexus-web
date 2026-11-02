@@ -18,7 +18,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
-import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { PlacementNote } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
@@ -392,10 +392,15 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     }
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
+    // the passage's one refusal, beneath the input; the save action it blocks or retries reads it.
+    const passageField = refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={[selectAgain, copyText]} />
+      : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={[selectAgain, copyText]} />
+      : failed?.phase === "Preparation" && !hasNote ? <Field id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} />
+      : null;
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
       {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
         : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
-      {draft.bodyRole === "annotation_or_question" || failed ? <SelectionAction action={saveAction} help={failed ? "retry saving" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} /> : null}
+      {draft.bodyRole === "annotation_or_question" || failed ? <SelectionAction action={saveAction} help={failed ? "retry saving" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} describedBy={passageField ? fieldId : undefined} /> : null}
       {canQuote ? <>
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} describedBy={chatField ? chatFieldId : undefined} />
         {!isMobile ? <div className={styles.highlightControl}>
@@ -417,9 +422,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     return (
       <div data-mobile={isMobile} className={styles.selectionComposer}>
         {!isMobile ? toolbar : null}
-        {refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={[selectAgain, copyText]} />
-          : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={[selectAgain, copyText]} /> : null}
-        {annotation && annotation.placement.kind !== "placed" ? <p className={styles.placement}>{PLACEMENT_COPY[annotation.placement.kind]}</p> : null}
+        {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
         {draft.highlightId && draft.bodyRole === "question" ? <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} /> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
@@ -435,10 +438,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             />
           </PaneReturnVisitScope>
         </div>
-
-        {failed?.phase === "Preparation" ? hasNote
-          ? <Hold id={`preparation:${draft.id}`} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} />
-          : <Field id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} /> : null}
+        {passageField}
+        {failed?.phase === "Preparation" && hasNote
+          ? <Hold id={`preparation:${draft.id}`} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
         {copying.notice}
         {canQuote && chatField ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
           <Field id={chatFieldId} line={chatField.line} verbs={chatField.verbs} />

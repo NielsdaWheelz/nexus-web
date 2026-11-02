@@ -192,7 +192,10 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
       }}>{operation?.status === "dead" || operation?.outcome === "superseded" ? "retry" : "extract independent works"}</Button> : null}
       {operationText ? <Fact line={{ fact: operationText }} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
-
+        {/* the contents stay inert until the reader shows their version; a load that ended without it says so */}
+        {!matched && mounted.status === "ready" && !mounted.refreshing && requestedGeneration.current === navigation.generation
+          ? <Fact line={{ fact: "couldn’t load the current text.", reason: "contents open once it loads." }}
+            verbs={[{ label: "retry", commandKey: "ReloadSourceText", run: () => reader.reload() }]} /> : null}
         <nav aria-label="Contents"><ContentsList reader={reader} nodes={snapshot.nodes} current={current} disabled={!matched} onNavigate={onNavigate}
           target={node => node.at === null ? null : { kind: "point", point: { kind: "text", ...node.at } }} actions={actions}
           detail={node => { const work = node.sectionId === null ? null : exactWork(node.sectionId); const candidate = node.sectionId === null ? null : exactCandidate(node.sectionId);

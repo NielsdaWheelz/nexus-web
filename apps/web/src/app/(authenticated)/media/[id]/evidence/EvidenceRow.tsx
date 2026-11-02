@@ -7,7 +7,7 @@ import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import Button from "@/components/ui/Button";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { PlacementNote } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import type { ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useInteractionOwner } from "@/lib/ui/overlay";
@@ -94,7 +94,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
       annotationFocusRequest={visible && verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
       resourceDetails={<>
-        {placement !== "placed" ? <p className={styles.placement}>{PLACEMENT_COPY[placement]}</p> : null}
+        {placement !== "placed" ? <PlacementNote kind={placement} /> : null}
         {placement === "unlocated" && unresolvedText ? <Button onClick={() => verbs.relocate(annotation.id)}>relocate</Button> : null}
         {placementDetails}
       </>} />;

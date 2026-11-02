@@ -4,6 +4,7 @@ import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { transportVerbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
@@ -17,7 +18,8 @@ import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
-import { useMediaAdmissions } from "@/lib/media/admissions";
+import { admissionTransport, useMediaAdmissions } from "@/lib/media/admissions";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
@@ -106,6 +108,7 @@ export default function MetadataResearchActions({
   const pending = admissions.pending("MetadataResearch", mediaId);
   const { say, fail } = useOutcome();
   const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  const unadmitted = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
   const reviewJob =
@@ -200,7 +203,8 @@ export default function MetadataResearchActions({
           const request = remedyRequest.current;
           if (request !== null && !request.signal.aborted) prepare(request.signal);
         } }} />
-        : <Fact line={TRANSPORT_LINES.Offline.read("source actions")} /> : null}
+        // no request went out: admission says why.
+        : <Fact line={TRANSPORT_LINES[unadmitted].read("source actions")} verbs={transportVerbs(unadmitted, { signIn: null }) ?? undefined} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
           data-metadata-action=""

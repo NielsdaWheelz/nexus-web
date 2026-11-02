@@ -196,6 +196,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   const pinSaved = useCallback(() => setInteracted(true), []);
   const metadataStamp = useChangeStamp("Metadata");
   const speak = useActiveRegion();
+  const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
     stale: metadataStamp,
@@ -259,7 +260,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   return record.status === "failed" ? <>
     <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
     <LocalAnnotations mediaId={id} />
-  </> : <Ruling />;
+  </> : <div className={styles.ruled} style={readerSurfaceStyle(profile)}><Ruling /></div>;
 }
 
 /** Writing about a source this device can't open: its quotes and notes stay local and editable. */
