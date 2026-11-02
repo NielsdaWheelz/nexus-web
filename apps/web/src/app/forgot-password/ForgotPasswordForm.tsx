@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
+import { Announcement } from "@/components/feedback/Feedback";
 import { Fact, Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
@@ -90,8 +91,12 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
             }
           />
           {emailError ? <Field id="password-recovery-email-error" line={emailError} /> : null}
-          {outcome ? <Field id="password-recovery-outcome" line={outcome} /> : null}
         </label>
+        {/* outside the label, which names the input. focus stays where the submit left it, so each outcome speaks once */}
+        {outcome ? <>
+          <Field id="password-recovery-outcome" line={outcome} />
+          <Announcement text={outcome.reason ? `${outcome.fact} ${outcome.reason}` : outcome.fact} level="Polite" occurrence={outcome} />
+        </> : null}
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           Send reset link
         </Button>

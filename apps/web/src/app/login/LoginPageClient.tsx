@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useId, useRef, useState, type ReactNode } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
 import AuthSurface from "@/components/auth/AuthSurface";
+import { Announcement } from "@/components/feedback/Feedback";
 import { Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
@@ -162,9 +163,10 @@ export default function LoginPageClient({
   const [revealed, setRevealed] = useState(false);
   const [emailError, setEmailError] = useState<Line | null>(null);
   const [passwordError, setPasswordError] = useState<Line | null>(null);
-  const [outcome, setOutcome] = useState<Line | null>(
-    initial && initial !== "session_ended" ? INITIAL[initial] : null,
-  );
+  // A failed submit focuses the password, which its outcome describes; one the page opened with
+  // has no focus to ride, so it speaks.
+  const initialOutcome = initial && initial !== "session_ended" ? INITIAL[initial] : null;
+  const [outcome, setOutcome] = useState<Line | null>(initialOutcome);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -221,6 +223,7 @@ export default function LoginPageClient({
             aria-hidden={pending || undefined}
           >
             <Field id="password-sign-in-outcome" line={outcome} />
+            {outcome === initialOutcome ? <Announcement text={outcome.fact} level="Polite" /> : null}
           </div>
         ) : null}
 

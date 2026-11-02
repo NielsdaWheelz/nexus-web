@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import EntryFailure from "@/components/EntryFailure";
+import { Announcement } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import { loginPath, type ReturnTarget } from "@/lib/auth/urls";
@@ -10,13 +12,14 @@ import styles from "./SessionUnavailable.module.css";
 
 type Failure = "ProviderUnavailable" | "Unconfirmed";
 const NOT_OPENED = "nexus couldn’t open.";
-/** A 503 is a busy provider; a thrown fetch or the deadline is offline or no answer. */
-const failureLine = (failure: Failure) => failure === "ProviderUnavailable" ? TRANSPORT_LINES.Busy.command(NOT_OPENED)
+/** A 503 is a busy provider; a thrown fetch or the deadline is offline or no answer. A new line per
+ * failed retry, so each speaks. */
+const failureLine = (failure: Failure): Line => failure === "ProviderUnavailable" ? TRANSPORT_LINES.Busy.command(NOT_OPENED)
   : TRANSPORT_LINES[navigator.onLine === false ? "Offline" : "Unavailable"].command(NOT_OPENED);
 
 export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarget }) {
   const target = useReturnTarget(nextPath);
-  const [failure, setFailure] = useState<Failure | null>(null);
+  const [failure, setFailure] = useState<Line | null>(null);
   const [pending, setPending] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const active = useRef<AbortController | null>(null);
@@ -34,7 +37,7 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
     setPending(true);
     const fail = (reason: Failure) => {
       active.current = null;
-      setFailure(reason);
+      setFailure(failureLine(reason));
       setPending(false);
     };
     // This bounds the browser's wait, not a refresh the provider has performed.
@@ -88,7 +91,7 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
   return (
     <EntryFailure
       title={NOT_OPENED}
-      description={failure === null ? "" : failureLine(failure).reason ?? ""}
+      description={failure?.reason ?? ""}
     >
       <div className={styles.action}>
         <Button
@@ -100,6 +103,7 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
         >
           retry
         </Button>
+        {failure === null ? null : <Announcement text={failure.reason ? `${failure.fact} ${failure.reason}` : failure.fact} level="Polite" occurrence={failure} />}
       </div>
     </EntryFailure>
   );
