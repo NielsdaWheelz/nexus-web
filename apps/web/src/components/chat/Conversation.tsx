@@ -10,11 +10,11 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteReady, subscribeRepair } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { CHANGED, commandKey, MAY_HAVE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
+import { CHANGED, commandKey, MAY_HAVE, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -39,6 +39,7 @@ import {
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { CommandVerb, Verbs } from "@/components/feedback/stage";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -413,6 +414,17 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
 
+  // The pane holds every pending command of its chat, whoever raised it, but a send its own composer
+  // made: the composer holds that one beside its draft. An unknown outcome is a held slip whose
+  // verbs stand in the lane too; a changed chat, or the failed read after it, is the lane's alone,
+  // and that read wakes on focus and reconnection. While no pane shows the chat, the workspace
+  // holds what a menu or the reader raised (lib/chat/commandFeedback.tsx).
+  const pending = state.command.kind === "Idle" ? null : state.command;
+  const composed = pending?.command.kind === "Send" && pending.command.viewId === runtime.paneId;
+  const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(say, outcome)), [paneStore, say]);
+  const unread = pending?.standing?.kind === "Unread";
+  useEffect(() => unread ? subscribeRepair(() => again("default")) : undefined, [unread, again]);
+
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
   if (savedOnly) {
@@ -425,24 +437,26 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     </div>;
   }
 
-  // The pane holds a repeat's or deletion's unknown outcome (a send's is its composer's), and any
-  // command's changed chat in its lane until a read. A menu's chat deletion is the workspace's.
-  const pending = state.command.kind === "Idle" || state.command.command.kind === "DeleteChat" ? null : state.command;
-  const again = (openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(say, outcome));
+  const held = pending?.standing?.kind === "Unknown" && !composed ? pending : null;
+  const heldKey = held === null ? null : commandKey(held.command);
+  const heldRetry: CommandVerb | null = held && { label: "retry", commandKey: `retry ${heldKey}`, busy: held.kind === "Busy", run: again };
+  const heldVerbs: Verbs | undefined = heldRetry === null ? undefined : held?.command.kind === "Send"
+    ? [heldRetry, { label: "discard send", commandKey: `discard ${heldKey}`, run: () => store.discardCommand() }]
+    : [heldRetry];
   const lane = pending?.standing?.kind === "Changed"
     ? <Fact speak line={{ fact: CHANGED }} verbs={[{ label: "check", commandKey: `check ${commandKey(pending.command)}`, busy: pending.kind === "Busy", run: again }]} />
     : pending?.standing?.kind === "Unread"
       ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
+      // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
+      : held !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={heldVerbs} />
       : null;
-  const held = pending !== null && pending.command.kind !== "Send" && pending.standing?.kind === "Unknown" ? pending : null;
   return (
     <div className={styles.pane}>
       {unavailableBranch ? <Fact speak line={{ fact: "can’t find this branch." }}
         verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
       {intent.kind === "invalid" ? <Fact speak line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
       {lane}
-      {held ? <Hold id={commandKey(held.command)} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }}
-        verbs={[{ label: "retry", commandKey: `retry ${commandKey(held.command)}`, busy: held.kind === "Busy", run: again }]} /> : null}
+      {held ? <Hold id={heldKey!} attempt={held.attempt} line={{ fact: unsureFact(held.command), reason: MAY_HAVE }} verbs={heldVerbs} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}

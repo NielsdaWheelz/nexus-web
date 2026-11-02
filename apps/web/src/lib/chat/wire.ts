@@ -72,6 +72,10 @@ const REASONS: Readonly<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE
 };
 const isReasoned = (code: string): code is keyof typeof REASONS => code in REASONS;
 
+/** The reader's refusal of a passage, by the same record: its sentence, or null for any other code. */
+export const unquotable = (error: ApiError): string | null =>
+  isReasoned(error.code) && REASONS[error.code] === UNQUOTABLE ? UNQUOTABLE : null;
+
 /** A refused chat command as it reads: its fact, then the domain's reason by code. Until L7 a
  * refusal travels as the command outcome's content: `title` is the fact, `message` the reason. */
 export const rejected = (fact: string, code: keyof typeof REASONS): FeedbackContent =>

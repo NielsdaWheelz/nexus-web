@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { Fact, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -8,7 +8,7 @@ import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/compo
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { commandKey, MAY_HAVE, recoveryOf, refusalOf, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
+import { commandKey, MAY_HAVE, PENDING_CHANGE, recoveryOf, refusalOf, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
@@ -32,7 +32,8 @@ const BLOCKED = {
 
 /** Draft text and model, and the one control for the chat's current admission state. A refused
  * send is said beneath the input, where send is the retry; one whose answer never came is held
- * above the composer until it resolves. */
+ * above the composer until it resolves, and send and `discard send` stay its verbs here. Any other
+ * pending command of the chat is the pane's to hold; send says it waits on it. */
 export default function ChatComposer(props: {
   scope: string;
   /** This pane: its draft, and the sends whose recovery it shows. */
@@ -91,7 +92,7 @@ export default function ChatComposer(props: {
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
   const fieldId = useId();
-  const blockedId = useId();
+  const waitsId = useId();
   /** A send's refusal, until the input changes. */
   const [refusal, setRefusal] = useState<FeedbackContent | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -177,6 +178,14 @@ export default function ChatComposer(props: {
   // an unknown send holds above the composer; its retry resends the frozen request
   const held = own?.command.kind === "Send" && own.standing?.kind === "Unknown" ? own : null;
   const blocked = target.kind === "Blocked" ? target.reason : null;
+  const sendWaits = blocked !== null && blocked !== "ReplyTargetUnavailable" ? BLOCKED[blocked]
+    : !run && command.kind !== "Idle" && own === null ? PENDING_CHANGE : null;
+  // the draft stays: focus on the withdrawn control returns to it
+  const discard = (event: MouseEvent<HTMLButtonElement>) => {
+    const owned = document.activeElement === event.currentTarget;
+    store.discardCommand();
+    if (owned && store.getState().command.kind === "Idle") textarea.current?.focus({ preventScroll: true });
+  };
   const field: { line: Line; verbs?: Verbs } | null = refusal ? refusalOf(refusal)
     : blocked === "ReplyTargetUnavailable" ? { line: { fact: "you can reply only to a complete answer." } }
     : reason && (!recallRequired || !recallPending) ? { line: { fact: reason } }
@@ -203,7 +212,7 @@ export default function ChatComposer(props: {
       {stopUnknown && run?.runId === stopUnknown.runId && !stopRequested
         ? <Hold id={`stop:${stopUnknown.runId}`} attempt={stopUnknown.attempt} line={{ fact: "not sure the answer stopped.", reason: MAY_HAVE }} /> : null}
       <div className={styles.shell}>
-        {blocked !== null && blocked !== "ReplyTargetUnavailable" ? <span id={blockedId} className="sr-only">{BLOCKED[blocked]}</span> : null}
+        {sendWaits !== null ? <span id={waitsId} className="sr-only">{sendWaits}</span> : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
             <GitBranch size={16} aria-hidden="true" />
@@ -265,7 +274,7 @@ export default function ChatComposer(props: {
             disabled={!inputReady || frozen !== null}
             waiting={recallRequired && recallPending && memoryFailure === null}
           />
-          {held ? <Button disabled={held.kind === "Busy"} onClick={() => store.discardCommand()}>discard send</Button> : null}
+          {held ? <Button disabled={held.kind === "Busy"} onClick={discard}>discard send</Button> : null}
           <Button
             emphasis={recovery || run ? undefined : "strong"}
             iconOnly
@@ -274,11 +283,11 @@ export default function ChatComposer(props: {
             onClick={run && !recovery ? () => cancel(run.runId) : activateSend}
             onKeyDown={activateSend}
             aria-label={sendLabel.current}
-            aria-describedby={field ? fieldId : blocked !== null ? blockedId : undefined}
+            aria-describedby={field ? fieldId : sendWaits !== null ? waitsId : undefined}
             aria-busy={sending}
             icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
         </div>
-        {recallTransport ? <Fact line={TRANSPORT_LINES[recallTransport].command("couldn’t load your last model.")} verbs={recallVerbs} /> : null}
+        {recallTransport ? <Fact speak={isPaneActive} line={TRANSPORT_LINES[recallTransport].command("couldn’t load your last model.")} verbs={recallVerbs} /> : null}
       </div>
     </div>
   );

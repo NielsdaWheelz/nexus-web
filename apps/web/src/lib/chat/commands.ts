@@ -330,6 +330,10 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   const listeners = new Set<{ changed(): void; settled: ((tree: ConversationTree | null) => void) | null }>();
   const isActive = () => !cleared && accountActive();
   const PENDING: CommandOutcome = { kind: "Pending" };
+  /** A pane that shows this chat subscribes its store with `settled`. */
+  const isViewed = () => [...listeners].some((listener) => listener.settled !== null);
+  /** A pane's arrival or departure moves where a pending command is held, so every other listener hears it. */
+  const viewersChanged = (except: object | null) => { for (const listener of listeners) if (listener !== except) listener.changed(); };
 
   const set = (next: CommandState) => {
     if (!isActive()) return;
@@ -535,8 +539,11 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       const listener = { changed, settled };
       listeners.add(listener);
       if (handoff) settled?.(handoff.tree);
-      return () => void listeners.delete(listener);
+      if (settled) viewersChanged(listener);
+      return () => { if (listeners.delete(listener) && settled) viewersChanged(null); };
     },
+    /** Whether a pane shows this chat: it holds the pending command, so the workspace need not. */
+    isViewed,
     /**
      * `onAcceptance` belongs to the command, not to a surface: it runs once, when the
      * server admits it, whichever surface retried (the draft's spend). Routing is the

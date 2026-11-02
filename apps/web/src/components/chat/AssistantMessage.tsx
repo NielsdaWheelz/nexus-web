@@ -145,10 +145,10 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   }] : undefined;
   // `check` reads the same run and tails it again; it never reruns
   const check: Verbs = [{ label: "check", commandKey: `check ${id}`, busy: link.kind === "Reconnecting", run: reconnect }];
-  // the transcript is a log, which speaks what lands in it; a stop is the viewer's own act, so it stays silent
-  const turn = failed ? <div aria-live={message.status === "cancelled" ? "off" : undefined}>
-    <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
-  </div>
+  // the transcript is a log, which speaks what lands in it. a stop is the viewer's own act, so it
+  // stays silent; a failed link is `Failed`, which speaks for itself from the active region alone
+  const linkFailed = pending && phase !== "Suspended" && link.kind === "Failed";
+  const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, run.support_id ?? null)} verbs={rerun} />
     : !pending ? null
     : phase === "Suspended" ? <Fact line={{ fact: "this answer stalled." }} verbs={link.kind === "Live" ? undefined : check} />
     : link.kind === "Failed" ? <Failed error={link.error} noun="live updates" retry={{ run: reconnect }} />
@@ -218,7 +218,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           </Button>
         </FloatingActionSurface>
       ) : null}
-      {turn}
+      {turn ? <div aria-live={message.status === "cancelled" || linkFailed ? "off" : undefined}>{turn}</div> : null}
       <MessageFooter
         message={message}
         latest={latest}

@@ -50,7 +50,8 @@ export default function MessageFooter({ message, latest, engaged, details = null
       <div className={styles.left}>
         {details}
         {currentAction || status ? (
-          <div className={detailsOpen && currentAction ? "sr-only" : styles.currentAction}>{currentAction ?? status}</div>
+          // the log speaks a phase as it changes; `stopping` answers the viewer's own press, so it stays silent
+          <div className={detailsOpen && currentAction ? "sr-only" : styles.currentAction} aria-live={status === "stopping" ? "off" : undefined}>{currentAction ?? status}</div>
         ) : null}
         {pending ? null : alternatives}
       </div>

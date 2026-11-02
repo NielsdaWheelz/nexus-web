@@ -41,7 +41,7 @@ export default function OracleLandingPaneBody() {
   const draft = useResourceDraft<{
     question: string; attempt: { id: string; question: string; openIntent: OpenIntent } | null;
     submitting: boolean;
-    /** The last refusal, said beneath the input. */
+    /** The last refusal, said beneath the input until the question changes. */
     refused: ApiError | null;
     /** Attempts of `attempt` whose answer never came. */
     unknown: number;
@@ -49,7 +49,7 @@ export default function OracleLandingPaneBody() {
     value => ({ changed: value.question !== "", unconfirmed: value.attempt !== null, stopsBrowserWork: false }));
   const guard = useWorkGuard();
   const { question, submitting, refused, unknown } = draft.value;
-  const setQuestion = (question: string) => draft.set(value => ({ ...value, question }));
+  const setQuestion = (question: string) => draft.set(value => ({ ...value, question, refused: null }));
   const setSubmitting = (submitting: boolean) => draft.set(value => ({ ...value, submitting }));
   usePaneReturnReady(true);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -75,7 +75,8 @@ export default function OracleLandingPaneBody() {
     const frozen = prior?.question === question
       ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
       : { id: crypto.randomUUID(), question, openIntent: intent };
-    draft.set(value => ({ ...value, attempt: frozen, refused: null }));
+    // a new attempt starts with no unknown answer of its own
+    draft.set(value => ({ ...value, attempt: frozen, refused: null, unknown: frozen.id === prior?.id ? value.unknown : 0 }));
     setSubmitting(true);
     try {
       await openAsyncResult({
