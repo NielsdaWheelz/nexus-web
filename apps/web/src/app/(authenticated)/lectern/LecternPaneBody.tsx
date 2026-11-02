@@ -8,7 +8,6 @@ import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
-import { suggestionTargetId } from "@/lib/suggestions";
 import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import { Fact } from "@/components/feedback/Fact";
@@ -29,7 +28,6 @@ import {
   LecternReadFailure,
   lecternItems,
   useLectern,
-  useLecternCommands,
   useLecternConsumptionRevision,
   useLecternOrder,
 } from "@/lib/lectern/lectern";
@@ -86,7 +84,6 @@ export default function LecternPaneBody() {
   } : live.status === "ready" || saved !== null || remoteReady() || catalog.loading ? live : { status: "failed", retrying: false, refetch: live.refetch, revalidate: live.revalidate,
     error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") };
   const liveShown = lectern.status === "ready" && source.kind === "live";
-  const { ensure } = useLecternCommands();
   const order = useLecternOrder();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive && liveShown);
@@ -284,17 +281,6 @@ export default function LecternPaneBody() {
         destination={{ kind: "Lectern" }}
         suggestions={suggestions}
         returnScope="Lectern.Suggestions"
-        accept={async (target) =>
-          (await ensure({
-            mediaId: suggestionTargetId(target),
-            title:
-              target.kind === "Media"
-                ? target.media_summary.title
-                : target.title,
-          })) === "Acknowledged"
-            ? "Accepted"
-            : "Retained"
-        }
       /> : null}
     </PaneSurface>
   );

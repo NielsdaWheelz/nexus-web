@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -14,15 +14,16 @@ import { admissionReason } from "@/lib/collections/admissionReason";
 import type { CollectionTarget } from "@/lib/consumption/api";
 import { prepareCollectionLectern } from "@/lib/lectern/api";
 import { LecternReadFailure } from "@/lib/lectern/lectern";
-import { installedApp } from "@/lib/native/admission";
+import { installedApp, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
 /** One complete, fixed-order append enters the existing account lectern lane. An unknown append
- * holds here with its retry while the dialog is open; the lane blocks other changes meanwhile. A
+ * holds here with its retry while the dialog is open, named when it is another collection's; the
+ * lane blocks other changes meanwhile. A
  * refusal, or a retry that finds the lectern moved, rereads what moved, and the confirm re-arms
- * when the reads land. The confirm waits busy on its reads; one they cannot vouch for stays
- * disabled and says why. */
+ * when the reads land. The confirm waits busy on its reads and on admission's check; one they
+ * cannot vouch for stays disabled and says why. */
 export default function CollectionLecternDialog({ target, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly target: CollectionTarget;
   readonly title: string;
@@ -34,7 +35,10 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
   const fail = useThrowLater();
   const outcome = useOutcome();
   const pending = ctx.lectern.collectionPending;
+  const ownPending = pending !== null && JSON.stringify(pending.target) === JSON.stringify(target);
   const admitted = !installedApp || ctx.online;
+  // Subscribed, so the reasons below read admission as it stands.
+  const checking = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission) === "Checking";
   const lectern = ctx.lectern.read;
   const [sending, setSending] = useState(false);
   const gateId = useId();
@@ -82,11 +86,11 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
         </>}
       {lectern.status === "failed" ? <LecternReadFailure error={lectern.error} retry={{ run: lectern.refetch, busy: lectern.retrying }} /> : null}
       {pending !== null && pending.phase !== "Sending" ? <Hold id="lectern-collection" attempt={pending.attempt}
-        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
+        line={{ fact: ownPending ? "not sure that saved." : `not sure adding “${pending.title}” to the lectern saved.`, reason: "it may have gone through." }}
         verbs={[{ label: "retry", commandKey: "lectern-collection", busy: pending.phase === "Checking",
           run: () => void pending.check().then(settled => { if (settled === "Superseded") source.refetch(); }, (error: unknown) => fail({ error })) }]} /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" aria-busy={sending || reviewing || undefined} aria-describedby={gate === null ? undefined : gateId}
+        <Button emphasis="strong" aria-busy={sending || reviewing || checking || undefined} aria-describedby={gate === null ? undefined : gateId}
           disabled={!armed} onClick={() => void submit()}>add to lectern</Button>
         <Button onClick={onClose}>cancel</Button>
         {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}

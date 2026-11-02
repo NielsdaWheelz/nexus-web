@@ -51,7 +51,6 @@ import {
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
-import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   ENTRY_TYPES,
   emptyEntries,
@@ -96,7 +95,6 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
-  const { addToLibrary } = useLibraryPlacementController();
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
@@ -394,15 +392,8 @@ function LibraryPane({ id }: { readonly id: string }) {
             destination={suggestionDestination}
             suggestions={suggestions}
             returnScope="Library.Suggestions"
-            accept={async (target) => {
-              if (target.kind === "Podcast") {
-                ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
-                  onAccepted: () => suggestions.acknowledge(target.ref) });
-                return "Retained";
-              }
-              const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
-              return accepted ? "Accepted" : "Retained";
-            }}
+            subscribe={target => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) },
+              title: target.title, libraryId: library.is_default ? null : id, onAccepted: () => suggestions.acknowledge(target.ref) })}
           /> : null}
       </PaneSurface>
     </>

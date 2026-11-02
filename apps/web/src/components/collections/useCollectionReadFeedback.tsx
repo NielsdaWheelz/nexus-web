@@ -12,7 +12,8 @@ import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
  * host's announced first-read wait. The rows already loaded stay; `retry` reads `More` again, or
  * the list's own recovery after a rejected cursor. A same-query refresh failure renders nowhere.
  * Each wait belongs to its requested key; changing the key retires that wait. Inactivity retires
- * its episode for good. Only the host's `outcome` is spoken, from the active region alone.
+ * its episode for good. Only the host's `outcome` is spoken, from the active region alone, and
+ * once: a region that goes quiet under a modal and speaks again never repeats it.
  * `returnFocus` is unread, and `useIndexReadFeedback`'s `notice` is always null: both stay
  * only until their callers stop passing and reading them.
  */
@@ -31,7 +32,8 @@ export default function useCollectionReadFeedback({ list, unit, waiting, outcome
   return { notice, announcement };
 }
 
-/** One foreground wait/outcome; preparation, returns and passive reads are silent. */
+/** One foreground wait/outcome; preparation, returns and passive reads are silent. Each outcome is
+ * its own occurrence, which the live region delivers at most once. */
 function useReadOutcome({ requestedKey, active, current, failed, waiting, outcome }: {
   readonly requestedKey: string | null;
   readonly active: boolean;
@@ -42,7 +44,7 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
 }): ReactNode {
   const region = useActiveRegion();
   const episode = useRef({ key: requestedKey, waiting: false, armed: false });
-  const [spoken, setSpoken] = useState<string | null>(null);
+  const [spoken, setSpoken] = useState<{ readonly text: string; readonly occurrence: object } | null>(null);
   useEffect(() => {
     const changedKey = requestedKey !== episode.current.key;
     const started = waiting && (changedKey || !episode.current.waiting);
@@ -60,7 +62,7 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
     if (current) {
       if (episode.current.armed) {
         episode.current.armed = false;
-        setSpoken(outcome);
+        setSpoken(outcome === null || outcome === "" ? null : { text: outcome, occurrence: {} });
       }
       return;
     }
@@ -75,7 +77,7 @@ function useReadOutcome({ requestedKey, active, current, failed, waiting, outcom
     }
   }, [requestedKey, waiting, active, current, failed, outcome]);
 
-  return <Announcement text={spoken ?? ""} level={region ? "Polite" : "None"} />;
+  return <Announcement text={spoken?.text ?? ""} occurrence={spoken?.occurrence} level={region ? "Polite" : "None"} />;
 }
 
 /** Complete-value outcome; a refresh failure over shown data renders nowhere and heals. */

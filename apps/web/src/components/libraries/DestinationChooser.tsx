@@ -41,7 +41,7 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
 });
 
 /** Local draft selection over one complete writable catalog. Reads belong to serverState; a cold
- * read's failure stands in the list region, a refresh's nowhere. `error` is only for callers outside
+ * read waits and fails in the list region, a refresh does both nowhere. `error` is only for callers outside
  * this lane until they stop passing it. */
 export default function DestinationChooser({ context, selection, onSet, disabled, create, error }: {
   readonly context: string;
@@ -78,7 +78,7 @@ export default function DestinationChooser({ context, selection, onSet, disabled
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
-    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
+    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying}
     summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
     failure={catalog.status === "failed" ? <Failed error={catalog.error} noun="libraries" retry={{ run: catalog.refetch, busy: catalog.retrying }} /> : null}
     error={error}

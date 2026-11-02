@@ -21,11 +21,11 @@ export interface ChooserRow {
   readonly progress: "Settled" | "Pending" | "Uncertain";
   /** A visible lane note on the row's second line. */
   readonly note?: string;
-  /** `Blocked` waits, and says why to a screen reader alone; `Locked` is durable, says why on the
-   * row and carries the lock mark. */
+  /** `Blocked` waits, and says why to a screen reader alone, or nothing when the list's own failure
+   * says it; `Locked` is durable, says why on the row and carries the lock mark. */
   readonly action:
     | { readonly kind: "Set"; readonly included: boolean; readonly label: string }
-    | { readonly kind: "Blocked"; readonly reason: string }
+    | { readonly kind: "Blocked"; readonly reason: string | null }
     | { readonly kind: "Locked"; readonly reason: string };
 }
 /** Only for callers outside this lane until they pass `failure`; L7 deletes it. */
@@ -108,7 +108,8 @@ export default function LibraryChooser({
     && !create.pendingNames.some(pending => pending.trim().toLowerCase() === q);
   const createKey = `create:${name}`;
   const options = [
-    ...matching.map(row => ({ key: row.id, disabledReason: row.action.kind === "Set" ? null : row.action.reason })),
+    // A blocked row with nothing to say is still disabled: an empty reason.
+    ...matching.map(row => ({ key: row.id, disabledReason: row.action.kind === "Set" ? null : row.action.reason ?? "" })),
     ...(canCreate ? [{ key: createKey, disabledReason: null }] : []),
   ];
   const searchContext = JSON.stringify([context, query]);

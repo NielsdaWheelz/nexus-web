@@ -3,9 +3,11 @@
 // The account retains accepted placement work across picker dismissal. A library
 // has one admission queue across all targets. Only an acknowledged predecessor
 // can advance a queued command's precondition. Unknown delivery retains the exact
-// command; reads never settle or rebase it. Creation and initial filing are atomic.
-// A lane's unknown outcome stands as a hold until its retry lands or is refused; a
-// refusal speaks once per lane, counting the successors it refused.
+// command, and a read never rebases it. Creation and initial filing are atomic.
+// A lane's unknown outcome stands as a hold until its retry lands or a refusal settles
+// it. A refusal can't say whether an earlier unknown send landed, so the lane rereads
+// first: an intent the reread shows in force retires silently, any other is refused.
+// A refusal speaks once per lane, counting the successors it refused.
 
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -18,7 +20,7 @@ import { createDestinationCreation, useDestinationCreation } from "@/components/
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/serverState";
+import { requestWithRetry, useFailedReadRepair } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
@@ -52,7 +54,6 @@ interface Change {
   phase: "Queued" | "Sending" | "Unknown";
   /** Attempts that left its outcome unconfirmed; past zero it holds until it lands or is refused. */
   unconfirmed: number;
-  readonly complete: ((confirmed: boolean) => void) | null;
 }
 interface Target {
   readonly target: LibraryPlacementTarget;
@@ -157,7 +158,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     const refused = [...(lanes.get(first.libraryId) ?? [])];
     const items = new Set(refused.map(change => change.row)).size;
     for (const change of refused) {
-      change.complete?.(false);
       remove(change);
       change.row.dirty = true;
       void read(change.row);
@@ -195,7 +195,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
             row.dirty = true;
           }
           remove(change);
-          change.complete?.(true);
         } catch (error) {
           if (!active || lifetime !== run || run.signal.aborted) return;
           signIn(error);
@@ -203,8 +202,23 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
           if (!isRefusal(error)) {
             change.unconfirmed += 1;
             change.phase = "Unknown";
-            change.complete?.(false);
             break;
+          }
+          if (change.unconfirmed > 0) {
+            // The refusal leaves the earlier send open; the item's placement says whether it landed.
+            const fresh = await read(change.row);
+            if (!active || lifetime !== run) return;
+            const cell = change.row.data?.find(item => item.library_id === libraryId);
+            if (fresh && cell !== undefined && (cell.relation !== "Absent") === change.included) {
+              remove(change);
+              emit();
+              continue;
+            }
+            if (!fresh && !change.row.unavailable) {
+              change.unconfirmed += 1;
+              change.phase = "Unknown";
+              break;
+            }
           }
           refuseLane(change, error);
         }
@@ -216,13 +230,13 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
       emit();
     }
   }
-  const enqueue = (row: Target, libraryId: string, desired: boolean, complete: Change["complete"] = null) => {
+  const enqueue = (row: Target, libraryId: string, desired: boolean) => {
     const cell = row.data?.find(item => item.library_id === libraryId);
     if (!cell || row.removalRevision === null) return;
     const lane = lanes.get(libraryId) ?? [];
     const change: Change = { id: crypto.randomUUID(), row, libraryId, name: cell.name, included: desired, expectedRevision: cell.order_revision,
       removalRevision: desired ? row.removalRevision : null, predecessor: lane.at(-1) ?? null,
-      acknowledgedRevision: null, phase: "Queued", unconfirmed: 0, complete };
+      acknowledgedRevision: null, phase: "Queued", unconfirmed: 0 };
     row.queue.push(change);
     lane.push(change);
     lanes.set(libraryId, lane);
@@ -261,6 +275,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     const all = held(scope);
     const rows = all.filter(row => !row.unavailable);
     const known = rows.length > 0 && all.length === unique(scope).length && rows.every(row => row.data !== null);
+    // A settled failed read waits on a press or a repair, not on a check; the list's Failed says so.
+    const failedRead = rows.some(row => row.readError !== null && row.reading === null);
     const libraries = new Map<string, { id: string; name: string }>();
     rows.forEach(row => row.data?.filter(item => item.blocked !== "SystemManaged")
       .forEach(item => libraries.set(item.library_id, { id: item.library_id, name: item.name })));
@@ -272,7 +288,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
       const uncertain = lane.some(change => change.phase === "Unknown");
       const locked = cells.find(cell => cell?.blocked)?.blocked;
       const action: ChooserRow["action"] = !known || cells.some(cell => cell === undefined)
-        || rows.some(row => row.readError !== null || row.dirty || row.reading !== null) ? { kind: "Blocked", reason: "checking this library." }
+        || rows.some(row => row.readError !== null || row.dirty || row.reading !== null) ? { kind: "Blocked", reason: failedRead ? null : "checking this library." }
         : uncertain ? { kind: "Blocked", reason: "retry the last change first." }
           : locked === "PodcastSubscription" || locked === "RequiresAdmin" ? { kind: "Locked", reason: LOCKED[locked] }
             : { kind: "Set", included: intended !== rows.length,
@@ -282,10 +298,12 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled", action };
     });
     const failed = all.find(row => row.readError !== null);
-    const failure = failed === undefined ? null : failed.unavailable
+    const reading = all.some(row => row.reading !== null);
+    const retry = failed === undefined || failed.unavailable ? null : () => retryRead(all);
+    const failure = failed === undefined ? null : retry === null
       ? <Fact line={{ fact: "this item is no longer available." }} />
-      : <Failed error={failed.readError} noun="libraries" retry={{ run: () => retryRead(all), busy: all.some(row => row.reading !== null) }} />;
-    return { items, failure, loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
+      : <Failed error={failed.readError} noun="libraries" retry={{ run: retry, busy: reading }} />;
+    return { items, failure, retry, reading, loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
       summary: known ? `${pluralize(items.filter(item => item.confirmed !== null && item.confirmed.included === item.confirmed.total).length, "library", "libraries")} included` : null,
       creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null && row.queue.length === 0)
         && ![...creations.values()].some(attempt => attempt.targets.some(row => all.includes(row))),
@@ -301,7 +319,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
   return {
     defect: () => defect,
     start() { active = true; if (lifetime.signal.aborted) lifetime = new AbortController(); lanes.forEach((_lane, id) => void drain(id)); },
-    stop() { active = false; lifetime.abort(); targets.forEach(row => row.queue.forEach(change => change.complete?.(false))); },
+    stop() { active = false; lifetime.abort(); },
     invalidate() { for (const row of targets.values()) { row.dirty = true; if (row.visible > 0) void read(row); } },
     show, view,
     /** The changes and creations whose outcome is unknown, each with its resend. */
@@ -339,14 +357,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
       void create(attempt);
       return true;
     },
-    async addToLibrary(target: LibraryPlacementTarget, libraryId: string): Promise<boolean> {
-      const row = get(target);
-      row.dirty = true;
-      if (!await read(row) || row.unavailable) return false;
-      const cell = row.data?.find(item => item.library_id === libraryId);
-      if (!cell || cell.blocked !== null || (lanes.get(libraryId) ?? []).some(change => change.phase === "Unknown")) return false;
-      return new Promise<boolean>(resolve => { enqueue(row, libraryId, true, resolve); emit(); });
-    },
   };
 }
 
@@ -360,7 +370,6 @@ interface ExternalPlacementSession {
 }
 interface LibraryPlacementController {
   readonly openLibraryPlacement: (targets: readonly LibraryPlacementTarget[], options: LibraryPlacementOpenOptions) => void;
-  readonly addToLibrary: (target: LibraryPlacementTarget, libraryId: string) => Promise<boolean>;
   readonly openExternalLibraryPlacement: (input: {
     target: string; pending: boolean;
     choose: (destination: LibraryDestination, sessionKey: number) => void;
@@ -407,7 +416,6 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       setExternal(null);
       setSession({ key: lastKey.current, targets: [...targets], options });
     },
-    addToLibrary: owner.addToLibrary,
     hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
     hasFailedExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target && attempt.unconfirmed > 0 && !attempt.sending),
     openExternalLibraryPlacement(input, options) {
@@ -478,8 +486,11 @@ export function useLibraryPlacements(targets: readonly LibraryPlacementTarget[])
   const latest = useRef(targets);
   latest.current = targets;
   useEffect(() => owner.show(latest.current), [owner, key]);
+  const view = owner.view(targets);
+  const { retry } = view;
+  useFailedReadRepair(retry !== null, view.reading, () => retry?.());
   return {
-    ...owner.view(targets),
+    ...view,
     onToggle: ({ id, included }: { id: string; included: boolean }) => owner.admit(targets, id, included),
     onCreate: (name: string) => owner.create(targets, name),
   };

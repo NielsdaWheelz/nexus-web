@@ -27,7 +27,7 @@ import { createCollectionCommands, type HeldWrite, type StateChange } from "./co
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import type { CollectionTarget } from "./api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -128,8 +128,8 @@ function createConsumptionCommands(
       holds: [...entries.values()].flatMap((entry): HeldWrite[] => entry.unconfirmed === 0 ? [] : [{
         key: entry.commandKey, occurrence: entry, attempt: entry.unconfirmed - 1,
         line: { fact: `not sure undoing “${entry.title}” saved.`, reason: "it may have gone through." },
-        verbs: [{ label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending",
-          disabledReason: remoteReady() ? undefined : admissionReason(), run: () => void undo(entry) }],
+        verbs: [{ label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending" || remoteAdmission() === "Checking",
+          disabledReason: admissionReason() ?? undefined, run: () => void undo(entry) }],
       }]),
     };
     for (const listener of listeners) listener();
@@ -254,8 +254,10 @@ function createConsumptionCommands(
       const stopCollections = collections.start();
       const settled = (change: StateChange) => collections.supersede([change]);
       stateSettled.add(settled);
+      // A hold's retry states admission's reason, which moves without any entry moving.
+      const unsubscribe = subscribeAdmission(publish);
       return () => {
-        scope.abort(); if (lifetime !== scope) return; lifetime = null;
+        unsubscribe(); scope.abort(); if (lifetime !== scope) return; lifetime = null;
         stopCollections(); stateSettled.delete(settled);
         for (const entry of entries.values()) entry.unregister();
         entries.clear(); finishes.clear(); publish();

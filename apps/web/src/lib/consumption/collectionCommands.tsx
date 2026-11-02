@@ -20,7 +20,7 @@ import { ProgressPreparationError } from "./progressFence";
 import type { ConsumptionUndo, withProgressFence } from "./state";
 import { applyCollectionConsumption, undoCollectionConsumption, type CollectionTarget } from "./api";
 import type { WorkGuard } from "@/lib/unsavedWork";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 
 type Request = Schema<"CollectionConsumptionRequest">;
 type Receipt = Schema<"CollectionConsumptionUndoReceipt">;
@@ -76,8 +76,8 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
       key: entry.key, occurrence: entry, attempt: entry.unconfirmed - 1,
       line: { fact: entry.kind === "Undo" ? `not sure undoing “${entry.title}” saved.` : `not sure marking “${entry.title}” ${verb(entry.target, entry.desiredState)} saved.`,
         reason: "it may have gone through." },
-      verbs: [{ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending",
-        disabledReason: remoteReady() ? undefined : admissionReason(),
+      verbs: [{ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending" || remoteAdmission() === "Checking",
+        disabledReason: admissionReason() ?? undefined,
         run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) }],
     }]), undoItems: [
       ...[...inverses.values()].map(inverse => ({ commandKey: inverse.key, target: inverse.target, title: inverse.title,
@@ -207,7 +207,9 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
     subscribe, snapshot: () => snapshot, supersede, commands,
     start() {
       const scope = new AbortController(); lifetime = scope;
-      return () => { scope.abort(); if (lifetime !== scope) return; lifetime = null;
+      // A hold's retry states admission's reason, which moves without any entry moving.
+      const unsubscribe = subscribeAdmission(emit);
+      return () => { unsubscribe(); scope.abort(); if (lifetime !== scope) return; lifetime = null;
         for (const entry of entries.values()) entry.unregister(); entries.clear();
         inverses.clear(); emit(); };
     },

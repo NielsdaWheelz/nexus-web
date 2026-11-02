@@ -5,6 +5,7 @@ import { Check, Copy, Send, Share2 } from "lucide-react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
+import type { Retract } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -14,9 +15,11 @@ import PeopleSearch, { personLabel } from "@/components/users/PeopleSearch";
 import {
   apiFetch,
   isApiError,
+  isSameSystemApiDefect,
   outcomeUnknown,
   type ApiPath,
 } from "@/lib/api/client";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
@@ -102,7 +105,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const { target } = session;
   const outcome = useOutcome();
   // A failed read stands where the options would until a replacement read lands; over a shown
-  // snapshot, a failed reread says nothing.
+  // snapshot, a failed reread says nothing. Either reruns on a repair; a defect throws.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   /** A change whose outcome is unknown: the snapshot's next read settles it. */
@@ -128,7 +131,8 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         setUnknown(null);
       } catch (error) {
         if (currentSignal.aborted || handleUnauthenticatedApiError(error)) return;
-        setLoadError(error);
+        if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
+        else setLoadError(error);
       } finally {
         if (reading.current === currentSignal) reading.current = null;
         if (!currentSignal.aborted) setLoading(false);
@@ -144,6 +148,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
     return () => controller.abort();
   }, [load]);
 
+  useFailedReadRepair(isApiError(loadError) && loadError.status !== 404, loading, () => void load());
   if (defect !== null) throw defect.error;
 
   const actions: PanelActions = {
@@ -537,14 +542,19 @@ function ShareCopyButton({href, label}: {href: string | null; label: string}) {
   const outcome = useOutcome();
   const [manual, setManual] = useState(false);
   useEffect(() => {setManual(false);}, [href]);
+  // The slip's `show link` opens this button's dialog, so the slip leaves with the button.
+  const slip = useRef<Retract>(() => {});
+  useEffect(() => () => slip.current(), []);
   const [defect, setDefect] = useState<{error: unknown} | null>(null);
   if (defect) throw defect.error;
   const copy = async () => {
     if (href === null) return;
     try {await copied.copy(href);}
     catch (error) {
-      if (error instanceof ClipboardWriteUnavailableError)
-        outcome.say({ fact: "couldn’t copy the link." }, [{ label: "show link", commandKey: `show-link:${href}`, run: () => setManual(true) }]);
+      if (error instanceof ClipboardWriteUnavailableError) {
+        slip.current();
+        slip.current = outcome.say({ fact: "couldn’t copy the link." }, [{ label: "show link", commandKey: `show-link:${href}`, run: () => setManual(true) }]);
+      }
       else setDefect({error});
     }
   };

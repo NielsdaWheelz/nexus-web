@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useSyncExternalStore } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -11,12 +11,13 @@ import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { admissionReason } from "@/lib/collections/admissionReason";
 import { prepareCollectionConsumption, type CollectionSelection } from "@/lib/consumption/api";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { installedApp, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
 /** Review freezes the complete selection. Only the account owner sends its bytes. The confirm
- * waits busy on the review's read; one the review cannot vouch for stays disabled and says why.
+ * waits busy on the review's read and on admission's check; one the review or admission cannot
+ * vouch for stays disabled and says why.
  * An unknown outcome holds inside this dialog, in its own frame, while the dialog is open. */
 export default function CollectionConsumptionDialog({ selection, desiredState, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly selection: CollectionSelection;
@@ -33,6 +34,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   const target = selection.kind === "Podcast" ? { kind: "Podcast" as const, podcast_id: selection.podcast_id } : selection;
   const pending = ctx.consumption.pendingCollection(target);
   const admitted = !installedApp || ctx.online;
+  // Subscribed, so the reasons below read admission as it stands.
+  const checking = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission) === "Checking";
   const gateId = useId();
   const gate = !admitted ? admissionReason()
     : source.status === "ready" && source.error !== null ? "the selection couldn’t refresh." : null;
@@ -65,12 +68,12 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
       {pending?.failed ? <Hold id={pending.commandKey} attempt={pending.attempt}
         line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
         verbs={[
-          { label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending",
-            disabledReason: remoteReady() ? undefined : admissionReason(), run: () => ctx.consumption.retry(pending.commandKey) },
+          { label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending" || checking,
+            disabledReason: admissionReason() ?? undefined, run: () => ctx.consumption.retry(pending.commandKey) },
           { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending", run: () => ctx.consumption.forget(pending.commandKey) },
         ]} /> : null}
       <div className={styles.actions}>
-        <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || reviewing || undefined} aria-describedby={gate === null ? undefined : gateId}
+        <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || reviewing || checking || undefined} aria-describedby={gate === null ? undefined : gateId}
           disabled={!armed} onClick={submit}>mark {verb}</Button>
         <Button onClick={onClose}>cancel</Button>
         {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}

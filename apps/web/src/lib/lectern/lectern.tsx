@@ -88,7 +88,8 @@ export interface LecternCommands {
   readonly revision: OrderRevision | null;
   readonly pending: ReadonlyMap<string, LecternPending>;
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
-  readonly collectionPending: { readonly title: string; readonly attempt: number; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
+  /** The one collection append in the lane, whichever collection it targets. */
+  readonly collectionPending: { readonly target: Schema<"CollectionLecternRequest">["target"]; readonly title: string; readonly attempt: number; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
   /** The unknown collection append, for the account to hold. `content` and `actions` restate it
    * for the old presenter that still mounts it, and leave with it. */
   readonly collectionFailure: (HeldWrite & { readonly content: { tone: "Warning"; title: string; message?: string }; readonly actions: readonly [{ label: string; onClick: () => void; busy?: boolean; commandKey: string }] }) | null;
@@ -113,6 +114,7 @@ interface CollectionRequest {
   /** Attempts that left its outcome unconfirmed. */
   unconfirmed: number;
   readonly onAcknowledged: (() => void) | null;
+  readonly target: Schema<"CollectionLecternRequest">["target"];
   readonly title: string;
   readonly body: string;
   readonly expected: OrderRevision;
@@ -282,7 +284,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   }
 
   function collectionPending(request: CollectionRequest): NonNullable<LecternCommands["collectionPending"]> {
-    return { title: request.title, attempt: Math.max(0, request.unconfirmed - 1), phase: request.phase, check: () => {
+    return { target: request.target, title: request.title, attempt: Math.max(0, request.unconfirmed - 1), phase: request.phase, check: () => {
       if (lane.collection !== request) return Promise.resolve("Superseded");
       return request.phase === "Unconfirmed" ? sendCollection(request, true) : Promise.resolve("Unconfirmed");
     } };
@@ -296,7 +298,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       read.refetch();
       return Promise.resolve("Moved");
     }
-    const request: CollectionRequest = { failed: false, unconfirmed: 0, title: input.title, onAcknowledged: input.onAcknowledged ?? null, body: JSON.stringify(input.request), expected: input.request.expected_order_revision, phase: "Sending", unregister: () => {} };
+    const request: CollectionRequest = { failed: false, unconfirmed: 0, target: input.request.target, title: input.title, onAcknowledged: input.onAcknowledged ?? null, body: JSON.stringify(input.request), expected: input.request.expected_order_revision, phase: "Sending", unregister: () => {} };
     request.unregister = guard.register({ id: "lectern-collection", scope: { kind: "account" },
       subscribe: listener => { collectionListeners.add(listener); return () => { collectionListeners.delete(listener); }; },
       read: () => ({ changed: false, unconfirmed: lane.collection === request, stopsBrowserWork: false }),
