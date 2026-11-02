@@ -331,8 +331,6 @@ export function actionFailure(
   label: string,
   error: ApiError,
 ): FeedbackContent {
-  if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
-    return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
   if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
     return { tone: "Warning", title: `couldn’t complete “${label.replace(/…$/, "")}”`, message: error.message };
   if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
