@@ -60,7 +60,10 @@ server components: callFastAPI ────────────────�
   `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
   pane visit) answer `loading | failed | ready {data, source, acceptedStale,
   fresh, generation, error, refreshing}` with strict awaitable `refetch()` and
-  non-superseding `revalidate()`. freshness compares the accepted token with
+  non-superseding `revalidate()`. `revalidate({ passive: true })` is a periodic
+  observation over accepted data. `refreshing` means a read that can revoke what
+  is shown: a passive read does not count until a strict read or plain
+  `revalidate()` joins it. freshness compares the accepted token with
   the requested token; retained data never borrows new authority. A new key loads (a null key waits); a moved
   `stale` refetches over the shown data; invalidation aborts the superseded flight and queues one fresh read.
   invalidation supersedes that read's success and failure; only the
@@ -96,8 +99,8 @@ server components: callFastAPI ────────────────�
   same-key refresh retains its usable snapshot; a different key exposes loading
   until its own snapshot exists. `requestedKey` names that requested scope, even
   before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
-  refresh supersedes; periodic `revalidate()` waits behind admitted reads and
-  coalesces observations. these hooks serve server-owned domains. authored
+  refresh supersedes; periodic `revalidate()`, which has no passive mode here,
+  waits behind admitted reads and coalesces observations. these hooks serve server-owned domains. authored
   resources, adjacency, search and references always query the durable local owner.
   installed catalog loaders are explicit local reads, separate from `apiFetch`.
   values, lists and retained snapshots identify their live/catalog source; a

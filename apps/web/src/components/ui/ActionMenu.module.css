@@ -67,6 +67,7 @@
 .menuItemIcon > svg {
   inline-size: 16px;
   block-size: 16px;
+  color: inherit;
 }
 
 /* A trailing region wraps to the published width instead of widening the panel. */

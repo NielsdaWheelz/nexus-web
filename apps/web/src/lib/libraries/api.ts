@@ -135,12 +135,9 @@ export function libraryDestinations(signal?: AbortSignal) {
 
 export type AcquisitionGuard = Pick<Schema<"ConfirmUploadRequest">, "expected_removal_revision" | "destinations">;
 
-/** Selected revisions are what the reader reviewed, never a submission-time rebase. */
+/** An append depends on no library's order: the guard names libraries and the removal fence. */
 export function acquisitionGuard(selected: readonly LibraryDestination[], removalRevision: string): AcquisitionGuard {
-  return {
-    expected_removal_revision: removalRevision,
-    destinations: selected.map(destination => ({ library_id: destination.id, expected_order_revision: destination.order_revision })),
-  };
+  return { expected_removal_revision: removalRevision, destinations: selected.map(destination => destination.id) };
 }
 
 /** Initial submission only. The caller retains this snapshot through unknown outcomes. */

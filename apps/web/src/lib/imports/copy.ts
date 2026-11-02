@@ -1139,6 +1139,7 @@ const X_UNAVAILABLE = "X imports are temporarily unavailable.";
 /** The capture endpoints' declared refusals; any other code is a defect. */
 const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
   E_RESOURCE_CONFLICT: "save needs review. review your choices and save again.",
+  E_SOURCE_IMPORT_ACTIVE: "this source is already importing. retry once it finishes.",
   E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
   E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
   E_NETWORK: "Check your connection and retry.",

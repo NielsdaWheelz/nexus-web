@@ -17,18 +17,17 @@ destinations is valid; all is never an organizational choice.
 
 ## url admission
 
-the destination read returns `{removal_revision,destinations:[{id,name,order_revision}]}`.
-the chooser preserves the revisions actually reviewed. original save freezes the
-removal revision before provider work and sends a client-minted attempt `id`,
-`url`, `expected_removal_revision` and `destinations:[{library_id,expected_order_revision}]`.
+the destination read returns `{removal_revision,destinations:[{id,name}]}`. original
+save freezes the removal revision before provider work and sends a client-minted
+attempt `id`, `url`, `expected_removal_revision` and `destinations:[library_id]`.
 multi-url shares freeze one removal snapshot and preserve each url's own command.
-retry only unresolved targets, retaining their exact id and guards.
+retry only unresolved targets, retaining their exact id and guard.
 
-the source owner compares every guard before acquiring personal retention and
-named placements atomically. default/system ids, duplicates, inaccessible and
-member-only destinations are refused. accepted destination no-ops advance their
-library revision. stale intent requires fresh explicit review; recovery never
-silently substitutes newer guards.
+the source owner compares the removal fence and destination authority before
+acquiring personal retention and named placements atomically; it compares no library
+order, so every url of one share lands in the same library. default/system ids,
+duplicates, inaccessible and member-only destinations are refused. a stale fence
+requires fresh explicit review; recovery never silently substitutes a newer one.
 
 an existing source receipt returns its historical identity without acquiring or
 filing again. the client rereads current availability and placements before
