@@ -196,15 +196,19 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const complete = (works.status === "ready");
   const matches = useCallback(
     (text: string) =>
-      rows.filter((row) =>
-        matchesPaneFilterQuery(
+      rows.filter((row) => {
+        // A stored work's row draws its line from the summary; any other row, from its authors.
+        const subject = row.resourceActions?.kind === "Media" ? row.resourceActions.subject : null;
+        return matchesPaneFilterQuery(
           text,
-          mediaListFilterFields({
-            title: row.title.text,
-            contributors: row.contributors,
-          }),
-        ),
-      ),
+          mediaListFilterFields(
+            subject?.kind === "Stored"
+              ? subject.summary
+              : { title: row.title.text, contributors: row.contributors, show: null },
+            null,
+          ),
+        );
+      }),
     [rows],
   );
   const filterRows = usePaneFilterRows({

@@ -252,7 +252,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const filterRows = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId}`,
     getRowStatus: (text) => {
-      const visible = resolved.filter(episode => matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)));
+      const visible = resolved.filter(episode => matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, podcastId)));
       return indexRowStatus(episodes, resolved.length, visible.length, { singular: "episode", plural: "episodes" });
     },
   });
@@ -352,7 +352,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   );
 
   const visible = resolved.filter((episode) =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)),
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, podcastId)),
   );
   const emptyTitle = text !== ""
     ? "no episodes match this filter."

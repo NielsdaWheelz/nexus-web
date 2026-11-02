@@ -90,7 +90,7 @@ const ENTRIES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryEn
 const UNIT = { singular: "entry", plural: "entries" };
 
 const fields = (entry: LibraryEntry) =>
-  mediaListFilterFields(entry.media_summary);
+  mediaListFilterFields(entry.media_summary, null);
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");

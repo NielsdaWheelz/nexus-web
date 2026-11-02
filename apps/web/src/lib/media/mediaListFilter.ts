@@ -2,11 +2,21 @@ import {
   selectMediaAuthors,
   type ContributorCredit,
 } from "@/lib/contributors/credits";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 
-/** All credited and canonical author names, including visually collapsed names. */
+/** The names a media row shows, as MediaIdentity draws them: the title, then an episode's show,
+ * which the show's own page omits, else every credited and canonical author name, including
+ * visually collapsed names. An episode's authors live in its details, so they never match. */
 export function mediaListFilterFields(
-  media: { readonly title: string; readonly contributors: readonly ContributorCredit[] },
+  media: {
+    readonly title: string;
+    readonly contributors: readonly ContributorCredit[];
+    readonly show: MediaSummary["show"];
+  },
+  showPage: string | null,
 ): readonly string[] {
+  if (media.show !== null)
+    return media.show.podcast_id === showPage ? [media.title] : [media.title, media.show.title];
   return [
     media.title,
     ...selectMediaAuthors(media.contributors).flatMap((credit) =>

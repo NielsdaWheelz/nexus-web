@@ -332,7 +332,8 @@ and the existing private one-day cache. next can report cached failures through
 episode index rows carry no artwork. `MediaSummaryOut.show` (`podcast_id`, `title`,
 `image_url`), null exactly for media without a `podcast_episodes` row, puts the
 show's name where a work's authors stand, as a credit link to its page; the
-show's own page omits it.
+show's own page omits it. list filters (`mediaListFilterFields`) match the names
+the row shows: the show's, never an episode's authors.
 
 ## Android Offline Downloads
 

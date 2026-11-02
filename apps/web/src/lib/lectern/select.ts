@@ -26,16 +26,9 @@ export function ordered(
   );
 }
 
-/** Title, contributors and, for an episode, its show. */
-export function filterFields(item: LecternItem): string[] {
-  const fields = [...mediaListFilterFields(item.media_summary)];
-  const { activation } = item;
-  if (
-    activation.kind === "FooterAudio" &&
-    activation.descriptor.subtitle !== null
-  )
-    fields.push(activation.descriptor.subtitle);
-  return fields;
+/** The names a lectern row shows, as every media row's filter reads them. */
+export function filterFields(item: LecternItem): readonly string[] {
+  return mediaListFilterFields(item.media_summary, null);
 }
 
 export function selectLectern(items: readonly LecternItem[], sort: string, query: string) {
