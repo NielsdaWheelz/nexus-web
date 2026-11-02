@@ -880,8 +880,7 @@ export function useNexusController() {
         return;
       }
       if (!viewport.isMobile) {
-        if (lookupGuidance !== null) { say(lookupGuidance); return; }
-        if (currentActive?.key == null) { say({ fact: "no result is selected." }); return; }
+        if (currentActive?.key == null) { say(lookupGuidance ?? { fact: "no result is selected." }); return; }
         if (!admitted) return;
         const selected = rows.find(row => row.key === currentActive.key);
         if (selected) activate(selected.action, activation, selected);
