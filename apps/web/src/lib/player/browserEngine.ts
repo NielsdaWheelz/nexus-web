@@ -547,7 +547,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       advanceAllowed = true;
       if (state.source === null)
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      if (state.error !== null) {
+      if (current !== null && state.error !== null && !playbackHeld(current) && !audio.ended) {
+        // Only a refused write stands, so the element needs no recovery. A press that finds it
+        // playing can only be the retry; one that finds it paused may be the play button.
+        current.stopped = false;
+        set({ error: null });
+        void write(current);
+        if (!audio.paused) return;
+      } else if (state.error !== null) {
         // Explicit retry may resume a refused sample; never replace it with a fresh read.
         if (current !== null && current.queued !== null) current.stopped = false;
         generation += 1;
