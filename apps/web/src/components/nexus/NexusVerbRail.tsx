@@ -73,12 +73,17 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
   const { focusRail, filterRail } = controller;
   // Initial focus is the first verb after the pair, pinned by id so a settling read never moves it.
   useLayoutEffect(() => { if (rail.focus === null && initial !== null) focusRail(initial); }, [rail.focus, initial, focusRail]);
+  // Only moving the rail's focus takes the document's focus: a settling read must not pull it back
+  // from `more`'s open menu.
+  useLayoutEffect(() => {
+    const element = focus === null ? null : toolbar.current?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(focus)}"]`);
+    if (element && element !== document.activeElement) element.focus({ preventScroll: true });
+  }, [focus]);
   const shown = order.join("\n");
   useLayoutEffect(() => {
     const bar = toolbar.current;
     const element = focus === null ? null : bar?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(focus)}"]`);
     if (!bar || !element) return;
-    if (element !== document.activeElement) element.focus({ preventScroll: true });
     // Reveal the focused verb by scrolling the rail alone, also when a settling read inserts verbs
     // before it; the list never moves for it.
     const port = bar.getBoundingClientRect();
