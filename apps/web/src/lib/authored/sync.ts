@@ -8,8 +8,9 @@ import { Persistence } from "./persistence";
 import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL, syncDetail, type SyncFacts } from "./status";
 import { ScopeTextNormalizer, type ScopeInputsPage, type ScopeTextPage, type ScopeNormalizationInterval, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
-/** Every failure carries a numeric `status` and, where the answer names one, its `code`.
- * Status 0 is a lost connection, including a body that died mid-read. */
+/** A failure of the connection or its answer carries a numeric `status` and, where the answer
+ * names one, its `code`. Status 0 is a lost connection, including a body that died mid-read.
+ * A failure with no status is a broken local invariant. */
 export interface Transport {
   json<T>(path: string, body: unknown | null, signal: AbortSignal): Promise<T>;
   snapshot(signal: AbortSignal): Promise<ReadableStream<Uint8Array>>;
@@ -95,7 +96,7 @@ export class Sync {
     const kind = status === null || status >= 400 && status < 500 && !TRANSIENT_4XX.has(status) ? "Refused" : "Retrying";
     this.facts.failure = status === 0 && !this.facts.online ? null : { kind, since: this.facts.failure?.kind === kind ? this.facts.failure.since : Date.now() };
     if (code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
-    this.last_error = this.facts.ready ? null : status === 0 ? "connect to finish preparing your notes." : status === 503 ? "nexus is busy. preparing your notes will retry." : "your notes couldn’t finish preparing.";
+    this.last_error = this.facts.ready ? null : status === 0 && !this.facts.online ? "connect to finish preparing your notes." : status === 503 ? "nexus is busy. preparing your notes will retry." : "your notes couldn’t finish preparing.";
   }
   private async upload() {
     while (!this.retired && this.foreground) {

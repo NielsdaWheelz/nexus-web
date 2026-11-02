@@ -47,7 +47,7 @@ async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); pending.delete(id); };
     const cancel = () => port.postMessage(JSON.stringify({ id: ++nextId, op: "cancel", target_id: id }));
     const abort = () => { cleanup(); cancel(); reject(signal?.reason ?? new DOMException("cancelled", "AbortError")); };
-    const timer = setTimeout(() => { cleanup(); cancel(); reject(new Error("native authored operation did not acknowledge completion")); }, timeout);
+    const timer = setTimeout(() => { cleanup(); cancel(); reject(Object.assign(new Error("native authored operation did not acknowledge completion"), { status: 504 })); }, timeout);
     pending.set(id, { resolve: value => { cleanup(); resolve(value as T); }, reject: error => { cleanup(); reject(error); } });
     signal?.addEventListener("abort", abort, { once: true });
     port.postMessage(JSON.stringify({ id, op, ...input }));
