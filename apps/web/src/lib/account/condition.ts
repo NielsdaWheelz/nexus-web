@@ -16,11 +16,6 @@ import { getWritingRuntime, writingStoreStopped } from "@/lib/notes/runtime";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 
 export type Condition = "Stopped" | "SyncLocal" | "Update" | "SignIn" | "Refused" | "Lagging" | "UpdateReady" | "Offline";
-export type Mark = "Solid" | "Hollow";
-export const MARK: Readonly<Record<Condition, Mark>> = {
-  Stopped: "Solid", SyncLocal: "Solid", Update: "Solid", SignIn: "Solid", Refused: "Solid",
-  Lagging: "Hollow", UpdateReady: "Solid", Offline: "Hollow",
-};
 
 interface Facts {
   readonly admission: RemoteAdmission;

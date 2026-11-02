@@ -2,6 +2,7 @@
 // native alone verifies admission; explicit Ready transitions wake reads, never writes.
 // A browser response can restore reachability without waking every read; a repair
 // wakes only the owners holding a failed read, whichever way reachability returned.
+// A demand is a repair no response raised, and the only kind a read may answer without limit.
 import type { RemoteAdmission } from "./contracts";
 
 export const installedApp = typeof window !== "undefined" && "nexusApp" in window;
@@ -15,6 +16,7 @@ export function bindBrowserAdmission(): () => void {
 let admission: RemoteAdmission = installedApp ? "Checking" : "Ready";
 let generation = 0;
 let repairs = 0;
+let demands = 0;
 let check: (() => Promise<unknown>) | null = null;
 const listeners = new Set<() => void>();
 const repairListeners = new Set<() => void>();
@@ -28,18 +30,21 @@ export function subscribeAdmission(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 export const repairGeneration = () => repairs;
-function repair(): void {
+export const demandGeneration = () => demands;
+function repair(demanded: boolean): void {
   repairs += 1;
+  if (demanded) demands += 1;
   for (const listener of repairListeners) listener();
 }
+const demandRepair = () => repair(true);
 /** Held only with a failed read. Focus is its natural demand; `online` keeps "back online"
  * true for a document with no browser admission binding. Never a timed loop. */
 export function subscribeRepair(listener: () => void): () => void {
-  if (repairListeners.size === 0) { window.addEventListener("focus", repair); window.addEventListener("online", repair); }
+  if (repairListeners.size === 0) { window.addEventListener("focus", demandRepair); window.addEventListener("online", demandRepair); }
   repairListeners.add(listener);
   return () => {
     repairListeners.delete(listener);
-    if (repairListeners.size === 0) { window.removeEventListener("focus", repair); window.removeEventListener("online", repair); }
+    if (repairListeners.size === 0) { window.removeEventListener("focus", demandRepair); window.removeEventListener("online", demandRepair); }
   };
 }
 function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
@@ -48,7 +53,7 @@ function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
   admission = next;
   if (next === "Ready" && wakeReads) generation += 1;
   for (const listener of listeners) listener();
-  if (reachable) repair();
+  if (reachable) repair(wakeReads);
 }
 export function publishAdmission(next: RemoteAdmission): void { setAdmission(next, true); }
 export function bindSessionCheck(run: () => Promise<unknown>): void { check = run; }

@@ -24,7 +24,7 @@ import {
   type ReactNode,
 } from "react";
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
-import { remoteReady, remoteAttemptAllowed, repairGeneration, subscribeRepair } from "@/lib/native/admission";
+import { demandGeneration, remoteReady, remoteAttemptAllowed, repairGeneration, subscribeRepair } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
   admissionRefusal,
@@ -300,21 +300,32 @@ export async function requestWithRetry<T>(
 const unobserved = () => () => {};
 
 /**
- * Runs `repair` for each repair generation after a read failed, until it stops failing.
- * Only a failed owner subscribes, so a healthy read neither renders nor rereads for one.
+ * Runs `repair` for the repairs a settled failed read hears, until it stops failing. A read in
+ * flight already is the answer: its own success may have raised the repair, so answering would
+ * restart the read that raised it. A response elsewhere is evidence once. A read that answered
+ * one and failed again waits for a demand, or reads failing apart would repair one another, and
+ * any cadence of successes would reread on its clock.
+ * Only a settled failure subscribes, so a healthy read neither renders nor rereads for one.
  */
-export function useFailedReadRepair(failed: boolean, repair: () => void): void {
-  const generation = useSyncExternalStore(failed ? subscribeRepair : unobserved, repairGeneration, repairGeneration);
-  const answered = useRef<number | null>(null);
+export function useFailedReadRepair(failed: boolean, running: boolean, repair: () => void): void {
+  const settled = failed && !running;
+  const generation = useSyncExternalStore(settled ? subscribeRepair : unobserved, repairGeneration, repairGeneration);
+  const heard = useRef<{ generation: number; demands: number } | null>(null);
+  const spent = useRef(false);
   const latest = useRef(repair);
   latest.current = repair;
   useEffect(() => {
-    if (!failed) { answered.current = null; return; }
-    if (answered.current === null) { answered.current = generation; return; }
-    if (answered.current === generation) return;
-    answered.current = generation;
+    if (!failed) spent.current = false;
+    if (!settled) { heard.current = null; return; }
+    const last = heard.current;
+    const demands = demandGeneration();
+    heard.current = { generation, demands };
+    if (last === null || last.generation === generation) return;
+    const demanded = last.demands !== demands;
+    if (spent.current && !demanded) return;
+    spent.current = !demanded;
     latest.current();
-  }, [failed, generation]);
+  }, [failed, settled, generation]);
 }
 
 /** Rethrows an async defect during the next render, at the pane boundary. */
@@ -777,7 +788,7 @@ function useServerState<D>(
     admittedGeneration.current = admissionGeneration;
     void refetch().catch(() => { /* A modeled read failure is rendered by this owner. */ });
   }, [admissionGeneration, refetch]);
-  useFailedReadRepair(held.error !== null, () => { void refetch().catch(() => { /* As above. */ }); });
+  useFailedReadRepair(held.error !== null, held.running, () => { void refetch().catch(() => { /* As above. */ }); });
 
   return valueOf(held, stale, refetch, revalidate);
 }

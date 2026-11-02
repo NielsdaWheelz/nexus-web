@@ -32,9 +32,13 @@ function nativePort(): Port {
     if (reply.kind === "authored_foreground") { receiveForeground(reply.active, reply.revision); return; }
     if (reply.kind === "authored_hint") { for (const wake of hints) wake(); return; }
     const waiting = pending.get(reply.id); pending.delete(reply.id);
-    if (reply.ok) waiting?.resolve(reply.result);
-    // the bridge sends its own code; the origin's survives only in NexusOriginError's message.
-    else waiting?.reject(Object.assign(new Error(reply.error.message), { status: reply.error.status, code: reply.error.message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : reply.error.code }));
+    if (reply.ok) { waiting?.resolve(reply.result); return; }
+    const { message, status, code } = reply.error;
+    // the bridge answers 500 and its own code for every throw it cannot name, so the message is
+    // all that is left: `origin ` keeps its status, and any other reads as a local invariant.
+    // that is wrong for a few throws both ways: docs/issues/native-authored-throws-classed-by-message.md.
+    const invariant = code === "E_AUTHORED" && status === 500 && !message.startsWith("origin ");
+    waiting?.reject(Object.assign(new Error(message), invariant ? { code } : { status, code: message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : code }));
   };
   }
   return port;

@@ -33,13 +33,20 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   return next;
 }
 function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null }); }
+/** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
+ * Firefox rejects `text()` with AbortError when `response`'s deadline passes mid-body. That is
+ * a body that died, as it is in Chromium, so it reads as one. */
+async function answer<T>(result: Response, signal: AbortSignal): Promise<T> {
+  try { return await readResponse<T>(result); }
+  catch (error) { throw isAbortError(error) && !signal.aborted ? new ApiError(0, "E_NETWORK", "authored body interrupted") : error; }
+}
 async function response(path: string, body: unknown | null, signal: AbortSignal) {
   let result: Response;
   const deadline = AbortSignal.timeout(path === "/api/authored/snapshot" ? 280_000 : 30_000);
   const requestSignal = AbortSignal.any([signal, deadline]);
   try { result = await fetch(path, { signal: requestSignal, method: body === null ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: { "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Account": account!, ...(body === null ? {} : { "Content-Type": "application/json" }) }, body: body === null ? null : JSON.stringify(body) }); }
   catch (error) { throw Object.assign(new Error("authored network unavailable", { cause: error }), { status: deadline.aborted && !signal.aborted ? 504 : 0 }); }
-  if (!result.ok) await readResponse(result); // throws the answer's status and code
+  if (!result.ok) await answer(result, signal); // throws the answer's status and code
   return result;
 }
 async function operation(port: MessagePort, op: string, input: Record<string, unknown>) {
@@ -62,7 +69,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       catch (error) { await opened.db.close(); throw error; }
       persistence = opened;
       sync = new Sync(persistence, {
-        json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => readResponse<T>(await response(path, body, signal)),
+        json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => answer<T>(await response(path, body, signal), signal),
         snapshot: async signal => {
           const result = await response("/api/authored/snapshot", null, signal);
           if (!result.body) throw new Error("authored snapshot stream missing");
@@ -72,7 +79,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
               try {
                 const { value, done } = await body.read();
                 if (done) controller.close(); else controller.enqueue(value);
-              } catch (error) { throw isAbortError(error) ? error : new ApiError(0, "E_NETWORK", "authored snapshot interrupted"); }
+              } catch (error) { throw signal.aborted ? error : new ApiError(0, "E_NETWORK", "authored snapshot interrupted"); }
             },
             cancel: reason => body.cancel(reason),
           });

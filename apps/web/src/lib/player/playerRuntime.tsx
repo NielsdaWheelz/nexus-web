@@ -126,6 +126,9 @@ export interface Engine {
   /** A resume asks the server unless this device holds a newer sample; `given` (the page's
    * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
   play(given?: PlayerDescriptor): Promise<void>;
+  /** The press on the failure line: a stopped listening write sends again and playback is left
+   * alone; anything else is a `play`. */
+  retry(): Promise<void>;
   /** Resumes only this accepted load; queue toggles never reread or reinstall it. */
   resumeLoaded(expectedSubject: string): Promise<void>;
   pause(): Promise<void>;
@@ -221,6 +224,7 @@ export interface PlayerCommands {
   cancelQueuePreparation(): void;
   playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded">;
   resume(): void;
+  retry(): void;
   pause(): void;
   /** Omission captures the confirmed load at admission; stale application is a silent no-op. */
   seekTo(input: { readonly positionMs: number; readonly expectedSubject?: string }): void;
@@ -1053,16 +1057,18 @@ export function GlobalPlayerProvider({
           return;
         }
         case "stop": await target.dismiss(); return;
-        case "resume": {
+        case "resume":
+        case "retry": {
+          const press = () => command.kind === "resume" ? target.play() : target.retry();
           if (mine !== latest.current) return;
-          if (target.state().source?.kind === "Preview") { await target.play(); return; }
+          if (target.state().source?.kind === "Preview") { await press(); return; }
           if (session?.uncertain()) throw new QueueCommandError("couldn’t confirm queue change");
-          if (before === null || before === undefined) { await target.play(); return; }
+          if (before === null || before === undefined) { await press(); return; }
           const entry = currentQueueEntry(before.state);
           if (entry !== null) {
             const source = target.state().source;
             const loaded = loadedOccurrence.current;
-            if (source?.kind === "Episode" && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) { await target.play(); }
+            if (source?.kind === "Episode" && loaded?.queueId === before.state.queue_id && loaded.entryId === entry.id && loaded.subject === target.state().playbackSubject) { await press(); }
             else await activate(entry, true, mine);
           }
           return;
@@ -1130,7 +1136,7 @@ export function GlobalPlayerProvider({
       if (entry === undefined) throw new QueueCommandError("episode is no longer queued");
       retirePending();
       await enqueue(work, { kind: "Episode", mediaId: entry.media_id });
-    } else if (command.kind === "resume") {
+    } else if (command.kind === "resume" || command.kind === "retry") {
       const saved = browser.current?.snapshot().saved;
       const source = target.state().source;
       const entry = saved == null ? null : currentQueueEntry(saved.state);
@@ -1157,7 +1163,7 @@ export function GlobalPlayerProvider({
         }
         if (command.kind === "rate") { requestPreferences({ rate: command.rate }); return; }
         if (command.kind === "silence") { requestPreferences({ skipSilence: command.on }); return; }
-        if (command.kind === "resume") {
+        if (command.kind === "resume" || command.kind === "retry") {
           const source = target.state().source;
           if (source?.kind !== "Preview" && header !== null && header.current_entry_id !== null)
             await queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play: true, position_ms: null } });
@@ -1256,6 +1262,7 @@ export function GlobalPlayerProvider({
           }
         } else void route({ kind: "resume" });
       },
+      retry: () => { onExplicitPlay(); void route({ kind: "retry" }); },
       pause: () => { retainCurrent(); retirePending(); void route({ kind: "pause" }); },
       seekTo,
       skipBy: deltaMs => {

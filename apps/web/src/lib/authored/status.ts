@@ -17,15 +17,17 @@ export interface SyncFacts {
   failure: SyncFailure; online: boolean; pending: boolean; scope_pending: boolean; cursor: string; head: string | null;
   scope_progress: ScopeProgress | null;
 }
+/** A Retrying failure reads `syncing`: a cursor at the last known head proves nothing while sync
+ * cannot answer. Admission outranks preparation: only a preparing worker can meet some refusals. */
 export function syncStatus(facts: SyncFacts): SyncStatus {
   if (facts.local_error) return "local_error";
   if (facts.saving) return "saving";
-  if (!facts.ready) return "preparing";
   if (facts.admission === "format") return "update_required";
   if (facts.admission === "auth") return "sign_in_required";
+  if (!facts.ready) return "preparing";
   if (facts.failure?.kind === "Refused") return "sync_error";
   if (!facts.online) return "offline";
-  return facts.pending || facts.scope_pending || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
+  return facts.failure !== null || facts.pending || facts.scope_pending || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
 }
 /** Why a command waiting on upload stops waiting, or null while a retry can still land it.
  * A failure one retry heals never reaches a waiter; lag does, because nothing else ends the wait.
@@ -54,7 +56,7 @@ export function uploadStall({ status, detail, failure }: { status: SyncStatus; d
 export function syncDetail(facts: SyncFacts, error: string | null): string | null {
   if (error !== null || syncStatus(facts) !== "syncing") return error;
   if (facts.pending) return "changes are saved on this device and waiting to sync.";
-  if (facts.head === null) return "changes are saved on this device; checking account sync.";
+  if (facts.head === null || facts.failure !== null) return "changes are saved on this device; checking account sync.";
   if (BigInt(facts.cursor) < BigInt(facts.head)) return "changes are saved on this device; catching up with your account.";
   const progress = facts.scope_progress;
   if (progress === null || !progress.metadata_complete) return `your writing is synced; preparing reading search${progress === null ? "." : `: ${progress.metadata_records.toLocaleString()} records loaded.`}`;

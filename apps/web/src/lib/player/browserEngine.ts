@@ -10,8 +10,9 @@
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
  * and retains the sample, with the existing player retry for an explicitly refused write.
- * A refused write stands beside playing audio: it gates neither a seek nor a resume, and says
- * so only where admission can send that retry.
+ * A refused write stands beside playing audio: it gates neither a seek nor a resume, and raises
+ * its line only where admission can send the retry. `retry` sends the sample and leaves the
+ * element alone; `play` sends it and plays.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -186,13 +187,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             current.queued = null; // sampled under the old epoch
             adoptInto(current, { position_ms: server.position_ms ?? 0, reset_epoch: server.reset_epoch,
               consumption_override_revision: server.consumption_override_revision });
-          } else if (status === 0 || status >= 500) {
-            // The attached episode retries on the tick or `online`.
+          } else if (status === 0 || status >= 500 || !remoteAttemptAllowed()) {
+            // The attached episode retries on the tick or `online`, unsent while admission refuses.
             return;
           } else {
-            // Standing error keeps the sample for an explicit retry (`play`), which resumes it.
+            // Standing error keeps the sample for an explicit `retry` or `play`, which sends it.
             current.stopped = true;
-            if (current === episode && remoteAttemptAllowed()) set({ error: PROGRESS_UNSAVED });
+            if (current === episode) set({ error: PROGRESS_UNSAVED });
             console.warn("listening_write_refused", { status });
             return;
           }
@@ -201,6 +202,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     } finally {
       current.writing = null;
     }
+  };
+
+  /** An explicit press over a stopped write: the line goes and the sample sends. */
+  const resend = (current: Episode) => {
+    current.stopped = false;
+    set({ error: null });
+    void write(current);
   };
 
   const adoptInto = (
@@ -547,6 +555,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       advanceAllowed = true;
       if (state.source === null)
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+      if (current !== null && state.error !== null && !playbackHeld(current)) resend(current);
       if (state.error !== null) {
         // Explicit retry may resume a refused sample; never replace it with a fresh read.
         if (current !== null && current.queued !== null) current.stopped = false;
@@ -567,6 +576,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
       const subject = state.playbackSubject!;
       capturePlayback(audio.play().then(() => true, () => { sync(); return false; }), subject, generation, mine);
+    },
+    async retry() {
+      const current = episode;
+      if (current === null || current.fenced || state.playbackFailed) return engine.play();
+      resend(current);
     },
     async resumeLoaded(expectedSubject) {
       const current = episode;
@@ -642,7 +656,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       await draining;
       if (current.queued !== null) {
         current.fenced = false;
-        if (current === episode) set({ error: PROGRESS_UNSAVED, synced: false });
+        if (current === episode) set({ error: remoteAttemptAllowed() ? PROGRESS_UNSAVED : state.error, synced: false });
         throw new ProgressPreparationError();
       }
       current.active = false;

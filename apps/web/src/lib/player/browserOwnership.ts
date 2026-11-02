@@ -16,7 +16,7 @@ interface BrowserSnapshot { readonly queue: PlayerQueue; readonly engine: Engine
 
 export type BrowserPlayerCommand =
   | { readonly kind: "queue"; readonly request: QueueRequest }
-  | { readonly kind: "pause" | "resume" | "stop" | "check" }
+  | { readonly kind: "pause" | "resume" | "retry" | "stop" | "check" }
   | { readonly kind: "seek"; readonly position_ms: number; readonly expected_subject: string | null }
   | { readonly kind: "rate"; readonly rate: number }
   | { readonly kind: "silence"; readonly on: boolean };
