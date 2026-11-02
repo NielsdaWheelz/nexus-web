@@ -1,9 +1,8 @@
 # release glyph lexicon
 
-the glyph lexicon changes drawings, one stroke weight, lint, one visible word
-(the find bar's `results`) and one paint: info and danger feedback titles take
-their tone, since those tones have no sign. it adds no wire, schema or storage
-change, no preflight and no owner step. nothing a client sends or stores differs.
+the glyph lexicon changes drawings, one stroke weight, lint and one visible word
+(the find bar's `results`). it adds no wire, schema or storage change, no
+preflight and no owner step. nothing a client sends or stores differs.
 
 it does not deploy alone. the main it merges already carries acquisition's wire-18
 break (`release-import-acquisition.md`) and the closed media kind's production

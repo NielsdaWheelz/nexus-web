@@ -181,9 +181,8 @@ retraction rules. a returning receipt does not announce again. action
 `commandKey` prevents a held control silently changing its command.
 
 `Signal` shares content, tone, diagnostics and actions across these presentations.
-a toned signal paints its tone on its sign (`Check` success, `Warning` warning);
-info and danger have no sign, so their 16px slot stays blank and the title takes
-the tone, as `FieldFeedback`'s words do. neutral has no tone and no slot.
+a toned signal paints its tone on its sign: `Check` success, `Warning` warning
+and danger; info and neutral have no sign and no slot.
 controls never enter live regions. details and diagnostics open on demand;
 recovery stays outside document and list flow. all rooms, forced colours, reduced
 motion and coarse targets retain the same contracts.

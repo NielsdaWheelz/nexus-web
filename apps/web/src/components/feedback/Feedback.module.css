@@ -49,15 +49,6 @@
   color: var(--feedback-tone);
 }
 
-.slot {
-  flex: 0 0 16px;
-  block-size: 16px;
-}
-
-.tonedTitle {
-  color: var(--feedback-tone);
-}
-
 .title {
   flex: 0 1 auto;
   min-width: 0;
