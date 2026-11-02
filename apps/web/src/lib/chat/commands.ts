@@ -347,7 +347,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     return PENDING;
   };
   /** A retry stands on what its command last stood on, until it answers. */
-  const busy = (attempt: NonNullable<typeof pending>) => set({ kind: "Busy", command: attempt.command, occurrence: attempt.occurrence, attempt: attempt.attempt,
+  const busy = ({ command, occurrence, attempt }: NonNullable<typeof pending>) => set({ kind: "Busy", command, occurrence, attempt,
     standing: state.kind === "Idle" ? null : state.standing, feedback: state.kind === "Idle" ? null : state.feedback });
   const deliver = (tree: ConversationTree | null) => {
     handoff = { tree };

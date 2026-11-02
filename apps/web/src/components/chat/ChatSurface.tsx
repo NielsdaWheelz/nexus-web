@@ -111,8 +111,9 @@ const ChatSurface = forwardRef<
           onPointerDown={scroll.onPointerDown}
           onClick={scroll.onClick}
         >
+          {/* outside the log, which would speak its line a second time */}
+          {view.path.length === 0 && absent !== null ? <div className={styles.absent}>{absent}</div> : null}
           <div ref={transcript} className={styles.transcript} role="log" aria-label="Chat messages">
-            {view.path.length === 0 ? absent : null}
             {roots.length ? (
               <div className={styles.rootAlternatives}>
                 <AlternativeSelector options={roots} />

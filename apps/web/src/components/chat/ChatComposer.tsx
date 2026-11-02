@@ -186,7 +186,9 @@ export default function ChatComposer(props: {
     label: "retry", commandKey: "retry last model", run: enterMemory,
     busy: memoryRead.status === "failed" ? memoryRead.retrying : memoryRead.status === "ready" && memoryRead.refreshing,
   };
-  const useRecalled: CommandVerb | null = shownMemory?.kind === "Selected" && catalog && isSelectable(catalog, shownMemory.selection, shownMemory.route)
+  // a stale build offers reload alone
+  const useRecalled: CommandVerb | null = recallTransport !== "Update" && shownMemory?.kind === "Selected" && catalog
+    && isSelectable(catalog, shownMemory.selection, shownMemory.route)
     ? { label: "use this model", commandKey: "use last model", run: () => { setSelection(shownMemory); textarea.current?.focus({ preventScroll: true }); } }
     : null;
   const recallVerb = recallTransport && transportVerbs(recallTransport, { retry: recallRetry, signIn: null })?.[0];

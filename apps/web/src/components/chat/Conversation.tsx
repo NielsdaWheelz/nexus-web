@@ -449,8 +449,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         view={view}
         live={state.live}
         command={state.command}
-        loading={history === "Loading"}
-        absent={history === "Loading" ? <Ruling />
+        loading={loading}
+        absent={loading ? <Ruling />
           : state.gone ? <Fact line={{ fact: "this chat doesn’t exist." }} />
           : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load() }} />
           : null}
