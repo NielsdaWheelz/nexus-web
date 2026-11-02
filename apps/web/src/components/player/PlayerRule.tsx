@@ -137,7 +137,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   }, [scrubbing]);
   useEffect(() => {
     if (scrub.current !== null && scrub.current.subject !== playbackSubject) cancel();
-    setHold(null);
+    settle();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- a new subject retires the old load's scrub
   }, [playbackSubject]);
 

@@ -173,7 +173,7 @@ export function barClock(mode: BarMode): BarClock {
 }
 
 /** One mapping from a pointer to media time for hover, drag and commit. Within `reachPx` of a drawn
- * start the nearest start wins, so the preview names what the release will land on. */
+ * start the nearest start wins, so what the pointer shows is where the release lands. */
 export function positionAt(x: number, width: number, durationMs: number, snaps: readonly number[], reachPx: number): { positionMs: number; snapped: boolean } {
   if (width <= 0 || durationMs <= 0) return { positionMs: 0, snapped: false };
   const clamped = Math.min(width, Math.max(0, x));
