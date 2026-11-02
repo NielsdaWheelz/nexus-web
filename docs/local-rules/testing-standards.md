@@ -159,6 +159,28 @@ removing reverses; if stopping fails, it reports and retains those mappings. `re
 replaces only its own process/cdp forward.
 no companion driver or device-wide settings change.
 
+the owned avd on this host is `nexus-api34` (`pixel_6`,
+`system-images;android-34;google_apis;arm64-v8a`; api 35's webview fails the
+password handoff, `docs/issues/android-api35-handoff-qualification.md`). create it
+when absent with `sdkmanager "system-images;android-34;google_apis;arm64-v8a"` then
+`avdmanager create avd -n nexus-api34 -k "system-images;android-34;google_apis;arm64-v8a" -d pixel_6`.
+boot it windowless from the case's driver with
+`$ANDROID_SDK_ROOT/emulator/emulator -avd nexus-api34 -no-window -no-audio -no-boot-anim -netdelay none -netspeed full`
+and wait for `adb -s <serial> shell getprop sys.boot_completed` to print `1`; the
+emulator takes the first free even console port from 5554, so read the serial by
+diffing `adb devices` before and after the boot rather than assuming
+`emulator-5554` (another session's emulator may hold it). tools:
+`~/Library/Android/sdk/platform-tools/adb`, `~/Library/Android/sdk/build-tools/34.0.0/aapt`;
+gradle needs `JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`.
+shut the emulator down with `adb -s <serial> emu kill` when the case finishes and
+wait for its serial to leave `adb devices`; never kill it by process name. the avd
+quick-boots (`fastboot.forceFastBoot=yes`), so `emu kill` saves the running state:
+boot with `-no-snapshot-load` and uninstall the disposable package before the
+kill, or the next launch races the saved state's stale task
+(`docs/issues/lab-android-stale-task-startup.md`). read window focus from
+`dumpsys window` whole: on api 34 `dumpsys window windows` prints no
+`mCurrentFocus` line.
+
 setup requests use `browserRequest` in `scripts/lab/browser.ts`, preserving real
 browser http2, cookies and origin checks. an about:blank page first opens the
 same-origin `/robots.txt`, which runs no application or autosave. playwright's

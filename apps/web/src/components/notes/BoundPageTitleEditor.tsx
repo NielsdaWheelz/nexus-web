@@ -181,7 +181,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
       inputIntent.current++;
       if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
       const command = outlineStructuralCommand(event, platform);
-      if (command && structuralKeys) {event.preventDefault(); const at = selection(); if (command === "indent") structuralKeys.indent?.(at); else if (command === "outdent") structuralKeys.outdent?.(at); else structuralKeys.move?.(command === "move_up" ? "up" : "down",at); return;}
+      if (command && structuralKeys) {event.preventDefault(); if (command === "indent") structuralKeys.indent?.(); else if (command === "outdent") structuralKeys.outdent?.(); else structuralKeys.move?.(command === "move_up" ? "up" : "down"); return;}
       if (event.key === "Escape" && structuralKeys?.selectBlock) {event.preventDefault(); structuralKeys.selectBlock(); return;}
       if (event.key === "Escape" && !structuralKeys) {event.preventDefault(); event.currentTarget.blur(); return;}
       if (value.length === 0 && structuralKeys?.emptyDelete && (event.key === "Backspace" || event.key === "Delete")) {event.preventDefault(); structuralKeys.emptyDelete(event.key === "Backspace" ? "backward" : "forward"); return;}

@@ -235,7 +235,9 @@ export interface ActionMenuProps {
   readonly placement?: "below" | "above";
   readonly align?: "start" | "center" | "end";
   readonly renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
-  readonly renderContextAnchor?: (props: ActionMenuContextAnchorProps) => ReactNode;
+  readonly renderContextAnchor?: (props: ActionMenuContextAnchorProps, menu: {open(): void}) => ReactNode;
+  /** external: a touch hold belongs to the caller, which opens the menu through `open()`; right-click and the keyboard are unchanged. */
+  readonly hold?: "internal" | "external";
   readonly triggerAttributes?: TriggerAttributes;
   readonly triggerRef?: (node: HTMLButtonElement | null) => void;
   readonly returnFocusTo?: ReturnFocusTarget;
@@ -263,7 +265,7 @@ export interface ActionMenuSession {
 
 /** A menu's real trigger stays mounted; only an invoked controller owns overlays. */
 export function ActionMenuHost({ title, subjectKey, label = `more actions for ${title}`, className,
-  renderTrigger, renderContextAnchor, triggerAttributes, triggerRef, triggerDisabled = false,
+  renderTrigger, renderContextAnchor, hold = "internal", triggerAttributes, triggerRef, triggerDisabled = false,
   triggerDisabledReason, children,
 }: Omit<ActionMenuProps, "source"> & {
   readonly title: string;
@@ -383,7 +385,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
       onPointerDown: event => {
         cancelHold(); local.heldClick = false;
         local.touchGesture = event.pointerType === "touch";
-        if (triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
+        if (hold === "external" || triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
         const { pointerId: pointer, clientX: x, clientY: y } = event;
         local.hold = { pointer, x, y, owner: getInteractionOwner(), generation: getInteractionGeneration(), subject: subjectKey,
           timer: setTimeout(() => {
@@ -402,7 +404,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
       },
       onPointerUp: cancelHold, onPointerCancel: cancelHold,
       onClickCapture: event => { if (local.heldClick) { local.heldClick = false; event.preventDefault(); event.stopPropagation(); } },
-    }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
+    }, { open: () => { if (!triggerDisabled && !local.session) begin(null); } }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
     {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
     {state.session !== null || state.announcement ? <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{state.announcement}</span> : null}
     {state.session !== null ? children(state.session) : null}

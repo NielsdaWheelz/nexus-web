@@ -110,7 +110,8 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const [entryError, setEntryError] = useState<unknown | null>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const rootField = useMemo(() => ({label: "page title", initialTitle, placeholder: pageTitle("", date)}), [date, initialTitle]);
-  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField});
+  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField, entering: params.get("via") ?? undefined});
+  usePaneReturnReady(root.ready || root.error !== null);
   const { inputRef, focusInput } = usePaneQueryInput();
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
