@@ -7,6 +7,7 @@ import { useRecent } from "@/lib/recent/store";
 import { recentTargetKey } from "@/lib/recent/model";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { DismissRequestReason } from "@/components/ui/ModalFrame";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { truncateText } from "@/lib/display/format";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
@@ -921,13 +922,13 @@ export function useNexusController() {
     escape,
     close: () => requestExit({ kind: "Close" }),
     openRoot: () => requestExit({ kind: "Replace", intent: { kind: "Root" }, opener: null }),
-    /** Native dismissal (phone back): ime, the rail, a child page, then the text, then the palette. */
-    guardClose(): DismissDecision {
+    /** The sheet's dismissals: the rail, a child page, then the palette; back and escape clear text first (owner decision 7). */
+    guardClose(reason: DismissRequestReason): DismissDecision {
       if (reorder.cancel()) return "blocked";
       if (dismissClosesAdd) return guardExit({ kind: "Close" });
       if (rail !== null) { setRail(null); return "blocked"; }
       if (page.kind !== "Root") { back(); return "blocked"; }
-      if (viewport.isMobile && query) { setQuery(""); return "blocked"; }
+      if (query && (reason === "back" || reason === "escape")) { setQuery(""); return "blocked"; }
       return guardExit({ kind: "Close" });
     },
     dismissAccepted: () => performExit({ kind: "Close" }),
