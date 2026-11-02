@@ -100,8 +100,8 @@ metadata is omitted only when the glyph/artwork supplies type. provenance, role,
 location and status remain. accessible title composition names type once among
 generated fragments; literal titles are unchanged, including a title `page`.
 
-`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map. all passage schemes
-use `TextQuote`; media retains its generic glyph even when subtype is known.
+`resourceRef.ts` owns an exhaustive scheme-to-sign/label map. all passage schemes
+draw `Passage`; media draws `Page` even when subtype is known.
 resource-specific pane icons consume this vocabulary; a passage's source pane
 still describes its source. invalid canonical refs are defects. availability,
 loading and terminal occurrences do not change type. markers fetch nothing and

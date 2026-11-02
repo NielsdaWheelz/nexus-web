@@ -18,7 +18,9 @@ how nexus says something happened. owners, under `apps/web/src/`:
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
 - `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
-- `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
+- `lib/ui/icons.tsx`, the glyph lexicon.
+- `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`) and
+  `scripts/check-icons.ts` (`bun run lint:icons`).
 
 ## design intent
 
@@ -63,6 +65,55 @@ the press block (`:root, [data-theme="dark"]`) declares only tokens another room
 overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
 the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
+
+## glyphs
+
+`lib/ui/icons.tsx` is the lexicon and lucide's one importer. each export is one
+sign: its name says the gloss, its trailing comment states it, and its drawing
+changes there in one line. consumers write `import * as Icon from
+"@/lib/ui/icons"` and name a sign: no named, computed or dynamic access. a new
+export is paid for by a bare use. every sign is decorative, paints
+`currentColor` and takes `className` and `size`; the slot owns size
+(`--control-icon-size`, `.menuItemIcon`) and `control.tsx` owns waiting. a glyph
+outside a slot sets `size` on the scale 12, 14, 16, 20, 24. domain
+tables (the action catalog, `SCHEMES`, `ROUTES`, destinations, nexus rows, pane
+controls) choose a sign or `null`; presenters size and paint it.
+
+1. a sign is a drawing plus one gloss. each determines the other.
+2. a gloss reads true at every use, with the object taken from the label or the
+   place. if it needs "or", the drawing is two signs.
+3. a noun on a control means open or start that noun with this subject.
+4. words are the default. a menu row paints a glyph only if that sign is read
+   bare somewhere: alone on a control, as a type, or as a place.
+5. no sign, no glyph. the slot stays and paints nothing. the label column never
+   moves.
+6. signs differ by silhouette at 16px. mirror images are for true inverses at one
+   place.
+
+a removal draws what survives it:
+
+| paint | what survives | covers |
+| --- | --- | --- |
+| `Dismiss` | anything saved | close, clear a field, drop a draft, cancel a download |
+| `Remove` | the thing; it leaves this place | remove from context or library, unlink, remove member, minimize a pane |
+| `RemoveFromLectern` | the item; it leaves the Lectern | remove from Lectern |
+| `Stop` | what is already done | stop response, stop playback |
+| a word | not the thing itself | delete, remove from Nexus, remove download, remove import |
+
+running anything again draws `Again`; replaying audio draws `Play`, because
+pressing it plays. disclosure is `Disclose`; a select or picker draws `Choose`,
+which does not turn. declared exceptions: the library chooser's indeterminate
+cell draws `Remove`'s minus; `EffortPicker`'s gauge stays raw svg until playback
+draws `Effort`.
+
+every glyph keeps a 1.5px line (`--icon-stroke`) in screen pixels at any size:
+`globals.css` sets the stroke width on `.lucide` and `vector-effect:
+non-scaling-stroke` on its children, inside `:where()`, so the default weighs
+specificity 0 and a glyph's own rule wins in any css chunk order. an exception
+sets its weight in its own css and sets `vector-effect: none` on its paths, so
+the weight stays in viewbox units, as the podcast subscription badge does. raw
+`svg` and `strokeWidth` belong only to brand and data marks, in the owners
+`eslint.config.mjs` lists.
 
 ## the solar's ornament
 
@@ -299,7 +350,9 @@ a description only when none is provided. visual tooltip text stays independent.
 disabled paint overrides every tone/selection state; focus stays visible.
 forced colors use system colors; reduced motion stops color transitions and busy
 rotation. colors, type and spacing use existing tokens; no layout animation; a
-state glyph may animate its own stroke weight.
+state glyph may animate its own stroke weight. a turn is glyph-internal:
+`Disclose` turns its own chevron by state; no owner rotates a glyph or swaps one
+to show open state.
 
 ## overflow buttons
 
@@ -309,15 +362,14 @@ names: Nexus, Lectern, All and Today. source titles, personal names and quoted
 queries retain their literal spelling. shared action copy also names the same
 inline controls; renderers never capitalize it.
 
-command/link descriptors explicitly supply an icon. ordinary actions use their
-semantic owner's glyph; only chapter and map destination lists use `null`.
-the menu retains its 16px decorative slot and text label. custom content owns its
-anatomy: swatches and status prose need no action glyph, while nested actions do.
+command/link descriptors carry a sign or `null`, as their domain table chooses
+under [the glyph laws](#glyphs). the menu retains its 16px decorative slot and
+text label; a `null` row leaves the slot blank, so labels share one x. custom
+content owns its anatomy: swatches and status prose need no action glyph.
 empty and domain-state prose retain their own presentation. operational waiting
 uses fixed controls; failures use the host recovery layer. icon-only button
-contracts remain non-null. lucide owns standard
-drawings; use existing semantic presentations or direct named glyph imports,
-without a second registry, inferred glyphs or placeholders.
+contracts remain non-null. lucide is reached only through `lib/ui/icons.tsx`;
+no inferred glyphs or placeholders.
 
 `OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
 shared controls own its paint and busy glyph. it forwards native attributes,
@@ -364,8 +416,8 @@ also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-`ResourceType` renders decorative, unfocusable, current-color lucide glyphs at
-`--text-md` square with stroke 2. outline markers use muted ink at rest and retain
+`ResourceType` renders its scheme's sign, decorative, unfocusable and
+current-color, at `--text-md` square. outline markers use muted ink at rest and retain
 control hover/focus treatment; disabled opening markers remain readable in muted
 ink. index prefixes use muted ink with a
 `--space-1` gap; the glyph does not shrink, while the existing title fragment
@@ -394,7 +446,8 @@ within 52px when any pointer is coarse. active fill,
 in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
 retain selection and focus. controls use shared `Button` paint, tooltips and
-decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
+decorative signs: minimize `Remove`, maximize `Maximize`, close `Dismiss`; restore
+draws `Add` on a minimized pane and `Restore` on a maximized one. close is neutral.
 `lib/workspace/paneControls.ts` owns desktop strip control content. the inline
 nexus pane list keeps wrapping mobile titles and independent 48px close targets.
 reorder completion uses one polite position
@@ -409,3 +462,12 @@ runtime (next/font variables, `--moon`, `--grain-seed`, measured geometry) and
 without a fallback. the android shelf and the firefox popup load no hosted
 stylesheet, so each built bundle is checked against its own declarations, where
 next/font variables do not count (their packaged stacks must be declared).
+
+`lint:icons` runs beside it and fails when two registry exports are one drawing,
+compared by value, since lucide exports each drawing under several names (`X`,
+`XIcon`). eslint fails on a lucide import outside the registry (`lucide-react` or
+any subpath), a registry import other than `* as Icon`, computed `Icon[name]`, a
+dynamic glyph import, raw `svg` or `strokeWidth` outside their owners, and a
+capitalised literal as a `fail` title, sparing only a compound PascalCase kind tag
+(`"SourceChanged"`). flat config replaces a rule's options per block, so a block
+that restricts imports or syntax for its own files spreads the shared lists.
