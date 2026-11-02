@@ -533,7 +533,7 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
-pdf navigation exposes direct minus, scale/fit-width reset and plus controls.
+pdf navigation exposes direct zoom out, scale/fit-width reset and zoom in controls.
 `Reader.setZoom` and its surface capability accept `number | null`: numbers
 use the existing bounds, null selects responsive `page-width` fitting. chosen
 mode participates in equality and restore even when fixed and fitted scales
@@ -810,11 +810,11 @@ give their rail position and order.
   tokens on `.frame[data-theme]` in `documentReader.module.css`. pdf pages keep
   their source colours; the theme paints the frame around them.
 - **view menu.** for every readable item, pdfs included, the view section opens
-  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" (`Sun`) or
-  "Dark" (`Moon`), which sets the profile theme absolutely; without `editable` it
+  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" or "Dark"
+  (drawn `Light`, `Dark`), which sets the profile theme absolutely; without `editable` it
   is disabled with "requires a connection". an unreadable item has no theme row.
   the "Reader settings" link to `/settings/reader` follows, carrying that route's
-  icon (`ALargeSmall`), the destination's one glyph.
+  sign (`ReaderSettings`), the destination's one glyph.
 
 ## verification
 

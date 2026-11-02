@@ -76,21 +76,21 @@ the task registers actual populated rows, unresolved acceptance, destination
 creation and its running browser pipeline with the common work guard. empty
 drafts, destination seed changes and settled receipts are clean. so is a row
 seeded from the palette query, until its first edit or the visit's first send:
-its text is the palette's, and the palette owns it. the arrow and esc restore it
-as the query; close discards it, as close discards any query. after a send the
-arrow restores no query, so a seeded row is work. normal and defect-boundary
+its text is the palette's, and the palette owns it. back and esc restore it
+as the query; close discards it, as close discards any query. after a send
+back restores no query, so a seeded row is work. normal and defect-boundary
 dismissal use one native confirmation. cancellation keeps the
 transfer running; confirmed leave stops remaining browser work and discards its
 local state. accepted imports remain server-owned. add has no reload recovery.
 
 the page holds its origin: the palette's mode, control and query, or null when
 opened from outside it (rail, library). sent means a submission moved a row out
-of draft in this visit, palette open to close. the arrow does not end a visit:
+of draft in this visit, palette open to close. back does not end a visit:
 starting or discarding a session keeps sent, and the palette clears it as it
 opens. removing or re-staging a row does not unsend it. both shells' dismissal
 branches on the same table, after the guard:
 
-| | arrow | esc, scrim, android back |
+| | back | esc, scrim, android back |
 | --- | --- | --- |
 | palette, nothing sent | root, origin restored | same |
 | palette, sent | root, query cleared | close |
@@ -100,7 +100,7 @@ restored means the query, the mode, the import row selected and focus in the
 combobox. a phone has no row selection: from search, focus lands in the search
 input; from the overview, on the import row, since focusing that input enters
 search. a query is never restored after a send. pickers consume esc first. the
-defect view has no arrow and keeps esc.
+defect view has no back and keeps esc.
 
 ## saved placement
 
