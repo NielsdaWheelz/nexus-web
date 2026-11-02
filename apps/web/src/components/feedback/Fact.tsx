@@ -116,10 +116,11 @@ export function Failed({ error, noun, retry }: { error: unknown; noun: string; r
   return <Fact line={TRANSPORT_LINES[transport].read(noun)} verbs={transportVerbs(transport, { retry: verb, signIn }) ?? undefined} speak={speak} />;
 }
 
-/** Beneath its input; the input's owner absorbs the growth. */
+/** Beneath its input; the input's owner absorbs the growth. `id` names the line alone, so the
+ * input's `aria-describedby` and each verb's read the line, not the verbs beside it. */
 export function Field({ id, line, verbs }: { id: string; line: Line; verbs?: Verbs }) {
-  return <div id={id} className={styles.field}>
-    {sentence(line)}
+  return <div className={styles.field}>
+    <span id={id}>{sentence(line)}</span>
     <FactVerbs verbs={verbs} contextId={id} />
   </div>;
 }
