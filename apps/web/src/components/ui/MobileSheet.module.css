@@ -51,6 +51,9 @@
   min-block-size: 0;
   max-height: none;
   max-block-size: 100%;
+  /* The backdrop already ends at the keyboard, so the keyboard covers that much of the safe area and
+     the last row sits on the keyboard's edge. */
+  padding-bottom: max(0px, calc(var(--viewport-safe-bottom) - var(--keyboard-inset)));
 }
 
 .header {
