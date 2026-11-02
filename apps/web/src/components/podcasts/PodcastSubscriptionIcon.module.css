@@ -1,6 +1,6 @@
-/* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot. */
+/* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot.
+   unsubscribed is the app's one weight, --icon-stroke; subscribed is 13/8 of it at every size. */
 .glyph > * {
-  stroke-width: 2;
   transition: stroke-width var(--duration-base) var(--ease-glide);
 }
 .glyph > circle { fill: currentColor; } /* wider strokes invert the dot's inner edge */
@@ -11,7 +11,7 @@
   color: var(--accent);
   transition: color var(--duration-fast) var(--ease-glide);
 }
-.subscribed > * { stroke-width: 3.25; }
+.subscribed > * { stroke-width: calc(var(--icon-stroke) * 13 / 8); }
 /* a read shorter than the hold shows nothing; the control is disabled throughout. */
 [aria-disabled="true"] .subscribed {
   color: inherit;
