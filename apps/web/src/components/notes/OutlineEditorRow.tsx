@@ -80,7 +80,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
           aria-expanded={row.open} aria-busy={row.read.pending}
           onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}
           icon={row.read.error !== null ? <TriangleAlert size={14}/> : <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>}/>
-        <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
+        <AuthoredReadFailure {...row.read} noun="linked items"/>
       </> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource)} /> : row.label,

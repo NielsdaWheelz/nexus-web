@@ -2,17 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import EntryFailure from "@/components/EntryFailure";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
+import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import { loginPath, type ReturnTarget } from "@/lib/auth/urls";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import styles from "./SessionUnavailable.module.css";
 
 type Failure = "ProviderUnavailable" | "Unconfirmed";
-const DESCRIPTION: Record<Failure, string> = {
-  ProviderUnavailable: "sign-in is temporarily unavailable. try again in a moment.",
-  Unconfirmed: "nexus didn’t respond. check your connection and try again.",
-};
+const NOT_OPENED = "nexus couldn’t open.";
+/** A 503 is a busy provider; a thrown fetch or the deadline is offline or no answer. */
+const failureLine = (failure: Failure) => failure === "ProviderUnavailable" ? TRANSPORT_LINES.Busy.command(NOT_OPENED)
+  : TRANSPORT_LINES[navigator.onLine === false ? "Offline" : "Unavailable"].command(NOT_OPENED);
 
 export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarget }) {
   const target = useReturnTarget(nextPath);
@@ -87,8 +87,8 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
   if (defect) throw defect.error;
   return (
     <EntryFailure
-      title="nexus couldn’t open"
-      description={failure === null ? "try again to continue." : DESCRIPTION[failure]}
+      title={NOT_OPENED}
+      description={failure === null ? "" : failureLine(failure).reason ?? ""}
     >
       <div className={styles.action}>
         <Button
@@ -98,9 +98,8 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
           aria-busy={pending || undefined}
           onClick={() => void retry()}
         >
-          try again
+          retry
         </Button>
-        {pending || failure !== null ? <FeedbackStatus content={{ tone: pending ? "Neutral" : "Warning", title: pending ? "checking sign-in…" : DESCRIPTION[failure!] }} announcement="Polite" /> : null}
       </div>
     </EntryFailure>
   );

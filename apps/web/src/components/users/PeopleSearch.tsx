@@ -6,7 +6,8 @@
 // belong to this field; a selected person displays until the viewer types again.
 
 import { useId, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackStatus, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { apiFetch } from "@/lib/api/client";
@@ -79,13 +80,12 @@ export default function PeopleSearch({
     },
   });
   const error = readKey !== null && search.status !== "loading" ? search.error : null;
-  const occurrence = useFeedbackOccurrence(error !== null, readKey);
   const waiting = selected === null && q.length >= 3 && !admitted && error === null;
   const status = selected !== null || q === "" ? null
-    : q.length < 3 ? "Enter at least 3 characters."
-      : !admitted ? null
-          : results.length === 0 ? "No matching Nexus users."
-            : `${results.length} ${results.length === 1 ? "result" : "results"}`;
+    : q.length < 3 ? "enter at least 3 characters."
+      : !admitted || results.length === 0 ? null
+        : `${results.length} ${results.length === 1 ? "result" : "results"}`;
+  const empty = selected === null && q.length >= 3 && admitted && results.length === 0;
 
   return (
     <div className={styles.root}>
@@ -122,12 +122,10 @@ export default function PeopleSearch({
         }}
       />
       {description ? <span id={`${id}-description`} className={collection.detail}>{description}</span> : null}
-      <FeedbackBusy subject={searchContext} pending={waiting}/>
-      {error ? <FeedbackFailure scope="Local" occurrence={occurrence}
-        content={{tone: "Warning", title: "people search couldn’t load", requestId: error.requestId}} announcement="Polite"
-        actions={[{label: "retry search", onClick: search.refetch, busy: search.status === "failed" ? search.retrying : search.status === "ready" && search.refreshing}]}
-        returnFocus={() => input.current}/> : null}
-      {status ? <div id={`${id}-status`}><FeedbackStatus content={{tone: "Neutral", title: status}} announcement="Polite"/></div> : null}
+      {status ? <Field id={`${id}-status`} line={{fact: status}}/> : null}
+      {waiting ? <Ruling/> : null}
+      {error ? <Failed error={error} noun="people" retry={{run: search.refetch, busy: search.status === "failed" ? search.retrying : search.status === "ready" && search.refreshing}}/> : null}
+      {empty ? <Fact line={{fact: "no nexus users match."}}/> : null}
       {expanded ? <ul ref={navigation.listRef} {...navigation.listProps}
         aria-busy={!admitted || undefined} className={`${collection.surface} ${collection.compactViewport}`}>
         {results.map(person => <li key={person.user_id} {...navigation.optionProps(person.user_id)} className={collection.row}>

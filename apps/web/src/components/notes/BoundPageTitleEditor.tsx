@@ -2,14 +2,14 @@
 /** Titles retain their displayed Y.Text baseline through IME. An outline supplies
  * the same history owner as its body and structural commands; standalone title
  * fields keep an occurrence-local manager. Neither path creates note-body state. */
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import * as Y from "yjs";
 import { textReplacement } from "@nexus/authored/documents";
 import { useWritingDocument } from "@/lib/notes/hooks";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
-import {FeedbackBusy} from "@/components/feedback/Feedback";
-import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
+import {Field} from "@/components/feedback/Fact";
+import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import Textarea from "@/components/ui/Textarea";
 import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
@@ -21,7 +21,8 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const { platform } = useRenderEnvironment();
-  const { document: opened, error, occurrence, pending, retry } = useWritingDocument(suppliedDocument ? null : pageRef);
+  const { document: opened, error, pending, retry } = useWritingDocument(suppliedDocument ? null : pageRef);
+  const failureId = useId();
   const document = suppliedDocument ?? opened;
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? ownRef;
@@ -165,11 +166,9 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     beforeSelection.current = at;
     setValue(next); onSelectionChange?.(at);
   };
+  if (error !== null && !isAuthoredStorageFailure(error)) throw error;
   return <>
-    <FeedbackBusy subject={pageRef} pending={pending}/>
-    <AuthoredReadFailure error={error} occurrence={occurrence} pending={pending} retry={retry}/>
-    {document ? <DocumentReadFailure document={document}/> : null}
-    <Textarea bare autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
+    <Textarea bare autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
     onSelect={() => {inputIntent.current++; const at = selection(); beforeSelection.current = at; onSelectionChange?.(at);}}
@@ -188,5 +187,6 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
       if (historyCommand) {event.preventDefault(); step(historyCommand === "redo");}
       else if (event.key === "Enter") {event.preventDefault(); onEnter?.();}
     }}/>
+    {error === null ? null : <Field id={failureId} line={{fact: "couldn’t open this page’s title on this device."}} verbs={[{label: "retry", commandKey: "RetryPageTitle", run: retry, busy: pending}]}/>}
   </>;
 }

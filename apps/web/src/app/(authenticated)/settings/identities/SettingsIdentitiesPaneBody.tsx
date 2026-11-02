@@ -4,23 +4,14 @@ import { Unlink } from "lucide-react";
 
 import { useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import {
-  FeedbackNotice,
-  FeedbackFailure,
-  useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch, apiTransportFeedback, outcomeUnknown } from "@/lib/api/client";
-import {
-  modeledApiError,
-  useServerValue,
-  useThrowLater,
-  type Visit,
-} from "@/lib/api/serverState";
+import { apiFetch, outcomeUnknown } from "@/lib/api/client";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { OAUTH_PROVIDERS, oauthPath, PROVIDER_NAMES } from "@/lib/auth/urls";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { formatDisplayDate } from "@/lib/display/format";
@@ -38,8 +29,7 @@ import styles from "./page.module.css";
 const VISIT = definePaneVisitDataKey<Visit<LinkedIdentity[]>>(
   "Settings.Identities",
 );
-const LOAD_FAILED = "Linked identities couldn’t be loaded";
-const UNLINK_FAILED = "We couldn't unlink this identity. Please try again.";
+const UNLINK_FAILED = "couldn’t unlink this identity.";
 
 async function readIdentities(): Promise<LinkedIdentity[]> {
   return (installedApp
@@ -56,7 +46,7 @@ async function readIdentities(): Promise<LinkedIdentity[]> {
 export default function SettingsIdentitiesPaneBody() {
   const display = useRenderEnvironment();
   const { accountId } = useAuthenticatedAccount();
-  const fail = useThrowLater();
+  const { say, fail } = useOutcome();
   const identities = useServerValue({
     key: "identities",
     stale: "",
@@ -64,34 +54,27 @@ export default function SettingsIdentitiesPaneBody() {
     load: readIdentities,
   });
   const [unlinking, setUnlinking] = useState<string | null>(null);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  // The row's `Unlink` is an unknown outcome's retry.
+  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
   usePaneReturnReady(identities.status !== "loading");
 
   const unlink = async (identity: LinkedIdentity) => {
     setUnlinking(identity.id);
-    setFailure(null);
     try {
       const { data: { outcome } } = installedApp
         ? await accountIdentityDelete(identity.id)
         : await apiFetch<{ data: IdentityDeleteResult }>(`/api/me/identities/${encodeURIComponent(identity.id)}`, { method: "DELETE" });
+      setUnknown(null);
       if (outcome === "Unlinked") identities.refetch();
-      else setFailure({ tone: "Danger", title: UNLINK_FAILED });
+      else say({ fact: UNLINK_FAILED });
     } catch (error) {
-      const modeled = modeledApiError(error, fail);
-      if (modeled !== null)
-        setFailure(
-          outcomeUnknown(modeled) && modeled.code !== "E_UNAUTHENTICATED" ? {tone: "Warning", title: "change not confirmed", message: "the request may have succeeded.", requestId: modeled.requestId} : apiTransportFeedback(modeled, UNLINK_FAILED) ?? {
-            tone: "Danger",
-            title: UNLINK_FAILED,
-          },
-        );
+      if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") setUnknown(current => ({ id: identity.id, attempt: current?.id === identity.id ? current.attempt + 1 : 0 }));
+      else { setUnknown(null); fail(error, UNLINK_FAILED); }
     } finally {
       setUnlinking(null);
     }
   };
 
-  const loadError = identities.status === "loading" ? null : identities.error;
-  const readOccurrence = useFeedbackOccurrence(loadError !== null);
   const ready = identities.status === "ready" ? identities : null;
   const missing = OAUTH_PROVIDERS.filter(
     (provider) =>
@@ -101,35 +84,14 @@ export default function SettingsIdentitiesPaneBody() {
     <PaneSurface>
       <PaneSection>
         <div className={styles.content}>
-          {identities.status === "loading" ? (
-            <PaneLoadingState />
-          ) : null}
-          {loadError ? (
-            <FeedbackFailure scope="Local" occurrence={readOccurrence}
-              content={
-                apiTransportFeedback(loadError, LOAD_FAILED) ?? {
-                  tone: "Danger",
-                  title: LOAD_FAILED,
-                  requestId: loadError.requestId,
-                }
-              }
-              announcement="Assertive"
-              actions={[{ label: "Retry", onClick: identities.refetch, busy: identities.status === "failed" ? identities.retrying : identities.status === "ready" && identities.refreshing }]}
-            />
-          ) : null}
-          {failure ? (
-            <FeedbackFailure scope="Local" occurrence={failure} content={failure} announcement="Assertive" />
-          ) : null}
+          {identities.status === "loading" ? <Ruling />
+            : identities.status === "failed" ? <Failed error={identities.error} noun="linked identities" retry={{ run: identities.refetch, busy: identities.retrying }} />
+            : null}
+          {unknown === null ? null : <Hold id={`unlink-identity:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved. it may have gone through." }} />}
           {ready === null ? null : (
             <>
               {ready.data.length === 0 ? (
-                <FeedbackNotice
-                  content={{
-                    tone: "Neutral",
-                    title: "No Google or GitHub identities are linked.",
-                  }}
-                  announcement="Polite"
-                />
+                <Fact line={{ fact: "no linked identities." }} />
               ) : (
                 <CollectionView
                   returnScope="Settings.Identities.Linked"
@@ -169,14 +131,7 @@ export default function SettingsIdentitiesPaneBody() {
                 />
               )}
               {missing.length === 0 ? (
-                <FeedbackNotice
-                  content={{
-                    tone: "Neutral",
-                    title:
-                      "Google and GitHub are already linked for this account.",
-                  }}
-                  announcement="None"
-                />
+                <Fact line={{ fact: "every sign-in provider is linked." }} />
               ) : (
                 <div className={styles.linkButtons}>
                   {missing.map((provider) => (

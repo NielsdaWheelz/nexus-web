@@ -2,16 +2,11 @@
 // at least 15 characters (the provider's own minimum). an answer that never
 // arrived asks for the same password again.
 import { Eye, EyeOff } from "lucide-react";
-import Link from "next/link";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
-import {
-  FeedbackNotice,
-  FieldFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Fact, Field } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
-import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
@@ -23,15 +18,7 @@ import {
   type ReturnTarget,
 } from "@/lib/auth/urls";
 
-const TOO_SHORT: FeedbackContent = {
-  tone: "Danger",
-  title: "Password must be at least 15 characters.",
-};
-const UNCONFIRMED: FeedbackContent = {
-  tone: "Danger",
-  title: "We couldn’t confirm whether your password was saved.",
-  message: "Enter the same password and save again.",
-};
+const TOO_SHORT: Line = { fact: "passwords need at least 15 characters." };
 
 export default function PasswordUpdateForm({
   nextPath,
@@ -43,15 +30,13 @@ export default function PasswordUpdateForm({
   expectedAccountId: string | null;
 }) {
   const [revealed, setRevealed] = useState(false);
-  const [fieldError, setFieldError] = useState<FeedbackContent | null>(null);
-  const [pageError, setPageError] = useState<FeedbackContent | null>(null);
+  const [error, setError] = useState<Line | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  function fail(field: FeedbackContent | null, page: FeedbackContent | null) {
+  function fail(line: Line) {
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
-    setFieldError(field);
-    setPageError(page);
+    setError(line);
     passwordRef.current?.focus();
   }
 
@@ -61,52 +46,35 @@ export default function PasswordUpdateForm({
     // an ended session was cleared with feedback /login renders.
     if (kind === "DifferentAccount") window.location.replace(expectedAccountPath("/account/password", expectedAccountId));
     else if (kind === "SessionEnded") window.location.replace(switchBrowserAccountPath(parseReturnTarget(expectedAccountPath("/account/password", expectedAccountId))));
-    else if (kind === "PolicyRejected") fail(TOO_SHORT, null);
-    else if (kind === "RateLimited") {
-      fail(null, {
-        tone: "Danger",
-        title: "Too many attempts.",
-        message: "Wait a few minutes, then try again.",
-      });
-    } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
-      fail(null, UNCONFIRMED);
-    } else if (kind === "Forbidden") fail(null, WRONG_ADDRESS);
+    else if (kind === "PolicyRejected") fail(TOO_SHORT);
+    else if (kind === "RateLimited") fail({ fact: "too many attempts.", reason: "wait a while, then try again." });
+    // Send is the retry.
+    else if (kind === "ServiceUnavailable" || kind === "Unreachable") fail({ fact: "not sure that saved. it may have gone through." });
+    // L1 owns this copy; until it is a `Line`, its title and message are one.
+    else if (kind === "Forbidden") fail({ fact: WRONG_ADDRESS.title, reason: WRONG_ADDRESS.message });
     else throw new Error(`Unexpected password-update outcome ${kind}`);
   });
 
   function validate(): boolean {
     if ((passwordRef.current?.value.length ?? 0) < 15) {
-      fail(TOO_SHORT, null);
+      fail(TOO_SHORT);
       return false;
     }
-    setFieldError(null);
-    setPageError(null);
+    setError(null);
     return true;
   }
 
   if (saved) {
     return (
       <div className={authStyles.stack}>
-        <FeedbackNotice
-          content={{
-            tone: "Success",
-            title: "Password saved.",
-            message: "You can now sign in with your email and password.",
-          }}
-          announcement="Polite"
-        />
-        <Link href={nextPath} className={buttonClassName({ emphasis: "strong", size: "comfortable" })}>
-          Continue
-        </Link>
+        <Fact line={{ fact: "password saved.", reason: "you can sign in with your email and this password." }}
+          verbs={[{ label: "continue", href: nextPath }]} speak />
       </div>
     );
   }
 
   return (
     <div className={authStyles.stack}>
-      {pageError ? (
-        <FeedbackNotice content={pageError} announcement="Assertive" />
-      ) : null}
       <form
         className={authStyles.form}
         method="post"
@@ -139,10 +107,10 @@ export default function PasswordUpdateForm({
               autoComplete="new-password"
               minLength={15}
               required
-              onChange={() => setFieldError(null)}
-              aria-invalid={fieldError ? true : undefined}
+              onChange={() => setError(null)}
+              aria-invalid={error ? true : undefined}
               aria-describedby={
-                fieldError
+                error
                   ? "password-update-help password-update-error"
                   : "password-update-help"
               }
@@ -160,14 +128,10 @@ export default function PasswordUpdateForm({
           <p id="password-update-help" className={authStyles.help}>
             Use at least 15 characters.
           </p>
-          {fieldError ? (
-            <div role="alert">
-              <FieldFeedback id="password-update-error" content={fieldError} />
-            </div>
-          ) : null}
+          {error ? <Field id="password-update-error" line={error} /> : null}
         </div>
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
-          {pending ? "Saving password…" : "Save password"}
+          Save password
         </Button>
       </form>
     </div>

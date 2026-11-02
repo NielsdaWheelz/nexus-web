@@ -8,9 +8,11 @@ import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import styles from "@/app/(authenticated)/layout.module.css";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
-import Button from "@/components/ui/Button";
-import { isApiError, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { isApiError } from "@/lib/api/client";
+import { staleBuild } from "@/lib/api/failure";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { DeviceWorkspaceContext } from "./workspaceContext";
 import type { DeviceStartup, SignInResult } from "./contracts";
@@ -111,7 +113,6 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   const catalogRecovery = isApiError(signInFailure?.error) &&
     (signInFailure.error.code === "E_CATALOG_INVALID" || signInFailure.error.code === "E_CATALOG_IO");
   const startupCleanup = isApiError(failure?.error) && failure.error.code === "E_LOCAL_CLEANUP" ? failure.error : null;
-  const cleanupError = startupCleanup ?? (isApiError(cleanupFailure?.error) ? cleanupFailure.error : null);
   // These are distinct recovery steps, not updates to one published action.
   const stage = startupCleanup !== null ? "startup-cleanup"
     : cleanupFailure !== null ? "signout-cleanup"
@@ -121,24 +122,21 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
     : startup === undefined ? "opening"
     : wrong ? "different-account"
     : signInResult === "Failed" ? "sign-in-failed" : "sign-in";
-  return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}><FeedbackState key={stage}
-    content={stage === "startup-cleanup" || stage === "signout-cleanup" ? { tone: "Warning", title: "sign out not completed", message: cleanupError?.message ?? "local cleanup did not finish. retry to remove this device’s account data." }
-      : stage === "catalog-recovery" ? { tone: "Warning", title: "saved catalog couldn’t be opened", message: "sign out on this device to remove its saved account data, then sign in again." }
-      : stage === "snapshot-failed" ? { tone: "Danger", title: "saved workspace couldn’t be opened" }
-      : stage === "update-required" ? STALE_BUILD_FEEDBACK
-      : stage === "opening" ? { tone: "Neutral", title: "opening your workspace…" }
-      : stage === "different-account" ? { tone: "Warning", title: "use the account already open here", message: "sign out first to switch accounts." }
-      : stage === "sign-in-failed" ? { tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." }
-      : { tone: "Neutral", title: "sign in to open your workspace", message: "connect to sign in on this device." }}
-    announcement="Polite"
-    actions={stage === "startup-cleanup" ? [{ label: "retry cleanup", onClick: () => void read() }]
-      : stage === "signout-cleanup" ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
-      : stage === "snapshot-failed" ? [{ label: "retry", onClick: () => void read() }]
-      : stage === "update-required" || stage === "opening" || stage === "catalog-recovery" ? undefined
-      : stage === "different-account" ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }]
-      : [{ label: "sign in", busy: signingIn, onClick: signIn }]}
-  />
-    {wrong || catalogRecovery ? <Button tone="danger" aria-busy={signingIn || undefined} onClick={clearDevice}>sign out on this device</Button> : null}
-  </main></div>;
+  const signInVerb: CommandVerb = { label: "sign in", commandKey: "DeviceSignIn", busy: signingIn, run: signIn };
+  const signOutVerb: CommandVerb = { label: "sign out on this device", commandKey: "DeviceSignOut", busy: signingIn, run: clearDevice };
+  const retryRead: CommandVerb = { label: "retry", commandKey: "RetryDeviceStartup", run: () => void read() };
+  const unfinished: Line = { fact: "sign out didn’t finish.", reason: "this device still holds account data." };
+  const fact = (line: Line, verbs?: Verbs) => <Fact key={stage} line={line} verbs={verbs} speak />;
+  return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}>{
+    stage === "startup-cleanup" ? fact(unfinished, [retryRead])
+    : stage === "signout-cleanup" ? fact(unfinished, [{ label: "retry", commandKey: "RetryDeviceSignOut", busy: signingIn, run: clearDevice }])
+    : stage === "catalog-recovery" ? fact({ fact: "couldn’t open saved lists on this device." }, [signOutVerb])
+    : stage === "snapshot-failed" ? fact({ fact: "couldn’t open your saved workspace." }, [retryRead])
+    : stage === "update-required" ? fact({ fact: staleBuild() })
+    : stage === "opening" ? <Ruling />
+    : stage === "different-account" ? fact({ fact: "wrong account for this device.", reason: "sign in with the account already open here." }, [signInVerb, signOutVerb])
+    : stage === "sign-in-failed" ? fact({ fact: "couldn’t sign in." }, [signInVerb])
+    : fact({ fact: "sign in to open your workspace." }, [signInVerb])
+  }</main></div>;
 }
 

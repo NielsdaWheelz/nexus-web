@@ -8,8 +8,12 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FeedbackBusy, FeedbackFailure, FeedbackProvider, FeedbackRecoveryControl, FeedbackState, FeedbackStatus, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import { StageAnchor } from "@/components/feedback/Slips";
+import type { Line, Shell, Verbs } from "@/components/feedback/stage";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
@@ -38,41 +42,36 @@ import styles from "./share.module.css";
 
 type Result =
   | { label: string; ok: true; status: string; path: string; available: boolean }
-  | { label: string; ok: false; retryable: boolean; review: boolean; local_commit: boolean; feedback: FeedbackContent };
+  | { label: string; ok: false; retryable: boolean; review: boolean; local_commit: boolean; signIn: boolean; line: Line };
 
-/** A refusal as a result row: sign-out is final for this share; anything the
-    surface does not model throws. */
-function failed(
-  label: string,
-  error: unknown,
-  describe: () => FeedbackContent | null,
-): Extract<Result, { ok: false }> {
-  if (isUnauthenticatedApiError(error)) {
-    const feedback: FeedbackContent = {
-      tone: "Danger",
-      title: "Sign in to save this",
-      message: "Open Nexus, sign in, then share again.",
-      requestId: error.requestId,
-    };
-    return { label, ok: false, retryable: false, review: false, local_commit: false, feedback };
-  }
-  const feedback = describe();
-  if (feedback === null) throw error;
-  return { label, ok: false, retryable: true, local_commit: false, review: isApiError(error) && ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), feedback };
+const SAVE_FAILED = "couldn’t save this.";
+/** A refusal as a result row: sign-out is final for this share; an unknown outcome resends the
+ * same id; a domain refusal takes L6's domain line; anything else its transport's. */
+function failed(label: string, error: unknown): Extract<Result, { ok: false }> {
+  if (isUnauthenticatedApiError(error)) return { label, ok: false, retryable: false, review: false, local_commit: false, signIn: true, line: { fact: "sign in to save this." } };
+  if (!isApiError(error)) throw error;
+  const transport = transportOf(error);
+  const domain = transport === "Refused" ? captureErrorFeedback(error, "SaveSource").message : undefined;
+  const line = outcomeUnknown(error) ? { fact: "not sure that saved. it may have gone through." }
+    : transport !== "Refused" ? TRANSPORT_LINES[transport].command(SAVE_FAILED)
+    : domain === undefined ? { fact: SAVE_FAILED } : { fact: SAVE_FAILED, reason: domain };
+  return { label, ok: false, retryable: true, local_commit: false, signIn: false, review: ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), line };
 }
 
-class CaptureAdmissionError extends Error {}
+/** No local binding yet, or a share made for another account than the one open here. */
+class CaptureAdmissionError extends Error {
+  constructor(readonly kind: "Unbound" | "OtherAccount") { super(kind); }
+}
 type ShareAccount = { user_id: string; calendar_time_zone: string; capture: {noteId: string; localDate: string} | null };
+/** Sign-in belongs to the workspace: capture's verb opens it. */
+const SHELL: Shell = { signIn: { label: "open workspace", commandKey: "OpenWorkspace", run: () => window.location.assign("nexus-share://open?path=%2Fdownloads") } };
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
-  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  return <FeedbackProvider><div ref={setBounds} tabIndex={-1} className={styles.capture}>
-    <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-      protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("[data-feedback-controls]")] : []} returnFocus={() => bounds}>
-      <span className={styles.recoverySlot} data-feedback-controls="true"><FeedbackRecoveryControl /></span>
-      <ShareCaptureAdmission {...props} />
-    </FeedbackSurface>
+  return <FeedbackProvider shell={SHELL}><div tabIndex={-1} className={styles.capture}>
+    <StageAnchor kind="Root" />
+    <ShareCaptureAdmission {...props} />
   </div></FeedbackProvider>;
 }
+const NOT_OPENED = "couldn’t open your notes on this device.";
 function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
   const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
   const [account, setAccount] = useState<ShareAccount | null>(null);
@@ -84,12 +83,12 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
     let active = true;
     void (async () => {
       const binding = "nexusAuthored" in window ? (await readDeviceStartup())?.binding ?? null : await readBrowserBinding();
-      if (!binding) throw new CaptureAdmissionError("open nexus once to prepare your notes on this device, then share again.");
+      if (!binding) throw new CaptureAdmissionError("Unbound");
       let capture: ShareAccount["capture"] = null;
       if (props.isShell) {
         const params = new URL(location.href).searchParams;
         const noteId = params.get("capture_id"), localDate = params.get("capture_date");
-        if (params.get("capture_account_id") !== binding.account.account_id || noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new CaptureAdmissionError("this capture no longer belongs to the account open on this device. share again from the original app.");
+        if (params.get("capture_account_id") !== binding.account.account_id || noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new CaptureAdmissionError("OtherAccount");
         capture = {noteId, localDate};
       }
       if (active) { setAccount({user_id:binding.account.account_id,calendar_time_zone:binding.account.calendar_time_zone,capture});setFailure(null); }
@@ -97,8 +96,12 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
     return () => {active=false;};
   },[plain,attempt,props.isShell]);
   if (admissionDefect !== null) throw admissionDefect.error;
-  if (plain && failure) return <FeedbackState content={{tone:"Warning",title:"couldn’t open notes on this device",message:failure instanceof CaptureAdmissionError?failure.message:"open nexus and try sharing again."}} announcement="Polite" actions={[{label:"retry",onClick:()=>retry(value=>value+1)}]} />;
-  if (plain && !account) return <FeedbackBusy pending />;
+  const retryAdmission: Verbs = [{ label: "retry", commandKey: "RetryShareAdmission", run: () => retry(value => value + 1) }];
+  if (plain && failure) return failure instanceof CaptureAdmissionError
+    ? failure.kind === "Unbound" ? <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={retryAdmission} speak />
+      : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />
+    : <Fact line={isApiError(failure) ? TRANSPORT_LINES[transportOf(failure)].command(NOT_OPENED) : { fact: NOT_OPENED }} verbs={retryAdmission} speak />;
+  if (plain && !account) return <Ruling />;
   return <WorkProvider>{plain && account ? <AuthoredProvider accountId={account.user_id} host="share"><ShareCaptureContent {...props} account={account} /></AuthoredProvider> : <ShareCaptureContent {...props} account={null} />}</WorkProvider>;
 }
 
@@ -196,8 +199,9 @@ function ShareCaptureContent({
           void current.capture.then(accepted, failed);
         }, () => {});
       } else if (!isAuthoredStorageFailure(error)) { if(active)setDefect({error}); return; }
-      if(active)setResults([{label:trimmed,ok:false,retryable:true,review:false,local_commit:error instanceof LocalCommitError,
-        feedback:{tone:"Warning",title:current.committed?"couldn’t check this capture":"couldn’t save on this device",message:current.committed?"retry checking the saved note.":"keep this page open. retry saving."}}]);
+      // `save` is the retry: it checks a committed note, or saves again.
+      if(active)setResults([{label:trimmed,ok:false,retryable:true,review:false,local_commit:error instanceof LocalCommitError,signIn:false,
+        line:{fact:current.committed?"couldn’t confirm this note on this device.":"couldn’t save this note on this device."}}]);
     };
     void current.capture.then(accepted, failed).finally(()=>{if(active)setSaving(false);});
     return()=>{active=false;};
@@ -222,9 +226,7 @@ function ShareCaptureContent({
     } catch (error) {
       command.unconfirmed=outcomeUnknown(error);
       if (isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
-      return failed(url, error, () =>
-        captureErrorFeedback(error, "SaveSource"),
-      );
+      return failed(url, error);
     }
   }
 
@@ -238,7 +240,7 @@ function ShareCaptureContent({
         for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false });
       }
     } catch (error) {
-      setResults(targets.map(url => failed(url, error, () => captureErrorFeedback(error, "SaveSource"))));
+      setResults(targets.map(url => failed(url, error)));
       setSaving(false);
       return;
     }
@@ -283,15 +285,7 @@ function ShareCaptureContent({
   if (trimmed === "") {
     return (
       <>
-        <h1 className={styles.heading}>Nothing to share</h1>
-        <p className={styles.body}>
-          The shared text was empty, so there was nothing to save.
-        </p>
-        <div className={styles.actions}>
-          <a className={styles.actionPrimary} href={done}>
-            Done
-          </a>
-        </div>
+        <Fact line={{ fact: "nothing to share.", reason: "the shared text was empty." }} verbs={[{ label: "done", href: done }]} />
       </>
     );
   }
@@ -302,13 +296,13 @@ function ShareCaptureContent({
       <h1 className={styles.heading}>save to nexus</h1>
       <p className={styles.body}>{trimmed}</p>
       <div className={styles.actions}>
-        <Button reserveIcon aria-busy={saving || undefined} disabled={saving || result === null || result.ok || !result.retryable}
+        <Button aria-busy={saving || undefined} disabled={saving || result === null || result.ok || !result.retryable}
           onClick={() => { if (result !== null) retry(result); }}>save</Button>
         {result?.ok ? <a className={styles.actionPrimary} href={open(result.path)}>open</a> : null}
         <a className={styles.action} href={done}>done</a>
       </div>
       {result !== null && !result.ok && !result.local_commit ? <CaptureFailure result={result} saving={saving} retry={() => retry(result)} /> : null}
-      {result?.ok ? <FeedbackStatus content={{ tone: "Neutral", title: result.status }} announcement="None" /> : null}
+      {result?.ok ? <Fact line={{ fact: result.status }} /> : null}
     </>;
   }
 
@@ -344,7 +338,7 @@ function ShareCaptureContent({
         />
         {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
         <div className={styles.actions}>
-          <Button reserveIcon
+          <Button
             className={styles.actionPrimary}
             aria-busy={saving || undefined}
             disabled={creating || saving}
@@ -368,24 +362,20 @@ function ShareCaptureContent({
   const shown =
     results;
   if (shown === null) {
-    return (
-      <>
-        <FeedbackBusy pending />
-      </>
-    );
+    return <Ruling />;
   }
 
   const anySaved = shown.some((result) => result.ok && result.available);
-  const signedOut = shown.some((result) => !result.ok && result.feedback.title === "Sign in to save this");
+  const signedOut = shown.some((result) => !result.ok && result.signIn);
   return (
     <>
       <h1 className={styles.heading}>
         {anySaved
-          ? "Saved to Nexus"
-          : shown.some(result => result.ok) ? "this item was saved, then removed"
+          ? "saved to nexus"
+          : shown.some(result => result.ok) ? "saved, then removed"
           : signedOut
-            ? "Sign in to save this"
-            : "Couldn’t save"}
+            ? "sign in to save this"
+            : "couldn’t save"}
       </h1>
       <div className={styles.results} ref={resultArea} tabIndex={-1}>
         {shown.map((result) => (
@@ -394,11 +384,7 @@ function ShareCaptureContent({
               {result.label}
             </span>
             {result.ok ? (
-              <FeedbackStatus
-                content={{ tone: "Neutral", title: result.status }}
-                announcement="Polite"
-                actions={result.available ? [{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }] : undefined}
-              />
+              <Fact line={{ fact: result.status }} speak verbs={result.available ? [{ label: "open", href: open(result.path) }] : undefined} />
             ) : (
               <CaptureFailure result={result} saving={saving} retry={() => retry(result)} />
             )}
@@ -417,8 +403,8 @@ function ShareCaptureContent({
   );
 }
 
+/** A failed result on its row. `review libraries` opens review; `save` sends. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
-  const occurrence = useFeedbackOccurrence(true, result.label);
-  return <FeedbackFailure scope="Local" occurrence={occurrence} content={result.feedback} announcement="Polite"
-    actions={result.retryable ? [{ label: result.review ? "review and save" : "retry same save", onClick: retry, busy: saving }] : undefined} />;
+  return <Fact line={result.line} speak verbs={result.signIn ? SHELL.signIn ? [SHELL.signIn] : undefined
+    : result.retryable ? [{ label: result.review ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving }] : undefined} />;
 }

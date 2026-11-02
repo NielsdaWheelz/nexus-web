@@ -3,38 +3,27 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
-import {
-  FeedbackNotice,
-  FieldFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Fact, Field } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
+import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 
-const UNAVAILABLE: FeedbackContent = {
-  tone: "Danger",
-  title: "Password reset is temporarily unavailable.",
-  message: "Try again in a moment.",
-};
+const NOT_SENT = "couldn’t send a reset link.";
 
 export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
-  const [emailError, setEmailError] = useState<FeedbackContent | null>(null);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [emailError, setEmailError] = useState<Line | null>(null);
+  const [outcome, setOutcome] = useState<Line | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const { pending, submit } = useAuthForm<"RateLimited" | "ServiceUnavailable">(
     (kind) => {
-      if (kind === "RateLimited") {
-        setFeedback({
-          tone: "Danger",
-          title: "Too many reset requests.",
-          message: "Wait a few minutes, then try again.",
-        });
-      } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
-        setFeedback(UNAVAILABLE);
-      } else if (kind === "Forbidden") {
-        setFeedback(WRONG_ADDRESS);
-      } else {
+      if (kind === "RateLimited") setOutcome({ fact: "too many reset requests.", reason: "wait a while, then try again." });
+      else if (kind === "ServiceUnavailable") setOutcome(TRANSPORT_LINES.Busy.command(NOT_SENT));
+      else if (kind === "Unreachable") setOutcome(TRANSPORT_LINES.Unavailable.command(NOT_SENT));
+      // L1 owns this copy; until it is a `Line`, its title and message are one.
+      else if (kind === "Forbidden") setOutcome({ fact: WRONG_ADDRESS.title, reason: WRONG_ADDRESS.message });
+      else {
         throw new Error(`Unexpected password-recovery outcome ${kind}`);
       }
     },
@@ -43,13 +32,13 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
   function validate(): boolean {
     const email = emailRef.current;
     if (!email) throw new Error("Password-recovery email control is missing");
-    const error: FeedbackContent | null = !email.value.trim()
-      ? { tone: "Danger", title: "Enter your email address." }
+    const error: Line | null = !email.value.trim()
+      ? { fact: "enter your email address." }
       : email.validity.typeMismatch
-        ? { tone: "Danger", title: "Enter a valid email address." }
+        ? { fact: "enter a valid email address." }
         : null;
     setEmailError(error);
-    setFeedback(null);
+    setOutcome(null);
     if (error) email.focus();
     return !error;
   }
@@ -64,24 +53,13 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
   if (sent) {
     return (
       <div className={authStyles.stack}>
-        <FeedbackNotice
-          content={{
-            tone: "Info",
-            title: "Check your email.",
-            message:
-              "If this email belongs to a Nexus account, a password-reset link is on its way.",
-          }}
-          announcement="Polite"
-        />
-        {back}
+        <Fact line={{ fact: "check your email.", reason: "a reset link was sent if it has an account." }}
+          verbs={[{ label: "back to sign in", href: "/login" }]} speak />
       </div>
     );
   }
   return (
     <div className={authStyles.stack}>
-      {feedback ? (
-        <FeedbackNotice content={feedback} announcement="Assertive" />
-      ) : null}
       <form
         className={authStyles.form}
         method="post"
@@ -107,20 +85,15 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
             onChange={() => setEmailError(null)}
             aria-invalid={emailError ? true : undefined}
             aria-describedby={
-              emailError ? "password-recovery-email-error" : undefined
+              [emailError ? "password-recovery-email-error" : null, outcome ? "password-recovery-outcome" : null]
+                .filter(Boolean).join(" ") || undefined
             }
           />
-          {emailError ? (
-            <div role="alert">
-              <FieldFeedback
-                id="password-recovery-email-error"
-                content={emailError}
-              />
-            </div>
-          ) : null}
+          {emailError ? <Field id="password-recovery-email-error" line={emailError} /> : null}
+          {outcome ? <Field id="password-recovery-outcome" line={outcome} /> : null}
         </label>
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
-          {pending ? "Sending reset link…" : "Send reset link"}
+          Send reset link
         </Button>
       </form>
       {back}
