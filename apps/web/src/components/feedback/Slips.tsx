@@ -21,6 +21,9 @@ import styles from "./Slips.module.css";
 const SWIPE_STARTS_PX = 4;
 const SWIPE_DISMISSES_PX = 32;
 const SWIPE_DISMISSES_PX_PER_MS = 0.11;
+/** Speed is the hand's over this span before the lift, so a finger that stopped reads still and
+ * one quick sample is no flick. */
+const SWIPE_SPEED_SPAN_MS = 100;
 const SWIPE_UPWARD_FRICTION = 0.3;
 
 const takeFocus = (element: HTMLElement) => element.focus({ preventScroll: true });
@@ -44,10 +47,10 @@ function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTML
   }, [owner]);
 }
 
-/** Touch only. The frame follows the finger on `transform`; down past the line, or fast enough,
- * `sweep` takes it from where it was let go. Everything else settles it back. */
+/** Touch only. The frame follows the finger on `transform`; down past the line, or fast enough
+ * as it lifts, `sweep` takes it from where it was let go. Everything else settles it back. */
 function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
-  const drag = useRef<{ pointer: number; startY: number; y: number; at: number; speed: number } | null>(null);
+  const drag = useRef<{ pointer: number; startY: number; y: number; trail: { y: number; at: number }[] } | null>(null);
   const follow = (offset: number | null) => {
     const element = frame.current;
     if (!element) return;
@@ -56,14 +59,13 @@ function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
   };
   return {
     onPointerDown(event: PointerEvent) {
-      if (event.pointerType === "touch") drag.current = { pointer: event.pointerId, startY: event.clientY, y: event.clientY, at: event.timeStamp, speed: 0 };
+      if (event.pointerType === "touch") drag.current = { pointer: event.pointerId, startY: event.clientY, y: event.clientY, trail: [{ y: event.clientY, at: event.timeStamp }] };
     },
     onPointerMove(event: PointerEvent) {
       const current = drag.current;
       if (current?.pointer !== event.pointerId) return;
-      current.speed = (event.clientY - current.y) / Math.max(1, event.timeStamp - current.at);
       current.y = event.clientY;
-      current.at = event.timeStamp;
+      current.trail.push({ y: event.clientY, at: event.timeStamp });
       const offset = current.y - current.startY;
       if (Math.abs(offset) >= SWIPE_STARTS_PX) follow(offset < 0 ? offset * SWIPE_UPWARD_FRICTION : offset);
     },
@@ -72,7 +74,9 @@ function useSwipe(frame: RefObject<HTMLElement | null>, sweep: () => void) {
       if (current?.pointer !== event.pointerId) return;
       drag.current = null;
       const offset = current.y - current.startY;
-      if (offset >= SWIPE_STARTS_PX && (offset > SWIPE_DISMISSES_PX || current.speed >= SWIPE_DISMISSES_PX_PER_MS)) sweep();
+      const from = current.trail.findLast(({ at }) => at <= event.timeStamp - SWIPE_SPEED_SPAN_MS) ?? current.trail[0];
+      const speed = (current.y - from.y) / Math.max(1, event.timeStamp - from.at);
+      if (offset >= SWIPE_STARTS_PX && (offset > SWIPE_DISMISSES_PX || speed >= SWIPE_DISMISSES_PX_PER_MS)) sweep();
       else follow(null);
     },
     onPointerCancel() {
