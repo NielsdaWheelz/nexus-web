@@ -4,6 +4,7 @@
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { insertionPositions, type Intent } from "@nexus/authored/commands";
 import { isVisible } from "@nexus/authored/merge";
 import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
@@ -169,19 +170,24 @@ export function connectionMutationErrorMessage(error: unknown): FeedbackContent 
   return apiTransportFeedback(error, "couldn’t remove connection") ?? { tone: "Warning", title: "this connection can’t be removed here", requestId: error.requestId };
 }
 
+const PASSAGE_REFUSAL: Line = { fact: "couldn’t link this passage.", reason: "its quote or location is missing." };
 /** A passage picker result carries its own quote/locator baseline. Known semantic
- * bindings survive deletion; no server reread is substituted during acceptance. */
-export class LinkInputRefusal extends Error {}
+ * bindings survive deletion; no server reread is substituted during acceptance. A passage
+ * missing its retained quote or location is refused, and `line` says so. */
+export class LinkInputRefusal extends Error {
+  readonly line = PASSAGE_REFUSAL;
+  constructor() { super(`${PASSAGE_REFUSAL.fact} ${PASSAGE_REFUSAL.reason}`); }
+}
 export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget): Promise<{ ref: string; intents: Intent[] }> {
   if (target.kind === "resource") return { ref: target.ref, intents: [] };
   const capture = target.capture;
   const capturedTarget = target.passage_target;
-  if (capture === null || capturedTarget === null) throw new LinkInputRefusal("This passage has no retained selection. select it again before linking.");
+  if (capture === null || capturedTarget === null) throw new LinkInputRefusal();
   const locator = capture.locator;
-  if (locator === null) throw new LinkInputRefusal("This passage has no retained location.");
+  if (locator === null) throw new LinkInputRefusal();
   const selector = "text_quote_selector" in locator ? locator.text_quote_selector : null;
   const quote_exact = capture.quote_exact;
-  if (quote_exact === null || quote_exact.length === 0) throw new LinkInputRefusal("This passage has no retained quote. select it again before linking.");
+  if (quote_exact === null || quote_exact.length === 0) throw new LinkInputRefusal();
   const prefix = normalizeQuote(selector?.prefix ?? (locator.type === "pdf_page_geometry" ? locator.prefix ?? "" : ""));
   const suffix = normalizeQuote(selector?.suffix ?? (locator.type === "pdf_page_geometry" ? locator.suffix ?? "" : ""));
   const normalized_exact = normalizeQuote(quote_exact);

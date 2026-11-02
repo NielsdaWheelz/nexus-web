@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { ApiJson } from "@/lib/api/wire";
-import { apiFetch, apiTransportFeedback, isApiError, isStaleBuild, type ApiError } from "@/lib/api/client";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { FeedbackBusy, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
+import { modeledApiError, useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { authoredItem } from "@/lib/notes/presentation";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import Button from "@/components/ui/Button";
@@ -79,20 +80,21 @@ function useFullExcerpt(observed: ResourceItem) {
       setRequest(previous => ({ mode: "Reload", attempt: previous.attempt + 1 }));
     }
   };
-  return { item: full ?? subject, conflict, unavailable: local && query.data !== null && (query.data.scope_available === false || resource === undefined || resource.excerpt === null),
+  useFailedReadRepair(remote.error !== null, remote.pending, retry);
+  // Before the reading's scope hydrates, absent and not yet read look alike: the preview stands, silent.
+  return { item: full ?? subject, conflict, absent: local && query.data?.scope_available === true && (resource === undefined || resource.excerpt === null),
     query, error: remote.error, pending: local ? query.pending : remote.pending, retry, reload };
 }
 
 function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boolean }) {
   const loaded = useFullExcerpt(item);
-  const occurrence = useFeedbackOccurrence(loaded.error !== null, item.ref);
+  // A storage failure speaks only while nothing full has shown; a defect throws whenever it comes.
+  if (loaded.query.error !== null && !isAuthoredStorageFailure(loaded.query.error)) throw loaded.query.error;
   return <>
-    <FeedbackBusy pending={loaded.pending} subject={item.ref} />
-    <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t load this excerpt" />
-    {loaded.error ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={loaded.error} content={apiTransportFeedback(loaded.error, "couldn’t load this excerpt") ?? { tone: "Warning", title: "couldn’t load this excerpt", requestId: loaded.error.requestId }} announcement="Polite"
-      actions={isStaleBuild(loaded.error) ? undefined : [{ label: "retry", onClick: loaded.retry, busy: loaded.pending }]} /> : null}
-    {loaded.conflict ? <p>this excerpt changed. <Button type="button" reserveIcon aria-disabled={loaded.pending || undefined} aria-busy={loaded.pending} onClick={loaded.reload}>reload excerpt</Button></p>
-      : loaded.unavailable ? <p>excerpt unavailable in this reading.</p>
+    {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t open the full excerpt on this device." /> : null}
+    {loaded.error ? <Failed error={loaded.error} noun="full excerpts" retry={{ run: loaded.retry, busy: loaded.pending }} /> : null}
+    {loaded.conflict ? <Fact line={{ fact: "this excerpt has changed." }} verbs={[{ label: "show new version", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending }]} />
+      : loaded.absent ? <Fact line={{ fact: "no excerpt here for this reading." }} />
         : quotation ? <ResourceQuotation item={loaded.item} /> : <ResourceBody body={loaded.item.preview.body} full />}
   </>;
 }

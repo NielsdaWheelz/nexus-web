@@ -1,0 +1,4 @@
+/* The picker's ruling holds six collection rows, the height its list will take. */
+.picker {
+  --ruling-pitch: var(--size-md);
+}

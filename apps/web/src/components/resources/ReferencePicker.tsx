@@ -1,22 +1,26 @@
 "use client";
-/** Local authored candidates remain selectable beside unavailable remote results. */
+/** Local authored candidates remain selectable beside unavailable remote results. What the list
+ * region says stands outside the listbox, so no option carries it. */
 import ExcerptDisclosure from "./ExcerptDisclosure";
 import ResourceBody from "./ResourceBody";
-import { FeedbackNotice, FeedbackStatus, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import Button from "@/components/ui/Button";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
 import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
+import { cx } from "@/lib/ui/cx";
 import collection from "@/components/ui/Collection.module.css";
+import styles from "./ReferencePicker.module.css";
 export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
   const { state, search, bindings } = input;
-  const remoteOccurrence = useFeedbackOccurrence(search.error !== null, search.list.requestedKey);
   if (!state) return null;
-  return <div className={collection.surface}>
-    {search.minimum ? <FeedbackStatus content={{ tone: "Neutral", title: "type at least 2 characters" }} announcement="Polite" /> : null}
-    <FeedbackBusy subject={JSON.stringify([state.context.source_ref, state.row_id, state.raw])} pending={search.loading}/>
-    {!search.minimum && !search.loading && !search.items.length && !search.error && !search.localError ? <p>no matching resources</p> : null}
+  return <div className={cx(collection.surface, styles.picker)}>
+    {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} speak />
+      : search.items.length ? null
+      : search.loading ? <Ruling />
+      : !search.error && !search.localError ? <Fact line={{ fact: "no matches." }} /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} aria-busy={search.loading} className={collection.compactViewport}>
       {search.items.map(target => {
         const key = targetKey(target), scheme = parseResourceRef(target.item.ref)!.scheme;
@@ -27,9 +31,10 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
       })}
     </div>
     <ExcerptDisclosure item={search.items.find(target => targetKey(target) === input.selected)?.item ?? null} returnFocus={returnFocus} />
-    {search.error ? <FeedbackFailure scope="Local" occurrence={remoteOccurrence} content={{ tone: "Warning", title: "remote resources aren’t available", requestId: search.error.requestId }} announcement="Polite" actions={[{ label: "retry remote search", onClick: search.retry, busy: search.list.running !== null }]} /> : null}
-    <AuthoredReadFailure error={search.localError} occurrence={search.localOccurrence} pending={search.localPending} retry={search.retryLocal} title="couldn’t search notes on this device"/>
-    {!search.localComplete ? <Button reserveIcon aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
-    {state.message ? <FeedbackNotice content={{ tone: "Warning", title: state.message }} announcement="Polite" actions={[{ label: "review this destination", onClick: onReviewPosition }]} /> : null}
+    {search.error ? <Failed error={search.error} noun="library matches" retry={{ run: search.retry, busy: search.list.running !== null }} /> : null}
+    <AuthoredReadFailure error={search.localError} occurrence={search.localOccurrence} pending={search.localPending} retry={search.retryLocal} title="couldn’t search notes on this device."/>
+    {!search.localComplete ? <Button aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
+    {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
+      verbs={[{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }]} /> : null}
   </div>;
 }

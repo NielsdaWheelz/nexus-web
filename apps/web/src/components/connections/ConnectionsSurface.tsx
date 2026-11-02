@@ -2,10 +2,15 @@
 
 // User links, mentions and embeds are local authored facts and render from the
 // device store online and offline. Server facts render in their own section,
-// which may fail without hiding local writing.
+// which may fail without hiding local writing. Until anything has shown, the body
+// is a ruling; a local storage failure says so until its rows have shown, and a
+// defect in any local read throws to the boundary.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
-import { FeedbackFailure, FeedbackStatus, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { CommandVerb } from "@/components/feedback/stage";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import LocalOutline from "@/components/notes/LocalOutline";
 import Button from "@/components/ui/Button";
@@ -13,10 +18,12 @@ import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { outcomeUnknown } from "@/lib/api/client";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -24,15 +31,6 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import RemoteConnections, { useRemoteConnections } from "./RemoteConnections";
 import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
-
-function scanErrorMessage(error: unknown, operation: "ScanStatus" | "StartScan"): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
-  const transport = apiTransportFeedback(error, title);
-  if (transport !== null) return transport;
-  if (!["E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_REQUEST"].includes(error.code)) throw error;
-  return { tone: "Danger", title, message: "This item or connection is no longer available. Refresh Connections.", requestId: error.requestId };
-}
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   resourceRef: ResourceRef;
@@ -49,14 +47,18 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
   const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
-  const localRead = self.error !== null ? self : linked.error !== null ? linked : mentions;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
+  const local = [self, linked, mentions];
+  for (const read of local) if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
+  const unread = local.find(read => read.error !== null && read.data === null);
   const empty = linked.data?.rows.length === 0 && mentions.data?.rows.length === 0 && self.data !== null &&
-    embedded.length === 0 && remote.complete && remote.running === null && remote.items.length === 0;
+    embedded.length === 0 && remote.complete && remote.items.length === 0;
+  const shown = Boolean(linked.data?.rows.length || mentions.data?.rows.length || embedded.length || remote.items.length);
+  const opening = !shown && unread === undefined && remote.status !== "failed"
+    && (local.some(read => read.data === null && read.pending) || remote.status === "loading");
 
-  if (scan.defectState) throw scan.defectState.error;
   return (
     <section ref={section} tabIndex={-1} className={styles.section} aria-label="Connections"
       {...attachments.dropProps}>
@@ -65,13 +67,14 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         <div className={styles.headerActions}>
           <ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
-          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={() => void scan.start()} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
+          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={scan.start} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
         </div>
       </div>
 
-      {scan.feedback ? <FeedbackFailure scope="Local" occurrence={scan.occurrence} content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
-      <AuthoredReadFailure {...localRead} title="couldn’t refresh connections" retry={() => {self.retry(); linked.retry(); mentions.retry();}}/>
-      {empty ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" /> : null}
+      {scan.held}
+      {unread ? <AuthoredReadFailure {...unread} title="couldn’t open connections on this device."
+        retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
+      {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
@@ -94,76 +97,78 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
 
 const DISCOVERY_SCAN_POLL_MS = 2000;
 const DISCOVERY_SCAN_TIMEOUT_MS = 45_000;
+type ScanCommand = "StartScan" | "ScanStatus";
 
-/** The native job status owns liveness; only its explicit outcome proves success. */
+/** The native job status owns liveness; only its explicit outcome proves success. What a scan
+ * command leaves unknown holds: a start whose answer was lost, or a scan still running past the
+ * watch. Held, its verb stays where it was; a later answer that settles the scan withdraws it. */
 function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   selfRef: string; enabled: boolean; onSettled: () => void;
 }) {
+  const { say, fail } = useOutcome();
   const [phase, setPhase] = useState<"idle" | "requesting" | "polling">("idle");
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [failureOperation, setFailureOperation] = useState<"ScanStatus" | "StartScan" | null>(null);
-  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
-  const deadlineRef = useRef(0);
-  const settle = useCallback((state: DiscoveryScanStatus) => {
+  const [held, setHeld] = useState<{ kind: "Unsure" | "Waiting"; attempt: number } | null>(null);
+  const deadline = useRef(0);
+  const hold = (kind: "Unsure" | "Waiting") => setHeld(current => ({ kind, attempt: current?.kind === kind ? current.attempt + 1 : 0 }));
+  // `retry` sends a new scan; `check` only reads its status.
+  const verb = (command: ScanCommand): CommandVerb => command === "StartScan"
+    ? { label: "retry", commandKey: `Connections.Scan.start:${selfRef}`, run: () => void latest.current("StartScan") }
+    : { label: "check", commandKey: `Connections.Scan.check:${selfRef}`, run: () => void latest.current("ScanStatus") };
+  const settle = (state: DiscoveryScanStatus) => {
     if (state.status === "pending" || state.status === "running") return false;
     setPhase("idle");
-    if (state.status === "failed" || state.outcome === "terminal_failed") {
-      setFeedback({ tone: "Warning", title: "Connections weren’t found", message: "The scan failed. You can try again." });
-      setFailureOperation("StartScan");
-    } else if (state.outcome === "skipped" || state.outcome === null) {
-      setFeedback({ tone: "Info", title: "scan didn’t run", message: "connection discovery isn’t available for this item right now." });
-      setFailureOperation(null);
-    } else {
-      setFeedback(null);
-    }
+    setHeld(null);
+    if (state.status === "failed" || state.outcome === "terminal_failed") say({ fact: "the scan didn’t finish." }, [verb("StartScan")]);
+    else if (state.outcome === "skipped" || state.outcome === null) say({ fact: "the scan ended without changes." });
     onSettled();
     return true;
-  }, [onSettled]);
-  const failed = useCallback((error: unknown, operation: "ScanStatus" | "StartScan") => {
+  };
+  const failed = (error: unknown, command: ScanCommand) => {
     setPhase("idle");
     if (handleUnauthenticatedApiError(error)) return;
+    if (command === "StartScan" && outcomeUnknown(error)) hold("Unsure");
+    else fail(error, command === "StartScan" ? "couldn’t start the scan." : "couldn’t check the scan.", verb(command));
+  };
+  const begin = async (command: ScanCommand) => {
+    if (phase !== "idle") return;
+    setPhase("requesting");
     try {
-      setFeedback(scanErrorMessage(error, operation));
-      setFailureOperation((outcomeUnknown(error) || (isApiError(error) && error.code === "E_RATE_LIMITED")) ? operation : null);
-    }
-    catch (error) { setDefectState({ error }); }
-  }, []);
+      const state = await (command === "StartScan" ? requestDiscoveryScan(selfRef) : fetchDiscoveryScanStatus(selfRef));
+      if (settle(state)) return;
+      setHeld(null);
+      deadline.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
+      setPhase("polling");
+    } catch (error) { failed(error, command); }
+  };
+  const latest = useRef(begin);
+  latest.current = begin;
+  const throwLater = useThrowLater();
+  // A scan already running resumes its watch; one that ended before this visit is no news. This
+  // read is auxiliary: a modeled failure says nothing, and a defect throws to the boundary.
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     void fetchDiscoveryScanStatus(selfRef).then((state) => {
-      if (cancelled || state.status === "idle") return;
-      if (state.status === "failed") { settle(state); return; }
-      deadlineRef.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
+      if (cancelled || state.status === "idle" || state.status === "failed") return;
+      deadline.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
       setPhase("polling");
-    }).catch((error) => { if (!cancelled) failed(error, "ScanStatus"); });
+    }, (error: unknown) => { if (!cancelled) modeledApiError(error, throwLater); });
     return () => { cancelled = true; };
-  }, [enabled, failed, selfRef, settle]);
+  }, [enabled, selfRef, throwLater]);
   // justify-polling: user-requested background work has no SSE plane; poll at
-  // 2s for at most 45s, then offer another status read without claiming success.
+  // 2s for at most 45s, then hold the scan as still running, with a status read.
   useIntervalPoll({ enabled: phase === "polling", pollIntervalMs: DISCOVERY_SCAN_POLL_MS, onPoll: async () => {
     try {
-      const state = await fetchDiscoveryScanStatus(selfRef);
-      if (settle(state)) return;
-      if (Date.now() >= deadlineRef.current) {
-        setPhase("idle");
-        setFeedback({ tone: "Info", title: "Still finding connections", message: "The scan is taking longer than expected. Check its status again." });
-        setFailureOperation("ScanStatus");
-      }
+      if (settle(await fetchDiscoveryScanStatus(selfRef)) || Date.now() < deadline.current) return;
+      setPhase("idle");
+      hold("Waiting");
     } catch (error) { failed(error, "ScanStatus"); }
   } });
-  const begin = useCallback(async (operation: "ScanStatus" | "StartScan") => {
-    if (phase !== "idle") return;
-    setPhase("requesting");
-    try {
-      const state = await (operation === "StartScan" ? requestDiscoveryScan(selfRef) : fetchDiscoveryScanStatus(selfRef));
-      if (settle(state)) return;
-      setFeedback(null);
-      setFailureOperation(null);
-      deadlineRef.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
-      setPhase("polling");
-    } catch (error) { failed(error, operation); }
-  }, [failed, phase, selfRef, settle]);
-  const occurrence = useFeedbackOccurrence(feedback !== null, selfRef);
-  return { phase, feedback, occurrence, canRetry: failureOperation !== null, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
+  return {
+    phase,
+    start: () => void begin("StartScan"),
+    held: held && <Hold id={`Connections.Scan:${selfRef}:${held.kind}`} attempt={held.attempt}
+      line={held.kind === "Unsure" ? { fact: "not sure the scan started.", reason: "it may have gone through." } : { fact: "still finding connections." }}
+      verbs={[{ ...verb(held.kind === "Unsure" ? "StartScan" : "ScanStatus"), busy: phase !== "idle" }]} />,
+  };
 }

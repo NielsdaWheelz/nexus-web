@@ -11,7 +11,9 @@
 import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp, History, Unlink} from "lucide-react";
 import MachineText from "@/components/ui/MachineText";
-import {FeedbackFailure, useFeedbackOccurrence, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
+import {Fact, Failed} from "@/components/feedback/Fact";
+import {Hold, useOutcome} from "@/components/feedback/Feedback";
+import type {Retract} from "@/components/feedback/stage";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
@@ -23,19 +25,19 @@ import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {useChangeStamp} from "@/lib/api/changes";
 import {useIndexRowWindow} from "@/lib/collections/indexRowWindow";
-import {isApiError} from "@/lib/api/client";
+import {isApiError, outcomeUnknown} from "@/lib/api/client";
 import {assertNever} from "@/lib/assertNever";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
 import type {Schema} from "@/lib/api/wire";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
-import type {WritingRuntime} from "@/lib/notes/runtime";
+import {isAuthoredStorageFailure, type WritingRuntime} from "@/lib/notes/runtime";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
-import {connectionMutationErrorMessage, mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
+import {mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
 import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
@@ -132,9 +134,13 @@ function LocalRow(props:Shared&{subject:string}){
   const resource=read.data?.rows[0]?.resource;
   const [ownedRef,setOwnedRef]=useState<string|null>(null);
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
+  // A storage failure speaks only until the row has shown; a defect throws whenever it comes.
+  if(read.error!==null&&!isAuthoredStorageFailure(read.error))throw read.error;
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
   if(read.data)return <ReferenceRow {...props}/>;
-  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,status:<AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>}}/>;
+  const type=resourceTypeLabel(parseResourceRef(props.subject)!.scheme).toLowerCase();
+  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,
+    status:<AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/>}}/>;
 }
 
 /** The row's one link to its resource; a null href renders its children alone. */
@@ -197,17 +203,17 @@ function ReferenceRow(props: Shared & {subject: string}) {
   const remote = usePaneFreeServerValue<Item>({key: `/resource-items/${props.subject}`, stale: useChangeStamp("Metadata"),
     load: signal => resolveResourceItem(props.subject, signal)});
   const local = useAuthoredQuery(remote.status === "ready" ? null : {kind: "resource", ref: props.subject});
+  // The stub read is auxiliary: its storage failure says nothing, its defect throws.
+  if (local.error !== null && !isAuthoredStorageFailure(local.error)) throw local.error;
   const stub = local.data?.rows[0]?.resource ?? null;
-  // Absent locally and still being read remotely is not yet "unavailable": show the literal ref.
-  const settled = remote.status === "failed";
-  const label = stub ? localResourceLabel(stub) : settled ? "unavailable resource" : props.subject;
+  // Until the server item arrives the row shows the stub's label, else the literal ref; its status says why.
+  const label = stub ? localResourceLabel(stub) : props.subject;
   if(remote.status==="ready"&&remote.data.authored_by_viewer&&AUTHORED.test(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props), ref: props.subject} : {
     ref: props.subject, label,
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
     primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
-    status: local.error ? <AuthoredReadFailure {...local} title="couldn’t refresh this resource"/>
-      : !stub && local.data && settled ? <p className={styles.status}>not available on this device</p> : null,
+    status: remote.status === "failed" ? <Failed error={remote.error} noun="this item’s details" retry={{run: remote.refetch, busy: remote.retrying}}/> : null,
   }}/>;
 }
 
@@ -216,13 +222,14 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
   const source = useAuthoredQuery(!props.inSource && resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const branch = useContext(ResourceBranch);
   const parsed = parseResourceRef(props.subject)!;
-  const label = resource ? localResourceLabel(resource) : parsed.scheme === "note_block" ? "unavailable note"
-    : parsed.scheme === "page" ? "unavailable page" : "unavailable highlight";
+  const type = resourceTypeLabel(parsed.scheme).toLowerCase();
+  const label = resource ? localResourceLabel(resource) : type;
   const terminal = classifyOutlineOccurrence({branch, targetRef: props.subject, edgeId: null}).kind === "reference";
   const editable = (props.editable ?? true) && !props.historical && !terminal;
   const href = resource ? localResourceHref(resource, { activationRef: props.readingRef ?? null }) : null;
   const sourceLabel = source.data?.rows[0]?.resource;
-  const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : ""}</span>
+  // Absence is a fact only in a hydrated scope; before it, absent and not yet read look alike.
+  const primary = !resource ? read.data?.scope_available ? <Fact line={{fact: `this ${type} isn’t on this device.`}}/> : null
     : resource.kind === "note" ? editable ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable/>
       : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
     : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
@@ -238,9 +245,7 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
   return <Occurrence {...props} presentation={{
     ref: props.subject, label, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
-    status: <>
-      <AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>
-    </>,
+    status: read.data === null ? <AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/> : null,
   }}/>;
 }
 
@@ -266,13 +271,15 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     edgeIds: enteringEdgeId === null ? [] : [enteringEdgeId]}),
     [branch, ref, occurrenceKey, enteringEdgeId]);
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
+  const {say, fail} = useOutcome();
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const [failure, setFailure] = useState<{content: FeedbackContent; action: FeedbackAction | null} | null>(null);
+  /** A removal whose answer was lost; `tries` keys its speech. */
+  const [unsure, setUnsure] = useState<{attempt: () => Promise<unknown>; tries: number} | null>(null);
+  const report = useRef<Retract | null>(null);
   const rowWindow = useIndexRowWindow();
-  const unsettled = busy || failure !== null;
+  const unsettled = busy || unsure !== null;
   useLayoutEffect(() => unsettled ? rowWindow?.pin() : undefined, [rowWindow, unsettled]);
-  const failureOccurrence = useFeedbackOccurrence(failure !== null, occurrenceKey);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {
     element.current = node;
@@ -317,11 +324,15 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
     if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
-  /** One server-fact removal; its failure stays beside the row with the owner's retry. */
+  const retryRemoval = (attempt: () => Promise<unknown>) => ({label: "retry", commandKey: `Resource.Relation.retry:${occurrenceKey}`, run: () => void mutate(attempt)});
+  /** One server-fact removal. A refusal is a slip with its retry; a lost answer holds until a
+   * retry settles it or the row leaves; a stale context says why and rereads the list. */
   async function mutate(attempt: () => Promise<unknown>) {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    report.current?.();
+    report.current = null;
     const row = element.current;
     const fallback = row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
     // A nested fact may retire its whole ancestor once its list refreshes.
@@ -336,12 +347,13 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     try {
       await attempt();
     } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) {
-        const content = connectionMutationErrorMessage(error);
-        const changed = isApiError(error) && error.code === "E_CONTEXT_CHANGED";
-        setFailure({content, action: changed ? {label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); }}
-          : {label: "retry", onClick: () => void mutate(attempt)}});
-      }
+      if (handleUnauthenticatedApiError(error)) return;
+      if (outcomeUnknown(error)) { setUnsure(current => ({attempt, tries: (current?.tries ?? -1) + 1})); return; }
+      setUnsure(null);
+      if (isApiError(error) && error.code === "E_CONTEXT_CHANGED") {
+        report.current = say({fact: "couldn’t remove this from future context.", reason: "the context changed."});
+        onChanged?.();
+      } else report.current = fail(error, "couldn’t remove this connection.", retryRemoval(attempt));
       return;
     } finally {
       document.removeEventListener("pointerdown", release, true);
@@ -350,7 +362,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       setBusy(false);
     }
     const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
-    setFailure(null);
+    setUnsure(null);
     onChanged?.();
     outline?.refreshChildren();
     if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
@@ -360,7 +372,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
     label: `Unlink from ${incoming.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
   if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Unlink size={16} aria-hidden="true" />,
-    disabled: busy, disabledReason: busy ? "removal is pending" : undefined,
+    disabled: busy, busy, disabledReason: busy ? "removing" : undefined,
     restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
   if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: <History size={16} aria-hidden="true" />,
@@ -401,8 +413,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
             {connection.snapshot.rationale}</MachineText></div> : null}
           {details}
-          {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure.content} announcement="Assertive"
-            actions={failure.action ? [{...failure.action, busy}] : undefined}/> : null}
+          {unsure ? <Hold id={`Resource.Relation.removal:${occurrenceKey}`} attempt={unsure.tries}
+            line={{fact: "not sure that was removed.", reason: "it may have gone through."}} verbs={[{...retryRemoval(unsure.attempt), busy}]}/> : null}
         </div>
         <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
