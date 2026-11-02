@@ -38,7 +38,7 @@ export default function GenerationPicker({
   value: SelectionEditor;
   onChange(value: SelectionEditor): void;
   disabled: boolean;
-  /** The choice shown is still being recalled. */
+  /** The choice shown is still being recalled: effort spins, stays pressable, and opens on the ruling. */
   waiting?: boolean;
 }) {
   // Complete only the committed unresolved intent. No deferred callback can
@@ -119,8 +119,8 @@ export default function GenerationPicker({
             onChange(chooseModel(catalog, route, selected.model.key, selected.mode, value));
         }} />
       <EffortPicker variant={variant} value={value}
-        disabled={disabled || (!variant && value.kind !== "Selected")}
-        waiting={waiting} unready={null}
+        disabled={disabled || (!variant && value.kind !== "Selected" && !waiting)}
+        waiting={waiting} unready={waiting && !variant ? <Ruling /> : null}
         onOpen={refresh}
         onChange={(key) => {
           if (route && variant) onChange(chooseThinking(route, variant.model.key, key));
