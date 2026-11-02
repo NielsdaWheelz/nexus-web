@@ -77,6 +77,8 @@
   --size-lg: 36px;
   --size-xl: 44px;
 
+  --icon-stroke: 1.5px;
+
   --z-overlay: 100; /* mobile chrome */
   --z-popover: 900; /* page menus, floating surfaces, previews */
   --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
@@ -407,6 +409,17 @@ input,
 textarea {
   font-family: inherit;
   font-size: inherit;
+}
+
+/* every glyph (lib/ui/icons.tsx) keeps one line weight in screen pixels at any
+   size: the slot scales the drawing, never its stroke. :where() keeps this default
+   at specificity 0, so a glyph's own declared exception wins in any css chunk order. */
+:where(.lucide) {
+  stroke-width: var(--icon-stroke);
+}
+
+:where(.lucide) > * {
+  vector-effect: non-scaling-stroke;
 }
 
 .sr-only {
