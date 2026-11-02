@@ -249,12 +249,11 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
   ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const id = desiredState === "finished" ? "MarkCollectionFinished" : "MarkCollectionUnread";
-  const entry = ACTION_CATALOG[id];
   const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
   const label = selection.kind === "Podcast" && selection.state !== "all"
     ? `Mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
     : `Mark all ${status}…`;
-  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
+  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -272,7 +271,7 @@ export function projectPodcastTranscriptAction({ podcastId, state, title, blocke
   const id = "TranscribePodcastEpisodes";
   const entry = ACTION_CATALOG[id];
   const label = state === "all" ? entry.label : `Transcribe ${state.replaceAll("_", " ")} episodes…`;
-  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
+  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
