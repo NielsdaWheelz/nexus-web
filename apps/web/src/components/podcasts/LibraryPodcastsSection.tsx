@@ -3,6 +3,7 @@
 /** Library sections promote one removal command: global in all, scoped in named
  * libraries. Current reads gate shortcuts; canonical menus prepare their own facts.
  */
+import { Fact } from "@/components/feedback/Fact";
 import { useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionRow from "@/components/collections/CollectionRow";
@@ -73,9 +74,9 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
         const descriptionId = `${reasonId}-${row.id}`;
         const show = showsById.get(row.id);
         const attention = show?.recurring.error_code !== null && show?.recurring.error_code !== undefined || show?.recurring.had_coverage_gaps
-          ? "last episode check incomplete; open show details to check again"
-          : show?.imports.some(operation => operation.state === "failed") ? "episode import paused; open show details to retry"
-          : show?.imports.some(operation => operation.state === "pending" || operation.state === "running") ? "importing episodes; open show details for progress" : undefined;
+          ? "last episode check incomplete"
+          : show?.imports.some(operation => operation.state === "failed") ? "episode addition stopped"
+          : show?.imports.some(operation => operation.state === "pending" || operation.state === "running") ? "adding episodes" : undefined;
         return <CollectionRow {...props} attention={attention} compactPrimaryControl actionFocus={focus}
           occurrenceActions={local === null ? undefined : [local]}
           primaryControl={<>
@@ -87,7 +88,7 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
             {action.disabledReason ? <span className="sr-only" id={descriptionId}>{action.disabledReason}</span> : null}
           </>} />;
       } : undefined}
-      empty={source.status === "ready" && source.error === null ? <p>no subscribed podcasts.</p> : null} />
+      empty={source.status === "ready" && source.error === null ? <Fact line={{ fact: "no subscribed podcasts." }} /> : null} />
     {live && data !== null && data.imports.length > 0 ? <section aria-label="episode additions"><h3>episode additions</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} /></div>)}</section> : null}
   </PaneSection>;
 }

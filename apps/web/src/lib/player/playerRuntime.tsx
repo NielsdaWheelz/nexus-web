@@ -1047,6 +1047,8 @@ export function GlobalPlayerProvider({
         const modeledFailure = uncertain ? null : modeled(error);
         const failure = isApiError(modeledFailure) && modeledFailure.code === "E_LIMIT" ? new QueueCommandError("TooMany") : modeledFailure;
         if (failure instanceof QueueCommandError) { if (failure.line !== null) outcome.say(failure.line); }
+        // A capture's refusal carries its reason as its message, as the engine's do.
+        else if (failure?.code === "E_PLAYBACK_REFUSED") outcome.say({ fact: "couldn’t queue these episodes.", reason: failure.message || undefined });
         else if (failure !== null) outcome.fail(failure, "couldn’t queue these episodes.",
           { label: "retry", commandKey: "retry queue preparation", run: () => navigation.current?.checkQueue() });
         throw error;

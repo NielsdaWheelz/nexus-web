@@ -152,12 +152,6 @@ export async function requestPodcastRefresh(
   return response.data.requested_count;
 }
 
-export function podcastRefreshRequestAnnouncement(count: number): string {
-  return count === 0
-    ? "no episode checks needed"
-    : `episode check requested for ${count} show${count === 1 ? "" : "s"}`;
-}
-
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
   kind: "PodcastEpisodeQuery",
   podcast_id: podcastId,

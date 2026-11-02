@@ -305,7 +305,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       return getPodcastSettings(podcastId, signal);
     },
   });
-  const save = usePodcastSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
+  const save = usePodcastSettingsSave(podcastId, loaded?.source.kind === "Episode" ? loaded.source.descriptor.subtitle ?? "this podcast" : "this podcast",
+    playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded?.source.kind === "Episode" && loaded.playbackFailed
     && queue.error?.kind === "Episode" && queue.error.entry_id === queue.header?.current_entry_id;

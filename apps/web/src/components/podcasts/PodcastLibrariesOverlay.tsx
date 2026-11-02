@@ -1,17 +1,17 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { libraryDestinations } from "@/lib/libraries/api";
 import { getDefaultPodcastLibrary, getPodcastDetail, type PodcastTarget } from "@/lib/podcasts/api";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import PodcastAcquisitionDialog from "./PodcastAcquisitionDialog";
 import PodcastStopDialog from "./PodcastStopDialog";
@@ -33,6 +33,8 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
   readonly successFocus?: ReturnFocusTarget;
 }) {
   const { ctx } = useActionRuntime();
+  const { say } = useOutcome();
+  const [occurrence] = useState({});
   const [step, setStep] = useState<Step>({ kind: "Choose" });
   const session = useRef<{ active: boolean; choosing: boolean }>({ active: true, choosing: true });
   useLayoutEffect(() => { const current = session.current; current.active = true; return () => { current.active = false; }; }, []);
@@ -59,15 +61,16 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
   for (const item of subscriptions) if (!destinations.has(item.library_id)) destinations.set(item.library_id, { id: item.library_id, name: libraryDisplayName(item), writable: item.can_add_content });
   const rows: ChooserRow[] = [...destinations.values()].map(item => {
     const included = subscriptions.some(subscription => subscription.library_id === item.id);
-    const reason = !ready ? "checking destination…" : null;
+    // Rows act only on fresh facts; a failed refresh says so, a wait is the chooser's busy.
+    const reason = ready ? null : source.status === "ready" && source.error !== null && !loading ? "couldn’t refresh libraries." : "checking libraries";
     return { id: item.id, name: item.name, confirmed: { included: included ? 1 : 0, total: 1 }, intended: { included: 0, total: 1 }, progress: "Settled",
-      note: included ? `podcast subscription${item.writable ? "" : " · read only"}` : reason ?? undefined,
+      note: included ? `podcast subscription${item.writable ? "" : " · read only"}` : reason === "couldn’t refresh libraries." ? reason : undefined,
       action: reason === null ? { kind: "Set", included: true, label: "choose destination" } : { kind: "Blocked", reason } };
   });
-  const readOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, scope);
-  const readError = source.status === "loading" || source.error === null ? null : {
-    occurrence: readOccurrence,
-    content: podcastErrorMessage(source.error, source.status === "failed" ? "couldn’t load libraries." : "couldn’t refresh libraries."),
+  // Coexistence until L5a's chooser takes a `failure` node: the read's `Failed` line, by transport.
+  const readLine = source.status === "failed" ? TRANSPORT_LINES[transportOf(source.error)].read("libraries") : null;
+  const readError = readLine === null ? null : {
+    occurrence, content: { tone: "Warning" as const, title: readLine.fact, message: readLine.reason },
     retry: source.refetch, busy: loading,
   };
   switch (step.kind) {
@@ -76,7 +79,7 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
         anchor={returnFocusTo} returnFocusFallback={returnFocusFallback}
         skipReturnFocus={() => !session.current.choosing}>
         <LibraryChooser context={`podcast-libraries:${scope}`} membershipKind="Chosen" rows={rows} loading={loading}
-          summary={null} empty="no libraries available"
+          summary={null} empty="no libraries."
           error={readError ?? creation.error}
           onToggle={({ id }) => {
             const row = rows.find(item => item.id === id);
@@ -88,7 +91,7 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
               if (!ctx.isActive()) return;
               if (session.current.active && session.current.choosing) { choose(destination.id, true); return; }
               // The chooser has closed: nothing else says the subscription still needs choosing.
-              ctx.feedback.receipt({ tone: "Info", title: `library created · ${destination.name}; addition not started` });
+              say({ fact: `created ${destination.name} without “${title}”.` });
             } }) }} />
       </PickerSurface>;
     case "AdditionReview":

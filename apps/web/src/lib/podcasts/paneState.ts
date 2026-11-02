@@ -1,7 +1,8 @@
 "use client";
 
-// Podcast pane failure copy, one-at-a-time commands and the chrome refresh,
-// over the shared server-state hooks (lib/api/serverState).
+// The podcast domain's translator, ahead of transport: domain codes become reasons, and
+// everything else is `transportOf`'s. Also the chrome's refresh over the shared server-state
+// hooks (lib/api/serverState).
 
 import { useCallback, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -11,17 +12,50 @@ import {
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import type { PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import {
-  podcastRefreshRequestAnnouncement,
-  requestPodcastRefresh,
-  type PodcastRefreshScope,
-} from "@/lib/podcasts/api";
+import { requestPodcastRefresh, type PodcastRefreshScope } from "@/lib/podcasts/api";
 
+/** Why the server refused a podcast command, when the code is the domain's; undefined leaves
+ * the line to transport. */
+export function podcastRefusalReason(error: ApiError): string | undefined {
+  switch (error.code) {
+    case "E_NOT_FOUND":
+    case "E_PODCAST_NOT_FOUND":
+    case "E_MEDIA_NOT_FOUND":
+      return "it isn’t available anymore.";
+    case "E_PODCAST_SUBSCRIPTION_ACTIVE":
+      return "a podcast subscription includes it.";
+    case "E_PODCAST_FEED_UNAVAILABLE":
+      return "its feed couldn’t be read.";
+    case "E_BROWSE_PROVIDER_UNAVAILABLE":
+      return "the podcast directory isn’t answering.";
+    case "E_BROWSE_PROVIDER_RATE_LIMITED":
+    case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
+      return "the podcast directory is busy.";
+    case "E_FORBIDDEN":
+      return "this account can’t make that change.";
+    case "E_RESOURCE_CONFLICT":
+    case "E_CONFLICT":
+    case "E_SELECTION_CHANGED":
+      return "it changed meanwhile.";
+    case "E_MEDIA_NOT_READY":
+      return "it’s still being prepared.";
+    default:
+      return undefined;
+  }
+}
+
+/** A podcast read that found nothing to show: absent or forbidden alike. */
+export const podcastAbsent = (error: ApiError) =>
+  error.code === "E_NOT_FOUND" || error.code === "E_PODCAST_NOT_FOUND" || error.code === "E_FORBIDDEN";
+
+/** Coexistence until L7: collections, the metadata overlay and the browse preview still read
+ * this shape. Throws defects. */
 /** Failure copy for podcast reads and commands; throws defects. */
 export function podcastErrorMessage(
   error: unknown,
@@ -69,7 +103,8 @@ export function podcastErrorMessage(
   }
 }
 
-/** One command at a time; its modeled failure becomes `failure`. */
+/** Coexistence until L7, for the browse preview: one command at a time; its modeled failure
+ * becomes `failure`. */
 export function useCommand(): {
   readonly running: string | null;
   readonly failure: FeedbackContent | null;
@@ -105,18 +140,18 @@ export function useCommand(): {
   return { running, failure, run };
 }
 
-/** The pane chrome's refresh: admit, then announce; panes refetch on "Podcasts". */
+/** The pane chrome's refresh: admit; panes refetch on "Podcasts". Success says nothing. */
 export function podcastRefresh(scope: PodcastRefreshScope): PaneRefreshExecute {
   return async ({ signal }) => {
     try {
-      const count = await requestPodcastRefresh(scope, signal);
-      const announcement = podcastRefreshRequestAnnouncement(count);
-      return { kind: "Complete", announcement };
+      await requestPodcastRefresh(scope, signal);
+      return { kind: "Complete", announcement: "" };
     } catch (error) {
       if (isAbortError(error) || !isApiError(error)) throw error;
       if (isSameSystemApiDefect(error)) throw error;
       handleUnauthenticatedApiError(error);
-      return { kind: "Failed", announcement: "Podcast refresh failed" };
+      const line = TRANSPORT_LINES[transportOf(error)].command("couldn’t check for new episodes.");
+      return { kind: "Failed", announcement: line.reason === undefined ? line.fact : `${line.fact} ${line.reason}` };
     }
   };
 }
