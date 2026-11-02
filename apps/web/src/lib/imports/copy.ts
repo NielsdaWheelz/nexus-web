@@ -194,7 +194,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "this page blocked the import",
     title: "This page blocked the import.",
     explanation:
-      "Open the original page in your browser and use Nexus Capture there.",
+      "The Nexus extension for Firefox can import it from the open page.",
   },
   E_SOURCE_FETCH_FAILED: {
     reason: "couldn’t fetch the page",
@@ -639,8 +639,8 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
-function offerLine(offer: RecoveryOffer): string {
-  if (offer.kind === "BrowserCapture") return "when the article is visible, use nexus capture to finish this import.";
+export function offerLine(offer: RecoveryOffer): string {
+  if (offer.kind === "BrowserCapture") return "the nexus extension for firefox can finish this from the open article.";
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":

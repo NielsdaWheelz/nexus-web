@@ -291,7 +291,6 @@ export default function ImportInspector({
                   ? `choose the original file: ${item.original_filename}` : null,
               ].filter(Boolean).join(" ") || undefined,
             }} announcement="None" />
-            {slot.recovery?.kind === "BrowserCapture" ? <p>when the article is visible, use nexus capture to finish this import.</p> : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>
