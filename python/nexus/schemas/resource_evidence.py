@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.db.models import MediaKind
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader_excerpts import FrozenExcerpt
@@ -43,7 +44,7 @@ class CapturedQuote(LocationQuote):
 class CapturedSource(CapturedModel):
     ref: str | None
     title: str | None
-    media_kind: str | None
+    media_kind: MediaKind | None
     contributors: list[ContributorCreditOut] | None
     location_label: str | None
 

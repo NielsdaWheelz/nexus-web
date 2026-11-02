@@ -3985,8 +3985,7 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
             location_label: string | null;
-            /** Media Kind */
-            media_kind: string | null;
+            media_kind: components["schemas"]["MediaKind"] | null;
             /** Ref */
             ref: string | null;
             /** Title */
@@ -8570,8 +8569,7 @@ export interface components {
              * @enum {string}
              */
             kind: "named";
-            /** Media Kind */
-            media_kind: string | null;
+            media_kind: components["schemas"]["MediaKind"] | null;
             /** Title */
             title: string;
         };
@@ -12929,8 +12927,7 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
             location_label: string | null;
-            /** Media Kind */
-            media_kind: string | null;
+            media_kind: components["schemas"]["MediaKind"] | null;
             /** Ref */
             ref: string | null;
             /** Title */
