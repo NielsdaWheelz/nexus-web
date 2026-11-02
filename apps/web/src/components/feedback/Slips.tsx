@@ -178,6 +178,8 @@ type FocusHome = {
   stay(): HTMLElement | null;
   /** Focus arrived on a frame or a tab; from outside the room, that is where it came from. */
   entered(event: FocusEvent): void;
+  /** Focus left a frame or a tab. */
+  left(event: FocusEvent): void;
   /** Focus moves between the room's own controls, so its origin stands, whatever the event says. */
   pass(next: HTMLElement): void;
 };
@@ -187,6 +189,8 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
   const frame = useRef<HTMLElement>(null);
   const origin = useRef<HTMLElement>(null);
   const navigated = useRef(false);
+  /** The control the window went away from, which stays the document's focus meanwhile. */
+  const away = useRef<EventTarget>(null);
   const target = () => navigated.current ? null
     : origin.current?.isConnected ? origin.current
     : room.anchor.kind === "Root" ? findActivePaneLandmarkFocusTarget() ?? room.element.closest<HTMLElement>("[tabindex='-1']")
@@ -196,10 +200,16 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
     navigated,
     target,
     stay: () => firstControl(frame.current) ?? target(),
-    entered({ relatedTarget: from }) {
-      if (from instanceof Node && room.element.contains(from)) return;
+    entered({ target: control, relatedTarget: from }) {
+      // The window came back to where it left: focus never left the room, so its origin stands.
+      const returned = from === null && control === away.current;
+      away.current = null;
+      if (returned || from instanceof Node && room.element.contains(from)) return;
       origin.current = from instanceof HTMLElement ? from : null;
       navigated.current = false;
+    },
+    left({ target: control, relatedTarget: to }) {
+      away.current = to === null && document.activeElement === control ? control : null;
     },
     pass(next) {
       const from = origin.current;
@@ -281,6 +291,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     }}
     onBlur={event => {
       if (!event.currentTarget.contains(event.relatedTarget)) stage.holdRoom(room.id, "Focus", false);
+      focus.left(event);
     }}
     onKeyDown={event => {
       if (event.key !== "Escape") return;
@@ -347,6 +358,7 @@ function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
     data-weight={room.tucked.some(row => row.weight === "Risk") ? "Risk" : "Held"}
     aria-label={count > 1 ? `show ${count} notices` : "show notice"}
     onFocus={focus.entered}
+    onBlur={focus.left}
     onClick={() => stage.restore(room.id)}
     onKeyDown={event => {
       if (event.key !== "Escape") return;
