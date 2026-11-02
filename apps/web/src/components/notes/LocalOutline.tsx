@@ -171,20 +171,20 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   const pendingError = pending.value.input.error instanceof LocalCommitError ? null : pending.value.input.error;
   const operationError = [failure, controller.error].find(error => error !== null && !(error instanceof LocalCommitError)) ?? null;
   const error = pendingError ?? operationError;
-  const [incident, setIncident] = useState<{error: unknown; occurrence: object} | null>(null);
-  if (error !== null && incident === null) setIncident({error, occurrence: {}});
-  else if (error === null && incident !== null) setIncident(null);
+  // Each failure while words stay at risk is a failed retry, which speaks again.
+  const [risk, setRisk] = useState<{error: unknown; attempt: number}>({error: null, attempt: 0});
+  if (risk.error !== pendingError) setRisk({error: pendingError, attempt: pendingError !== null && risk.error !== null ? risk.attempt + 1 : 0});
   const pendingCopyAvailable = pendingError !== null && guard.readCopyText({scopes: [], ownerIds: [pending.owner]}) !== null;
   const rootState = controller.branchRead(pending.value.input.root_id);
   const wordsAtRisk = useWordsAtRisk([rootRef, ...controller.documents.keys()]);
-  // A refusal or a failed change is a command's outcome: one slip, retracted once it clears.
-  // Pending writing that failed is words at risk, held below.
+  // A refusal or a failed change is a command's outcome: one slip per error, retracted once it
+  // clears. Pending writing that failed is words at risk, held below.
   useEffect(() => {
-    if (incident === null || pendingError !== null) return;
-    if (incident.error instanceof OutlineActionRefusal) return say(incident.error.line);
+    if (error === null || pendingError !== null) return;
+    if (error instanceof OutlineActionRefusal) return say(error.line);
     return say({fact: "couldn’t change this outline on this device."},
       controller.canRetry ? [{label: "retry", commandKey: "RetryOutlineChange", run: () => controller.retry()}] : undefined);
-  }, [incident, pendingError, say, controller]);
+  }, [error, pendingError, say, controller]);
   if (error !== null && !(error instanceof OutlineActionRefusal) && !isAuthoredStorageFailure(error)) throw error;
   const retryPending: CommandVerb = {label: "retry", commandKey: "RetryPendingOutline", run: () => pending.value.input.retry()};
   const copyPending: CommandVerb = {label: "copy text", commandKey: "CopyPendingOutline", copied: copied.occurrence ?? undefined, run: () => {
@@ -198,7 +198,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       const next = event.relatedTarget;
       if (!(next instanceof Element && (next.closest(`[data-outline-session="${pending.value.input.root_id}"]`) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
     }}>
-      {pendingError !== null ? <Hold id={`outline-pending:${occurrencePrefix}`} risk line={WORDS_AT_RISK}
+      {pendingError !== null ? <Hold id={`outline-pending:${occurrencePrefix}`} attempt={risk.attempt} risk line={WORDS_AT_RISK}
         verbs={pendingCopyAvailable ? [retryPending, copyPending] : [retryPending]}/> : null}
       <Dialog open={manualCopy !== null} title="copy text" onClose={() => setManualCopy(null)}>
         <p>select the text and copy it.</p><textarea readOnly value={manualCopy ?? ""} aria-label="pending outline text"/>

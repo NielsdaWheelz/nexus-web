@@ -10,7 +10,6 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import {useLocalOutlineRoot, type LocalOutlineHandle} from "@/components/notes/LocalOutline";
 import {useOutcome} from "@/components/feedback/Feedback";
 import {Fact} from "@/components/feedback/Fact";
-import {Ruling} from "@/components/feedback/Ruling";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -101,7 +100,8 @@ export default function NotePaneBody() {
   useEffect(() => arrivalFailure === null ? undefined : say({fact: arrivalFailure}), [arrivalFailure, say]);
   if (defect) throw defect.error;
   if (!resource) {
-    if (!read.rootRead.known) return <>{read.view}{read.error === null ? <Ruling/> : null}</>;
+    // Until the root is known, the outline's view owns the empty region: its ruling or its failure.
+    if (!read.rootRead.known) return <>{read.view}</>;
     return <Fact line={{fact: "this note is no longer available."}}/>;
   }
   return <div>
