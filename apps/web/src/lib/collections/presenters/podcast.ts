@@ -2,7 +2,7 @@
 
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import type { Schema } from "@/lib/api/wire";
-import type { CollectionRowView, PositiveCount } from "@/lib/collections/types";
+import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
@@ -12,7 +12,6 @@ export interface PodcastPresenterItem {
   readonly title: string;
   readonly imageUrl: string | null;
   readonly contributors: readonly ContributorCredit[];
-  readonly unplayedCount: PositiveCount | null;
   readonly recurring: Schema<"PodcastRecurringOut"> | null;
 }
 
@@ -34,8 +33,7 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
     publicationDate: null,
     context: null,
     activity: sync?.state === "pending" || sync?.state === "running"
-      ? { kind: "PodcastSync", status: sync.state }
-      : item.unplayedCount !== null ? { kind: "Unplayed", count: item.unplayedCount } : null,
+      ? { kind: "PodcastSync", status: sync.state } : null,
     exceptionalStatus: sync?.error_code !== null && sync?.error_code !== undefined
       ? { kind: "PodcastSync", status: "failed" } : null,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: item.id }),

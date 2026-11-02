@@ -29,14 +29,15 @@ export type ResourceRowPrimary =
   | { kind: "static" };
 
 type RowContent =
-  | { kind: "Index"; metadata: ReactNode; supportingContent?: ReactNode }
-  | { kind: "Search"; metadata: ReactNode; excerpt: ReactNode }
+  | { kind: "Index"; metadata: ReactNode; facts?: ReactNode; supportingContent?: ReactNode }
+  | { kind: "Search"; metadata: ReactNode; facts?: ReactNode; excerpt: ReactNode }
   | { kind: "Details"; body: ReactNode };
 
 /**
  * One index geometry: two reserved text lines, or three for search. Details alone
  * wrap operational content. Width adaptation belongs to this named container;
  * native title navigation, passive artwork and independent controls keep owners.
+ * Passive facts lead the trailing cell, so every fold keeps them centred with controls.
  */
 export default function ResourceRow({
   primary, title, content, leadingVisual, controls, selected, density, as: Root = "li", rootProps,
@@ -85,6 +86,7 @@ export default function ResourceRow({
     </>; break;
     default: assertNever(content);
   }
+  const facts = content.kind === "Details" ? null : content.facts;
   return <Root {...rootProps} className={cx(styles.row, density === "compact" && styles.compact, selected && styles.selected, rootProps?.className)}>
     <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details, content.kind === "Index" && content.supportingContent != null && styles.hasSupport)}>
       {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
@@ -92,7 +94,7 @@ export default function ResourceRow({
         {activation}
         {secondary}
       </div>
-      {controls ? <div className={styles.controls}>{controls}</div> : null}
+      {facts || controls ? <div className={styles.trailing}>{facts}{controls}</div> : null}
     </div>
   </Root>;
 }

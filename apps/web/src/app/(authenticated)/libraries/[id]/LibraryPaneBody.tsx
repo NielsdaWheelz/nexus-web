@@ -456,7 +456,6 @@ function LibraryPane({ id }: { readonly id: string }) {
           }
           ariaLabel={name}
           anchorKey={text}
-          rowActionsAvailable={(list.status === "ready")}
           collectionBusy={busy}
           surface={false}
           order={ordering}
