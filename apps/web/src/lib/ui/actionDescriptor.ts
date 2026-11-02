@@ -170,14 +170,15 @@ export type PreparationState =
  * Facts that settle after a prepared snapshot is published, for the same request. They
  * render in one region after it; a failure ends the menu with `more actions`, which prepares
  * everything again. Arrival cannot reorder, replace or close the published actions, move focus
- * or change their meaning. A failure's `feedback`, `retry` and `pending` are read by nothing;
- * components/resources may still set them until L7.
+ * or change their meaning. A failure carries its error: under a stale build the menu offers reload,
+ * not `more actions`. Until L7, components/resources omits `error` and still sets `feedback`,
+ * `retry` and `pending`, which nothing reads.
  */
 export type TrailingState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly label: string | null; readonly options: readonly ActionDescriptor[] }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback?: FeedbackContent; readonly retry?: (() => void) | null; readonly pending?: boolean };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error?: unknown; readonly feedback?: FeedbackContent; readonly retry?: (() => void) | null; readonly pending?: boolean };
 
 /** The presenter owns invocation, cancellation and its preparation deadline. */
 export type MenuSource = { readonly subjectKey: string; readonly title: string } & (

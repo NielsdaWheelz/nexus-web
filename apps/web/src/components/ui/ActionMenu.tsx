@@ -780,12 +780,17 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     </li>)}
   </ul> : null;
   // A delayed region that failed ends the menu with an ordinary verb: it closes, prepares
-  // everything again in a new invocation, and reopens.
+  // everything again in a new invocation, and reopens. Under a stale build that verb would only
+  // fail again, so the host offers reload instead, once the menu stands.
   const reprepare = () => {
     flushSync(() => close(true));
     session.reopen();
   };
-  const more = invocation?.failed === true || trailing?.kind === "Failed" ? <ul className={`${styles.sections} ${styles.late}`} role={sheet ? undefined : "none"}>
+  const staleTrailing = trailing?.kind === "Failed" && isStaleBuild(trailing.error) ? trailing.error : null;
+  useLayoutEffect(() => {
+    if (visible && staleTrailing !== null) session.failed(staleTrailing);
+  }, [visible, staleTrailing, session]);
+  const more = invocation?.failed === true || trailing?.kind === "Failed" && staleTrailing === null ? <ul className={`${styles.sections} ${styles.late}`} role={sheet ? undefined : "none"}>
     <li role={sheet ? undefined : "none"}>
       <button type="button" role={sheet ? undefined : "menuitem"} tabIndex={sheet ? 0 : -1} className={collection.row} data-menu-row="more-actions" onClick={reprepare}>
         <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true" />
