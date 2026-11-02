@@ -34,7 +34,7 @@ import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
-import { remoteReady, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { installedApp, remoteReady, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import { localContentAvailable } from "@/lib/offline/localContent";
 import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -156,13 +156,17 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   });
   const result = source.status === "ready" ? source.data : null;
   const settled = result?.settled === true;
+  const error = source.status === "loading" ? null : source.error;
+  // imports' domain codes come ahead of transport: a refusal, first read or refresh, is the
+  // attempt's absence. savedSourceReadFailure answers only refusals here.
+  const refusal = error !== null && !isSameSystemApiDefect(error) && transportOf(error) === "Refused" ? error : null;
   const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
   // justify-polling: an accepted source has no identity event stream. Only visible, unsettled
-  // handoffs poll. A failed refresh over the saved fact polls on, since the next poll heals it;
-  // a failed first read has nothing to poll and waits for its retry.
+  // handoffs poll, on through a transport failure, which the next poll heals; a refusal ends it.
+  // A failed first read has nothing to poll and waits for its retry.
   useIntervalPoll({
-    enabled: visible && result !== null && !settled,
+    enabled: visible && result !== null && !settled && refusal === null,
     pollIntervalMs: 2_000,
     onPoll: () => {
       if (document.visibilityState === "visible") source.refetch();
@@ -172,15 +176,12 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
     if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
   }, [result, runtime.router, settled]);
   const speak = useActiveRegion();
-  if (source.status === "failed") {
-    const { error } = source;
-    // imports' domain codes come ahead of transport; savedSourceReadFailure answers only refusals here.
-    if (!isSameSystemApiDefect(error) && transportOf(error) === "Refused") {
-      const domain = savedSourceReadFailure(error);
-      return <Fact line={{ fact: domain.title, reason: domain.message }} verbs={[viewImports]} speak={speak} />;
-    }
-    return <Failed error={error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
+  if (refusal !== null) {
+    const domain = savedSourceReadFailure(refusal);
+    return <Fact line={{ fact: domain.title, reason: domain.message }} verbs={[viewImports]} speak={speak} />;
   }
+  if (source.status === "failed")
+    return <Failed error={source.error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
   if (settled || source.status === "loading") return <Ruling />;
   return <Fact line={{ fact: "source saved.", reason: "it opens here when processing finishes." }} verbs={[viewImports]} speak={speak} />;
 }
@@ -207,8 +208,13 @@ function MediaRoute({ id }: { readonly id: string }) {
         id,
       ),
   });
-  usePaneReturnReady(record.status === "failed" || !admitted && !catalog.loading && record.status !== "ready");
+  // only an installed device has a saved catalog to stand in for an unreachable server.
+  const catalogOnly = installedApp && !admitted && !catalog.loading;
+  usePaneReturnReady(record.status === "failed" || catalogOnly && record.status !== "ready");
   const failure = record.status === "loading" ? null : record.error;
+  // media's own code comes ahead of transport: only E_MEDIA_NOT_FOUND says the item is gone, so a
+  // mismatch 403 reads sign-in and any other refusal reads as one.
+  const gone = failure?.code === "E_MEDIA_NOT_FOUND";
   const savedReady = saved.kind === "Ready";
   // Only an entry whose own record read failed with the server out of reach opens on the saved
   // copy, and stays there once the record lands. Another read's dropped response, or a refresh
@@ -226,9 +232,9 @@ function MediaRoute({ id }: { readonly id: string }) {
       <span>downloaded copy</span>
       <Button aria-busy={view === "live" && record.status === "loading" && admitted || undefined} onClick={() => switchView("live")}>view current version</Button>
     </div>
-    {failure !== null && [403, 404, 410].includes(failure.status) ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} /> : null}
-    {view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
-      retry={{ run: record.refetch, busy: record.retrying }} /> : null}
+    {gone ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} />
+      : view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
+        retry={{ run: record.refetch, busy: record.retrying }} /> : null}
     <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
   </div>;
   const viewCurrent = { label: "view current version", commandKey: "ViewCurrentVersion", run: () => switchView("live") };
@@ -249,13 +255,13 @@ function MediaRoute({ id }: { readonly id: string }) {
     <Failed error={failure} noun="this item’s details" />
     <LocalAnnotations mediaId={id} />
   </>;
-  if (failure !== null && [403, 404, 410].includes(failure.status)) return <>
+  if (gone) return <>
     <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
     <LocalAnnotations mediaId={id} />
   </>;
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
   if (summary !== null) return <><SavedMedia summary={summary} record={record} /><LocalAnnotations mediaId={id} /></>;
-  if (!admitted && !catalog.loading) return <>
+  if (catalogOnly) return <>
     <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />
     <LocalAnnotations mediaId={id} />
   </>;
@@ -309,7 +315,8 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   </div></div>;
 }
 
-function MediaPane({ id, record }: { readonly id: string; readonly record: ServerValue<MediaDetail> }) {
+/** The pane over a read record: its route renders it only once the record is ready. */
+function MediaPane({ id, record }: { readonly id: string; readonly record: Extract<ServerValue<MediaDetail>, { status: "ready" }> }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const { requestSecondarySurface } = runtime;
   const paneActive = usePaneIsActive();
@@ -330,13 +337,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     [],
   );
 
-  const loaded = record.status === "ready" ? record.data : null;
-  const [detail, setMedia] = useState<MediaDetail | null>(null);
-  useEffect(() => {
-    if (loaded) setMedia(loaded);
-  }, [loaded]);
-  const { snapshot } = useMediaProcessingStatus(detail?.id ?? null);
-  const media = useMemo(() => detail === null ? null : snapshot === null ? detail : {
+  // the record as read, until a metadata refresh below replaces it.
+  const [detail, setMedia] = useState(record.data);
+  useEffect(() => { setMedia(record.data); }, [record.data]);
+  const { snapshot } = useMediaProcessingStatus(detail.id);
+  const media = useMemo(() => snapshot === null ? detail : {
       ...detail,
       processing_status: snapshot.processing_status,
       last_error_code: snapshot.last_error_code,
@@ -347,8 +352,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       transcript_coverage: snapshot.transcript_coverage,
       reader_generation: snapshot.reader_generation,
     }, [detail, snapshot]);
-  const transcript = media?.kind === "podcast_episode" || media?.kind === "video";
-  const readable = media?.capabilities?.can_read === true;
+  const transcript = media.kind === "podcast_episode" || media.kind === "video";
+  const readable = media.capabilities?.can_read === true;
 
   // ---- the reader ----
   const readerRef = useRef<Reader | null>(null);
@@ -433,9 +438,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     return () => stops.forEach((close) => close());
   }, [articleIds, paneVisible, reader]);
   useEffect(() => {
-    if (readable && doc && media?.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
+    if (readable && doc && media.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
-  }, [doc, media?.reader_generation, readable, reader]);
+  }, [doc, media.reader_generation, readable, reader]);
   useEffect(() => {
     if (readable && snapshot !== null && doc?.kind === "text" && doc.format === "transcript"
       && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key
@@ -470,12 +475,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
 
   // A title job is admitted with source publication, before naming may fail.
   // Manual title admission costs the same small reread; it does not reload progress.
-  const metadata = useMediaMetadataOperations(paneVisible && media ? id : null);
+  const metadata = useMediaMetadataOperations(paneVisible ? id : null);
   const stamp = metadata.view?.last_enriched_at != null ? metadata.view.last_enriched_at : null;
   const operation = metadata.view?.operation;
   const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   useEffect(() => {
-    if (!media) return;
     const recorded = media.metadata_enrichment.operation;
     const recordedTitleJob = recorded?.purpose === "title" ? recorded.job_id : null;
     const titleAdmitted = titleJob !== null && titleJob !== recordedTitleJob;
@@ -543,8 +547,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
   const seek = useCallback((ms: number) => {
-    if (media?.kind === "video") return setVideoAt(ms);
-    if (!media || media.kind !== "podcast_episode") return;
+    if (media.kind === "video") return setVideoAt(ms);
+    if (media.kind !== "podcast_episode") return;
     run({
       ref: `media:${id}`, id: "Playback", label: "play", title: media.title,
       confirmation: null, tracked: false,
@@ -619,7 +623,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     return "Applied";
   }
   const arrival = useSourceArrival({
-    ready: restored || (media !== null && !readable),
+    ready: restored || !readable,
     sourceIdentity: doc?.identity ?? null,
     restoreVisit: {
       visitId: runtime.visitId,
@@ -776,11 +780,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     else latestOpenRequest.current?.onResolved(null);
     requestSecondarySurface("resource-connections");
   }, [clearArrival, requestEvidence, requestSecondarySurface, runtime.visitId]);
-  const canQuote = media?.capabilities?.can_quote === true;
+  const canQuote = media.capabilities?.can_quote === true;
   const marks = annotations.local.status === "ready" ? annotations.decorations.marks : null;
   // the host knows its own title and a part's source title; other owners keep their stubs.
-  const sourceLabel = useCallback((sourceRef: string) => !media ? null
-    : sourceRef === `media:${id}` ? { kind: media.kind, label: media.title }
+  const sourceLabel = useCallback((sourceRef: string) => sourceRef === `media:${id}` ? { kind: media.kind, label: media.title }
     : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
@@ -804,11 +807,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const actions = useMemo<EvidenceActions>(
     () => ({
       verbs: { noteEdit, annotate, hovered, hover, closeNoteEdit, relocate },
-      sourceContext: media?.kind !== "text_part",
-      mediaLabel: media?.title ?? "this document",
+      sourceContext: media.kind !== "text_part",
+      mediaLabel: media.title,
       refresh: store.refresh,
     }),
-    [annotate, closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, relocate, store],
+    [annotate, closeNoteEdit, hover, hovered, media.kind, media.title, noteEdit, relocate, store],
   );
   const evidence = useMemo(
     () => (
@@ -826,7 +829,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   );
   const contents = useMemo(
     () =>
-      doc?.kind === "text" && (media?.kind === "text_part" || media?.kind === "epub" || media?.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
+      doc?.kind === "text" && (media.kind === "text_part" || media.kind === "epub" || media.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
         <HostedContents id={id} media={media} reader={reader} focusTarget={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? null} />
       ) : undefined,
     [doc, id, media, reader],
@@ -854,7 +857,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     ? "select text matching the original quote." : bounds.scope.kind === "page" ? "select the new passage on this page." : "select the new passage in this section." });
   useReaderChrome({
     media,
-    failed: record.status === "failed" || (record.status === "ready" && (record.error?.status === 403 || record.error?.status === 404)),
+    // a refresh that finds the item gone retires its inspector; any other refresh failure says nothing.
+    gone: record.error?.code === "E_MEDIA_NOT_FOUND",
     reader,
     find,
     readable,
@@ -869,23 +873,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   useReaderActivity(id, reader, root, paneActive, isMobile);
 
   // ---- render ----
-  if (record.status === "loading" || (record.status === "ready" && !media))
-    return (
-      <div className={styles.stateScrollport} data-mobile={isMobile}>
-        <ReaderRuling profile={profile} />
-      </div>
-    );
-  if (record.status === "failed" || !media) {
-    return (
-      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
-        <div className={styles.state}>
-          {record.status === "failed" && record.error.status !== 404
-            ? <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
-            : <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />}
-        </div>
-      </div>
-    );
-  }
   const sourceLine = mediaSourceLine(media.processing_status, media.last_error_code);
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
@@ -1006,7 +993,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         isMobile={isMobile}
         canQuote={canQuote}
         returnFocus={returnFocus}
-        sharePiece={media?.kind === "text_part" ? trigger => openShare(resourceShareTarget(`media:${id}`), anchoredShareOpenOptions(trigger, () => root.current)) : null}
+        sharePiece={media.kind === "text_part" ? trigger => openShare(resourceShareTarget(`media:${id}`), anchoredShareOpenOptions(trigger, () => root.current)) : null}
       />
     </div>
   );

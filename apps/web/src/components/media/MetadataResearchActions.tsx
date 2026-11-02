@@ -176,11 +176,10 @@ export default function MetadataResearchActions({
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button data-metadata-action="" aria-disabled={remedy !== "Reload" || undefined}
-          tooltip={remedy === "Reload" ? undefined : { text: staleBuild() }}
-          onClick={() => { if (remedy === "Reload") window.location.reload(); }}>
-          reload
-        </Button> :
+        // a stale build offers reload only where reload can work; elsewhere its line, visible.
+        isStaleBuild(pending.error) ? remedy === "Reload"
+          ? <Button data-metadata-action="" onClick={() => window.location.reload()}>reload</Button>
+          : <span data-metadata-feedback="">{staleBuild()}</span> :
         <Button
           data-metadata-action=""
           aria-busy={pending.kind === "sending" || undefined}

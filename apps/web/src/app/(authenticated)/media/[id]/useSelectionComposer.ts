@@ -556,18 +556,21 @@ export function useSelectionComposer(input: {
       // The server derives the quote from its own copy of this highlight. Its creation, resize
       // or recolour may be any committed local command, so wait for the local prefix committed
       // now (uploads are prefix-ordered); later commits and downloads do not hold the question.
-      // an upload that cannot proceed (offline, sign-in, update, sync or local failure) names its
-      // cause; the highlight stays saved here and the question may be asked again later.
+      // A wait that ends unsent names what it waited on, once, in the field; the highlight stays
+      // saved here and send asks again. Only sign-in and update are transport; the rest is local.
       try {
         const committed = (await (await writing!.store).readReplica()).command_seq;
         await writing!.whenUploaded(committed, account);
       } catch (error) {
         if (account.aborted) return null;
-        // an upload stall is a modeled ApiError; anything else is a defect.
-        if (!isApiError(error)) throw error;
-        const transport = transportOf(error);
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed",
-          line: TRANSPORT_LINES[transport].command("question not sent."), verbs: transportVerbs(transport, { signIn: null }) ?? undefined } }));
+        if (!isApiError(error) && !isAuthoredStorageFailure(error)) throw error;
+        const unsent = (reason: string): ReaderChatIssue => ({ kind: "Failed", line: { fact: "question not sent.", reason } });
+        const issue: ReaderChatIssue = !isApiError(error) ? unsent("local notes aren’t responding.")
+          : error.code === "E_SYNC_REFUSED" ? unsent("notes can’t sync.")
+          : error.code === "E_NETWORK" ? unsent(navigator.onLine === false ? "you’re offline." : "the highlight hasn’t synced yet.")
+          : { kind: "Failed", line: TRANSPORT_LINES[transportOf(error)].command("question not sent."),
+            verbs: transportVerbs(transportOf(error), { signIn: null }) ?? undefined };
+        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: issue }));
         return null;
       }
       const key = assumeReaderSelectionKey({ mediaId: entry.sourceMediaId, highlightId: ensured.id });

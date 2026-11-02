@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError, isUnauthenticatedApiError, outcomeUnknown } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { requestWithRetry } from "@/lib/api/serverState";
 import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
@@ -49,13 +50,14 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   return target;
 }
 
+/** Reads go through the read layer's retry, so one lost response is no failed read. */
 export function hostedSource(mediaId: string): ReaderSource {
   return {
     async load(signal) {
-      const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
+      const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
         `/api/media/${mediaId}/reader`,
-        { signal },
-      );
+        { signal: attempt },
+      ), signal);
       return readerDocument(data);
     },
     async refreshPdf(signal) {
@@ -68,14 +70,15 @@ export function hostedSource(mediaId: string): ReaderSource {
   };
 }
 
-/** The server cursor: compare-and-set on the revision; a refused save names the newer one. */
+/** The server cursor: compare-and-set on the revision; a refused save names the newer one. Its
+ * read retries as the source's does. */
 export function hostedProgress(mediaId: string): ReaderProgressPort {
   const path = `/api/media/${mediaId}/reader-state` as const;
   return {
-    async load(signal) {
-      const { data } = await apiFetch<
+    async load(signal = new AbortController().signal) {
+      const { data } = await requestWithRetry(attempt => apiFetch<
         ApiJson<"/media/{media_id}/reader-state", "get">
-      >(path, { signal, cache: "no-store" });
+      >(path, { signal: attempt, cache: "no-store" }), signal);
       return { kind: "Canonical", snapshot: data };
     },
     async save(locator, base) {

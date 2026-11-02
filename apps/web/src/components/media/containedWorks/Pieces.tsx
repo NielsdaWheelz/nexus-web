@@ -24,7 +24,7 @@ import { isAbortError } from "@/lib/errors";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { sourceContents, partDefinition, discoverParts, decidePart } from "@/lib/media/parts";
-import PartEditor, { partBlockMessage, partFailure, UNSURE } from "./PartEditor";
+import PartEditor, { partBlockMessage, partFailure, unsure, UNSURE } from "./PartEditor";
 import CandidateReview from "./CandidateReview";
 import styles from "./parts.module.css";
 
@@ -207,7 +207,8 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
         {snapshot.nodes.length === 0 && works.length === 0 && page.candidates.length === 0 ? <p>no sections available</p> : null}
       </> : null}
     </> : null}
-    {commands.value.request !== null && !commands.value.busy ? <Hold id={`contents-command:${source}`} line={UNSURE}
+    {commands.value.request !== null && !commands.value.busy ? <Hold id={`contents-command:${source}`}
+      line={commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE}
       verbs={[{ label: "retry", commandKey: "RetryContentsCommand", run: () => void run(commands.value.request!, true) }]} /> : null}
     {intent?.kind === "manual" ? <PartEditor key={`manual:${source}:${intent.section}`} source={source} initialSection={intent.section} initialTitle={intent.title} initialSelection={intent.selection} page={page} definition={null}
       onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} onRefresh={refresh} readError={contents.status === "failed" ? contents.error : null} readPending={contents.status === "ready" && contents.refreshing} returnFocusTo={focusTarget} /> : null}

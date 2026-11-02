@@ -1,6 +1,8 @@
 // The cursor: where the reader intends to resume. Revision is authority (the
 // port compares and sets). Movement saves after 500ms idle, at most 5s after
-// the first unsaved move, one request in flight, latest locator only.
+// the first unsaved move, one request in flight, latest locator only. A save that
+// fails is sent once more before its failure is published, so one lost response
+// says nothing; the failure then stands until a save lands or a read settles it.
 // Command preparation holds acknowledged progress only; refusal releases its hold
 // while preserving the local locator and the owner’s save/conflict recovery.
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
@@ -32,7 +34,8 @@ export type ProgressState =
       readonly view: ProgressView;
       readonly saving: boolean;
       readonly retrying: boolean;
-      /** A failed save or resolution; the next movement, a landed save or a newer read clears it. */
+      /** A save that failed twice running, or a failed resolution; a landed save, a newer read or a
+       * new binding clears it. Movement does not: the position still isn't saved. */
       readonly saveFailure: { readonly error: unknown } | null;
       readonly handoff: Handoff | null;
     };
@@ -108,6 +111,8 @@ export function createProgressSync(
   let unsaved: Locator | null = null;
   let adopting = false;
   let failure: { readonly error: unknown } | null = null;
+  /** Saves that failed since the last answer; the first is sent again before it is said. */
+  let misses = 0;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
   let inFlight: Promise<void> | null = null;
@@ -200,6 +205,7 @@ export function createProgressSync(
           expectedReaderGeneration: hooks.generation(),
           adoptUnresolved: adopting,
         });
+        misses = 0;
         if (needsSourceBinding()) return;
         if (result.kind === "ContentChanged") {
           unsaved = null;
@@ -243,7 +249,8 @@ export function createProgressSync(
         cutOff = keepalive || leaving;
         if (!cutOff) {
           console.error("reader_cursor_save_failed", error);
-          failure = { error };
+          misses += 1;
+          if (misses > 1) failure = { error };
         }
       } finally {
         inFlight = null;
@@ -358,6 +365,7 @@ export function createProgressSync(
       unsaved = null;
       adopting = false;
       failure = null;
+      misses = 0;
       handoff = null;
       state = state.kind === "LoadFailed"
         ? { ...state, recovery: "ReloadDocument", retrying: true }
@@ -400,7 +408,6 @@ export function createProgressSync(
       if (unsaved === null) dirtySince = Date.now();
       movedAt = Date.now();
       unsaved = locator;
-      failure = null;
       leaving = false;
       schedule();
     },
@@ -420,8 +427,12 @@ export function createProgressSync(
       await inFlight;
       if (handoff?.kind !== "Newer") await save(false);
       if (needsSourceBinding() || unsaved !== null || view?.kind !== "Canonical" || handoff !== null) {
-        // Unloaded progress and source reloads retain their recovery fence.
-        if (!needsSourceBinding() && view !== null) fenced = false;
+        // Unloaded progress and source reloads retain their recovery fence; a save the fence
+        // held back, or the one it sent and lost, goes out again.
+        if (!needsSourceBinding() && view !== null) {
+          fenced = false;
+          schedule();
+        }
         publish();
         throw new ProgressPreparationError();
       }
@@ -442,6 +453,7 @@ export function createProgressSync(
       unsaved = null;
       adopting = false;
       failure = null;
+      misses = 0;
       activitySaved = false;
       publish();
     },

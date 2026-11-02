@@ -30,8 +30,9 @@ const ReaderSettingsIcon = getPaneRouteIcon("/settings/reader");
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;
 
 export function useReaderChrome(input: {
-  readonly media: MediaDetail | null;
-  readonly failed: boolean;
+  readonly media: MediaDetail;
+  /** A refresh found the item gone: the inspector and find retire over the text still shown. */
+  readonly gone: boolean;
   readonly reader: Reader;
   readonly find: FindController | null;
   readonly readable: boolean;
@@ -53,17 +54,17 @@ export function useReaderChrome(input: {
   const kind = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc.kind : null));
   const sectioned = useReaderState(reader, (s) => s.document.status === "ready" && s.document.doc.kind === "text" && s.document.doc.sections.length > 0);
   const widthPx = useReaderState(reader, (s) => s.pdf?.widthPx ?? null);
-  const id = media?.id ?? runtime.pathParams.id;
-  const pdf = media?.kind === "pdf";
+  const { id } = media;
+  const pdf = media.kind === "pdf";
 
   useResourceInspector({
     scheme: "media",
-    handle: input.failed ? null : media?.id ?? null,
+    handle: input.gone ? null : id,
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
-  const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
-  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
-  const summary = seed === null ? null : summaries.resolve(seed);
+  const seed = useMemo(() => mediaSummaryFromDetail(media), [media]);
+  const summaries = useMediaSummaries([seed]);
+  const summary = summaries.resolve(seed);
   const navigation = useMemo(
     () => readable && (kind === "pdf" || kind === "text" && sectioned)
       ? { label: kind === "pdf" ? "PDF controls" : "section navigation", content: <ReaderNavigation reader={reader} /> }
@@ -97,34 +98,30 @@ export function useReaderChrome(input: {
   usePaneChrome(
     useMemo(
       () => ({
-        header: seed !== null && summary === null
+        header: summary === null
           ? { kind: "Resource" as const, resource: { status: "Unavailable" as const } }
-          : media
-          ? {
+          : {
               kind: "Resource" as const,
               resource: {
                 status: "Ready" as const,
                 creditGroups: authors ? [{ kind: "Authors" as const, credits: authors.credits }] : [],
               },
-            }
-          : input.failed
-            ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
-            : undefined,
+            },
         resourceActions: summary === null ? undefined : {
           kind: "Media" as const,
           subject: { kind: "Stored" as const, summary },
-          knownDescriptor: media?.playerDescriptor ?? null,
+          knownDescriptor: media.playerDescriptor,
         },
         navigation,
         query: find
           ? { kind: "Find" as const, find }
-          : !input.failed && !documentFailed && (media === null || readable)
+          : !input.gone && !documentFailed && readable
             ? { kind: "Find" as const, find: null }
             : undefined,
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions,
       }),
-      [authors, seed, summary, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
+      [authors, summary, documentFailed, find, id, input.gone, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.
@@ -153,7 +150,7 @@ export function useReaderChrome(input: {
     const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
     const chat = () => void openConversationAbout({
-      ctx, originPaneId: paneId, intent: "default", ref: canonicalResourceRef({ scheme: "media", id }), subject: media?.title,
+      ctx, originPaneId: paneId, intent: "default", ref: canonicalResourceRef({ scheme: "media", id }), subject: media.title,
     });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return;
@@ -193,5 +190,5 @@ export function useReaderChrome(input: {
       if (pending !== null) window.clearTimeout(pending);
       document.removeEventListener("keydown", keydown);
     };
-  }, [ctx, id, media?.title, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
+  }, [ctx, id, media.title, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
 }

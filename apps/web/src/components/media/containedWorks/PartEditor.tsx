@@ -28,7 +28,7 @@ type Draft = {
   busy: boolean; failed: boolean; conflict: boolean; retired: boolean;
 };
 /** A part command that didn't land says so once, by `fact`. An unknown outcome says nothing
- * here: its owner keeps the request and holds `UNSURE` until a resend settles it. */
+ * here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
 export function partFailure(outcome: Outcome, error: unknown, fact: string): "Said" | "Unknown" {
   if (isApiError(error) && error.status === 409) outcome.say({ fact, reason: "this work or its source changed." });
   else if (isApiError(error) && (error.status === 403 || error.status === 404)) outcome.say({ fact, reason: "this work isn’t available to change." });
@@ -36,7 +36,9 @@ export function partFailure(outcome: Outcome, error: unknown, fact: string): "Sa
   else return "Unknown";
   return "Said";
 }
-export const UNSURE = { fact: "not sure that saved.", reason: "it may have gone through." };
+/** An unknown outcome, by what the command does: `saved`, `started`. */
+export const unsure = (fact: string) => ({ fact, reason: "it may have gone through." });
+export const UNSURE = unsure("not sure that saved.");
 export function partBlockMessage(reason: Schema<"PartAction">["reason"]): string {
   switch (reason) {
     case "unknown_end": return "this section’s end hasn’t been identified.";
@@ -170,7 +172,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
       {canBounds ? <>
         {readError ? <Failed error={readError} noun="sections" retry={{ run: () => void onRefresh(), busy: readPending }} /> : page === null ? <Ruling /> : null}
         {preparing || needsPreparation && !failed ? <Fact line={{ fact: "preparing text." }} /> : null}
-        {(page?.preparation?.classification === "NeedsAttention" || failed) && needsPreparation ? <Fact line={{ fact: "couldn’t prepare the text." }}
+        {(page?.preparation?.classification === "NeedsAttention" || failed && request === null) && needsPreparation ? <Fact line={{ fact: "couldn’t prepare the text." }}
           verbs={[{ label: "retry", commandKey: "RetryPreparePart", busy: blocking, run: () => { if (navigation && !blocking) void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } }); } }]} /> : null}
         {freshChoice ? <Field id={fieldId} line={{ fact: "the sections changed. choose again." }} /> : null}
         {navigation && (definition !== null || freshChoice) ? <SelectField layout="Stacked" label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
@@ -191,7 +193,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
         <Button disabled={blocking || readError !== null || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, failed: false }))}>keep my changes</Button>
       </section> : null}
-      {request !== null && !busy && failed ? <Hold id={`part-editor:${source}`} line={UNSURE}
+      {request !== null && !busy && failed ? <Hold id={`part-editor:${source}`} line={request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE}
         verbs={[{ label: "retry", commandKey: "RetryPartCommand", run: () => void run(request, true) }]} /> : null}
       <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy}
         aria-describedby={[freshChoice ? fieldId : null, canBounds && blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} onClick={save}>{definition === null ? "extract" : "save"}</Button>
