@@ -10,7 +10,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -203,13 +203,12 @@ export default function OracleReadingPaneBody() {
     } catch (error) {
       if (!live.current || ctx.sessionSignal().aborted) return;
       if (handleUnauthenticatedApiError(error)) return;
-      // the frozen attempt keeps its id, and the first creation wins, so a retry resends it
-      if (outcomeUnknown(error)) setUnknown((current) => ({ id: frozen.id, attempt: (current?.id === frozen.id ? current.attempt : 0) + 1 }));
-      else {
-        attempt.current = null;
-        setUnknown(null);
+      // the frozen attempt keeps its id until one lands, and the first creation wins, so any retry
+      // resends it. a refusal changed nothing and leaves an earlier unknown send held; anything else
+      // a send meets leaves its own outcome unknown. fail rethrows a defect.
+      if (!isApiError(error) || isSameSystemApiDefect(error) || isRefusal(error))
         fail(error, "couldn’t start a new reading.", { label: "retry", commandKey: `read again ${readingId}`, run: intent => void retryReading(intent) });
-      }
+      else setUnknown((current) => ({ id: frozen.id, attempt: (current?.id === frozen.id ? current.attempt : 0) + 1 }));
     } finally { if (live.current) setRetrying(false); }
   };
   const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];

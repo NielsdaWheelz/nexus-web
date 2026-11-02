@@ -8,7 +8,7 @@ import MediaImage from "@/components/ui/MediaImage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -28,6 +28,7 @@ import { OracleTheme } from "./ornaments";
 import styles from "./oracle.module.css";
 
 const UNSTARTED = "couldn’t start the reading.";
+type Attempt = { id: string; question: string; openIntent: OpenIntent };
 
 /** Ask and list. A refused question is said beneath the input, where consult is the retry; one
  * whose answer never came is held, and its retry resends the frozen attempt: first creation wins. */
@@ -39,7 +40,7 @@ export default function OracleLandingPaneBody() {
   const { ctx } = useActionRuntime();
   const live = useRef(false);
   const draft = useResourceDraft<{
-    question: string; attempt: { id: string; question: string; openIntent: OpenIntent } | null;
+    question: string; attempt: Attempt | null;
     submitting: boolean;
     /** The last refusal, said beneath the input until the question changes. */
     refused: ApiError | null;
@@ -68,42 +69,56 @@ export default function OracleLandingPaneBody() {
   });
 
   const length = questionLength(question);
-  const submit = async (intent: OpenIntent) => {
-    if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
-    const prior = draft.read().attempt;
-    if (prior && prior.question !== question && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
-    const frozen = prior?.question === question
-      ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
-      : { id: crypto.randomUUID(), question, openIntent: intent };
+  /** One send of an attempt, whose id stays frozen until a send lands. A refusal changed nothing: it
+   * drops an attempt none of whose sends went unanswered, and leaves one that may have landed held.
+   * Anything else a send meets leaves its outcome unknown. */
+  const send = async (frozen: Attempt) => {
     // a new attempt starts with no unknown answer of its own
-    draft.set(value => ({ ...value, attempt: frozen, refused: null, unknown: frozen.id === prior?.id ? value.unknown : 0 }));
+    draft.set(value => ({ ...value, attempt: frozen, refused: null, unknown: frozen.id === value.attempt?.id ? value.unknown : 0 }));
     setSubmitting(true);
     try {
       await openAsyncResult({
         ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const readingId = await createReading({ id: frozen.id, question: frozen.question });
-          if (!ctx.sessionSignal().aborted) draft.set(value => value.attempt !== frozen ? value : ({
+          if (!ctx.sessionSignal().aborted) draft.set(value => value.attempt?.id !== frozen.id ? value : ({
             ...value, attempt: null, unknown: 0, question: value.question === frozen.question ? "" : value.question,
           }));
           return { target: { href: `/oracle/${readingId}` }, title: "reading started", openLabel: "open reading" };
         },
       });
     } catch (error) {
-      if (ctx.sessionSignal().aborted) return;
-      if (isRefusal(error) && prior === null) draft.set(value => value.attempt === frozen ? { ...value, attempt: null } : value);
-      if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
-      else if (outcomeUnknown(error)) draft.set(value => value.attempt === frozen ? { ...value, unknown: value.unknown + 1 } : value);
-      else draft.set(value => ({ ...value, refused: error, unknown: 0 }));
+      if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) {
+        setDefect({ error });
+        return;
+      }
+      draft.set(value => value.attempt?.id !== frozen.id ? value
+        : isRefusal(error) ? { ...value, refused: error, attempt: value.unknown === 0 ? null : value.attempt }
+        : { ...value, unknown: value.unknown + 1 });
     } finally { if (!ctx.sessionSignal().aborted) setSubmitting(false); }
+  };
+  /** Consult asks what the field holds: the held attempt again if it asks the same, else a new one. */
+  const submit = (intent: OpenIntent) => {
+    if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
+    const prior = draft.read().attempt;
+    if (prior && prior.question !== question && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
+    void send(prior?.question === question
+      ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
+      : { id: crypto.randomUUID(), question, openIntent: intent });
+  };
+  /** The held slip's retry resends its frozen attempt, whatever the field holds now. */
+  const resend = (intent: OpenIntent) => {
+    const held = draft.read().attempt;
+    if (submitting || held === null || !live.current) return;
+    void send({ ...held, openIntent: intent === "new_pane" ? intent : held.openIntent });
   };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") {
       event.preventDefault();
-      void submit(activation.intent);
+      submit(activation.intent);
     }
   };
   if (defect) throw defect.error;
@@ -122,7 +137,7 @@ export default function OracleLandingPaneBody() {
             Ask one question. The oracle will arrange a plate, three passages,
             and a reading drawn from public-domain literature and your library.
           </p>
-          <form className={styles.askForm} onSubmit={event => { event.preventDefault(); void submit("default"); }}>
+          <form className={styles.askForm} onSubmit={event => { event.preventDefault(); submit("default"); }}>
             <textarea
               className={styles.askInput}
               placeholder="What am I afraid of? What lies on the other side of this threshold?"
@@ -157,7 +172,7 @@ export default function OracleLandingPaneBody() {
             {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : null}
           </form>
           {held && unknown > 0 ? <Hold id={held.id} attempt={unknown} line={{ fact: "not sure the reading started.", reason: "it may have gone through." }}
-            verbs={[{ label: "retry", commandKey: `ask ${held.id}`, busy: submitting, run: intent => void submit(intent) }]} /> : null}
+            verbs={[{ label: "retry", commandKey: `ask ${held.id}`, busy: submitting, run: resend }]} /> : null}
 
           {readings.status === "failed" ? (
             <Failed error={readings.error} noun="readings" retry={{ run: () => void readings.refetch(), busy: readings.retrying }} />
