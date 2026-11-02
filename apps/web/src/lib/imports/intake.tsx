@@ -648,11 +648,11 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       if (line === null) return;
       if (line.stage.kind === "Unknown") return resend(line);
       if (line.stage.kind !== "Refused") return;
-      const batch = (kind: LineRefusal["kind"]) => entries.filter(other => other.batch === line.batch
-        && (refusalOf(other) === kind || other.stage.kind === "Waiting" && kind === "Changed"));
+      const batch = entries.filter(other => other.batch === line.batch);
       switch (line.stage.refusal.kind) {
         // one reread re-freezes the batch: a removal must not cost a press per line
-        case "Changed": case "NoStart": return refreeze(batch(line.stage.refusal.kind));
+        case "Changed": return refreeze(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting"));
+        case "NoStart": return refreeze(batch.filter(other => refusalOf(other) === "NoStart"));
         case "LibraryGone": return refreeze([line]);
         case "Offline": return line.guard === null ? refreeze([line]) : resend(line);
         case "Active": case "Undeclared": case "BytesLost": case "NotPrepared": case "NotChecked": return resend(line);
