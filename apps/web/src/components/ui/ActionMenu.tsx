@@ -935,7 +935,6 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 choose(entry.value, true);
               }}>
-              {entry.icon ? <span aria-hidden="true">{entry.icon}</span> : null}
               <span>{entry.label}</span>
             </button>)}
           </div>

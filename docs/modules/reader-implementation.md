@@ -810,8 +810,8 @@ give their rail position and order.
   tokens on `.frame[data-theme]` in `documentReader.module.css`. pdf pages keep
   their source colours; the theme paints the frame around them.
 - **view menu.** for every readable item, pdfs included, the view section opens
-  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" or "Dark"
-  (drawn `Light`, `Dark`), which sets the profile theme absolutely; without `editable` it
+  with the `Reader theme` [menu choice](overlays.md#surfaces), the words "Light" or
+  "Dark", which sets the profile theme absolutely; without `editable` it
   is disabled with "requires a connection". an unreadable item has no theme row.
   the "Reader settings" link to `/settings/reader` follows, carrying that route's
   sign (`ReaderSettings`), the destination's one glyph.

@@ -1,11 +1,11 @@
-import { useId, type ReactElement, type ReactNode, type Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ChoiceField.module.css";
 import selection from "./Selection.module.css";
 
 /** Native selection, including radio-group arrow keys and checkbox space. */
 export default function ChoiceField({
-  label, checked, onChange, disabled, type = "checkbox", name, value, description, presentation = "Inline", icon,
+  label, checked, onChange, disabled, type = "checkbox", name, value, description, presentation = "Inline",
   ref, "aria-describedby": describedBy,
 }: {
   readonly label: ReactNode;
@@ -17,7 +17,6 @@ export default function ChoiceField({
   readonly value?: string;
   readonly description?: string;
   readonly presentation?: "Inline" | "Segment";
-  readonly icon?: ReactElement;
   readonly ref?: Ref<HTMLInputElement>;
   readonly "aria-describedby"?: string;
 }) {
@@ -30,7 +29,6 @@ export default function ChoiceField({
         checked={checked} disabled={disabled} aria-labelledby={labelId}
         aria-describedby={cx(describedBy, description && descriptionId) || undefined}
         onChange={(event) => onChange(event.currentTarget.checked)} />
-      {icon ? <span aria-hidden="true">{icon}</span> : null}
       <span>
         <span id={labelId}>{label}</span>
         {description ? <span id={descriptionId} className={styles.description}>{description}</span> : null}

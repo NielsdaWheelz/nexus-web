@@ -23,9 +23,7 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronsUpDown,
-  CircleArrowUp,
   CircleUser,
-  CloudOff,
   CodeXml,
   Compass,
   Copy as CopyDrawing,
@@ -55,7 +53,6 @@ import {
   MessageSquarePlus,
   Minimize2,
   Minus,
-  Moon,
   NotebookTabs,
   Palette,
   PanelRight,
@@ -80,7 +77,6 @@ import {
   Square,
   StickyNote,
   Strikethrough as StrikethroughDrawing,
-  Sun,
   TriangleAlert,
   Underline as UnderlineDrawing,
   Undo2,
@@ -187,15 +183,11 @@ export const Settings: Glyph = SettingsDrawing;       // how it behaves
 export const Appearance: Glyph = Palette;             // how it looks
 export const ReaderSettings: Glyph = ALargeSmall;     // how text reads
 export const Keyboard: Glyph = KeyboardDrawing;       // the keys
-export const Light: Glyph = Sun;                      // light theme
-export const Dark: Glyph = Moon;                      // dark theme
 
 // Marks.
 export const Check: Glyph = CheckDrawing;             // this holds
 export const Warning: Glyph = TriangleAlert;          // needs a look
 export const Blocked: Glyph = Lock;                   // not allowed
-export const Offline: Glyph = CloudOff;               // no connection
-export const UpdateReady: Glyph = CircleArrowUp;      // a new version is ready
 
 // Drawn glyphs carry a nexus- name, so their class never matches a stock glyph.
 // The lectern: a closed desk with converging sides, a ledge, a post and splayed legs.

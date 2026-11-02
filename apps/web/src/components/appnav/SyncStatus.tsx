@@ -16,7 +16,7 @@ const DETAIL: Record<SyncStatus, string | null> = {
 };
 // A status with no sign keeps a blank slot, so its text holds still as the state changes.
 const ICONS: Record<SyncStatus, Icon.Glyph | null> = {
-  preparing: null, saving: null, offline: Icon.Offline, syncing: null, current: Icon.Check,
+  preparing: null, saving: null, offline: null, syncing: null, current: Icon.Check,
   sign_in_required: Icon.Warning, update_required: Icon.Warning, local_error: Icon.Warning, sync_error: Icon.Warning,
 };
 const REMOTE_FAILURES: ReadonlySet<SyncStatus> = new Set(["sign_in_required", "update_required", "sync_error"]);

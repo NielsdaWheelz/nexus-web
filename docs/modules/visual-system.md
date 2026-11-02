@@ -293,7 +293,7 @@ role. inside `role=menu` the same choice is `menuitemradio`
 `Segmented` sets each option as a `ChoiceField` segment in one track of equal
 columns whose labels wrap; its visible legend takes the form-label type, and a
 `Hidden` legend names the group to assistive technology only. a choice label may
-be a node, such as a font named in its own face, beside a decorative icon.
+be a node, such as a font named in its own face.
 
 `ChoiceField.module.css` owns native label/input geometry and the public group,
 choices and group-description layouts. names reference label-only spans;

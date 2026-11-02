@@ -219,7 +219,7 @@ export default function AccountMenu(props: {
     id: "app-update",
     label: "app update",
     render: () => <div className={accountStyles.status}>
-      <Icon.UpdateReady size={16} className={accountStyles.statusIcon} aria-hidden="true" />
+      <span className={accountStyles.statusIcon} />
       <span className={accountStyles.statusText}>
         <span>app update ready</span>
         <span className={accountStyles.statusDetail}>finish writing, then close all nexus tabs and reopen.</span>

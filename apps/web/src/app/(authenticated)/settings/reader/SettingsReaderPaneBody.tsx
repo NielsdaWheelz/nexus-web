@@ -1,6 +1,5 @@
 "use client";
 
-import * as Icon from "@/lib/ui/icons";
 import { useId } from "react";
 import { FeedbackFailure } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
@@ -46,8 +45,8 @@ export default function SettingsReaderPaneBody() {
             presentation="Segmented"
             value={p.theme}
             choices={[
-              { value: "light", label: "Light", icon: <Icon.Light size={16} aria-hidden="true" /> },
-              { value: "dark", label: "Dark", icon: <Icon.Dark size={16} aria-hidden="true" /> },
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
             ]}
             onChange={reader.setTheme}
           />
