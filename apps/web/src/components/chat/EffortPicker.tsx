@@ -1,22 +1,27 @@
 "use client";
 
-import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { choiceUnavailable, modelKeyOf, type ModelVariant, type SelectionEditor } from "@/lib/chat/selection";
 import styles from "./EffortPicker.module.css";
 
-/** One ordered effort dimension; the model control owns mode. */
+/** One ordered effort dimension; the model control owns mode. While its choices wait the chevron
+ * spins and the trigger stays pressable; `unready` stands in the panel until the catalog lands. */
 export default function EffortPicker({
   variant,
   value,
   disabled,
+  waiting,
+  unready,
   onOpen,
   onChange,
 }: {
   variant: ModelVariant | null;
   value: SelectionEditor;
   disabled: boolean;
+  waiting: boolean;
+  unready: ReactNode | null;
   onOpen(): void;
   onChange(key: string): void;
 }) {
@@ -35,7 +40,7 @@ export default function EffortPicker({
     ? variant.reasoning.find((row) => row.key === currentKey) ?? null : null;
   const fixed = current !== null && variant?.reasoning.length === 1;
   const index = choices.findIndex((row) => row.key === currentKey);
-  const label = current?.effort_label ?? (value.kind === "DefaultUnavailable" ? "default effort unavailable" : currentKey ?? "effort unavailable");
+  const label = current?.effort_label ?? (waiting || unready !== null ? "effort" : "effort unavailable");
   const ladder = JSON.stringify(choices.map((row) => row.key));
   const setTrigger = useCallback((node: HTMLButtonElement | null) => {
     if (node === null && trigger.current === document.activeElement) focusFixedValue.current = true;
@@ -75,8 +80,8 @@ export default function EffortPicker({
         <span ref={fixedValue} className={styles.fixed} role="group" aria-label="effort" tabIndex={-1}>{label}</span>
       ) : (
         <button ref={setTrigger} type="button" className={styles.trigger} disabled={disabled}
-          aria-label={`effort, ${label}`} aria-haspopup="dialog" aria-expanded={open}
-          aria-controls={open ? id : undefined}
+          aria-label={current ? `effort, ${label}` : label} aria-haspopup="dialog" aria-expanded={open}
+          aria-controls={open ? id : undefined} aria-busy={waiting || undefined}
           onClick={() => open ? setOpen(false) : show()}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -94,7 +99,7 @@ export default function EffortPicker({
             ) : null}
             <circle cx="12" cy="15" r="1.5" fill="currentColor" />
           </svg>
-          <span>{label}</span><ChevronDown size={13} aria-hidden="true" />
+          <span>{label}</span><ChevronDown size={13} aria-hidden="true" className={styles.chevron} />
         </button>
       )}
       <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}
@@ -102,37 +107,39 @@ export default function EffortPicker({
         title="effort" panelId={id} placement="above" className={styles.surface}
         initialFocus={(surface) => surface.querySelector<HTMLElement>("input[type=range]:not(:disabled), [data-effort-choice]:not(:disabled)") ?? surface}>
         <div ref={panel} className={styles.panel} role="group" aria-label="effort" tabIndex={-1}>
-          {current && choiceUnavailable(current) ? (
-            <p className={styles.reason}>{choiceUnavailable(current)}</p>
-          ) : null}
-          {index >= 0 && choices.length > 1 ? (
-            <div className={styles.rail}>
-              <input key={ladder} ref={setRange} type="range" min={0} max={choices.length - 1} step={1}
-                value={index} aria-label="effort" aria-valuetext={choices[index].effort_label}
-                disabled={disabled}
-                onChange={(event) => {
-                  const choice = choices[Number(event.currentTarget.value)];
-                  if (choice) onChange(choice.key);
-                }} />
-              <div className={styles.stops} aria-hidden="true">
-                {choices.map((choice) => <span key={choice.key}>{choice.effort_label}</span>)}
+          {unready ?? <>
+            {current && choiceUnavailable(current) ? (
+              <p className={styles.reason}>{choiceUnavailable(current)}</p>
+            ) : null}
+            {index >= 0 && choices.length > 1 ? (
+              <div className={styles.rail}>
+                <input key={ladder} ref={setRange} type="range" min={0} max={choices.length - 1} step={1}
+                  value={index} aria-label="effort" aria-valuetext={choices[index].effort_label}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const choice = choices[Number(event.currentTarget.value)];
+                    if (choice) onChange(choice.key);
+                  }} />
+                <div className={styles.stops} aria-hidden="true">
+                  {choices.map((choice) => <span key={choice.key}>{choice.effort_label}</span>)}
+                </div>
               </div>
-            </div>
-          ) : choices.length > 0 ? (
-            <div className={styles.choices} aria-label="choose effort">
-              {choices.map((choice) => (
-                <button type="button" data-effort-choice="true" key={choice.key} disabled={disabled}
-                  onClick={() => {
-                    focusReplacement.current = panel.current?.contains(document.activeElement) === true;
-                    onChange(choice.key);
-                  }}>{choice.effort_label}</button>
-              ))}
-            </div>
-          ) : (
-            <p className={styles.reason}>
-              {variant ? choiceUnavailable(variant.reasoning[0]) ?? "effort unavailable" : "model unavailable"}
-            </p>
-          )}
+            ) : choices.length > 0 ? (
+              <div className={styles.choices} aria-label="choose effort">
+                {choices.map((choice) => (
+                  <button type="button" data-effort-choice="true" key={choice.key} disabled={disabled}
+                    onClick={() => {
+                      focusReplacement.current = panel.current?.contains(document.activeElement) === true;
+                      onChange(choice.key);
+                    }}>{choice.effort_label}</button>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.reason}>
+                {variant ? choiceUnavailable(variant.reasoning[0]) ?? "effort unavailable" : "model unavailable"}
+              </p>
+            )}
+          </>}
         </div>
       </PickerSurface>
     </div>

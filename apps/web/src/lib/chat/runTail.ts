@@ -1,5 +1,4 @@
 import type { ApiError } from "@/lib/api/client";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
 import { openStream } from "@/lib/api/stream";
 import { assertNever } from "@/lib/assertNever";
@@ -23,7 +22,8 @@ export type Link =
   | { kind: "Live" }
   | { kind: "Lost" }
   | { kind: "Reconnecting" }
-  | { kind: "Failed"; feedback: FeedbackContent; retryable: boolean };
+  /** The reconnect read failed. */
+  | { kind: "Failed"; error: ApiError };
 export type MessageAction = Omit<Schema<"TrustToolCallOut">, "id"> & {
   readonly id: Schema<"TrustToolCallOut">["id"] | null;
 };
@@ -33,7 +33,6 @@ export type Live = Readonly<{
   text: string;
   lastSeq: number;
   link: Link;
-  suspension: ApiError | null;
   execution: Execution | null;
   /** by call position; saved reads alone supply ids and undo state. */
   tools: Readonly<Record<number, LiveAction>>;
@@ -54,7 +53,6 @@ export function emptyLive(runId: string): Live {
     text: "",
     lastSeq: 0,
     link: { kind: "Live" },
-    suspension: null,
     execution: null,
     tools: {},
   };
@@ -125,7 +123,7 @@ export function messageActions(
 export function openRunTail(
   runId: string,
   after: number,
-  on: { event(event: ChatEvent): void; suspended(error: ApiError): void; end(reason: "done" | "lost"): void },
+  on: { event(event: ChatEvent): void; end(reason: "done" | "lost"): void },
 ): () => void {
   return openStream<ChatEvent>({
     path: `/api/stream/chat-runs/${encodeURIComponent(runId)}/events`,
@@ -137,7 +135,8 @@ export function openRunTail(
     },
     isTerminal: (event) => event.type === "done",
     onEvent: on.event,
-    onSuspended: on.suspended,
+    // a suspended stream waits for admission on its cursor and resumes; the account says why
+    onSuspended: () => {},
     onError: (error) => {
       console.error("Chat run stream ended without its terminal event:", error);
       on.end("lost");

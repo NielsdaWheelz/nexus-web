@@ -11,7 +11,13 @@ import type { SelectionEditor } from "./selection";
 import type { Catalog } from "./wire";
 
 type Memory = ApiJson<"/me/chat-selection", "get">["data"];
-type Context = { read: ServerValue<Memory>; failureOccurrence: object | null; enter(): void; fresh(catalog: Catalog | null): SelectionEditor | null };
+type Context = {
+  read: ServerValue<Memory>;
+  /** Until L7: L2's reader composer keys its recall failure by it. Chat's composer reads `read`. */
+  failureOccurrence: object | null;
+  enter(): void;
+  fresh(catalog: Catalog | null): SelectionEditor | null;
+};
 const ChatSelectionContext = createContext<Context | null>(null);
 
 export function ChatSelectionProvider({ children }: { children: ReactNode }) {

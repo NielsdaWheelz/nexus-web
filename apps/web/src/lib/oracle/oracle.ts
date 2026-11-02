@@ -1,11 +1,7 @@
 // The oracle transport: ask, and follow one reading until it leaves pending.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import {
-  apiFetch,
-  apiTransportFeedback,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
@@ -44,7 +40,8 @@ export async function createReading(attempt: { readonly id: string; readonly que
 
 /**
  * Each frame is the whole reading; the last one is complete or failed. A reading
- * that is gone, or a stream that stays down, is reported once as lost.
+ * that is gone, or a stream that stays down, is reported once as lost. A stream
+ * suspended for admission resumes on its cursor, so it reports nothing.
  */
 export function watchReading(
   id: string,
@@ -62,24 +59,15 @@ export function watchReading(
       reading.status === "complete" || reading.status === "failed",
     onEvent: onState,
     onError: onLost,
-    onSuspended: onLost,
+    onSuspended: () => {},
   });
 }
 
-/**
- * Copy for a modeled failure: a missing reading, a transport failure (offline,
- * gateway, rate limit, a stale build: every request's copy), or any other
- * answer ("Something went wrong", with its request id). A defect throws.
- */
+/** Until L6's atlas migrates (L7): a failed oracle read as content, its domain code ahead of the
+ * transport's line. A defect throws. */
 export function failureCopy(error: unknown, title: string): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const { requestId } = error;
-  if (error.code === "E_NOT_FOUND") {
-    const message = "This reading is no longer available.";
-    return { tone: "Danger", title, message, requestId };
-  }
-  const copy = apiTransportFeedback(error, title);
-  if (copy !== null) return copy;
-  const message = "Something went wrong. Try again.";
-  return { tone: "Danger", title, message, requestId };
+  if (error.code === "E_NOT_FOUND") return { tone: "Warning", title: "this reading doesn’t exist." };
+  const { fact, reason } = TRANSPORT_LINES[transportOf(error)].command(title);
+  return { tone: "Warning", title: fact, message: reason };
 }

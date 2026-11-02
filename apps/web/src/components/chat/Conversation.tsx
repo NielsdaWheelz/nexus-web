@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence, useFeedback } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
@@ -12,7 +14,7 @@ import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
+import { changedLine, commandKey, heldUnknown, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -37,6 +39,7 @@ import {
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { CommandVerb } from "@/components/feedback/stage";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -73,8 +76,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId, runtime.paneId);
   const savedCatalog = useCatalogState();
   const saved = conversationId === null || savedCatalog.data === null ? null : catalogChat(savedCatalog.data, conversationId);
-  // A menu's chat deletion speaks as a workspace condition (commandFeedback.tsx).
-  const recovery = recoveryOf(state.command, (command) => command.kind !== "DeleteChat");
   const catalogRead = useServerValue({
     key: "/llm-catalog",
     stale: "",
@@ -247,8 +248,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           const { conversation_id, assistant_message_id } = outcome.receipt.outcome;
           return {
             target: { href: conversationViewHref(conversation_id, assistant_message_id) },
-            title: sending === null ? "response ready" : "message sent",
-            openLabel: "open response",
+            // admitted, its answer still pending
+            title: sending === null ? "new answer started" : "message sent",
+            openLabel: "open answer",
           };
         },
         onDefault: (result) => {
@@ -286,7 +288,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     seed(delivery.entry.text);
     claim(delivery);
   }, [delivery, claim, seed, enterMemory]);
-  const feedback = useFeedback();
+  const slips = useOutcome();
+  const { say } = slips;
   const workspace = useLatestWorkspace();
   useEffect(() => {
     if (delivery === null || !("messageId" in delivery.entry) || !ready) return;
@@ -299,10 +302,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       return;
     }
     if (!claim(delivery)) return;
-    if (!message)
-      return void feedback.receipt({ tone: "Neutral", title: "This message is no longer available." });
+    if (!message) return void say({ fact: "couldn’t find that message." });
     if (entry.kind === "DeleteMessage") {
-      void store.deleteMessage(message.id);
+      // a refusal's retry deletes again, through the same confirmation
+      const remove = () => void store.deleteMessage(message.id)
+        .then((outcome) => sayRefusal(slips, outcome, { label: "retry", commandKey: `delete ${message.id}`, run: remove }));
+      remove();
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
@@ -312,7 +317,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         quote: "",
       });
     }
-  }, [fork, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path]);
+  }, [fork, clearArrival, claim, delivery, say, slips, messages, ready, runtime, store, view.path]);
   useEffect(() => {
     if (!state.gone || conversationId === null) return;
     settleDeletedResourcePanes({
@@ -343,10 +348,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       linkedItems: conversationId ? (
         <ChatContext conversationId={conversationId} refreshKey={contextVersion} />
       ) : (
-        <FeedbackNotice
-          content={{ tone: "Neutral", title: "Start a chat to link items." }}
-          announcement="None"
-        />
+        <Fact line={{ fact: "context opens after the first message." }} />
       ),
       forks: (
         <ForksPanel
@@ -407,73 +409,77 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     let ancestor = previous.get(leafId)?.parent_message_id ?? null;
     while (ancestor !== null && !messages.has(ancestor)) ancestor = previous.get(ancestor)?.parent_message_id ?? null;
     if (ancestor !== null) selectEndpoint(ancestor);
-    feedback.receipt({ tone: "Neutral", title: "this branch was deleted" });
+    say({ fact: "this branch was deleted." });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: a replaced graph repairs a known deleted endpoint once
   }, [messages, ready]);
 
   const pathOnly = conversationId ? conversationViewHref(conversationId, leafId) : "/conversations/new";
-  const check = {
-    label: "check chat change",
-    onClick: (openIntent: OpenIntent) => void paneStore.retryCommand(openIntent),
-    busy: recovery?.kind === "Busy",
-  };
+  // a source arrival's failure is said once, and retracted when it clears
+  const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
+  useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
 
-  const readOccurrence = useFeedbackOccurrence(state.error !== null || history === "Unavailable", conversationId);
-  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null || invalidatedInspection, conversationId);
+  // Every pane that shows the chat shows a pending command's lane, but the pane whose composer sent
+  // it: that composer holds it beside its draft. One pane holds it as a slip, the command owner's
+  // `holder`, so two panes on one chat hold it once; while none shows the chat, the workspace holds
+  // what a menu or the reader raised (lib/chat/commandFeedback.tsx). An unknown outcome is a held
+  // slip whose verbs stand in the lane too; a changed chat, or the failed read after it, is the
+  // lane's alone, and the holder rereads that read on focus and reconnection. Only the active pane
+  // speaks a lane.
+  const pending = state.command.kind === "Idle" ? null : state.command;
+  const composed = pending?.command.kind === "Send" && pending.command.viewId === runtime.paneId;
+  const holds = state.holder === runtime.paneId;
+  const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(slips, outcome)), [paneStore, slips]);
+  useFailedReadRepair(holds && pending?.standing?.kind === "Unread", pending?.kind === "Busy", () => again("default"));
+  useFailedReadRepair(history === "Unavailable" && !state.gone, state.readingTree, () => void store.load());
+
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
-  if (savedOnly) return <div className={styles.pane}>
-    {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
-    <FeedbackNotice content={saved === null ? catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this chat is not available offline" }} announcement="Polite" />
-  </div>;
+  if (savedOnly) {
+    const absent = saved !== null ? null
+      : catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" });
+    return <div className={styles.pane}>
+      <div className={styles.lanes}>
+        {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
+        <Fact speak={isPaneActive} line={saved !== null ? { fact: "this chat’s messages aren’t saved on this device." }
+          : absent !== null ? { fact: absent.title, reason: absent.message } : { fact: "couldn’t open saved chats." }} />
+      </div>
+    </div>;
+  }
 
+  const unknownStanding = pending?.standing?.kind === "Unknown" && !composed ? pending.standing : null;
+  const pendingKey = pending === null ? "" : commandKey(pending.command);
+  const unknownRetry: CommandVerb = { label: "retry", commandKey: `retry ${pendingKey}`, busy: pending?.kind === "Busy", run: again };
+  const unknown = pending !== null && unknownStanding !== null ? heldUnknown(unsureFact(pending.command), unknownStanding.refused, pending.command.kind === "Send"
+    ? [unknownRetry, { label: "discard send", commandKey: `discard ${pendingKey}`, run: () => store.discardCommand() }]
+    : [unknownRetry]) : null;
+  const lane = pending?.standing?.kind === "Changed"
+    ? <Fact speak={isPaneActive} line={changedLine(pending.command)}
+      verbs={[{ label: "check", commandKey: `check ${pendingKey}`, busy: pending.kind === "Busy", run: again }]} />
+    : pending?.standing?.kind === "Unread"
+      ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
+      // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
+      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknown.verbs} />
+      : null;
   return (
     <div className={styles.pane}>
-      {unavailableBranch ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "this branch is no longer available" }}
-          announcement="Polite"
-          actions={[{ label: "choose another branch", onClick: () => runtime.requestSecondarySurface("resource-forks") }]}
-        />
-      ) : null}
-      {intent.kind === "invalid" ? (
-        <FeedbackNotice
-          content={{
-            tone: "Danger",
-            title: "This quote link is malformed",
-            message:
-              "The passage couldn’t be attached. Reopen it from the reader.",
-          }}
-          announcement="Assertive"
-        />
-      ) : null}
-      {arrival.failure || invalidatedInspection ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{ tone: "Warning", title: arrival.failure?.title ?? "this match is no longer available" }} announcement="Polite" /> : null}
-      {state.error || history === "Unavailable" ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}
-          announcement="Assertive"
-          actions={history === "Unavailable"
-            ? [{ label: "retry chat", onClick: () => void store.load() }]
-            : [{ label: "Dismiss", onClick: store.dismissError }]}
-        />
-      ) : null}
-      {recovery?.feedback ? (
-        <FeedbackFailure scope="Local" occurrence={recovery.occurrence} announcementOccurrence={recovery.feedback}
-          content={recovery.feedback}
-          announcement="Assertive"
-          actions={recovery.kind === "Unconfirmed" && recovery.command.kind === "Send"
-            // the viewer's way out of a send no retry settles; the draft keeps its text
-            ? [check, { label: "discard send", onClick: store.discardCommand }]
-            : [check]}
-        />
-      ) : null}
+      {unavailableBranch || intent.kind === "invalid" || lane !== null ? <div className={styles.lanes}>
+        {unavailableBranch ? <Fact speak={isPaneActive} line={{ fact: "can’t find this branch." }}
+          verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
+        {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
+        {lane}
+      </div> : null}
+      {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}
         view={view}
         live={state.live}
         command={state.command}
-        loading={history === "Loading"}
+        loading={loading}
+        absent={loading ? <Ruling />
+          : state.gone ? <Fact line={{ fact: "this chat doesn’t exist." }} />
+          : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load(), busy: state.readingTree }} />
+          : null}
         store={paneStore}
         fork={fork}
         composer={
