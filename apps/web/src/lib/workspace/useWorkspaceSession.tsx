@@ -1,7 +1,7 @@
 "use client";
 /** Local workspace metadata saves independently of remote credentials. The cloud mirror
- * is best effort: a local failure alone presents. A 5xx retries on a slow timer; any other
- * remote failure waits for the next change, or the next admission generation. */
+ * is best effort: a local failure alone presents. A 5xx leaves the state unsaved, so the next
+ * change, hide or admission generation sends it again; nothing resends on a clock. */
 import { useEffect, useState } from "react";
 import { FeedbackFailure } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -13,7 +13,6 @@ import { useDeviceWorkspaceSave } from "@/lib/native/workspaceSave";
 import { saveBrowserWorkspace } from "@/lib/authored/binding";
 import type { WorkspaceState } from "./model";
 import type { WorkspaceStore } from "./store";
-const MIRROR_RETRY_MS = 30_000;
 export function useWorkspaceSession(store: WorkspaceStore) {
   const account = useAuthenticatedAccount();
   const local = useDeviceWorkspace();
@@ -41,9 +40,10 @@ export function useWorkspaceSession(store: WorkspaceStore) {
         saved = state;
         if (live) setFailure(null);
       } catch (error) {
-        if (localSaved && isApiError(error) && error.status >= 500) { if (live) { setFailure(null); timer = setTimeout(() => { void save(); }, MIRROR_RETRY_MS); } }
-        else if (localSaved) { saved = state; if (live) setFailure(null); }
-        else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
+        if (localSaved) {
+          if (!isApiError(error) || error.status < 500) saved = state;
+          if (live) setFailure(null);
+        } else if (live) setFailure(previous => ({ retry: () => { void save(); }, busy: false, occurrence: previous?.occurrence ?? {} }));
       } finally {
         sending = false;
         if (live && again) { again = false; void save(); }
