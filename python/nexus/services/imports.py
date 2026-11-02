@@ -396,14 +396,17 @@ def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
             f" {_rank('i.primary_stage')} AS stage_rank, m.*"
         )
     elif query.view == "Recent":
-        # own is what the viewer acquired: an upload ref is always the viewer's session,
-        # and shared media, metadata-only rows and transcript requests are not imports of
-        # theirs. no obligation join: a complete import has no current obligation.
+        # own is what the viewer acquired: an upload ref is always the viewer's session, a
+        # media ref needs the viewer's source attempt, live or superseded onto it. shared
+        # media, metadata-only rows and transcript requests are not imports of theirs. no
+        # obligation join: a complete import has no current obligation.
         params["transcript_source_type"] = PODCAST_EPISODE_TRANSCRIPT
         where.append(
             "(i.session_id IS NOT NULL OR EXISTS (SELECT 1 FROM media_source_attempts a"
             " WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id"
-            " AND a.source_type <> :transcript_source_type))"
+            " AND a.source_type <> :transcript_source_type) OR EXISTS (SELECT 1"
+            " FROM media_source_supersessions s WHERE s.media_id = i.media_id"
+            " AND s.created_by_user_id = :viewer_id))"
         )
         join = ""
         selection = "i.primary_key AS view_key"

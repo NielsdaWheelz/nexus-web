@@ -26,8 +26,9 @@ http (all authenticated repeatable reads, `Data{data}`; the web under `/api`):
 | `GET /imports/{ref}/history` | `cursor`, `limit` 1..100 = 50 | `HistoryPage{entries, next_cursor}`, newest first by `(occurred_at, id)`; 400, 404, 400 `E_INVALID_CURSOR` |
 
 Recent is the viewer's own imports, every classification, newest accepted first: an
-`upload:` row, or a `media:` row with a source attempt the viewer created that is not
-a podcast transcript request. shared media and metadata-only rows are not their
+`upload:` row, or a `media:` row with a source attempt the viewer created, live or
+superseded onto it, that is not a podcast transcript request. shared media,
+metadata-only rows and a join of another reader's run in flight are not their
 imports. it matches no obligation, so complete imports stay, and its `matched_count`
 is the page's own, sparing a second pass over the read model.
 
