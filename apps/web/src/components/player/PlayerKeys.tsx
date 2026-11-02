@@ -4,12 +4,13 @@ import { useEffect, useRef } from "react";
 import * as Player from "@/lib/player/playerRuntime";
 import { isEditableTarget, isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import type { PlayerOrigin } from "./usePlayerOrigin";
 
 /**
  * Space plays and pauses, ←/→ skip, shift+←/→ step the queue; never inside controls or text.
  * The listener registers once for the player's lifetime; the ref hands it each render's session.
  */
-export default function PlayerKeys() {
+export default function PlayerKeys({ origin: _origin }: { readonly origin: PlayerOrigin }) {
   const commands = Player.usePlayerCommands();
   const { state, pendingPlayback, queue } = Player.usePlayerSession();
   const keyed = useRef({ commands, canPause: false, loaded: false });

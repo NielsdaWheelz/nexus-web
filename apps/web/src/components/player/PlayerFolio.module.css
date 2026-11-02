@@ -1,0 +1,22 @@
+/* flush right, 17ch held for every folio string of an episode under ten hours. */
+.folio {
+  flex: none;
+  min-width: 17ch;
+  color: var(--ink-muted);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.exact { display: none; }
+
+/* attention: the rail's keyboard focus (a play key's never counts), a scrub, or a still phase. */
+:global([data-player-bar]:is([data-cold="true"], [data-scrub="true"], :has(input[type="range"]:focus-visible))) .rest { display: none; }
+:global([data-player-bar]:is([data-cold="true"], [data-scrub="true"], :has(input[type="range"]:focus-visible))) .exact { display: inline; }
+
+/* and the pointer, where there is one that hovers. */
+@media (hover: hover) {
+  :global([data-player-bar]:hover) .rest { display: none; }
+  :global([data-player-bar]:hover) .exact { display: inline; }
+}

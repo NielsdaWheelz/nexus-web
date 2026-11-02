@@ -1,31 +1,22 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import * as Icon from "lucide-react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import { buttonClassName } from "@/components/ui/control";
-import Tooltip from "@/components/ui/Tooltip";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { assertNever } from "@/lib/assertNever";
+import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import {
-  useMobileViewport,
-  useRootTextEntryFocused,
-} from "@/lib/mobileShell/viewport";
+import { useMobileViewport, useRootTextEntryFocused } from "@/lib/mobileShell/viewport";
+import { barClock, barMode, barSubjectId, liveKeys, miniKeys } from "@/lib/player/barModel";
 import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
+import type { ActionDescriptor, PreparationState } from "@/lib/ui/actionDescriptor";
+import * as Icon from "@/lib/ui/icons";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -33,7 +24,8 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import QueuePanel from "./QueuePanel";
 import PlayerIdentity from "./PlayerIdentity";
 import PlayerTransport from "./PlayerTransport";
-import PlayerSeek, { MiniProgress } from "./PlayerSeek";
+import PlayerRule from "./PlayerRule";
+import PlayerFolio from "./PlayerFolio";
 import PlayerUtilities from "./PlayerUtilities";
 import SpeedKey from "./SpeedKey";
 import { PlaybackPanel, usePlaybackSettings } from "./PlaybackSettings";
@@ -41,19 +33,29 @@ import PlayerChapters from "./PlayerChapters";
 import { unavailableMessages } from "./PlayerFailures";
 import PlayerSheet, { MobileDisclosure } from "./PlayerSheet";
 import PlayerKeys from "./PlayerKeys";
+import { usePlayerOrigin } from "./usePlayerOrigin";
 import styles from "./GlobalPlayerSurfaces.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
 
 const PICKER_DIALOGS = '[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]';
+/** the keys a narrow bar sheds to more, in bar order. */
+type Shed = "previous" | "next" | "chapters" | "upNext";
+const SHED: readonly Shed[] = ["previous", "next", "chapters", "upNext"];
+
+/** Shown: connected, outside a hidden or inert subtree, laid out and visible. */
+const shown = (element: HTMLElement | null): element is HTMLElement => element !== null && element.isConnected
+  && element.closest("[hidden], [inert]") === null && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
 
 /**
- * presentation hides desktop chrome without retiring settings or announcements.
- * the viewport measures the mobile slot; chrome owns its inner footer's motion.
- * overlays return only to visible controls, and never reclaim unrelated focus.
+ * The player's root: what the bar shows is `barMode`'s, read from the session and the one summary
+ * it names; leaves render it. The root wires refs, pickers, the more menu, focus and the one live
+ * region, and never reads the clock. Presentation hides desktop chrome without retiring settings or
+ * announcements; overlays return only to shown controls and never reclaim unrelated focus.
  */
 export default function GlobalPlayerSurfaces({ readerComposition }: { readerComposition: boolean }) {
-  const { state, queue, preferences, pendingPlayback, playbackSubject, supportsSilenceSkipping } = Player.usePlayerSession();
+  const session = Player.usePlayerSession();
+  const { state, queue, preferences, playbackSubject, supportsSilenceSkipping } = session;
   const presentation = usePlayerPresentation();
   const commands = Player.usePlayerCommands();
   const latestWorkspace = useLatestWorkspace();
@@ -63,40 +65,48 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const mobileViewport = useMobileViewport();
   const textEntryFocused = useRootTextEntryFocused();
   const nativeKeyboard = useNativeKeyboardVisibility();
+  const subjectId = barSubjectId(session);
+  const summaries = useMediaSummaryIds(subjectId === null ? [] : [subjectId]);
+  const mode = barMode(session, subjectId !== null && summaries.pending(subjectId) ? { kind: "Pending" }
+    : { kind: "Ready", summary: subjectId === null ? null : summaries.resolve(subjectId) });
+  const keys = liveKeys(mode, session);
+  const clock = barClock(mode);
+  const origin = usePlayerOrigin(playbackSubject);
+  const [draft, setDraft] = useState<number | null>(null);
   const [picker, setPicker] = useState<{ readonly subject: string; readonly kind: "Playback" | "Chapters" } | null>(null);
   const shownPicker = (isMobile || presentation.visible) && !modeChanged && state.kind === "Loaded" && picker !== null && picker.subject === playbackSubject ? picker.kind : null;
-  const panelOpen = shownPicker === "Playback";
   const [opening, setOpening] = useState(0);
   const playbackId = useId();
   const chaptersId = useId();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"Player" | "Queue">("Player");
-  const queueRef = useRef<HTMLButtonElement>(null);
-  const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
-  const retained = queue.known && queue.header !== null && queue.header.count > 0;
+  const [shed, setShed] = useState<{ readonly request: AbortSignal; readonly keys: readonly Shed[] } | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
-  const idleRef = useRef<HTMLAnchorElement>(null);
+  const discRef = useRef<HTMLButtonElement>(null);
+  const previousRef = useRef<HTMLButtonElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
   const rateRef = useRef<HTMLButtonElement>(null);
   const chaptersRef = useRef<HTMLButtonElement>(null);
+  const queueRef = useRef<HTMLButtonElement>(null);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const setMoreRef = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
   const openerRef = useRef<HTMLButtonElement>(null);
   const sheetContentRef = useRef<HTMLDivElement>(null);
   const focusedControl = useRef<HTMLElement | null>(null);
   const sourceOpened = useRef(false);
-  const announcedSource = useRef<string | null>(null);
-  const announcedPhase = useRef<Loaded["phase"] | null>(null);
-  const announcedUnavailable = useRef<string | null>(null);
+  const announced = useRef<{ source: string | null; phase: Loaded["phase"] | null; unavailable: string | null; stopped: string | null }>({ source: null, phase: null, unavailable: null, stopped: null });
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded?.source.descriptor.media_id ?? null;
+  const liveMedia = useRef(identity);
+  liveMedia.current = identity;
   const { accountId } = useAuthenticatedAccount();
   const settings = usePlaybackSettings({ loaded, playbackSubject, preferences, opening });
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded !== null && loaded.playbackFailed
     && queue.failure?.kind === "Episode" && queue.failure.entry_id === queue.header?.current_entry_id;
-  const status = loaded === null || queuePlaybackFailure ? null : loaded.error ??
-    (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
   const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
   const sheetShown = !modeChanged && isMobile && sheetOpen;
   const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
@@ -132,204 +142,172 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   // Loaded replacement retains the sheet but retires its old disclosure.
   useLayoutEffect(() => { setPicker(null); }, [playbackSubject, isMobile, sheetOpen]);
   useLayoutEffect(() => { priorMode.current = isMobile; setSheetOpen(false); setQueueOpen(false); }, [isMobile, accountId]);
-
   useLayoutEffect(() => {
     if (!isMobile && !presentation.visible) { setPicker(null); setQueueOpen(false); }
   }, [isMobile, presentation.visible]);
 
-  const returnFocus = useCallback((opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
-    const candidates = !isMobile && !currentSurface.current.desktopVisible
-      ? [presentation.railRef.current]
-      : [opener, idleRef.current, isMobile ? null : presentation.regionRef.current, findActivePaneLandmarkFocusTarget()];
-    const element = candidates
-      .find(candidate => {
-        if (!candidate?.isConnected) return false;
-        const blocker = candidate.closest("[hidden], [inert]");
-        // The overlay retries after this slot's closing suppression commits.
-        if (candidate === opener && blocker === slotRef.current && !textEntryFocused) {
-          return slotRef.current?.parentElement?.closest("[hidden], [inert]") === null;
-        }
-        return blocker === null && candidate.getClientRects().length > 0;
-      });
+  /** The first shown of `preferred`, then the disc, up next, the region and the pane. */
+  const returnFocus = useCallback((preferred: readonly (HTMLElement | null)[]): { element: HTMLElement; preventScroll: true } | null => {
+    const candidates = !isMobile && !currentSurface.current.desktopVisible ? [presentation.railRef.current]
+      : [...preferred, discRef.current, queueRef.current, isMobile ? null : presentation.regionRef.current, findActivePaneLandmarkFocusTarget()];
+    const element = candidates.find(candidate => {
+      // The overlay retries after this slot's closing suppression commits.
+      if (candidate !== null && preferred.includes(candidate) && candidate.closest("[hidden], [inert]") === slotRef.current && !textEntryFocused)
+        return candidate.isConnected && slotRef.current?.parentElement?.closest("[hidden], [inert]") === null;
+      return shown(candidate);
+    });
     return element ? { element, preventScroll: true } : null;
   }, [textEntryFocused, isMobile, presentation.railRef, presentation.regionRef]);
-  useLayoutEffect(() => {
+  // A control that leaves the bar, by mode or by a tier resize, hands owned focus on.
+  const recoverFocus = useCallback(() => {
     const departed = focusedControl.current;
-    if (departed === null) return;
-    if (departed.isConnected && !departed.matches(":disabled") && !departed.closest("[hidden], [inert]") && departed.getClientRects().length > 0) return;
+    if (departed === null || shown(departed) && !departed.matches(":disabled")) return;
     focusedControl.current = null;
     const active = document.activeElement;
-    const pane = findActivePaneLandmarkFocusTarget();
-    if (active !== document.body && active !== pane && active !== departed) return;
-    const target = sheetShown ? sheetContentRef.current?.querySelector<HTMLButtonElement>('[data-player-play="true"]')
-      : returnFocus(null)?.element;
+    if (active !== document.body && active !== findActivePaneLandmarkFocusTarget() && active !== departed) return;
+    const target = sheetShown ? sheetContentRef.current?.querySelector<HTMLButtonElement>('[data-player-play="true"]') : returnFocus([])?.element;
     target?.focus({ preventScroll: true });
-  }, [state, isMobile, preferences, sheetShown, presentation.visible, returnFocus]);
+  }, [sheetShown, returnFocus]);
+  useLayoutEffect(() => recoverFocus(), [recoverFocus, state, isMobile, preferences, presentation.visible, mode.kind]);
+  const recover = useRef(recoverFocus);
+  recover.current = recoverFocus;
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    if (slot === null) return;
+    const observer = new ResizeObserver(() => recover.current());
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
+    const said = announced.current;
     switch (state.kind) {
-      case "Absent":
-        setAnnouncement(announcedSource.current === null ? null : "playback stopped");
-        announcedSource.current = null;
-        announcedPhase.current = null;
-        announcedUnavailable.current = null;
+      case "Absent": {
+        // the queue running out says so, in place of the stop it also is.
+        const stop = mode.kind === "Finished" ? "queue finished" : "playback stopped";
+        if (said.source !== null || said.stopped === "playback stopped" && stop === "queue finished") { setAnnouncement(stop); said.stopped = stop; }
+        said.source = null;
+        said.phase = null;
+        said.unavailable = null;
         break;
+      }
       case "Unavailable":
-        if (unavailable !== announcedUnavailable.current) setAnnouncement(unavailable);
-        announcedUnavailable.current = unavailable;
+        if (unavailable !== said.unavailable) setAnnouncement(unavailable);
+        said.unavailable = unavailable;
         break;
       case "Loaded": {
-        if (queuePlaybackFailure) {
-          announcedSource.current = identity;
-          announcedPhase.current = state.phase;
-          break;
-        }
-        const recovering = announcedUnavailable.current !== null;
-        announcedUnavailable.current = null;
+        said.stopped = null;
+        if (queuePlaybackFailure) { said.source = identity; said.phase = state.phase; break; }
+        const recovering = said.unavailable !== null;
+        said.unavailable = null;
         const started = state.error === null && state.phase === "Playing";
-        if (identity !== announcedSource.current) {
+        if (identity !== said.source) {
           const observation = started ? "now playing" : state.phase === "Buffering" ? "buffering" : "audio loaded";
           setAnnouncement(state.error === null ? `${observation}: ${title}` : null);
-        } else if (started && announcedPhase.current !== "Playing") {
-          setAnnouncement(`now playing: ${title}`);
-        }
+        } else if (started && said.phase !== "Playing") setAnnouncement(`now playing: ${title}`);
         else if (recovering) setAnnouncement(null);
-        announcedSource.current = identity;
-        announcedPhase.current = state.phase;
+        said.source = identity;
+        said.phase = state.phase;
         break;
       }
       default: assertNever(state);
     }
-  }, [state, identity, title, status, unavailable, settings.status, queuePlaybackFailure]);
+  }, [state, mode.kind, identity, title, unavailable, queuePlaybackFailure]);
 
   const toggle = (kind: "Playback" | "Chapters") => {
     if (shownPicker === kind) { setPicker(null); return; }
     if (kind === "Playback") { settings.save.reset(); setOpening(value => value + 1); }
     if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
   };
+  const openQueue = () => { sourceOpened.current = false; if (isMobile) { setSheetTarget("Queue"); setSheetOpen(true); } else setQueueOpen(value => !value); };
+  const openLectern = (event: TargetActivationEvent) => activateTargetLink({ event, runtime: linkRuntime, target: { href: "/lectern", labelHint: "lectern" } });
+  const openEpisode = (event: TargetActivationEvent, episode: { readonly mediaId: string; readonly title: string }) => {
+    const handled = activateTargetLink({ event, runtime: linkRuntime, target: { href: `/media/${episode.mediaId}`, labelHint: episode.title } });
+    if (handled === "handled-default" || handled === "handled-new-pane") opened();
+  };
   const speedKey = (variant: "Bar" | "Sheet") => <SpeedKey ref={rateRef} variant={variant} expanded={shownPicker === "Playback"} controls={playbackId}
     status={settings.status} failed={settings.failed} busy={settings.save.busy} onToggle={() => toggle("Playback")} />;
-  const chaptersKeyProps = { chaptersExpanded: shownPicker === "Chapters", chaptersId, chaptersRef, onToggleChapters: () => toggle("Chapters") };
-  const openQueue = <Button ref={queueRef} size="comfortable" className={styles.upNext} icon={<Icon.ListMusic />} aria-label="up next"
-    aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
-    aria-busy={queueBusy || undefined}
-    aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined}
-    onClick={() => { sourceOpened.current = false; if (isMobile) { setSheetTarget("Queue"); setSheetOpen(true); } else setQueueOpen(value => !value); }}>up next</Button>;
-  const absentCopy = pendingPlayback !== null || !queue.known ? ""
-    : retained ? queue.header?.current_entry_id === null ? "queue finished" : "playback stopped" : "nothing queued";
-  let desktopSource: ReactNode = <p className={styles.emptyIdentity}>{absentCopy}</p>;
-  let contents: ReactNode = null;
-  let overlays: ReactNode = null;
-  let sheetPlayerContent: ReactNode = null;
-  switch (state.kind) {
-    case "Absent": {
-      const openLectern = (event: TargetActivationEvent) => activateTargetLink({
-        event, runtime: linkRuntime, target: { href: "/lectern", labelHint: "lectern" },
-      });
-      if (pendingPlayback !== null) sheetPlayerContent = <><p>{absentCopy}</p><PlayerTransport variant="Sheet" /></>;
-      contents = <div className={styles.idle}>
-        <Icon.Headphones className={styles.idleGlyph} aria-hidden="true" />
-        <span className={styles.idleCopy}>{absentCopy}</span>
-        {pendingPlayback !== null ? <PlayerTransport variant="Mini" /> : <>
-          {retained ? <Button iconOnly size="comfortable" icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous} disabled={queue.phase !== "Ready"} /> : null}
-          {retained ? <Button onClick={commands.resume} disabled={queue.phase !== "Ready" || queue.header?.current_entry_id === null}>resume</Button> : null}
-        </>}
-        {openQueue}
-        <Tooltip text="open lectern" triggerRef={idleRef} renderTrigger={help => (
-          // Shared player navigation uses its existing workspace gesture handler.
-          // eslint-disable-next-line @next/next/no-html-link-for-pages
-          <a {...help} href="/lectern" className={buttonClassName({ size: "comfortable", iconOnly: true })}
-            aria-label="open lectern" data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>
-            <Icon.ListMusic size={20} aria-hidden="true" />
-          </a>
-        )} />
-      </div>;
-      break;
+  const chaptersKey = { chaptersExpanded: shownPicker === "Chapters", chaptersId, chaptersRef, onToggleChapters: () => toggle("Chapters") };
+  const upNext = <Button ref={queueRef} size="comfortable" iconOnly icon={<Icon.UpNext />} aria-label="up next" className={styles.key}
+    aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen} aria-busy={queue.phase === "Preparing" || queue.phase === "Saving" || undefined}
+    aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined} onClick={openQueue} />;
+  // more lists each live key the bar has shed, read from the rects when it opens, then the player's own acts.
+  const shedRow = (key: Shed): ActionDescriptor => {
+    const disabled = keys.get(key) !== "Enabled";
+    switch (key) {
+      case "previous": return { kind: "command", id: key, label: "previous", icon: <Icon.Previous />, disabled, onSelect: commands.previous };
+      case "next": return { kind: "command", id: key, label: "next", icon: <Icon.Next />, disabled, onSelect: commands.next };
+      case "chapters": return { kind: "command", id: key, label: "chapters", icon: <Icon.Chapters />, hasPopup: "dialog", disabled, onSelect: () => toggle("Chapters") };
+      case "upNext": return { kind: "command", id: key, label: "up next", icon: <Icon.UpNext />, hasPopup: "dialog", disabled, onSelect: openQueue };
+      default: return assertNever(key);
     }
-    case "Unavailable": {
-      const warning = state.reason === "UpdateRequired" ? <FeedbackNotice
-        content={{ tone: "Warning", title: unavailableMessages[state.reason] }} announcement="None"
-        actions={[{ label: "update", href: "/android" }]} /> : null;
-      desktopSource = warning;
-      if (pendingPlayback !== null) sheetPlayerContent = <>{warning}<PlayerTransport variant="Sheet" /></>;
-      contents = <div className={styles.unavailable}>{warning}{pendingPlayback !== null ? <PlayerTransport variant="Mini" /> : null}{openQueue}</div>;
-      break;
-    }
-    case "Loaded": {
-      const source = state.source;
-      const sourceHref = `/media/${source.descriptor.media_id}`;
-      const openSource = (event: TargetActivationEvent) => {
-        const handled = activateTargetLink({ event, runtime: linkRuntime,
-          target: { href: sourceHref, labelHint: source.descriptor.title },
-        });
-        if (handled === "handled-default" || handled === "handled-new-pane") opened();
-      };
-      const identityStatus = (queuePlaybackFailure ? null : state.error) ?? settings.status ?? status;
-      desktopSource = <PlayerIdentity variant="Bar" loaded={state} label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />;
-      const playbackPanel = (presentation: "Popup" | "Embedded") => preferences === null || playbackSubject === null ? null
-        : <PlaybackPanel loaded={state} preferences={preferences} supportsSilenceSkipping={supportsSilenceSkipping} settings={settings} presentation={presentation} />;
-      const seekChapter = (startMs: number) => {
-        if (playbackSubject !== null) commands.seekTo({ positionMs: startMs, expectedSubject: playbackSubject });
-      };
-      contents = isMobile ? <>
-        <MiniProgress />
-        <div className={styles.miniRow}>
-          <PlayerIdentity variant="Mini" loaded={state} buttonRef={openerRef} status={identityStatus}
-            label={`open now playing: ${source.descriptor.title}`}
-            onOpen={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
-          <PlayerTransport variant="Mini" />
-          {openQueue}
-        </div>
-      </> : null;
-      sheetPlayerContent = <>
-        <PlayerIdentity variant="Sheet" loaded={state} label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={identityStatus} />
-        <PlayerTransport variant="Sheet" />
-        <PlayerSeek active={sheetShown} />
-        <PlayerUtilities variant="Sheet" speed={speedKey("Sheet")} {...chaptersKeyProps} />
-        {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
-          id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
-          trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
-          skipReturnFocus={() => sourceOpened.current || !currentSurface.current.sheetShown || picker?.subject !== currentSurface.current.playbackSubject}>
-          {shownPicker === "Playback" ? playbackPanel("Embedded") : <PlayerChapters loaded={state} presentation="Embedded" onSeek={seekChapter} onOpened={opened} />}
-        </MobileDisclosure> : null}
-      </>;
-      overlays = <>
-        <PickerSurface active={!isMobile && presentation.visible && panelOpen} onClose={() => { focusedControl.current = null; setPicker(null); }} title="playback" panelId={playbackId}
-          anchor={() => returnFocus(rateRef.current)} returnFocusFallback={() => returnFocus(null)} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
-          placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
-          {playbackPanel("Popup")}
-        </PickerSurface>
-        <PickerSurface active={!isMobile && presentation.visible && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId} heightLimit="available"
-          anchor={() => returnFocus(chaptersRef.current)} returnFocusFallback={() => returnFocus(null)} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
-          placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
-          <PlayerChapters loaded={state} presentation="Popup" onSeek={seekChapter} onOpened={opened} />
-        </PickerSurface>
-      </>;
-      break;
-    }
-    default: assertNever(state);
-  }
+  };
+  const shedRefs = { previous: previousRef, next: nextRef, chapters: chaptersRef, upNext: queueRef } as const;
+  const moreState: PreparationState = shed === null ? null : { kind: "Ready", request: shed.request, content: { sections: [{ id: "player", label: null, options: [
+    ...shed.keys.map(shedRow),
+    { kind: "command", id: "stop", label: "stop playback", icon: <Icon.Stop />, separatorBefore: shed.keys.length > 0 || undefined, onSelect: commands.stop },
+    { kind: "command", id: "hide", label: "hide player", icon: <Icon.Hide />, onSelect: presentation.hide },
+    { kind: "command", id: "open", label: "open episode", icon: null, onSelect: ({ openIntent }) => {
+      const workspace = latestWorkspace();
+      if (liveMedia.current === null) return;
+      workspace.activateWorkspaceTarget({ target: { href: `/media/${liveMedia.current}` }, originPaneId: workspace.state.active_primary_pane_id,
+        disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } });
+      opened();
+    } },
+  ] }] } };
+  const more = <ActionMenu label="more player actions" placement="above" triggerDisabled={keys.get("more") === "Disabled"}
+    triggerRef={setMoreRef} returnFocusTo={() => returnFocus([moreRef.current])}
+    source={{ kind: "Prepared", subjectKey: "player", title: "player actions", initial: { sections: [] }, state: moreState,
+      prepare: request => setShed({ request, keys: SHED.filter(key => keys.has(key) && shedRefs[key].current?.getClientRects().length === 0) }) }}
+    renderTrigger={binding => <OverflowMenuButton {...binding} className={styles.key} />} />;
 
-  if (!isMobile) contents = <>
-    <div className={styles.source}>{desktopSource}</div>
-    <div className={styles.desktopTransport}><PlayerTransport variant="Bar" /></div>
-    <div className={styles.listening}><PlayerSeek active={presentation.visible} /></div>
-    <PlayerUtilities variant="Bar" className={styles.options} upNext={openQueue} speed={speedKey("Bar")} {...chaptersKeyProps} />
+  const playbackPanel = (surface: "Popup" | "Embedded") => loaded === null || preferences === null || playbackSubject === null ? null
+    : <PlaybackPanel loaded={loaded} preferences={preferences} supportsSilenceSkipping={supportsSilenceSkipping} settings={settings} presentation={surface} />;
+  const chapterPanel = (surface: "Popup" | "Embedded") => loaded === null ? null
+    : <PlayerChapters loaded={loaded} presentation={surface} onSeek={origin.seek} onOpened={opened} />;
+  const mini = miniKeys(mode);
+  const contents = isMobile ? <>
+    <PlayerRule variant="Mini" clock={clock} origin={origin} />
+    <div className={styles.miniRow}>
+      <PlayerIdentity variant="Mini" mode={mode} openLectern={openLectern} buttonRef={openerRef}
+        onOpenSheet={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
+      {mini.has("upNext") ? upNext : null}
+      {mini.has("disc") ? <PlayerTransport variant="Mini" mode={mode} keys={keys} discRef={discRef} /> : null}
+    </div>
+  </> : <>
+    <PlayerRule variant="Bar" clock={clock} origin={origin} draft={draft} onDraft={setDraft} />
+    <PlayerIdentity variant="Bar" mode={mode} openLectern={openLectern} open={openEpisode} />
+    <PlayerTransport variant="Bar" mode={mode} keys={keys} discRef={discRef} previousRef={previousRef} nextRef={nextRef} />
+    <div className={styles.right}>
+      <PlayerUtilities variant="Bar" keys={keys} tiered={mode.kind === "Active" || mode.kind === "Advancing"} speed={speedKey("Bar")} upNext={upNext} more={more} {...chaptersKey} />
+      <PlayerFolio variant="Bar" clock={clock} draft={draft} panelOpen={shownPicker === "Playback"} />
+    </div>
   </>;
+  const cold = clock.kind === "Live" && (clock.loaded.phase === "Paused" || clock.loaded.phase === "Ended" || clock.loaded.playbackFailed || clock.loaded.error !== null);
 
   return <>
-    <PlayerKeys />
+    <PlayerKeys origin={origin} />
     <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     <div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
       onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>
-      <footer ref={setFooter} id={isMobile ? undefined : presentation.regionId} tabIndex={isMobile ? undefined : -1} className={`${styles.surface} ${isMobile ? styles.mini : styles.bar}`}
-        role="region" aria-label="media player">
+      <footer ref={setFooter} id={isMobile ? undefined : presentation.regionId} tabIndex={isMobile ? undefined : -1}
+        className={`${styles.surface} ${isMobile ? styles.mini : styles.bar}`} role="region" aria-label="media player"
+        data-player-bar={isMobile ? undefined : ""} data-cold={cold} data-scrub={draft !== null}>
         {contents}
       </footer>
-      {overlays}
+      <PickerSurface active={!isMobile && presentation.visible && shownPicker === "Playback"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="playback" panelId={playbackId}
+        anchor={() => returnFocus([rateRef.current])} returnFocusFallback={() => returnFocus([])} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
+        placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
+        {playbackPanel("Popup")}
+      </PickerSurface>
+      <PickerSurface active={!isMobile && presentation.visible && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId} heightLimit="available"
+        anchor={() => returnFocus([chaptersRef.current, moreRef.current])} returnFocusFallback={() => returnFocus([])} skipReturnFocus={skipReturnFocus(PICKER_DIALOGS)}
+        placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
+        {chapterPanel("Popup")}
+      </PickerSurface>
       <PickerSurface active={!isMobile && presentation.visible && queueOpen} onClose={() => setQueueOpen(false)} title="up next"
-        anchor={() => returnFocus(queueRef.current)} returnFocusFallback={() => returnFocus(null)} placement="above"
+        anchor={() => returnFocus([queueRef.current, moreRef.current])} returnFocusFallback={() => returnFocus([])} placement="above"
         skipReturnFocus={skipReturnFocus('[role="dialog"][aria-label="up next"]')}
         className={styles.queuePicker} initialFocus={panel => {
           const target = panel.querySelector<HTMLElement>('[data-queue-initial-target="true"] [data-row-focusable]') ?? panel.querySelector<HTMLHeadingElement>("h2");
@@ -341,10 +319,19 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       <PlayerSheet active={sheetShown} target={sheetTarget} contentRef={sheetContentRef}
         onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }}
         skipReturnFocus={() => sourceOpened.current}
-        returnFocusTo={() => returnFocus(loaded !== null ? openerRef.current ?? queueRef.current : queueRef.current)}
-        returnFocusFallback={() => returnFocus(null)}
+        returnFocusTo={() => returnFocus([openerRef.current, queueRef.current])}
+        returnFocusFallback={() => returnFocus([])}
         announce={setAnnouncement} runtime={linkRuntime} onOpened={opened}>
-        {sheetPlayerContent}
+        <PlayerIdentity variant="Sheet" mode={mode} openLectern={openLectern} open={openEpisode} />
+        {mode.kind === "Active" ? <PlayerRule variant="Sheet" clock={clock} origin={origin} draft={draft} onDraft={setDraft} /> : null}
+        <PlayerTransport variant="Sheet" mode={mode} keys={keys} />
+        {mode.kind === "Active" ? <PlayerUtilities variant="Sheet" keys={keys} speed={speedKey("Sheet")} {...chaptersKey} /> : null}
+        {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
+          id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
+          trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
+          skipReturnFocus={() => sourceOpened.current || !currentSurface.current.sheetShown || picker?.subject !== currentSurface.current.playbackSubject}>
+          {shownPicker === "Playback" ? playbackPanel("Embedded") : chapterPanel("Embedded")}
+        </MobileDisclosure> : null}
       </PlayerSheet>
     </div>
   </>;
