@@ -208,6 +208,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
   const { frame } = focus;
   const [onset, setOnset] = useState<"Risk" | "Notice" | null>(room.slips.some(({ row }) => row.weight === "Risk") ? "Risk" : "Notice");
   const standing = useRef(false);
+  const end = useRef<HTMLElement>(null);
   const swipe = useSwipe(frame, () => stage.sweep(room.id));
   useFocusReturn(frame, focus.target);
   // Nothing changes under a hold: a row stacking in cannot widen the frame beneath a pointer.
@@ -215,14 +216,16 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     const element = frame.current;
     if (element) element.style.inlineSize = room.held ? `${element.getBoundingClientRect().width}px` : "";
   }, [frame, room.held]);
-  // Three rows, then internal scroll.
+  // Three rows, then internal scroll. The frame ends at the third, and a hold keeps that row: what
+  // lands grows the frame above the rows that stand, and the cap returns when the hold ends.
   useLayoutEffect(() => {
     const element = frame.current;
-    const third = element?.children[2];
     if (!element) return;
-    element.style.maxBlockSize = element.children.length > 3 && third instanceof HTMLElement
-      ? `min(${third.offsetTop + third.offsetHeight + 2 * element.clientTop}px, var(--stage-ceiling) - 24px)` : "";
-  }, [frame, room.slips]);
+    const third = element.children[2];
+    if (!room.held || !end.current?.isConnected) end.current = third instanceof HTMLElement ? third : null;
+    element.style.maxBlockSize = element.children.length > 3 && end.current
+      ? `min(${end.current.offsetTop + end.current.offsetHeight + 2 * element.clientTop}px, var(--stage-ceiling) - 24px)` : "";
+  }, [frame, room.slips, room.held]);
   useEffect(() => {
     standing.current = true;
     const release = () => stage.holdRoom(room.id, "Press", false);
