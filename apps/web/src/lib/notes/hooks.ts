@@ -9,6 +9,14 @@ export function useWritingRuntime(): WritingRuntime | null {
   const accountId = useAuthoredAccountId();
   return useMemo(() => accountId === null ? null : getWritingRuntime(accountId), [accountId]);
 }
+/** Whether a failed commit holds one of these refs. Their editor turns its caret `--danger`
+ * while the words are at risk: an echo of the risk slip, never the sole signal. */
+export function useWordsAtRisk(refs: readonly string[]): boolean {
+  const runtime = useWritingRuntime();
+  const read = () => { const writing = runtime?.snapshot(); return writing !== undefined && writing.error !== null && writing.error_refs.some(ref => refs.includes(ref)); };
+  return useSyncExternalStore(runtime?.subscribe ?? NO_SUBSCRIPTION, read, () => false);
+}
+const NO_SUBSCRIPTION = () => () => {};
 export function useAuthoredQuery(query: AuthoredQuery | null) {
   const accountId = useAuthoredAccountId();
   const store = useAuthoredStore();

@@ -1,19 +1,20 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { CircleArrowUp, CircleUser, Download, LogOut } from "lucide-react";
+import { createContext, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
-import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { transportVerbs, type CommandVerb } from "@/components/feedback/stage";
 import { isApiError } from "@/lib/api/client";
-import { installedApp, publishAdmission } from "@/lib/native/admission";
+import { conditionLine, MARK, useCondition, type Condition } from "@/lib/account/condition";
+import { installedApp, publishAdmission, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useAuthoredSignIn, useAuthoredStatus, useAuthoredSyncDetail } from "@/lib/authored/provider";
+import { useAuthoredSignIn, useAuthoredStatus, useAuthoredSyncDetail, useCommitFailed } from "@/lib/authored/provider";
 import { prepareAuthoredSignOut } from "@/lib/authored/signOut";
-import { observeShellUpdate } from "@/lib/authored/shell";
+import { STATUS_COPY } from "@/lib/authored/status";
 import { importAttentionDescription } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
@@ -23,54 +24,57 @@ import { localContentAvailable } from "@/lib/offline/localContent";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor, ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { cx } from "@/lib/ui/cx";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
-import { syncStatusOption, syncStatusText } from "./SyncStatus";
 import styles from "./AppNav.module.css";
 import accountStyles from "./AccountMenu.module.css";
 
+/** `syncDetail` states a running preparation after the writing it follows; the row says the
+ * preparation alone. Healthy sync's other details stay in no row. */
+const SYNCED = "your writing is synced; ";
 const SignOutContext = createContext<{ request: () => void; busy: boolean } | null>(null);
 
 /** The person declined discarding device-only writing; nothing was retired. */
 class SignOutDeclined extends Error {}
+const NOT_SIGNED_OUT = { fact: "couldn’t sign out.", reason: "you’re still signed in." };
+const UNKNOWN = { fact: "not sure that saved. it may have gone through." };
 
 /** One guarded exit. Authored writing drains or is deliberately discarded and its
- * account retired before the session ends; declining leaves everything intact. */
+ * account retired before the session ends; declining leaves everything intact. A sign-out
+ * that did not end the session says so; one whose end is unknown holds until a retry settles. */
 export function SignOutProvider({ children }: { children: ReactNode }) {
   const { accountId } = useAuthenticatedAccount();
   const guardedSignOut = useGuardedSignOut();
+  const { say } = useOutcome();
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
-  const [failure, setFailure] = useState<{ message: string; ended: boolean } | null>(null);
+  const [unknown, setUnknown] = useState<{ attempt: number } | null>(null);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
     return () => { live.current = false; };
   }, []);
   const refreshDevice = () => window.dispatchEvent(new Event("nexus:device-settings-refreshed"));
+  const retry: CommandVerb = { label: "retry", commandKey: "RetrySignOut", busy, run: () => void request() };
   async function request() {
     if (working.current) return;
     working.current = true;
     setBusy(true);
-    setFailure(null);
     let nativeStarted = false;
-    let ended = false;
-    let message = "playback couldn’t stop or save its position. your session is still open. retry sign out.";
     try {
       await guardedSignOut(async confirm => {
         if (!live.current) throw new Error("sign-out account is no longer active");
         await unbindNativePlayer();
         if (!live.current) throw new Error("sign-out account is no longer active");
-        message = "your notes on this device couldn’t be closed for sign out. your session is still open. retry sign out.";
         if (!await prepareAuthoredSignOut(accountId, confirm)) throw new SignOutDeclined();
         if (installedApp) {
           nativeStarted = true;
-          message = "sign out was not confirmed. retry sign out to finish removing this device’s account data.";
           // prepareAuthoredSignOut has drained or obtained the discard this carries.
           await sessionSignOut(true);
-          ended = true;
           if (live.current) publishAdmission("SignInRequired");
           return;
         }
@@ -78,9 +82,12 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       }, () => {
         if (installedApp && live.current) refreshDevice();
       });
+      if (live.current) setUnknown(null);
     } catch (error) {
       if (error instanceof SignOutDeclined) return;
       reportError(error);
+      // Ended: the session is over, and the device's startup owns any unfinished cleanup.
+      let ended: boolean | "Unknown" = false;
       if (nativeStarted) {
         if (isApiError(error) && error.code === "E_LOCAL_CLEANUP") ended = true;
         else try {
@@ -88,17 +95,14 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
           ended = startup?.binding?.account.account_id !== accountId;
         } catch (inspection) {
           if (isApiError(inspection) && inspection.code === "E_LOCAL_CLEANUP") ended = true;
-          else reportError(inspection);
+          else { reportError(inspection); ended = "Unknown"; }
         }
       }
-      if (ended) {
-        message = "your account has ended on this device, but local cleanup did not finish. retry sign out to remove remaining account data.";
-        if (live.current) {
-          publishAdmission("SignInRequired");
-          refreshDevice();
-        }
-      }
-      if (live.current) setFailure({ message, ended });
+      if (!live.current) return;
+      if (ended === "Unknown") { setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 })); return; }
+      setUnknown(null);
+      if (ended) { publishAdmission("SignInRequired"); refreshDevice(); }
+      else say(NOT_SIGNED_OUT, [retry]);
     } finally {
       working.current = false;
       if (live.current) setBusy(false);
@@ -107,20 +111,16 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   return (
     <SignOutContext value={{ request: () => void request(), busy }}>
       {children}
-      {failure === null ? null : <Dialog open title="sign out not completed" onClose={() => setFailure(null)}>
-        <div className={accountStyles.choices}>
-          <p>{failure.message}</p>
-          <Button emphasis="strong" onClick={() => { if (failure.ended) refreshDevice(); else void request(); }}>{failure.ended ? "retry account cleanup" : "retry sign out"}</Button>
-          <Button onClick={() => setFailure(null)}>close</Button>
-        </div>
-      </Dialog>}
+      {unknown === null ? null : <Hold id="sign-out" attempt={unknown.attempt} line={UNKNOWN} verbs={[retry]} />}
     </SignOutContext>
   );
 }
 
-/** Account navigation, sync status and passive import/update attention, shared by the
- * rail and mobile Nexus. The trigger describes current status and attention. Expired
- * credentials offer the existing sign-in flow without retiring local writing. */
+/** Account navigation, the account's condition and import attention, shared by the rail and
+ * mobile Nexus. The mark says, by shape, whether something here needs a person; phones have
+ * none. The trigger's description is the current state, pulled only. Rows are live while the
+ * menu is closed; opening latches the last rendered ones, so a status change cannot move a
+ * published row under the hand. */
 export default function AccountMenu(props: {
   activeId: DestinationId | null;
   placement: "above" | "below";
@@ -134,21 +134,27 @@ export default function AccountMenu(props: {
   const workspace = useWorkspaceStore();
   const { signIn, busy: signingIn } = useAuthoredSignIn();
   const signOut = useContext(SignOutContext);
+  const guard = useWorkGuard();
   const { summary } = useImports();
   const status = useAuthoredStatus();
-  const cause = useAuthoredSyncDetail();
-  const [updateReady, setUpdateReady] = useState(false);
-  useEffect(() => {
-    if (installedApp || !("serviceWorker" in navigator)) return;
-    return observeShellUpdate(setUpdateReady);
-  }, []);
+  const detail = useAuthoredSyncDetail();
+  const condition = useCondition();
+  const commitFailed = useCommitFailed();
+  const mobile = useIsMobileViewport();
+  // `Update`'s line and verb read the remedy; a change of remedy re-renders them.
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const descriptionId = useId();
   const count = summary.status === "ready" ? summary.data.needs_attention_count : null;
   const refresh_failed = summary.status === "ready" && summary.error !== null;
-  const description = [
-    count !== null && count > 0 ? importAttentionDescription(count, refresh_failed) : null,
-    updateReady ? "app update ready" : null,
-  ].filter(value => value !== null).join("; ") || null;
+  const attention = count !== null && count > 0 ? importAttentionDescription(count, refresh_failed) : null;
+  const mark = mobile ? null : condition !== null && MARK[condition] === "Solid" || attention !== null ? "Solid" : condition !== null ? "Hollow" : null;
+  const state = condition !== null ? conditionLine(condition, commitFailed).fact : STATUS_COPY[status];
+  const preparation = condition === null && status === "syncing" && detail?.startsWith(SYNCED) ? detail.slice(SYNCED.length) : null;
+  const live = accountRows(condition, commitFailed, preparation, {
+    signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },
+    restart: () => { if (guard.confirmDocumentExit()) window.location.reload(); },
+  });
+  const [latched, setLatched] = useState<readonly ActionDescriptor[] | null>(null);
   // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
   if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
 
@@ -183,7 +189,7 @@ export default function AccountMenu(props: {
 
 
   const options: ActionDescriptor[] = [
-    syncStatusOption(status, cause, { onSignIn: () => void signIn(), busy: signingIn || signOut.busy }),
+    ...latched ?? live,
     link(NAV_STATS, props.activeId === "stats"),
     link(NAV_IMPORTS, props.activeId === "imports"),
     link(NAV_SETTINGS, props.activeId === "settings"),
@@ -199,7 +205,7 @@ export default function AccountMenu(props: {
     },
   ];
   if (localContentAvailable) {
-    options.splice(3, 0, {
+    options.splice(options.length - 1, 0, {
       kind: "link",
       id: "downloads",
       label: "Downloads",
@@ -214,18 +220,6 @@ export default function AccountMenu(props: {
       }),
     });
   }
-  if (updateReady) options.splice(1, 0, {
-    kind: "custom",
-    id: "app-update",
-    label: "app update",
-    render: () => <div className={accountStyles.status}>
-      <CircleArrowUp size={16} className={accountStyles.statusIcon} aria-hidden="true" />
-      <span className={accountStyles.statusText}>
-        <span>app update ready</span>
-        <span className={accountStyles.statusDetail}>finish writing, then close all nexus tabs and reopen.</span>
-      </span>
-    </div>,
-  });
 
   return (
     <>
@@ -234,16 +228,45 @@ export default function AccountMenu(props: {
         label="account"
         placement={props.placement}
         align={props.align}
+        onOpenChange={open => setLatched(open ? live : null)}
         renderTrigger={(trigger) => props.renderTrigger({
           ...trigger,
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
         }, <span className={accountStyles.mark} aria-hidden="true">
           <CircleUser size={20} />
-          <span className={accountStyles.attention} data-visible={description !== null} />
+          <span className={accountStyles.attention} data-mark={mark ?? undefined} />
         </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
       />
-      <span id={descriptionId} className="sr-only">{description === null ? syncStatusText(status, cause) : `${syncStatusText(status, cause)}; ${description}`}</span>
+      <span id={descriptionId} className="sr-only">{attention === null ? state : `${state}; ${attention}`}</span>
     </>
   );
+}
+
+/** The condition's row and its verbs, else a running preparation's row. A verb row is an
+ * ordinary command, so the menu closes before it runs. */
+function accountRows(condition: Condition | null, commitFailed: boolean, preparation: string | null, verbs: {
+  signIn: { busy: boolean; run: () => void }; restart: () => void;
+}): ActionDescriptor[] {
+  const line = condition === null ? preparation === null ? null : { fact: preparation } : conditionLine(condition, commitFailed);
+  if (line === null) return [];
+  const row: ActionDescriptor = { kind: "custom", id: "account-state", label: line.fact, render: () => <p className={accountStyles.status}>
+    {line.fact}{line.reason ? <span className={accountStyles.reason}> {line.reason}</span> : null}
+  </p> };
+  const verb = (id: string, label: string, onSelect: (detail: ActionSelectDetail) => void, busy = false): ActionDescriptor =>
+    ({ kind: "command", id, label, icon: null, disabled: busy, onSelect });
+  switch (condition) {
+    case "Stopped":
+    case "SyncLocal": return [row, verb("restart", "restart nexus", verbs.restart)];
+    case "Update": {
+      const reload = transportVerbs("Update", { signIn: null })?.[0];
+      return reload && "run" in reload ? [row, verb("reload", reload.label, detail => reload.run(detail.openIntent))] : [row];
+    }
+    case "SignIn": return [row, verb("sign-in", "sign in", verbs.signIn.run, verbs.signIn.busy)];
+    case "Refused":
+    case "Lagging":
+    case "UpdateReady":
+    case "Offline":
+    case null: return [row];
+  }
 }

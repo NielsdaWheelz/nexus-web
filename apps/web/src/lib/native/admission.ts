@@ -63,6 +63,8 @@ export function observeWorkerUpdate(): void {
   }
   observeRemoteFailure(426);
 }
+/** Whether an installed shell update waits for every old tab to close. */
+export const updateWaiting = () => shellWaiting;
 export function observeShellWaiting(waiting: boolean): void {
   if (waiting === shellWaiting) return;
   shellWaiting = waiting;
