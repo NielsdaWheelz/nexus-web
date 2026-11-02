@@ -10,7 +10,7 @@ export function catalogErrorFeedback(error: { readonly code: string }): Feedback
     case "E_CATALOG_INVALID":
       return { tone: "Warning", title: "saved catalog couldn’t be opened", message: "connect and save your catalog again." };
     case "E_CATALOG_INCOMPATIBLE":
-      return { tone: "Warning", title: "saved catalog needs an online rebuild", message: "connect and save your catalog again." };
+      return { tone: "Warning", title: "saved catalog needs an online rebuild", message: "it rebuilds when you connect." };
     case "E_CATALOG_IO":
       return { tone: "Warning", title: "saved catalog couldn’t be read", message: "retry, or connect and save your catalog again." };
     case "E_CATALOG_TOO_LARGE":

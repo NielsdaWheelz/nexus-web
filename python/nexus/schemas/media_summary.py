@@ -40,6 +40,17 @@ class MediaPartSourceOut(BaseModel):
     href: str | None
 
 
+class MediaShowOut(BaseModel):
+    """The show an episode belongs to. ``MediaSummaryOut.show`` is null exactly when the media
+    has no ``podcast_episodes`` row, which is every media that is not an episode."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    podcast_id: UUID
+    title: str
+    image_url: str | None
+
+
 class MediaSummaryOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +58,7 @@ class MediaSummaryOut(BaseModel):
     media_kind: MediaKind
     title: str
     part_source: MediaPartSourceOut | None
+    show: MediaShowOut | None
     contributors: list[ContributorCreditOut]
     original_published_date: PublicationDate | None
     processing_status: MediaProcessingStatus

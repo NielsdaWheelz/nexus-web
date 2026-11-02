@@ -317,16 +317,25 @@ followed-show and library-show outputs always include stored `image_url`
 (string or null), selected in their existing list queries. `presentPodcast`
 projects it into an artwork capability; suggestions omit that capability.
 rows never fetch show details or provider metadata for artwork.
-`PodcastRowArtwork` owns presentation for each source through `MediaImage` and
-the authenticated image proxy. null, pending and failed sources show initials:
-the first grapheme of each of the first two uppercased words, or `P` for an
-empty title. success hides initials even for transparent images. image and
-initials nodes stay mounted across completion, changing opacity only; source
-changes remount the artwork child while preserving the row. artwork is passive
-with empty alt text and no duplicate accessible name. image delivery retains
-original bytes and the existing private one-day cache.
-next can report cached failures through `onLoad`; readiness requires positive
-`naturalWidth`.
+`components/ui/Artwork.tsx` owns presentation for every show tile (rows, overview,
+metadata overlay, downloaded episode) through `MediaImage`: publisher urls through
+the authenticated image proxy, a downloaded episode's saved image as a local blob.
+absent, pending and failed sources show initials in one box: the
+first grapheme of each of the first two uppercased words; an empty title paints
+an empty tile. success hides initials even for transparent images. image and
+initials nodes stay mounted across completion, changing visibility only; a source
+change remounts both layers inside the same box. artwork is passive with empty
+alt text and no duplicate accessible name. image delivery retains original bytes
+and the existing private one-day cache. next can report cached failures through
+`onLoad`; readiness requires positive `naturalWidth`.
+
+episode index rows carry no artwork. `MediaSummaryOut.show` (`podcast_id`, `title`,
+`image_url`), null exactly for media without a `podcast_episodes` row, puts the
+show's name where a work's authors stand, as a credit link to its page; the
+show's own page omits it. `mediaByline` decides that byline once: rows draw it,
+list filters (`mediaListFilterFields`) match it, and the live queue capture behind
+their play (`playback_snapshot.py`) matches the same names: the show's, never an
+episode's authors.
 
 ## Android Offline Downloads
 

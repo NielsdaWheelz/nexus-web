@@ -5,6 +5,7 @@
 // its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
+import Artwork from "@/components/ui/Artwork";
 import Button from "@/components/ui/Button";
 import { WIRE_HEADER } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
@@ -18,7 +19,6 @@ import { useCompactAnnotations } from "@/lib/documentReader/chrome/CompactAnnota
 import { locatePassage } from "@/lib/documentReader/annotations";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
-import { useHostPolicy } from "@/lib/host/policy";
 import { localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
@@ -96,7 +96,6 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const active = usePaneIsActive();
   const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
-  const { Image } = useHostPolicy();
   const chrome = useMobileChrome();
   const viewport = useMobileViewport();
   const { playAudio, pause } = usePlayerCommands();
@@ -105,11 +104,8 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const listening = useListening();
   const [contents, setContents] = useState(false);
   const [artwork, setArtwork] = useState<string | null>(null);
-  const [artworkFailure, setArtworkFailure] = useState(false);
-  const [artworkAttempt, setArtworkAttempt] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
   const failureOccurrence = useFeedbackOccurrence(failure !== null);
-  const artworkOccurrence = useFeedbackOccurrence(artworkFailure);
   const [retrying, setRetrying] = useState(false);
   const transcriptReady = item.extras?.transcript.kind === "Ready";
   const artworkState = item.extras?.artwork;
@@ -203,14 +199,16 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const artworkReady = item.extras?.artwork.kind === "Ready";
   useEffect(() => {
     if (!artworkReady) return;
-    setArtworkFailure(false);
     const abort = new AbortController();
     let url: string | null = null;
     void localResponse(componentPath(id, packageId, "artwork"), abort.signal).then(response => response.blob()).then(blob => {
       if (!abort.signal.aborted) { url = URL.createObjectURL(blob); setArtwork(url); }
-    }).catch(() => { if (!abort.signal.aborted) setArtworkFailure(true); });
+    }).catch(() => {
+      // justify-ignore-error: saved artwork that will not open leaves the show's initials in its
+      // box; decoration degrades to absence, and the audio is unaffected.
+    });
     return () => { abort.abort(); if (url !== null) URL.revokeObjectURL(url); setArtwork(null); };
-  }, [artworkReady, artworkAttempt, id, packageId]);
+  }, [artworkReady, id, packageId]);
   const observation = capture.playback_baseline.observation;
   const entry = listening.facts?.episodes.get(id);
   const effective = effectiveEpisode({ revision: observation.consumption_revision, state: observation.state, source_duration_ms: capture.rendition.duration_ms }, entry);
@@ -248,7 +246,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
       : transcript.reason === "E_MEDIA_NOT_READY" ? "no published transcript was available at download · remove and download again for newer content" : "transcript download failed"
     : null;
   const header = <div className={styles.savedEpisode} onPointerDown={onIntent} onKeyDown={onIntent}>
-    {artwork === null ? null : <Image className={styles.savedArtwork} src={artwork} alt="" width={80} height={80} unoptimized onError={() => { setArtworkFailure(true); setArtwork(null); }} />}
+    <Artwork title={capture.rendition.subtitle ?? ""} source={artwork === null ? { kind: "Absent" } : { kind: "Local", url: artwork }} size={80} className={styles.savedArtwork} />
     <h1>{capture.rendition.title}</h1>
     {capture.rendition.subtitle === null ? null : <p>{capture.rendition.subtitle}</p>}
     <p>downloaded · {formatByteCount(manifest.audio.byte_count)}</p>
@@ -264,8 +262,6 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     {failure === null ? null : <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={{ tone: "Warning", title: failure }} announcement={active ? "Polite" : "None"} />}
     {capture.show_notes.kind === "Available" ? <PublisherNotes title={capture.rendition.title} html={capture.show_notes.html} hrefForTime={() => null} onOpenTime={openTime} />
       : capture.show_notes.kind === "Unavailable" ? <FeedbackStatus content={{ tone: "Neutral", title: capture.show_notes.reason === "TooLarge" ? "show notes exceed download limit" : "show notes unavailable" }} announcement="None" /> : null}
-    {artworkFailure ? <FeedbackFailure scope="Local" occurrence={artworkOccurrence} content={{ tone: "Warning", title: "saved artwork couldn’t open", message: "audio remains available." }} announcement="None"
-      actions={[{ label: "retry artwork", onClick: () => setArtworkAttempt(value => value + 1) }]} /> : null}
     {artworkState?.kind === "Failed" ? <FeedbackStatus content={{ tone: "Neutral", title: artworkState.reason === "TooLarge" ? "artwork exceeds download limit" : "artwork download failed" }} announcement="None" /> : artworkState?.kind === "Pending" ? <FeedbackStatus content={{ tone: "Neutral", title: "artwork download pending" }} announcement="None" /> : null}
     {transcriptCopy === null ? null : <FeedbackStatus content={{ tone: transcript?.kind === "Failed" ? "Warning" : "Neutral", title: transcriptCopy }} announcement="None" />}
     {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <FeedbackStatus content={{ tone: "Neutral", title: "partial transcript" }} announcement="None" /> : null}

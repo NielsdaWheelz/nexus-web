@@ -19,7 +19,7 @@ from nexus.schemas import playback_sessions as wire
 from nexus.schemas.consumption import NaturalEndIn
 from nexus.services.consumption import state as consumption
 from nexus.services.consumption import viewer_txn
-from nexus.services.playback_snapshot import MAX_ENTRIES, playable_episode_fields
+from nexus.services.playback_snapshot import MAX_ENTRIES, playable_episodes
 
 
 def _conflict() -> ConflictError:
@@ -139,5 +139,5 @@ def _validate_entries(
                 raise _conflict()
         else:
             added.append(entry.media_id)
-    if set(playable_episode_fields(db, user_id, added)) != set(added):
+    if set(playable_episodes(db, user_id, added)) != set(added):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Episode not found")
