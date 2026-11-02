@@ -67,7 +67,7 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
 import { QueueCommandError } from "@/lib/player/queue";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { installedApp, remoteReady, subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
@@ -101,6 +101,8 @@ export interface ActionContext {
   readonly isActive: () => boolean;
   readonly accountId: string;
   readonly online: boolean;
+  /** What can replace a stale build now: a stale verb offers reload only under `Reload`. */
+  readonly remedy: UpdateRemedy;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly LocalItem[] };
@@ -263,6 +265,7 @@ export default function ResourceActionsProvider({
   const connectivity = useConnectivity();
   const admission = useRemoteAdmission();
   const online = installedApp ? admission === "Ready" : connectivity === "Online";
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -326,6 +329,7 @@ export default function ResourceActionsProvider({
       isActive: () => !session.controller.signal.aborted,
       accountId,
       online,
+      remedy,
       offline: !localContentAvailable
         ? { kind: "Unavailable" }
         : localIndex === null
@@ -354,6 +358,7 @@ export default function ResourceActionsProvider({
     [
       accountId,
       online,
+      remedy,
       localIndex,
       lectern,
       playerSession.queue,

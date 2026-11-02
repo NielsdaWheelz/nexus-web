@@ -732,9 +732,10 @@ export function projectResourceActions(
     const pending = ctx.admissions.pending(kind, id);
     if (pending === null) return null;
     if (isStaleBuild(pending.error)) {
-      return make(actionId, null, () => { if (!installedApp) window.location.reload(); }, {
-        state: { label: installedApp ? "Update Nexus" : "Reload", icon: ACTION_CATALOG.RefreshSource.icon },
-        disabledReason: installedApp ? staleBuild() : undefined,
+      const reload = ctx.remedy === "Reload";
+      return make(actionId, null, () => { if (reload) window.location.reload(); }, {
+        state: { label: reload ? "Reload" : "Update Nexus", icon: ACTION_CATALOG.RefreshSource.icon },
+        disabledReason: reload ? undefined : staleBuild(),
         tracked: false,
       });
     }
