@@ -71,6 +71,9 @@
   --duration-base: 220ms;
   --duration-deliberate: 600ms;
 
+  /* one glyph weight at every size and in every room. */
+  --icon-stroke: 1.5px;
+
   --size-xs: 24px;
   --size-sm: 28px;
   --size-md: 32px;
@@ -322,6 +325,17 @@
     --duration-base: 0ms;
     --duration-deliberate: 0ms;
   }
+}
+
+/* every lucide glyph strokes --icon-stroke in css px, whatever its size. any author rule beats
+   lucide's stroke-width attribute, so the rule needs no specificity; at zero, a glyph whose stroke
+   must scale opts out in its own module whatever order stylesheets load in. */
+:where(.lucide) {
+  stroke-width: var(--icon-stroke);
+}
+
+:where(.lucide) > * {
+  vector-effect: non-scaling-stroke;
 }
 
 /* The Black Forest Oracle: a route-local manuscript palette (oracle, atlas). */
