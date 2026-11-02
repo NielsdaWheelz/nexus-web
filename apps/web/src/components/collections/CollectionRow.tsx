@@ -6,7 +6,7 @@ import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
-import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -79,11 +79,10 @@ export default function CollectionRow({
     ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
   const primary = typeLabel !== null && row.primary.kind !== "static"
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
-  const activity = row.activity !== null ? collectionActivityText(row.activity) : null;
   const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
     ? "processing failed; open metadata for details and recovery"
     : row.exceptionalStatus !== null ? "last episode check incomplete; open show details to check again"
-    : row.activity?.kind === "PodcastSync" ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
+    : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
     { id: "View", actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [] },
@@ -116,18 +115,14 @@ export default function CollectionRow({
     </>}
   /> : null;
   const metadata = <span className={styles.supportLine}>
-    {attention && !menuAvailable ? <span className={styles.reason}>{attention.split(";", 1)[0]}</span> : null}
     {media ? <MediaIdentity subject={media.subject} returnFocus={returnFocus} /> : <IndexBibliography
       contributors={row.contributors} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
     />}
     {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
-    {activity && row.activity?.kind !== "PodcastSync" ? <span className={styles.activity}>
-      <span aria-hidden="true">{activity.visible}</span><span className="sr-only">{activity.accessible}</span>
-    </span> : null}
   </span>;
   let content: ComponentProps<typeof ResourceRow>["content"];
   switch (row.presentation) {
-    case "Index": content = { kind: "Index", metadata }; break;
+    case "Index": content = { kind: "Index", metadata, facts: media?.subject.kind === "Stored" ? <MediaFacts summary={media.subject.summary} /> : null }; break;
     case "Details": content = { kind: "Details", body: row.context ? renderContext(row.context) : null }; break;
     default: assertNever(row.presentation);
   }

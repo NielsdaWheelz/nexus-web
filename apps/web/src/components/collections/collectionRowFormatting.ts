@@ -38,13 +38,6 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
         accessible: `estimated ${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${{ Read: "read", Listen: "listen at normal speed" }[modality]}`,
       };
     }
-    case "Unplayed": {
-      const count = activity.count.value;
-      return {
-        visible: `${count} new`,
-        accessible: `${count} new unplayed ${count === 1 ? "episode" : "episodes"}`,
-      };
-    }
     case "PodcastSync":
       switch (activity.status) {
         case "pending":

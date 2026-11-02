@@ -36,7 +36,7 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   </span>;
 }
 
-/** Bibliography truncates and demotes while the trailing saved-position facts persist. */
+/** Index bibliography and provenance. Rows own facts: `MediaFacts` goes in their trailing cell. */
 export default function MediaIdentity({ subject, returnFocus }: {
   subject: MediaSubject;
   returnFocus: () => HTMLElement | null;
@@ -46,6 +46,5 @@ export default function MediaIdentity({ subject, returnFocus }: {
     <IndexBibliography contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
       originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
     {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}
-    {summary ? <MediaFacts summary={summary} /> : null}
   </span>;
 }

@@ -112,7 +112,7 @@ a.primary:hover { text-decoration: underline; }
   white-space: inherit;
 }
 
-.controls {
+.trailing {
   position: relative;
   display: inline-flex;
   flex-wrap: nowrap;
@@ -122,21 +122,21 @@ a.primary:hover { text-decoration: underline; }
   min-width: 0;
 }
 
-.controls > * { flex: none; }
+.trailing > * { flex: none; }
 .details { align-items: start; }
 .details .titleLine { block-size: auto; }
 .details .title { white-space: normal; overflow-wrap: anywhere; }
 .body { min-width: 0; overflow-wrap: anywhere; color: var(--ink-muted); font-size: var(--text-sm); }
 
-.controls :global([data-action-control-key="LibraryPlacement"]),
-.controls :global([data-action-control-key="PodcastLibraries"]),
-.controls :global([data-action-control-key="AddEpisodeToAll"]) {
+.trailing :global([data-action-control-key="LibraryPlacement"]),
+.trailing :global([data-action-control-key="PodcastLibraries"]),
+.trailing :global([data-action-control-key="AddEpisodeToAll"]) {
   display: none;
 }
 
 @container indexRow (max-width: calc(32em - 1px)) {
-  .controls :global([data-action-control-key]:not([data-action-control-key="Playback"])),
-  .controls :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
+  .trailing :global([data-action-control-key]:not([data-action-control-key="Playback"])),
+  .trailing :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
     display: none;
   }
 }
@@ -144,9 +144,8 @@ a.primary:hover { text-decoration: underline; }
 /* Two routine controls share the side column until scaled metadata needs its line. */
 @container indexRow (max-width: calc(96px + 12em)) {
   .grid:not(.details) {
-    --row-metadata-gap: 0px;
+    --row-metadata-gap: var(--space-1);
     --row-media-gap: var(--space-1);
-    --row-publication-gap: 0px;
     padding-inline: 0;
     gap: var(--space-1);
   }
@@ -158,10 +157,9 @@ a.primary:hover { text-decoration: underline; }
     grid-row: 1;
   }
 
-  .grid:not(.details) > .controls {
+  .grid:not(.details) > .trailing {
     grid-column: -2 / -1;
     grid-row: 1;
-    align-self: start;
   }
 
   .grid:not(.details) > .leadingVisual {
@@ -176,35 +174,33 @@ a.primary:hover { text-decoration: underline; }
 
 /* Artwork or a persistent occurrence command needs the larger control budget. */
 @container indexRow (max-width: calc(144px + 15em)) {
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) {
-    --row-metadata-gap: 0px;
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) {
+    --row-metadata-gap: var(--space-1);
     --row-media-gap: var(--space-1);
-    --row-publication-gap: 0px;
     padding-inline: 0;
     gap: var(--space-1);
   }
 
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .content { display: contents; }
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .content { display: contents; }
 
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .titleLine {
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) .titleLine {
     grid-column: -3 / -2;
     grid-row: 1;
   }
 
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .controls {
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .trailing {
     grid-column: -2 / -1;
     grid-row: 1;
-    align-self: start;
   }
 
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .leadingVisual {
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .leadingVisual {
     grid-column: 1;
     grid-row: 1;
   }
 
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .supporting,
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .metadata,
-  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .excerpt { grid-column: 1 / -1; }
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) .supporting,
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) .metadata,
+  .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) .excerpt { grid-column: 1 / -1; }
 }
 
 :global([data-theme="elvish"]) .row { isolation: isolate; }
@@ -238,7 +234,7 @@ a.primary:hover { text-decoration: underline; }
 }
 :global([data-theme="elvish"]) .selected::after { opacity: var(--ornament); }
 
-:global([data-mobile="true"]) .row .controls > * {
+:global([data-mobile="true"]) .row .trailing > * {
   --control-min-size: 48px;
 }
 
@@ -266,9 +262,8 @@ a.primary:hover { text-decoration: underline; }
 
 @container indexRow (max-width: calc(144px + 15em)) {
   :global([data-index-window]) .grid:not(.details) {
-    --row-metadata-gap: 0px;
+    --row-metadata-gap: var(--space-1);
     --row-media-gap: var(--space-1);
-    --row-publication-gap: 0px;
     grid-template-rows: minmax(var(--index-control-size), auto) auto;
     padding-inline: 0;
     gap: var(--space-1);
@@ -276,7 +271,7 @@ a.primary:hover { text-decoration: underline; }
 
   :global([data-index-window]) .grid:not(.details) > .content { display: contents; }
   :global([data-index-window]) .grid:not(.details) .titleLine { grid-column: -3 / -2; grid-row: 1; }
-  :global([data-index-window]) .grid:not(.details) > .controls { grid-column: -2 / -1; grid-row: 1; align-self: start; }
+  :global([data-index-window]) .grid:not(.details) > .trailing { grid-column: -2 / -1; grid-row: 1; }
   :global([data-index-window]) .grid:not(.details) > .leadingVisual { grid-column: 1; grid-row: 1; }
   :global([data-index-window]) .grid:not(.details) .metadata { grid-column: 1 / -1; grid-row: 2; }
 }

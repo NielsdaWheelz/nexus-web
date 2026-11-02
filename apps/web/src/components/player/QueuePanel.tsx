@@ -10,7 +10,7 @@ import Button from "@/components/ui/Button";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ActionMenu from "@/components/ui/ActionMenu";
-import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
 import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
@@ -77,7 +77,7 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
     ?? rowElement(entry.id)?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
   return <ResourceRow density="compact" primary={{ kind: "link", href: `/media/${entry.media_id}` }}
     title={subject === null ? title : <MediaTitle subject={subject} />}
-    content={{ kind: "Index", metadata: subject === null ? null : <MediaIdentity subject={subject} returnFocus={returnFocus} /> }} selected={current}
+    content={{ kind: "Index", metadata: subject === null ? null : <MediaIdentity subject={subject} returnFocus={returnFocus} />, facts: summary === null ? null : <MediaFacts summary={summary} /> }} selected={current}
     rootProps={{ "data-collection-row-id": entry.id, "aria-current": current ? "true" : undefined,
       "aria-posinset": index + 1, "aria-setsize": manifest.entries.length,
       "data-queue-initial-target": initialTarget ? "true" : undefined }}

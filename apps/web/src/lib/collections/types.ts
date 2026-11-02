@@ -29,11 +29,6 @@ export interface OrderPresentation {
     | { readonly kind: "Sorted" | "Filtered" | "Incomplete" | "Refreshing" };
 }
 
-/** Source-decoder or source-owned derivation guarantee: integer >= 1. */
-export interface PositiveCount {
-  readonly value: number;
-}
-
 export type CollectionItemKind =
   | "media"
   | "podcast"
@@ -47,10 +42,6 @@ export type CollectionItemKind =
 
 export type CollectionActivity =
   | { readonly kind: "RemainingTime"; readonly modality: "Read" | "Listen"; readonly minutes: number }
-  | {
-      readonly kind: "Unplayed";
-      readonly count: PositiveCount;
-    }
   | {
       readonly kind: "PodcastSync";
       readonly status: Extract<Schema<"PodcastRecurringOut">["state"], "pending" | "running">;
@@ -77,7 +68,7 @@ interface CollectionRowBase {
   readonly contributors: readonly ContributorCredit[];
   readonly publicationDate: string | null;
   readonly context: CollectionContext | null;
-  readonly activity: CollectionActivity | null;
+  readonly activity: Extract<CollectionActivity, { kind: "PodcastSync" }> | null;
   readonly exceptionalStatus: ExceptionalStatus | null;
   /**
    * The displayed resource's canonical identity and contextual More menu subject.

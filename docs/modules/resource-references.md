@@ -24,7 +24,7 @@ conversation messages retain their message layout.
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
 | `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
-| `components/media/MediaIdentity.tsx` | shared index bibliography and passive consumption/remaining-time facts; `MediaFacts` also serves inline search and saved detail |
+| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance; `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
@@ -108,13 +108,17 @@ loading and terminal occurrences do not change type. markers fetch nothing and
 grant no action or editing capability.
 
 the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
-`Details` (wrapping operational/instructional content). index/search reserve empty
-lines and ellipsize individual fields; content length and arriving state never
-add text lines. typography may enlarge the shared line geometry. when fixed
-controls and text minima cannot fit side by side, `ResourceRow` places controls
-beside the title and gives metadata/excerpt the full row width, with tighter
-spacing. these rows may grow taller; no bibliography or facts disappear to preserve
-the former geometry. operational `Details` rows keep their wrapping layout.
+`Details` (wrapping operational/instructional content). `Index` and `Search` accept
+passive `facts`, which callers supply and the shell places: first in the trailing
+cell, before controls and centred with them, reserving nothing when absent. fold
+thresholds never depend on facts, so a late summary cannot change row height.
+index/search reserve empty lines and ellipsize individual fields; content length
+and arriving state never add text lines. typography may enlarge the shared line
+geometry. when fixed controls and text minima cannot fit side by side, `ResourceRow`
+places the trailing cell beside the title at the grid's alignment, as the title
+is, and gives metadata/excerpt the full row width, with tighter spacing. these
+rows may grow taller; no bibliography or facts disappear to preserve the former
+geometry. operational `Details` rows keep their wrapping layout.
 `ResourceRow`'s optional compact density keeps this geometry with smaller shared
 title/metadata type and padding; native touch target minima remain. the queue
 composes the shell with its own occurrence commands rather than generic media
@@ -140,9 +144,11 @@ group: no level grows into spare width, and names prefer their natural text widt
 or a `1em` minimum, whichever is larger. under pressure, names shrink
 proportionally toward that minimum and ellipsize individually; commas, omitted
 count, separator and year retain natural widths. those protected minima propagate
-through the group's allocation. spare width belongs outside the bibliography;
-`MediaIdentity` keeps facts trailing within its allocated region, including when
-separate context follows. missing facts never stretch the byline.
+through the group's allocation. spare width stays outside the bibliography: in
+search and collection rows without provenance, separate context starts one metadata
+gap after it and keeps its natural width up to 45% of the line; the bibliography
+yields the rest. beside a search row's reason, which holds its width, context and
+bibliography share the pressure in proportion and context ellipsizes.
 provenance text grows within the remaining allocation and ellipsizes without raising
 the identity's protected minimum.
 hidden names leave the tab order; focused hidden
@@ -203,12 +209,12 @@ zero is `0m`; absent estimates have no slot. speech retains supplied minutes,
 names the estimate and reading/listening modality, and calls audio normal-speed
 time. glyph/time expose one expanded sentence, with no interaction, focus stop,
 live region, animation or fetch. transparent svg cutouts inherit the accent;
-forced colours use system text. facts anchor to their allocated identity region;
+forced colours use system text. row facts live in the trailing cell;
 direct consumers keep their existing inline placement and wrapping.
 
 bounded metadata leaves inherit spacing from `ResourceRow`: `--row-metadata-gap`,
-`--row-media-gap` and `--row-publication-gap`. the shell alone owns their responsive
-cutover. `MediaIdentity` and `IndexBibliography` compose inside that shell;
+`--row-media-gap` and `--row-publication-gap`. the shell alone owns them; a fold
+tightens the first two. `MediaIdentity` and `IndexBibliography` compose inside that shell;
 standalone detail uses full bibliography with `MediaFacts`.
 
 live media bodies use one existing summary batch. adapters retain supplied live
