@@ -1,6 +1,9 @@
-/* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot. */
+/* lucide order: inner arc, outer arc, dot. the weight travels outward from the dot.
+   the weights are the badge's own, in the 24 viewbox, so its paths opt out of the
+   global non-scaling stroke. */
 .glyph > * {
   stroke-width: 2;
+  vector-effect: none;
   transition: stroke-width var(--duration-base) var(--ease-glide);
 }
 .glyph > circle { fill: currentColor; } /* wider strokes invert the dot's inner edge */

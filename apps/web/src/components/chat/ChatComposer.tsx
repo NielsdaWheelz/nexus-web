@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackBusy, FeedbackFailure, FeedbackStatus, type FeedbackAction, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -169,13 +169,13 @@ export default function ChatComposer(props: {
         {error ? <FeedbackFailure scope="Local" occurrence={error} content={error} announcement="Assertive" /> : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
-            <GitBranch size={16} aria-hidden="true" />
+            <Icon.Forks size={16} aria-hidden="true" />
             <div>
               <strong>Fork reply</strong>
               {branch.quote ? <blockquote>{truncateText(branch.quote, 220)}</blockquote> : null}
             </div>
-            <Button iconOnly icon={<LocateFixed />} aria-label="Jump to parent message" onClick={() => scroll.scrollToMessage(branch.parentId)} />
-            <Button iconOnly icon={<X />} aria-label="Cancel branch reply" onClick={props.onClearBranch} disabled={locked} />
+            <Button iconOnly icon={<Icon.Locate />} aria-label="Jump to parent message" onClick={() => scroll.scrollToMessage(branch.parentId)} />
+            <Button iconOnly icon={<Icon.Dismiss />} aria-label="Cancel branch reply" onClick={props.onClearBranch} disabled={locked} />
           </section>
         ) : null}
         {quote ? (
@@ -234,7 +234,7 @@ export default function ChatComposer(props: {
             aria-label={sendLabel.current}
             busyKey={own?.command ?? run?.runId}
             aria-busy={sending}
-            icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
+            icon={recovery ? <Icon.Again aria-hidden="true" /> : run ? <Icon.Stop aria-hidden="true" /> : <Icon.Send aria-hidden="true" />} />
         </div>
         <FeedbackBusy pending={recallRequired && recallPending && memoryFailure === null} />
         {recallRequired && memoryFailure !== null && memoryOccurrence !== null ? <FeedbackFailure scope="Local" occurrence={memoryOccurrence}

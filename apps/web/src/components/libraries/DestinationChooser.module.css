@@ -39,22 +39,8 @@
   white-space: nowrap;
 }
 
-.trigger svg {
-  transition: transform var(--duration-fast) var(--ease-glide);
-}
-
-.trigger svg[data-open="true"] {
-  transform: rotate(180deg);
-}
-
 @media (any-pointer: coarse) {
   .trigger {
     min-height: var(--size-xl);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .trigger svg {
-    transition: none;
   }
 }

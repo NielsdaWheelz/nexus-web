@@ -90,7 +90,7 @@ export default function EvidenceRow({ entry, actions, active, visible, placed, u
     return <ResourceOutlineRow resourceRef={annotation.ref} readingRef={annotation.readingRef} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} inSource={placed}
       omitResourceActions={actions.sourceContext ? ["EditHighlightAnnotation"] : ["EditHighlightAnnotation", "Share"]}
       rowActions={[{ kind: "command", id: "EditHighlightAnnotation", label: annotation.body === null ? "annotate" : "edit annotation",
-        icon: <ACTION_CATALOG.EditHighlightAnnotation.icon size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
+        icon: <ACTION_CATALOG.EditHighlightAnnotation.icon aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
       annotationFocusRequest={visible && verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
       resourceDetails={<>

@@ -4,7 +4,7 @@
  * Identity follows nearby and current/focused/open occurrences.
  * Every edit captures the displayed manifest's authority; playback owns feedback. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
-import { ArrowDown, ArrowUp, Ellipsis, Pause, Play, Trash2, ListStart } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { PlayerFailures } from "./GlobalPlayerSurfaces";
 import Button from "@/components/ui/Button";
 import ResourceList from "@/components/ui/ResourceList";
@@ -57,19 +57,19 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   const move = (beforeEntryId: string | null, message: string) => {
     void dispatch({ kind: "move-before", entry_id: entry.id, before_entry_id: beforeEntryId }, [entry.id], message);
   };
-  const action = (id: string, label: string, icon: ReactElement, onSelect: () => void): ActionDescriptor => ({
+  const action = (id: string, label: string, icon: ReactElement | null, onSelect: () => void): ActionDescriptor => ({
     kind: "command", id, label, icon, disabled: !ready,
     disabledReason: ready ? undefined : "wait for the queue change to finish", onSelect,
   });
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "Play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
-    options.push(action("earlier", "Move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
+    options.push(action("next", "Play next", null, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
+    options.push(action("earlier", "Move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "Move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
-  if (future || failed) options.push(action("remove", "Remove from queue", <Trash2 />, () => {
+    options.push(action("later", "Move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
+  if (future || failed) options.push(action("remove", "Remove from queue", null, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
     void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors, `removed “${title}” from queue`);
   }));
@@ -82,14 +82,14 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
       "aria-posinset": index + 1, "aria-setsize": manifest.entries.length,
       "data-queue-initial-target": initialTarget ? "true" : undefined }}
     controls={<>
-      <Button iconOnly icon={playing ? <Pause /> : <Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
+      <Button iconOnly icon={playing ? <Icon.Pause /> : <Icon.Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
         data-queue-entry={entry.id} data-queue-action="play" aria-disabled={!ready || undefined}
         onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null, null); }} />
       {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus} label={`more actions for “${title}”`}
         triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
         triggerDisabled={!ready} triggerDisabledReason="wait for the queue change to finish"
         onOpenChange={open => menuChanged(entry.id, open)}
-        renderTrigger={props => <Button {...props} iconOnly icon={<Ellipsis />} />}
+        renderTrigger={props => <Button {...props} iconOnly icon={<Icon.More />} />}
         source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${ready}`, title: "queue actions",
           content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
     </>} />;

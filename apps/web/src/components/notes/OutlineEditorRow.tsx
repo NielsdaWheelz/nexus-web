@@ -8,7 +8,7 @@ import {createPortal} from "react-dom";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
 import {authoredItem} from "@/lib/notes/presentation";
-import {ChevronRight, CornerLeftUp, SquareDashedMousePointer, TriangleAlert, Unlink} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import type {BranchRead} from "@/lib/notes/outlineController";
 import AuthoredReadFailure from "./AuthoredReadFailure";
@@ -55,8 +55,8 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const scheme = parsed === null ? "note_block" : parsed.scheme;
     const identity = resourceTypeLabel(scheme).toLowerCase();
     const marker = scheme === "note_block" ? "•" : <ResourceTypeIcon scheme={scheme}/>;
-    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
-    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
+    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: null, restoreFocusOnClose: false, onSelect: row.select}];
+    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Icon.Remove aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
     // native keyboard traversal uses the glyph as the row's tab stop.
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
@@ -73,13 +73,13 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     </span>;
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"
       aria-label={`show earlier occurrence of ${row.label}`} onKeyDown={event => event.stopPropagation()}
-      onClick={event => {event.stopPropagation(); row.reveal();}}><CornerLeftUp size={14}/></button>
+      onClick={event => {event.stopPropagation(); row.reveal();}}><Icon.Locate size={14}/></button>
       : row.childrenAvailable ? <>
         <Button iconOnly type="button" className={styles.control} data-row-focusable="true"
           aria-label={`${row.open ? "collapse" : "expand"} linked resources for ${row.label}`}
           aria-expanded={row.open} aria-busy={row.read.pending}
           onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}
-          icon={row.read.error !== null ? <TriangleAlert size={14}/> : <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>}/>
+          icon={row.read.error !== null ? <Icon.Warning/> : <Icon.Disclose open={row.open}/>}/>
         <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
       </> : null;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),

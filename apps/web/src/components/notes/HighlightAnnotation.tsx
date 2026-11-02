@@ -4,7 +4,7 @@
  * explicit save; subsequent writing uses the ordinary durable document owner. */
 import {useCallback, useEffect, useRef, useState} from "react";
 import * as Y from "yjs";
-import {Check} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {bodyHasContent, noteBodySchema, rawBodyText, type NoteBody} from "@nexus/authored/body";
 import type {EditorHistory} from "@/lib/notes/structure";
 import type {WritingDocument} from "@/lib/notes/runtime";
@@ -172,7 +172,7 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
   if (!editable) return <>{feedback}{resource?.body_pm_json ? <NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}} revision={0} label="annotation" editable={false} history={null} onEdit={() => {}} atomicEmbeds/> : null}</>;
   return <section aria-label="annotation" data-highlight-annotation={highlightRef}>
     {feedback}
-    {read.data !== null && !resource && (value || editing) ? <p role="status">this highlight is unavailable. your writing is kept. <Button reserveIcon icon={copied.copied ? <Check/> : undefined} onClick={copyWriting}>copy</Button></p> : null}
+    {read.data !== null && !resource && (value || editing) ? <p role="status">this highlight is unavailable. your writing is kept. <Button reserveIcon icon={copied.copied ? <Icon.Check/> : undefined} onClick={copyWriting}>copy</Button></p> : null}
     {value ? <>
       <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} compact history={null}
         reference={{source_ref: highlightRef, label: "annotation", onActiveChange: reference => draft.set(current => current && {...current, reference}), onSelected: (target, item) => draft.set(current => current && {...current, reference: false, links: [...current.links, {target, label: item.label}], revision: current.revision + 1})}}

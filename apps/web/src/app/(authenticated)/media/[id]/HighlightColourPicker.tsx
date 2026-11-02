@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useId, useRef, useState, type FocusEventHandler, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Highlighter } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import Tooltip from "@/components/ui/Tooltip";
 import type { HighlightColor } from "@/lib/documentReader/model";
@@ -34,7 +34,7 @@ export function Colours({ selected, onSelect, disabledReason = null, persisted =
           aria-pressed={selected === color} aria-disabled={reason !== null || undefined}
           onClick={(event) => { if (reason) event.preventDefault(); else onSelect(color); }}>
           <span className={styles.colourFill} style={{ background: `var(--highlight-${color})` }} aria-hidden="true">
-            {selected === color ? <Check size={16} /> : null}
+            {selected === color ? <Icon.Check size={16} /> : null}
           </span>
         </button>
       )} />{reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}</Fragment>;
@@ -62,7 +62,7 @@ export function HighlightButton({ selected, persisted, disabledReason, busy, onC
       aria-describedby={reason ? id : undefined}
       tooltip={{ text: reason ? `${label}. ${reason}` : label }}
       onClick={onClick} onPointerDown={onPointerDown} onKeyDown={onKeyDown} onFocus={onFocus}
-      icon={<><Highlighter size={16} /><span className={styles.highlightColour} style={{ background: `var(--highlight-${selected})` }} /></>} />
+      icon={<><Icon.Highlight /><span className={styles.highlightColour} style={{ background: `var(--highlight-${selected})` }} /></>} />
     {reason ? <span id={id} className="sr-only">{reason}</span> : null}
   </>;
 }
@@ -120,7 +120,7 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
         aria-disabled={disabledReason !== null || undefined}
         aria-describedby={disabledReason ? `${id}-disclosure-reason` : undefined}
         tooltip={{ text: disabledReason ? `Choose highlight colour. ${disabledReason}` : "Choose highlight colour" }}
-        onClick={() => setOpen(!open)} icon={<ChevronDown size={16} />}
+        onClick={() => setOpen(!open)} icon={<Icon.Choose />}
     />
     {disabledReason ? <span id={`${id}-disclosure-reason`} className="sr-only">{disabledReason}</span> : null}
     {open && container ? createPortal(

@@ -66,12 +66,6 @@
 .bullet:disabled {
   color: var(--ink-muted);
 }
-.arrow {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-.arrow[data-open="true"] {
-  transform: rotate(90deg);
-}
 .content {
   flex: 1;
   min-width: 0;
@@ -131,11 +125,5 @@
 @media (any-pointer: coarse) {
   .content {
     padding-top: var(--space-2);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arrow {
-    transition: none;
   }
 }

@@ -75,19 +75,7 @@
   line-height: 1;
 }
 
-.arrow {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-
-.arrow[data-open="true"] {
-  transform: rotate(90deg);
-}
-
 @media (any-pointer: coarse) {
   .row {--outline-control-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
   .content {padding-top: var(--space-2);}
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arrow {transition: none;}
 }

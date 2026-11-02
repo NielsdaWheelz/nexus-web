@@ -1,6 +1,6 @@
 "use client";
 
-import { Minus, Plus, RefreshCw } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useEffect, useId, useRef, useState } from "react";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -46,7 +46,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   const failure = context.status === "loading" ? null : context.error;
   const occurrence = useFeedbackOccurrence(failure !== null, selfRef);
   return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
-    <div className={styles.tools}><ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Plus size={16} aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
+    <div className={styles.tools}><ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Icon.Add aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
     <p className={styles.metadata}>available to future replies</p>
     {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={{ tone: "Warning", title: context.status === "ready" ? "couldn’t refresh connections" : "context couldn’t be loaded", requestId: failure.requestId }} announcement="Assertive" actions={[{ label: context.status === "ready" ? "retry refresh" : "retry", onClick: context.refetch, busy: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }]} /> : null}
     {context.status === "ready" ? <ResourceList ariaLabel="Chat context">
@@ -136,7 +136,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
     <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     attention={failure ? [failure.title, failure.message].filter(Boolean).join(" · ") : undefined}
     primaryControl={entry.mutation ? <>
-      <Button ref={removeButton} iconOnly icon={stale ? <RefreshCw /> : <Minus />}
+      <Button ref={removeButton} iconOnly icon={stale ? <Icon.Again /> : <Icon.Remove />}
         aria-label={`${stale ? "refresh future context before removing" : failure ? "retry removing from future context" : "remove from future context"}: ${label}`}
         aria-disabled={busy || runtime === null || undefined} aria-busy={busy || undefined}
         aria-describedby={runtime === null ? reasonId : undefined} tooltip={runtime === null ? { text: "local writing is unavailable" } : undefined}

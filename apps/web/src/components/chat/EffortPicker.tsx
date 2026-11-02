@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { choiceUnavailable, modelKeyOf, type ModelVariant, type SelectionEditor } from "@/lib/chat/selection";
 import styles from "./EffortPicker.module.css";
@@ -94,7 +94,7 @@ export default function EffortPicker({
             ) : null}
             <circle cx="12" cy="15" r="1.5" fill="currentColor" />
           </svg>
-          <span>{label}</span><ChevronDown size={13} aria-hidden="true" />
+          <span>{label}</span><Icon.Choose size={14} aria-hidden="true" />
         </button>
       )}
       <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}

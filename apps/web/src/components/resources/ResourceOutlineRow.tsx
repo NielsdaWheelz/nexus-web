@@ -9,7 +9,7 @@
 // Rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
 import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
-import {ChevronRight, CornerLeftUp, History, Unlink} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import MachineText from "@/components/ui/MachineText";
 import {FeedbackFailure, useFeedbackOccurrence, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
@@ -358,12 +358,12 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   }
   const commands: ActionDescriptor[] = [];
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
-    label: `Unlink from ${incoming.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
-  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Unlink size={16} aria-hidden="true" />,
+    label: `Unlink from ${incoming.parentLabel}`, icon: <Icon.Remove aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
+  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Icon.Remove aria-hidden="true" />,
     disabled: busy, disabledReason: busy ? "removal is pending" : undefined,
     restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
-  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: <History size={16} aria-hidden="true" />,
+  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
     href: made.conversation_id && made.message_id
       ? `/conversations/${made.conversation_id}?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
@@ -377,11 +377,11 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       className={cx(styles.control, styles.bullet)} aria-label={`actions for ${identity}: ${label}`} data-row-focusable="true">{marker}</button>;
   const disclosure = terminal ? <button ref={attachDisclosure} type="button" className={styles.control}
     disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${label}`}
-    onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
+    onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><Icon.Locate size={14}/></button>
     : hasChildren ? <button ref={attachDisclosure} type="button" className={styles.control}
       aria-label={`${open ? "collapse" : "expand"} linked resources for ${label}`} aria-expanded={open}
       aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
-      onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>
+      onClick={toggle} data-row-focusable="true"><Icon.Disclose open={open} size={14}/></button>
     : <span className={styles.spacer} aria-hidden="true"/>;
   if (projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}>

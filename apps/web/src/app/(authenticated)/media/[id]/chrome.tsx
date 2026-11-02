@@ -4,7 +4,7 @@
 // find, the inspector (Contents and Connections), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
-import { Moon, Sun } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackFailure, useFeedbackOccurrence, } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
@@ -88,8 +88,8 @@ export function useReaderChrome(input: {
     const theme: MenuOption[] = readable ? [{
       kind: "choice", id: "ViewAction.Reader.Theme", label: "Reader theme", value: profile.theme,
       choices: [
-        { value: "light", label: "Light", icon: <Sun size={16} aria-hidden="true" /> },
-        { value: "dark", label: "Dark", icon: <Moon size={16} aria-hidden="true" /> },
+        { value: "light", label: "Light", icon: <Icon.Light size={16} aria-hidden="true" /> },
+        { value: "dark", label: "Dark", icon: <Icon.Dark size={16} aria-hidden="true" /> },
       ],
       onChange: value => setTheme(value === "dark" ? "dark" : "light"),
       disabled: !editable, disabledReason: editable ? undefined : "requires a connection",
