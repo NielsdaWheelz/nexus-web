@@ -26,7 +26,7 @@ export function usePodcastActions(subject: PodcastActionSubject): readonly Actio
   return project(subject, ctx, run).map<ActionButtonSpec>((action, index) => ({
     controlKey: index === 0 ? "PodcastSubscription" : "PodcastLibraries", id: action.id,
     menuLabel: action.label, accessibleLabel: action.accessibleLabel, icon: action.icon,
-    disabled: action.disabled === true, disabledReason: action.disabledReason ?? null, busy: false, hasPopup: "dialog",
+    disabled: action.disabled === true, disabledReason: action.disabledReason ?? null, waiting: action.waiting === true, busy: false, hasPopup: "dialog",
     invoke: focus => { project(subject, ctx, run, focus)[index].onSelect({ triggerEl: focus.trigger, openIntent: "default" }); },
   }));
 }

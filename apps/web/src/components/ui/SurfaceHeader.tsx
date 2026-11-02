@@ -300,7 +300,7 @@ function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<Comp
   const present = new Set(sections.flatMap(section => section.actions.map(action => action.id)));
   const actions: ActionDescriptor[] = shortcuts.filter(action => !present.has(action.id)).map(action => ({
     kind: "command", id: action.id, label: action.menuLabel, icon: action.icon,
-    disabled: action.disabled, disabledReason: action.disabledReason ?? undefined, busy: action.busy, hasPopup: action.hasPopup ?? undefined,
+    disabled: action.disabled, disabledReason: action.disabledReason ?? undefined, waiting: action.waiting || undefined, busy: action.busy, hasPopup: action.hasPopup ?? undefined,
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ ...actionFocus, trigger: triggerEl }),
   }));
