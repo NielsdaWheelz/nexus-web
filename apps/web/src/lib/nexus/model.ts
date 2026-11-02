@@ -61,7 +61,6 @@ export type NexusTarget =
     }
   | { readonly kind: "ResumeCurrentPlayback" }
   | { readonly kind: "OpenAdd"; readonly seed: AddSeed }
-  | { readonly kind: "CreatePage"; readonly titleDraft: string }
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }

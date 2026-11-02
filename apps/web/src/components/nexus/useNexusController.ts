@@ -44,7 +44,7 @@ import {
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { canonicalHref, latchedHref, normalizeQuery } from "@/lib/nexus/rank";
-import { arrivalRows, blankRows, choiceRows, continuations, nexusGroups, OPEN_CAP, playbackRow, syncRows } from "@/lib/nexus/rows";
+import { arrivalRows, blankRows, choiceRows, continuations, learnedHref, nexusGroups, OPEN_CAP, playbackRow, syncRows } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
@@ -374,11 +374,10 @@ export function useNexusController() {
     if (current.kind === "Add") return addSession.workOwnerIds;
     if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "UseText") return [];
     if (current.kind === "ChooseCreate" && target !== null) {
-      const transferred = target.kind === "CreatePage" ? target.titleDraft
-        : target.kind === "CreateLibrary" ? target.nameDraft
-          : target.kind === "InternalHref" && target.entry?.kind === "ComposeChat" ? target.entry.text
-            : target.kind === "InternalHref" && target.entry?.kind === "ComposePage" ? target.entry.title
-              : target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText : null;
+      const transferred = target.kind === "CreateLibrary" ? target.nameDraft
+        : target.kind === "InternalHref" && target.entry?.kind === "ComposeChat" ? target.entry.text
+          : target.kind === "InternalHref" && target.entry?.kind === "ComposePage" ? target.entry.title
+            : target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText : null;
       if (transferred === current.draft) return [];
     }
     return [pageOwner.id];
@@ -434,7 +433,7 @@ export function useNexusController() {
     reorder.cancel({ silent: true });
     setRail(null);
     if (target.kind !== "InternalHref" && target.kind !== "PaneOpen" && target.kind !== "OpenDailyPage" &&
-      target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" && target.kind !== "CreatePage" &&
+      target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" &&
       !guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
     switch (target.kind) {
       case "Resource": {
@@ -452,8 +451,6 @@ export function useNexusController() {
         setPage({ kind: "Add", sessionId: addSession.start(target.seed), origin: origin ?? rootOrigin(row) });
         setOpen(true);
         return null;
-      case "CreatePage":
-        return run({ kind: "InternalHref", href: "/pages/new", ...(target.titleDraft ? { entry: { kind: "ComposePage", title: target.titleDraft } as const } : {}) }, activation, row, origin);
       case "CreateLibrary":
         setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: !origin && page.kind === "ChooseCreate" ? page : choiceReturn(row, activation, origin) });
         setOpen(true);
@@ -497,8 +494,7 @@ export function useNexusController() {
     setAnnouncement("");
     finishNavigation(null);
     if (!row?.learns_selection) return result;
-    const pane = materialized.kind === "PaneOpen" ? panes.find((candidate) => candidate.id === materialized.paneId) : null;
-    const href = materialized.kind === "InternalHref" ? materialized.href : pane?.href ?? null;
+    const href = target.kind === "PaneOpen" ? panes.find((candidate) => candidate.id === target.paneId)?.href ?? null : learnedHref(target);
     if (href) find.remember({ query: parsed.text || null, target_href: href });
     return result;
   }

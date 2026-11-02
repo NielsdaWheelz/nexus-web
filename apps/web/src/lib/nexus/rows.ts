@@ -24,7 +24,7 @@ import type { LocalMatch } from "@/lib/search/localSearch";
 import { resourceMetadata, resourceMetadataText } from "@/lib/resources/metadata";
 import { emptySearchQuery } from "@/lib/search/query";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import type { NexusAction, NexusCommandId, NexusGroup, NexusPage, NexusPane, NexusRow, NexusStream, RankTier, UsageMap } from "./model";
+import type { NexusAction, NexusCommandId, NexusGroup, NexusPage, NexusPane, NexusRow, NexusStream, NexusTarget, RankTier, UsageMap } from "./model";
 import { RESULT_CAP } from "./policy";
 import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
 import { canonicalHref, compareRank, frecency, nameTier } from "./rank";
@@ -64,8 +64,21 @@ function placeActionLabel(place: Destination): string {
   return place.id === "authors" ? "search people" : `open ${place.label.toLowerCase()}`;
 }
 
+/**
+ * The identity a selection is learned under (law 10): the href its dispatch lands on. A day's page is
+ * learned date-free as `/daily`, so `quick note` is one target across days; `remember` posts the same.
+ */
+export function learnedHref(target: NexusTarget): string | null {
+  if (target.kind === "InternalHref") return target.href;
+  if (target.kind === "OpenDailyPage") return getDestination("today").href;
+  return null;
+}
+
+/** The Today place learns under no identity: `/daily` is `quick note`'s, and one identity names one row. */
+const placeHref = (place: Destination): string | null => place.id === "today" ? null : place.href;
+
 function placeRow(place: Destination, tier: RankTier, usage: UsageMap): NexusRow {
-  const today = place.id === "today";
+  const href = placeHref(place);
   return {
     key: `Destination:${place.id}`, localMatch: null,
     label: placeActionLabel(place),
@@ -73,26 +86,27 @@ function placeRow(place: Destination, tier: RankTier, usage: UsageMap): NexusRow
     detail: place.id === "authors" ? "authors and contributors" : undefined,
     action: {
       kind: "Available",
-      target: today
+      target: href === null
         ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
-        : { kind: "InternalHref", href: place.href, labelHint: place.label },
+        : { kind: "InternalHref", href, labelHint: place.label },
     },
-    learns_selection: !today,
-    href: place.href, evidence: false, frecency: frecency(place.href, usage), recency: 0, rank: rank("Navigation", tier),
+    learns_selection: href !== null,
+    href, evidence: false, frecency: href === null ? 0 : frecency(href, usage), recency: 0, rank: rank("Navigation", tier),
   };
 }
 
-function commandRow(id: NexusCommandId, tier: RankTier, argument: string, recency = 0): NexusRow {
+function commandRow(id: NexusCommandId, tier: RankTier, argument: string, usage: UsageMap, recency = 0): NexusRow {
   const command = NEXUS_COMMANDS[id];
   const action = command.action(argument);
+  const href = action.kind === "Available" ? learnedHref(action.target) : null;
   return {
     key: `QuickAction:${id}`, localMatch: null,
     label: id === "Nexus.Quick.Note" && argument ? "save note to today" : command.label,
     icon: command.icon,
     detail: argument || undefined,
     action,
-    ...UNSCORED, recency,
-    href: action.kind === "Available" && action.target.kind === "InternalHref" ? action.target.href : null,
+    learns_selection: href !== null,
+    href, evidence: false, frecency: href === null ? 0 : frecency(href, usage), recency,
     rank: rank("Navigation", tier),
   };
 }
@@ -214,9 +228,9 @@ export function syncRows(input: Reference & {
       key: `ImportUrl:${intent.url}`, localMatch: null, label: "import", icon: LinkIcon, detail: intent.url,
       action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
-    case "Command": return [commandRow(intent.id, "ExplicitIntent", intent.argument)];
-    // Registry order through recency: nothing else distinguishes the six.
-    case "CommandLookup": return COMMAND_IDS.map((id, index) => commandRow(id, "ExplicitIntent", "", COMMAND_IDS.length - index));
+    case "Command": return [commandRow(intent.id, "ExplicitIntent", intent.argument, usage)];
+    // Registry order through recency: nothing else distinguishes the six, so no usage.
+    case "CommandLookup": return COMMAND_IDS.map((id, index) => commandRow(id, "ExplicitIntent", "", NO_USAGE, COMMAND_IDS.length - index));
     case "Destination": return [placeRow(getDestination(intent.id), "ExplicitIntent", usage)];
     case "ChooseCreate": return [{
       key: "Intent:ChooseCreate", localMatch: null, label: "new…", icon: FilePlus2,
@@ -234,7 +248,7 @@ export function syncRows(input: Reference & {
   const plain = plainSearch(query);
   const rows: NexusRow[] = [];
   const places: NexusRow[] = DESTINATIONS.flatMap(place => {
-    const tier = tierOf(place.href, placeActionLabel(place), [place.label, ...place.keywords]);
+    const tier = tierOf(placeHref(place), placeActionLabel(place), [place.label, ...place.keywords]);
     return tier ? [placeRow(place, tier, usage)] : [];
   });
   for (const pane of panes) {
@@ -258,8 +272,9 @@ export function syncRows(input: Reference & {
   rows.push(...places);
   for (const id of COMMAND_IDS) {
     const command = NEXUS_COMMANDS[id];
-    const tier = nameTier(text, command.label, command.keywords);
-    if (tier) rows.push(commandRow(id, tier, ""));
+    const action = command.action("");
+    const tier = tierOf(action.kind === "Available" ? learnedHref(action.target) : null, command.label, command.keywords);
+    if (tier) rows.push(commandRow(id, tier, "", usage));
   }
   if (plain) for (const item of input.recent) {
     const tier = tierOf(item.entry.href, item.presentation.title, item.presentation.status === "Ready" && item.presentation.detail ? [item.presentation.detail] : []);
@@ -367,7 +382,7 @@ export function blankRows(input: {
   const tabs = input.layoutOrder ? panes : input.mru.flatMap(id => panes.filter(pane => pane.id === id && !pane.current));
   const shownTabs = input.layoutOrder || input.panesExpanded ? tabs : tabs.slice(0, OPEN_CAP);
   const recents = input.recent.filter(item => !current || (item.resourceRef !== null ? item.resourceRef !== current.resourceRef : item.entry.href !== current.href));
-  const actions = (["Nexus.Quick.Note", "Nexus.Quick.Chat", "Nexus.Quick.Import"] as const).map(id => commandRow(id, "PrefixOrToken", ""));
+  const actions = (["Nexus.Quick.Note", "Nexus.Quick.Chat", "Nexus.Quick.Import"] as const).map(id => commandRow(id, "PrefixOrToken", "", NO_USAGE));
   if (input.playback) actions.push({ ...input.playback, label: `resume ${input.playback.label}` });
   return [
     ...(input.useText ? [textRow(input.useText, input.useText)] : []),
