@@ -2,7 +2,6 @@
 
 import { useRef } from "react";
 import ResourceRow from "@/components/ui/ResourceRow";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
 import type { ImportItem } from "@/lib/imports/api";
 import {
   KIND_LABEL,
@@ -41,8 +40,7 @@ export default function ImportRow({
   const actions = useImportActions({ item, triggerRef: moreRef, returnFocus });
   const now = new Date();
   const consequence = consequenceLine(item, (at) => momentText(at, display));
-  const reason = reasonLine(item);
-  const concurrent = concurrentWorkLine(item);
+  const detail = [reasonLine(item), concurrentWorkLine(item)].filter(Boolean).join(" · ");
   const age = ageLine(item, display, now);
   return (
     <ResourceRow
@@ -59,12 +57,10 @@ export default function ImportRow({
         onActivate: (triggerElement) => onSelect(item.ref, triggerElement),
       }}
       title={item.title}
-      content={{ kind: "Details", body: <><FeedbackStatus
-        content={{ tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
-          message: [reason, concurrent].filter(Boolean).join(" · ") || undefined }}
-        announcement="None"
-      />
+      content={{ kind: "Details", body: <>
+        <p className={styles.status}>{consequence}</p>
         <div className={styles.rowContext}>
+          {detail ? <span>{detail}</span> : null}
           {item.matched_event !== null ? (
             <span>{matchLine(item.matched_event, display, now)}</span>
           ) : null}
@@ -80,7 +76,7 @@ export default function ImportRow({
             <time dateTime={age.dateTime}>{age.text}</time>
           </span>
         </div>
-        {actions.feedback}
+        {actions.held}
       </> }}
       controls={<>{actions.shortcuts}{actions.menu}</>}
     />

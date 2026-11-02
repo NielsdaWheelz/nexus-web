@@ -5,28 +5,27 @@ import { countText, importAttentionDescription } from "@/lib/imports/copy";
 import styles from "./Imports.module.css";
 
 /**
- * Account's passive Imports label and count. The hidden maximum-width pill
- * reserves menu geometry at zero or unknown; positive counts have one complete
- * accessible description, including a retained read failure and the exact count.
+ * Account's passive Imports label and count. The count stands only while something needs
+ * attention, with one complete accessible description that speaks the exact count. A failed
+ * refresh over a shown count says nothing. `refresh_failed` is read by nothing: optional so the
+ * account menu can stop passing it, then deleted (L7).
  */
 export default function ImportsBadge({
   label,
   count,
-  refresh_failed,
 }: {
   readonly label: string;
   readonly count: number | null;
-  readonly refresh_failed: boolean;
+  readonly refresh_failed?: boolean;
 }) {
-  const description = count !== null && count > 0
-    ? importAttentionDescription(count, refresh_failed) : null;
+  const attention = count !== null && count > 0 ? count : null;
   return (
     <>
-      <span className={styles.badgeLabel} aria-hidden={description !== null}>{label}</span>
-      <Pill tone="warning" size="sm" className={styles.attentionCount} data-visible={description !== null} aria-hidden="true">
-        {count !== null && count > 0 ? countText(count) : "99+"}
-      </Pill>
-      {description !== null ? <span className="sr-only">{description}</span> : null}
+      <span className={styles.badgeLabel} aria-hidden={attention !== null}>{label}</span>
+      {attention === null ? null : <>
+        <Pill tone="warning" size="sm" className={styles.attentionCount} aria-hidden="true">{countText(attention)}</Pill>
+        <span className="sr-only">{importAttentionDescription(attention)}</span>
+      </>}
     </>
   );
 }

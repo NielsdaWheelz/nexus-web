@@ -1,12 +1,18 @@
 "use client";
 
-// Browse fans a query out to independent source sections. Each shared list
-// owns traversal, errors and its pane-visit snapshot; the pane tracks first-read readiness.
+// Browse fans a query out to independent source sections. Each shared list owns traversal,
+// errors and its pane-visit snapshot, and reports its cold read to the body. The body owns one
+// rule: once every section has failed with one transport, it says so once, and the sections stay
+// mounted, quiet and hidden, because each owns the read that can recover. While that sentence may
+// still come, a failed section waits quiet in its ruling. A section the body quieted stays quiet
+// through the reread that may heal it, and speaks only if that fails again. The body's own
+// sentence, said offline, waits in a ruling until rereads replace every failure seen offline.
 
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,16 +22,17 @@ import { podcastActionFacts } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import { FeedbackNotice, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import RadioGroup from "@/components/ui/RadioGroup";
-import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
+import type { ApiError } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import { fetchBrowsePage, type BrowseCandidate } from "@/lib/browse/api";
+import { fetchBrowsePage, type BrowseCandidate, type BrowseKind } from "@/lib/browse/api";
 import {
   BROWSE_KIND_LABELS,
   BROWSE_KINDS,
@@ -41,54 +48,33 @@ import {
   type BrowseSection,
 } from "@/lib/browse/query";
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
+import { providerRefusal } from "./providerRefusal";
 import styles from "./browse.module.css";
 
+/** A section's cold read, as far as the body's rule needs it. */
 interface SectionStatus {
   readonly settled: boolean;
-  readonly error: ApiError | null;
+  /** A failed cold read the transport speaks for: neither the provider's refusal nor a refused query. */
+  readonly failure: ApiError | null;
+  /** The server refused the query itself; the body replaces the pane. */
+  readonly invalid: boolean;
+  readonly running: boolean;
+  /** Stable, so a report changes only with the read. */
+  readonly refetch: () => Promise<void>;
 }
 const keyOf = (section: BrowseSection) => `${section.kind}:${section.source}`;
-const until = (time: string | null) =>
-  time !== null
-    ? ` until ${new Date(time).toLocaleTimeString()}`
-    : "";
-
-/** A section's failure row; any code a section does not model is a defect. */
-function sectionErrorMessage(error: ApiError): string {
-  // justify-type-assertion: provider failure details are the server's
-  // BrowseProviderFailure contract; errors carry no generated schema.
-  const details = error.details as {
-    readonly retry_at: string | null;
-    readonly reset_at: string | null;
-  };
-  switch (error.code) {
-    case "E_NETWORK":
-      return "Connection lost";
-    case "E_INVALID_CURSOR":
-      return "This search can no longer continue.";
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_BROWSE_PROVIDER_UNAVAILABLE":
-      return "Source unavailable";
-    case "E_RATE_LIMITED":
-      return "Rate limited";
-    case "E_BROWSE_PROVIDER_RATE_LIMITED":
-      return `Rate limited${until(details.retry_at)}`;
-    case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
-      return `Quota exhausted${until(details.reset_at)}`;
-    default: {
-      const transport = apiTransportFeedback(error, "source couldn’t be loaded");
-      if (transport !== null) return transport.message ?? transport.title;
-      throw error;
-    }
-  }
-}
+const KIND_NOUNS: Readonly<Record<BrowseKind, string>> = {
+  Pdf: "pdfs", Epub: "epubs", WebArticle: "web articles", Video: "videos", Podcast: "podcasts",
+};
+const refusedQuery = (error: ApiError) => error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_BROWSE_QUERY";
 
 /** Browse owns submitted text, exclusive kind/source choices and provider order. */
 function BrowseToolbar({ query, inputRef, onQuery }: {
@@ -119,7 +105,7 @@ function BrowseToolbar({ query, inputRef, onQuery }: {
       placeholder: "Search across sources",
       value: draft,
       appliedValue: query.text,
-      error: invalid ? "Use up to 200 characters without control characters." : undefined,
+      error: invalid ? "search text is over 200 characters or has control characters." : undefined,
       onChange: setDraft,
       onClear: () => { setDraft(""); onQuery({ ...query, text: "" }); },
     }}
@@ -165,14 +151,17 @@ function BrowseToolbar({ query, inputRef, onQuery }: {
   />;
 }
 
-/** Each kind/source keeps its own visit snapshot and independent provider failure. */
-function BrowseSourceSection({ queryKey, text, section, onStatus }: {
+/** Each kind/source keeps its own visit snapshot and its own failure. `quiet` while the body may
+ * yet speak, or speaks, for every section at once. */
+function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   readonly queryKey: string;
   readonly text: string;
   readonly section: BrowseSection;
+  readonly quiet: boolean;
   readonly onStatus: (key: string, status: SectionStatus) => void;
 }) {
   const active = usePaneIsActive();
+  const display = useRenderEnvironment();
   const headingId = useId();
   const sectionRef = useRef<HTMLElement | null>(null);
   const sectionKey = keyOf(section);
@@ -190,11 +179,22 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     id: (item) => item.kind === "OwnedMedia" ? item.resolution.action_ref : item.target,
     fetchPage: (cursor, limit, signal) => fetchBrowsePage({ q: text, ...section, cursor, limit, signal }),
   });
-  const error = list.failure?.error ?? null;
-  const settled = list.current || error !== null;
+  // A failure over shown rows heals unseen; continuation is the read feedback's.
+  const cold = list.current ? null : list.failure?.error ?? null;
+  const refusal = cold === null ? null : providerRefusal(cold, display);
+  const invalid = cold !== null && refusedQuery(cold);
+  const failure = refusal !== null || invalid ? null : cold;
+  const settled = list.current || cold !== null;
+  const running = list.running !== null;
+  const { refetch } = list;
   useEffect(() => {
-    onStatus(sectionKey, { settled, error });
-  }, [queryKey, onStatus, sectionKey, settled, error]);
+    onStatus(sectionKey, { settled, failure, invalid, running, refetch });
+  }, [queryKey, onStatus, sectionKey, settled, failure, invalid, running, refetch]);
+  // Quieted, a failure waits in its ruling, and stays there through the reread that may heal it:
+  // the old failure stands until that read settles, and would read meanwhile as a fresh line.
+  const [quieted, setQuieted] = useState(false);
+  const stillQuiet = quiet || (quieted && running);
+  if (stillQuiet !== quieted) setQuieted(stillQuiet);
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
@@ -202,7 +202,6 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     targets: list.items.flatMap(item => item.kind === "Podcast" ? [{ kind: "Discovery" as const, target: item.target }] : []),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
   });
-  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const rows = list.items.flatMap((item) => {
     if (item.resolution.kind !== "InNexusMedia") {
       return [presentBrowseCandidate(item, item.kind === "Podcast" ? {
@@ -219,30 +218,19 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     })];
   });
   const label = BROWSE_SOURCE_LABELS[section.source];
-  const readOccurrence = useFeedbackOccurrence(error !== null, readKey);
-  const factsOccurrence = useFeedbackOccurrence(factsError !== null, readKey);
-  const initialError = list.failure?.op !== "More" ? error : null;
-  const invalid = initialError?.code === "E_INVALID_REQUEST" || initialError?.code === "E_INVALID_BROWSE_QUERY";
+  const noun = `${KIND_NOUNS[section.kind]} from ${label.toLowerCase()}`;
   const feedback = useCollectionReadFeedback({
     list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null,
     returnFocus: () => sectionRef.current,
   });
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}>
     <h3 id={headingId} className={styles.sourceHeading}>{label}</h3>
-    {!list.current && initialError === null ? (
-      <FeedbackBusy subject={readKey} pending/>
-    ) : initialError !== null && !invalid ? (
-      <FeedbackFailure scope="Local" occurrence={readOccurrence}
-        content={{ tone: "Warning", title: `${label} couldn’t be loaded`, message: sectionErrorMessage(initialError), requestId: initialError.requestId }}
-        announcement="Polite"
-        actions={[{ label: `retry ${label.toLowerCase()}`, onClick: list.retry, busy: list.running !== null }]}
-        returnFocus={() => sectionRef.current}
-      />
-    ) : list.complete && initialError === null && rows.length === 0 ? (
-      <FeedbackStatus content={{ tone: "Neutral", title: "no results" }} announcement="None" />
-    ) : null}
-    {factsError !== null ? <FeedbackFailure scope="Local" occurrence={factsOccurrence} content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
-      actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
+    {list.status === "loading" ? <Ruling />
+      : refusal !== null ? <Fact line={{ fact: `couldn’t load ${noun}.`, reason: refusal.reason }}
+        verbs={refusal.retry ? [{ label: "retry", commandKey: `retry ${noun}`, run: list.retry, busy: running }] : undefined} />
+      : failure !== null ? stillQuiet ? <Ruling /> : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
+      : list.complete && rows.length === 0 ? <Fact line={{ fact: "no results." }} />
+      : null}
     <CollectionView
       returnScope={`Browse.${section.kind}.${section.source}`}
       rows={rows}
@@ -255,6 +243,25 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     {feedback.notice}
     {feedback.announcement}
   </section>;
+}
+
+/** The body's one sentence for every section. Withdrawn with focus on its verb, it hands focus to
+ * the pane's landmark: withdrawal restores only focus it owned. */
+function SharedFailure({ error, statuses }: { readonly error: ApiError; readonly statuses: readonly SectionStatus[] }) {
+  const region = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = region.current;
+    return () => {
+      if (element?.contains(document.activeElement))
+        findPaneLandmarkFocusTarget(element.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId)?.focus({ preventScroll: true });
+    };
+  }, []);
+  return <div ref={region}>
+    <Failed error={error} noun="results" retry={{
+      run: () => { for (const status of statuses) void status.refetch().catch(() => {}); },
+      busy: statuses.some((status) => status.running),
+    }} />
+  </div>;
 }
 
 export default function BrowsePaneBody() {
@@ -275,9 +282,25 @@ export default function BrowsePaneBody() {
       sections: { ...(previous.key === queryKey ? previous.sections : {}), [key]: status },
     }));
   }, [queryKey]);
-  const statuses = sections.map((section) => reports.key === queryKey ? reports.sections[keyOf(section)] : undefined);
-  const settled = statuses.filter((status) => status?.settled).length;
-  const invalid = statuses.some((status) => status?.error?.code === "E_INVALID_BROWSE_QUERY" || status?.error?.code === "E_INVALID_REQUEST");
+  const statuses = sections.flatMap((section) => {
+    const status = reports.key === queryKey ? reports.sections[keyOf(section)] : undefined;
+    return status === undefined ? [] : [status];
+  });
+  const settled = statuses.filter((status) => status.settled).length;
+  const invalid = statuses.some((status) => status.invalid);
+  // One cause gets one sentence: every planned section failed, all with one transport. While every
+  // settled read is such a failure and some are still out, that sentence may yet come.
+  const failures = statuses.flatMap((status) => status.failure ?? []);
+  const oneCause = failures.length === settled
+    && failures.every((failure) => transportOf(failure) === transportOf(failures[0]));
+  const shared = oneCause && failures.length === sections.length && failures.length > 0 ? failures[0] : null;
+  const awaiting = oneCause && settled < sections.length;
+  // A transport is read at render, so back online a failure seen offline would read `nexus isn’t
+  // answering.` before nexus was asked again. While any of them stands, the body waits.
+  const [seenOffline, setSeenOffline] = useState<readonly ApiError[]>([]);
+  const offline = shared !== null && transportOf(shared) === "Offline";
+  if (offline && failures.some((failure) => !seenOffline.includes(failure))) setSeenOffline(failures);
+  const reconnecting = !offline && shared !== null && failures.some((failure) => seenOffline.includes(failure));
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
   const onQuery = useCallback(
     (next: BrowseQuery | null) => {
@@ -295,20 +318,19 @@ export default function BrowsePaneBody() {
   );
   usePaneChrome({ query: queryControls, header: { kind: "Section", meta: { kind: "None" } } });
   if (query === null || invalid) return <PaneSurface state={
-    <div className={styles.invalid}>
-      <FeedbackNotice content={{ tone: "Warning", title: "This Browse link is invalid", message: "Reset Browse to start from a valid search." }} announcement="Polite" />
-      <Button onClick={() => router.replace("/browse")}>Reset Browse</Button>
-    </div>
+    <Fact line={{ fact: "browse can’t use this link." }}
+      verbs={[{ label: "reset browse", commandKey: "reset browse", run: () => router.replace("/browse") }]} />
   } />;
   return <PaneSurface
     brief="Discover beyond Nexus. Preview first; add only when it belongs."
     empty={<p>Search to discover things beyond Nexus.</p>}
+    state={shared === null ? undefined : reconnecting ? <Ruling /> : <SharedFailure error={shared} statuses={statuses} />}
   >
     {text ? [...new Set(sections.map((section) => section.kind))].map((kind) => (
-      <section key={kind} className={styles.chapter}>
+      <section key={kind} className={styles.chapter} hidden={shared !== null}>
         <h2 className={styles.chapterHeading}>{BROWSE_KIND_LABELS[kind]}</h2>
         {sections.filter((section) => section.kind === kind).map((section) => (
-          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} onStatus={onStatus} />
+          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} quiet={awaiting || shared !== null} onStatus={onStatus} />
         ))}
       </section>
     )) : null}

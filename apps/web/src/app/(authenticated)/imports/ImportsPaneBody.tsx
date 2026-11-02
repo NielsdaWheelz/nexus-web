@@ -1,14 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList, {
   type MatchedImportEvidence,
 } from "@/components/imports/ImportsList";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ImportsView } from "@/lib/imports/api";
-import { loadFailure } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
   apiQuery,
@@ -126,18 +125,11 @@ export default function ImportsPaneBody() {
   const [listSettled, setListSettled] = useState(false);
   usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
 
-  const summaryOccurrence = useFeedbackOccurrence(summary.status === "failed");
   // Before the counts choose a view there is none to publish controls for.
   if (view === null)
-    return summary.status === "failed" ? (
-      <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
-        content={loadFailure(summary.error)}
-        announcement="Assertive"
-        actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
-      />
-    ) : (
-      <PaneLoadingState />
-    );
+    return summary.status === "failed"
+      ? <Failed error={summary.error} noun="imports" retry={{ run: refresh, busy: summary.retrying }} />
+      : <Ruling />;
   return (
     <ImportsList
       view={view}
