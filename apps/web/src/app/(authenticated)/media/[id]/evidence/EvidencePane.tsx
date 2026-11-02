@@ -84,7 +84,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const [sourceText, setSourceText] = useState<ReadonlySet<string>>(() => saved?.browse?.sourceText ?? new Set());
   capture.current = { hidden, following, browse: browse.current };
   const restore = useRef(saved?.browse?.anchor ?? null);
-  const rows = useRef<readonly HTMLElement[]>([]);
   const scheduleRestore = useRef<(() => void) | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
@@ -174,9 +173,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries, state.markers]);
   const keys = placements.map((place) => place.key).join();
   const placedKeys = useMemo(() => new Set(placed.map(entry => entry.key)), [placed]);
-  // A readable source that hasn't failed will place this entry once its doc is mounted and bound.
-  const undetermined = useCallback((entry: EvidenceEntry) => actions.readable && document.status !== "failed" &&
-    (doc === null || entry.kind === "highlight" && entry.annotation.placement.kind === "unavailable"), [actions.readable, doc, document.status]);
+  // A source that isn't absent will place this entry once its doc is mounted and bound.
+  const undetermined = useCallback((entry: EvidenceEntry) => !sourceAbsent &&
+    (doc === null || entry.kind === "highlight" && entry.annotation.placement.kind === "unavailable"), [doc, sourceAbsent]);
   const whole = useMemo(() => entries.filter(entry => !placedKeys.has(entry.key) && (entry.kind === "link" || entry.kind === "remote" && entry.root.resolution === null)), [entries, placedKeys]);
   const unavailable = useMemo(() => {
     const wholeKeys = new Set(whole.map(entry => entry.key));
@@ -195,11 +194,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     ...(aligned ? [{key: "placed-space", estimate: placedHeight}] : []),
   ], [aligned, order, placedHeight]);
   const rowWindow = useEvidenceWindow({scope: publicationKey, slots, aligned, placements: placements.map(place => place.key),
-    demand: arrival ?? focusRequest?.key ?? restore.current?.key ?? null, focused, root: windowRoot, port: list, outer: pane});
+    demand: arrival ?? focusRequest?.key ?? (aligned ? null : restore.current?.key) ?? null, focused, root: windowRoot, port: list, outer: pane});
   const heldKeys = [...rowWindow.held].sort().join();
   const mountedKeys = rowWindow.rendered.map(slot => slot.key).join();
   const held = useRef(rowWindow.held); held.current = rowWindow.held;
-  const {interact} = rowWindow;
+  const {interact, release} = rowWindow;
   const requestFocus = useCallback((key: string, occurrence: string | null, last: boolean, isCurrent: () => boolean) => {
     if (aligned) setFollowing(false);
     interact(key); setFocusRequest({key, occurrence, last, isCurrent});
@@ -236,16 +235,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     const bounds = root.getBoundingClientRect();
     const top = Math.max(box.top, bounds.top);
     const bottom = Math.min(box.bottom, bounds.bottom);
-    // Rows are cached in flow order when layout owners change. Native scrolling
-    // measures a logarithmic search, never the whole mounted evidence corpus.
-    let low = 0;
-    let high = rows.current.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (rows.current[middle].getBoundingClientRect().bottom <= top) low = middle + 1;
-      else high = middle;
-    }
-    const row = rows.current[low];
+    const row = [...port.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")].find(node => node.getBoundingClientRect().bottom > top);
     if (!row || bottom <= top || row.getBoundingClientRect().top >= bottom) return;
     const key = row.dataset.group;
     if (key) updateBrowse(current => ({ ...current, anchor: { key, offsetPx: row.getBoundingClientRect().top - box.top, outerScrollTop: root.scrollTop } }));
@@ -254,7 +244,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   useLayoutEffect(() => {
     const port = list.current;
     if (!port || aligned || publicationKey === null) return;
-    rows.current = [...port.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")];
     alignedPosition.current = null;
     if (restore.current === null) {captureScroll(); return;}
     let frame = 0;
@@ -267,13 +256,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         return;
       }
       // This occurrence holds until the reader acts: rows above can grow long after the data settles.
-      const row = rows.current.find(element => element.dataset.group === anchor.key);
+      const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(anchor.key)}"]:not([hidden])`);
       if (row) {
         if (pane.current) pane.current.scrollTop = anchor.outerScrollTop;
         port.scrollTop += row.getBoundingClientRect().top - port.getBoundingClientRect().top - anchor.offsetPx;
       } else if (terminal) {
-        port.scrollTop = 0;
-        if (pane.current) pane.current.scrollTop = 0;
         updateBrowse(current => ({ ...current, anchor: null }));
         restore.current = null;
         observer.disconnect();
@@ -285,12 +272,13 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     const observer = new ResizeObserver(schedule);
     observer.observe(port);
     if (pane.current) observer.observe(pane.current);
-    for (const row of rows.current) observer.observe(row);
+    if (windowRoot.current) observer.observe(windowRoot.current);
     schedule();
     return () => { scheduleRestore.current = null; observer.disconnect(); cancelAnimationFrame(frame); };
   }, [aligned, captureScroll, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
 
   const stopRestore = () => {
+    if (restore.current) release();
     restore.current = null;
     scheduleRestore.current?.();
   };

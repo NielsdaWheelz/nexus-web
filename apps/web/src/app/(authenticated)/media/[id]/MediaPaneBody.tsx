@@ -796,12 +796,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const actions = useMemo<EvidenceActions>(
     () => ({
       verbs: { noteEdit, annotate, hovered, hover, closeNoteEdit, relocate },
-      readable,
       sourceContext: media?.kind !== "text_part",
       mediaLabel: media?.title ?? "this document",
       refresh: store.refresh,
     }),
-    [annotate, closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, readable, relocate, store],
+    [annotate, closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, relocate, store],
   );
   const evidence = useMemo(
     () => (

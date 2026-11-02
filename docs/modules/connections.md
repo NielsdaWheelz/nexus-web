@@ -123,8 +123,9 @@ the margin mounts its source placements. geometry belongs to the current
 publication and width. complete membership, facets and source order remain with
 the pane, including keyboard successors, explicit arrivals and unlink recovery.
 saved restoration and the switch to all hold their occurrence until the reader
-acts; a removed occurrence returns the list to its start. late layout preserves
-the visible occurrence's offset, and a list at its start stays at its start.
+acts; a removed occurrence ends the hold where the list stands. late layout
+preserves the visible occurrence's offset, and a list at its start stays at its
+start.
 
 focus, inspector selection, menus, actual draft risk, pending local document
 edits and unsettled row commands retain the existing occurrence and editor.

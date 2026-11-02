@@ -24,8 +24,6 @@ export interface EvidenceOpenRequest {
 }
 
 export interface EvidenceActions {
-  /** The media can mount a reader, so a row's placement is still coming until it has. */
-  readonly readable: boolean;
   readonly sourceContext: boolean;
   /** The media every whole-document link attaches to. */
   readonly mediaLabel: string;
