@@ -190,7 +190,6 @@ class PodcastSubscriptionCreateRequest(BaseModel):
     id: UUID
     import_id: UUID
     target: PodcastCommitTarget
-    expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision
 
     model_config = _CLOSED
@@ -199,7 +198,6 @@ class PodcastSubscriptionCreateRequest(BaseModel):
 class PodcastImportCreateRequest(BaseModel):
     id: UUID
     target: PodcastCommitTarget
-    expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision
 
     model_config = _CLOSED
@@ -212,7 +210,7 @@ class PodcastImportCancelRequest(BaseModel):
 
 
 class PodcastImportRetryRequest(PodcastImportCancelRequest):
-    expected_order_revision: OrderRevision
+    """Retry compares only the frozen attempt: an addition depends on no library order."""
 
 
 class PodcastAdmissionOut(BaseModel):

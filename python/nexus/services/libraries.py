@@ -509,7 +509,7 @@ def list_writable_library_destinations(db: Session, viewer_id: UUID) -> LibraryD
         text("""
         SELECT u.removal_revision, destination.* FROM users u
         LEFT JOIN LATERAL (
-            SELECT l.id, l.name, l.order_revision FROM libraries l
+            SELECT l.id, l.name FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = u.id AND m.role = 'admin'
             WHERE NOT l.is_default AND l.system_key IS NULL
         ) destination ON true
@@ -521,9 +521,7 @@ def list_writable_library_destinations(db: Session, viewer_id: UUID) -> LibraryD
     return LibraryDestinationsOut(
         removal_revision=str(rows[0].removal_revision),
         destinations=[
-            LibraryDestinationOut(id=row.id, name=row.name, order_revision=str(row.order_revision))
-            for row in rows
-            if row.id is not None
+            LibraryDestinationOut(id=row.id, name=row.name) for row in rows if row.id is not None
         ],
     )
 

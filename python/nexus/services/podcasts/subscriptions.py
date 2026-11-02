@@ -1,16 +1,17 @@
 """library-owned ongoing rules, atomic admission and scoped stopping.
 
 create reuses its client id and bound initial import: an extant matching resource
-returns current state without repeating acquisition. fresh admission checks exact
-library/account guards before any placement. discovery replay validates its sealed
-source against retained identities before provider work; a removed rule's retained
-initial import refuses recreation. preflight ends before provider reads, and the
-final locked owner rechecks identity and authority. scoped stop compares the complete
-frozen destination set and identities atomically. keep ignores arriving-entry
-revisions and independent additions; remove requires them and fences all selected
-additions. rules leave before placements. bulk addition and cleanup touch only
-their chosen destinations, never manufacture personal holdings, and preserve
-authored work, listening state and queue/device state. cancellation never waits on queue rows.
+returns current state without repeating acquisition. fresh admission checks library
+authority and the account's removal fence before any placement; an addition compares
+no library order. discovery replay validates its sealed source against retained
+identities before provider work; a removed rule's retained initial import refuses
+recreation. preflight ends before provider reads, and the final locked owner rechecks
+identity and authority. scoped stop compares the complete frozen destination set and
+identities atomically. keep ignores arriving-entry revisions and independent
+additions; remove requires them and fences all selected additions. rules leave before
+placements. bulk addition and cleanup touch only their chosen destinations, never
+manufacture personal holdings, and preserve authored work, listening state and
+queue/device state. cancellation never waits on queue rows.
 """
 
 from typing import Literal
@@ -132,7 +133,6 @@ def admit(
             import_id=body.import_id
             if isinstance(body, wire.PodcastSubscriptionCreateRequest)
             else None,
-            expected_order_revision=int(body.expected_order_revision),
             expected_removal_revision=int(body.expected_removal_revision),
         )
 
@@ -147,7 +147,6 @@ def admit_in_current_transaction(
     podcast_id: UUID,
     id: UUID,
     import_id: UUID | None,
-    expected_order_revision: int,
     expected_removal_revision: int,
 ) -> wire.PodcastAdmissionOut:
     """Canonical admission shared with approved tools; caller owns the transaction."""
@@ -257,8 +256,6 @@ def admit_in_current_transaction(
     library = libraries.access(db, viewer_id, library_id, lock=False)
     library.require_add_content(viewer_id)
     users.require_removal_revision(db, viewer_id, expected_removal_revision)
-    if library.order_revision != expected_order_revision:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
     run_id = new_uuid7()
     db.execute(
         text("""
@@ -302,11 +299,6 @@ def admit_in_current_transaction(
                        already_present_count=:present WHERE id=:id"""),
         {"id": operation_id, "added": added, "present": present},
     )
-    if (
-        libraries.access(db, viewer_id, library_id, lock=False).order_revision
-        == expected_order_revision
-    ):
-        libraries.advance_order_revision(db, library_id)
     traversal.enqueue_step(db, run_id=run_id)
     projection.refresh_viewer_contributors(
         db,

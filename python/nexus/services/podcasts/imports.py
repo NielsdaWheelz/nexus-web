@@ -1,9 +1,10 @@
 """finite library imports and their processed identities.
 
 a client id identifies one retained operation; duplicate admission never recopies.
-retry compares the frozen attempt and library revision, retaining processed rows;
-cancel compares the attempt and keeps committed entries. publication runs under
-the caller's show/run lock and locks the complete media/library set before filing.
+retry compares the frozen attempt, retaining processed rows; an addition depends on no
+library order. cancel compares the attempt and keeps committed entries. publication
+runs under the caller's show/run lock and locks the complete media/library set before
+filing.
 terminal completion/cancel clears processed identities only after fencing workers.
 module imports stay light because queue dead letters call finish_run.
 """
@@ -297,11 +298,7 @@ def retry(
         libraries.lock_library_rows_in_order(db, [library_id])
         library = libraries.access(db, viewer_id, library_id, lock=False)
         library.require_add_content(viewer_id)
-        if (
-            row["attempt_version"] != body.expected_attempt_version
-            or library.order_revision != int(body.expected_order_revision)
-            or row["failed_at"] is None
-        ):
+        if row["attempt_version"] != body.expected_attempt_version or row["failed_at"] is None:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
         db.execute(
             text("""
@@ -319,7 +316,6 @@ def retry(
             {"id": row["run_id"]},
         )
         traversal.enqueue_step(db, run_id=row["run_id"])
-        libraries.advance_order_revision(db, library_id)
         return get_import(db, viewer_id, library_id, import_id)
 
     return retry_read_committed(db, "retry_podcast_import", attempt)

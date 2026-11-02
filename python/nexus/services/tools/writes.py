@@ -196,7 +196,6 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
             podcast_id=ref.id,
             id=intent.id,
             import_id=intent.import_id,
-            expected_order_revision=int(value.expected_order_revision),
             expected_removal_revision=int(value.expected_removal_revision),
         )
         library = libraries.access(db, viewer, value.library_id, lock=False)
@@ -207,7 +206,7 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
             library_uri=f"library:{library.id}",
             resource_uri=ref.uri,
         )
-    if value.podcast is not None:
+    if value.podcast is not None or value.expected_order_revision is None:
         refuse("InvalidInput")
     library_id = value.library_id
     target = library_entries.media_target(ref.id)

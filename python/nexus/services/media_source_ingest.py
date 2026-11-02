@@ -10,12 +10,12 @@ Retry rules (no replay ledger): a url accept carries a client-minted attempt id,
 resend finds its own attempt; a retry or refresh finds its own effect as the expected
 attempt's successor (I10), and a refresh joins the run already in flight; a repair
 finds its job no longer dead. A url accept of a deduped source takes its identity lock
-after the viewer lock and before media/library locks (I12). Frozen removal and
-destination guards apply to every fresh acquisition. An existing own receipt
-only answers identity; it never retains or files again. Receipts share their
-media's lifetime: after hard teardown an old submission must pass its original
-guards before doing anything. Automatic children require current parent access
-and preserve child removal markers.
+after the viewer lock and before media/library locks (I12). The frozen removal
+fence and destination authority apply to every fresh acquisition; an append compares
+no library order. An existing own receipt only answers identity; it never retains or
+files again. Receipts share their media's lifetime: after hard teardown an old
+submission must pass its original guards before doing anything. Automatic children
+require current parent access and preserve child removal markers.
 """
 
 from __future__ import annotations
@@ -56,7 +56,6 @@ from nexus.errors import (
 )
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import requeue_dead_job
-from nexus.schemas.acquisition import DestinationGuard
 from nexus.schemas.import_history import SourceRecoveryAccepted
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
@@ -323,7 +322,7 @@ def accept_url_source(
     id: UUID,
     url: str,
     expected_removal_revision: int,
-    destinations: list[DestinationGuard],
+    destinations: list[UUID],
     request_id: str | None,
 ) -> FromUrlOut:
     """Accept a url on a fresh session; ``id`` is the client-minted attempt id.
@@ -359,22 +358,19 @@ def accept_url_source(
                     ApiErrorCode.E_RESOURCE_CONFLICT, "attempt id already saved a captured post"
                 )
             return _from_url_out(db, sent, id)
-        library_ids = [guard.library_id for guard in destinations]
         result = _accept_url(
             db,
             viewer_id,
             id,
             url,
-            library_ids,
+            destinations,
             {},
             request_id,
             expected_removal_revision=expected_removal_revision,
-            destinations=destinations,
         )
-        library_entries.finish_acquisition_destinations(db, destinations=destinations)
         shared_viewers = db.scalars(
             text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
-            {"ids": [guard.library_id for guard in destinations]},
+            {"ids": destinations},
         ).all()
         projection.refresh_viewer_contributors(db, [viewer_id, *shared_viewers])
         record_input_change(db, owners=(f"media:{result.media_id}",))
@@ -449,7 +445,6 @@ def _accept_url(
     request_id: str | None,
     *,
     expected_removal_revision: int | None = None,
-    destinations: list[DestinationGuard] | None = None,
 ) -> FromUrlOut:
     validate_requested_url(url)
     spec = url_source_spec(url)
@@ -501,12 +496,12 @@ def _accept_url(
     if media is None:
         media = _new_media(db, spec, url=url, actor_id=actor_id)
         if library_ids is not None:
-            assert expected_removal_revision is not None and destinations is not None
+            assert expected_removal_revision is not None
             library_entries.validate_acquisition_destinations(
                 db,
                 viewer_id=actor_id,
                 expected_removal_revision=expected_removal_revision,
-                destinations=destinations,
+                library_ids=library_ids,
             )
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, actor_id, media.id, library_ids
@@ -522,12 +517,12 @@ def _accept_url(
     library_entries.lock_media_rows_in_order(db, [media.id, *article_ids])
     db.refresh(media)
     if library_ids is not None:
-        assert expected_removal_revision is not None and destinations is not None
+        assert expected_removal_revision is not None
         library_entries.validate_acquisition_destinations(
             db,
             viewer_id=actor_id,
             expected_removal_revision=expected_removal_revision,
-            destinations=destinations,
+            library_ids=library_ids,
         )
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, actor_id, media.id, library_ids
@@ -546,7 +541,8 @@ def _accept_url(
             and latest.provider_target_ref != spec.provider_target_ref
         ):
             raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT, "Another post in this thread is being imported."
+                ApiErrorCode.E_SOURCE_IMPORT_ACTIVE,
+                "Another post in this thread is being imported.",
             )
         return _from_url_out(db, latest, id)  # I2: join the run in flight
     if spec.source_type == st.X_AUTHOR_THREAD:
@@ -1100,7 +1096,7 @@ def accept_x_capture(
     id: UUID,
     capture_id: UUID,
     expected_removal_revision: int,
-    destinations: list[DestinationGuard],
+    destinations: list[UUID],
 ) -> FromXCaptureOut:
     """Save retained complete evidence with one settled attempt; replay never refiles."""
     from nexus.schemas.x_source import XCompletePostCapture
@@ -1182,10 +1178,10 @@ def accept_x_capture(
             db,
             viewer_id=viewer_id,
             expected_removal_revision=expected_removal_revision,
-            destinations=destinations,
+            library_ids=destinations,
         )
         library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, [item.library_id for item in destinations]
+            db, viewer_id, media.id, destinations
         )
         attempt = sa.create_attempt(
             db,
@@ -1200,7 +1196,6 @@ def accept_x_capture(
             payload={"capture_id": str(capture_id)},
             status="succeeded",
         )
-        library_entries.finish_acquisition_destinations(db, destinations=destinations)
         admit_x_captures_for_accounts(
             db,
             account_ids=media_audience_account_ids(db, media_ids=[media.id]),
