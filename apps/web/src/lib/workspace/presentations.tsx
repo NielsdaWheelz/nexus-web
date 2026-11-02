@@ -2,7 +2,7 @@
 /** Authored titles come from the local graph, even online. Other resource labels
  * retain their server/catalog owner. Saved visit hints are display evidence only.
  * `detail` is the byline or the reason a title is missing, never a kind word: the glyph is the kind. */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { ApiError, apiFetch } from "@/lib/api/client";
@@ -114,7 +114,11 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     throw new DOMException("aborted", "AbortError");
   } });
   const captureFacts = captures.status === "ready" && !captures.error ? captures.data : null;
-  const remoteFacts = remote.status === "ready" ? remote.data : null;
+  // Recents, foreground and catalog changes re-key the read, which starts empty; the facts already
+  // shown hold until the new ones land, so a shown title never loses its byline while revalidating.
+  const heldFacts = useRef<Map<string, Canonical | null> | null>(null);
+  if (remote.status === "ready") heldFacts.current = remote.data;
+  const remoteFacts = heldFacts.current;
   // A media's kind never changes, so one seen holds for the session, through every refetch that blanks remoteFacts.
   const [kinds, setKinds] = useState<ReadonlyMap<string, MediaKind>>(() => new Map());
   useEffect(() => {
