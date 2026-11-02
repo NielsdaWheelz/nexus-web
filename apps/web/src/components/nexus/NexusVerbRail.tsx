@@ -3,10 +3,11 @@
 // The verb rail: one row's verbs as an inline toolbar, on both surfaces. A projection over the row's
 // menu source (`useContextualActions`) plus the palette's own verbs: the fixed pair, the first read
 // verbs `RAIL_VERBS` names until RAIL_CHIPS, `close pane` where the row is a pane, then `more`, which
-// opens the existing menu. Typing filters, arrows and tab move, enter runs the focused verb once through
-// `activateDescriptor`; it owns no verb and reads only on open.
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent } from "react";
-import { ActionMenuHost, ActionMenuInvocation } from "@/components/ui/ActionMenu";
+// opens the existing contextual menu over the same input. Typing filters, arrows and tab move, enter
+// runs the focused verb once through `activateDescriptor`; it owns no verb and reads only on open. The
+// rail and the menu each own their read, so opening the menu never unsettles the rail's verbs.
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import selection from "@/components/ui/Selection.module.css";
 import Tooltip from "@/components/ui/Tooltip";
 import { useContextualActions, type ContextualActionsInput } from "@/lib/actions/useContextualActions";
@@ -58,8 +59,11 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
   ];
   const busy = verbs.read && source.kind === "Prepared" && (source.state === null || source.state.kind === "Loading" || source.trailing?.kind === "Loading");
   const options = sections.flatMap(section => section.options);
+  // `more`'s menu is anchored to `more`, so while it is open the rail holds the read verbs it shows: a
+  // read settling behind the menu would move its anchor and invalidate it. The rail closes with the menu.
+  const [held, setHeld] = useState<ReadonlySet<string> | null>(null);
   // Danger never takes a slot; a slot keeps its verb when it is unavailable.
-  const reads = verbs.read ? RAIL_VERBS.flatMap(verbId => options.filter((option): option is NexusVerb =>
+  const reads = verbs.read ? RAIL_VERBS.filter(verbId => held === null || held.has(verbId)).flatMap(verbId => options.filter((option): option is NexusVerb =>
     (option.kind === "command" || option.kind === "link") && option.id === verbId && option.tone !== "danger").slice(0, 1))
     .slice(0, RAIL_CHIPS - verbs.pair.length - (verbs.close ? 1 : 0)) : [];
   // The sheet's row is its own `open`.
@@ -169,13 +173,11 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
     }}
     onKeyUpCapture={event => { if (event.key === " " && event.target instanceof Node && event.currentTarget.contains(event.target)) event.preventDefault(); }}>
     {chips.filter(verb => order.includes(verb.id)).map(chip)}
-    {verbs.menu ? <ActionMenuHost title={source.title} subjectKey={source.subjectKey} label={MORE} renderTrigger={trigger =>
-      <button {...trigger} data-action-id={MORE} tabIndex={focus === MORE ? 0 : -1}
-        className={cx(selection.surface, selection.target, styles.verb, focus === MORE && selection.selected)}
-        onFocus={() => { if (focus !== MORE) focusRail(MORE); }}>{MORE}</button>}>
-      {session => <ActionMenuInvocation source={source} session={session} align="end" returnFocusTo={returnFocusTo}
-        onOpenChange={open => { if (!open) onClose(false); }} />}
-    </ActionMenuHost> : null}
+    {verbs.menu ? <ContextualActionMenu {...verbs.menu} label={MORE} align="end" returnFocusTo={returnFocusTo}
+      onOpenChange={open => { if (open) setHeld(new Set(reads.map(verb => verb.id))); else onClose(false); }} renderTrigger={trigger =>
+        <button {...trigger} data-action-id={MORE} tabIndex={focus === MORE ? 0 : -1}
+          className={cx(selection.surface, selection.target, styles.verb, focus === MORE && selection.selected)}
+          onFocus={() => { if (focus !== MORE) focusRail(MORE); }}>{MORE}</button>} /> : null}
     <span className={styles.railBusy} aria-hidden="true" />
     {mobile ? null : <span id={`${id}-help`} className="sr-only">type to filter. enter runs the focused option. left or escape returns to the query.</span>}
   </div>;
