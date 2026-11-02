@@ -129,10 +129,11 @@ for every surface and for the intake's slips. nothing survives a reload.
   admissions either way, so a create that outlives the visit never sets the next one's.
 - **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
   revision and its libraries. a failed read is `no start`, or `offline`, and so is a send
-  the shell's admission holds, since nothing left. links go one at a time and file puts two
-  at a time; a link's accept and an upload's confirm, both serializable under the viewer
-  lock, take one slot between them. every send answers within 30 s, the put within its
-  upload window. acceptance drops a file's `File`: nothing sends it again.
+  the shell's admission holds, at its start or at a confirm's turn, since nothing left. links
+  go one at a time and file puts two at a time; a link's accept and an upload's confirm,
+  both serializable under the viewer lock, take one slot between them. every send answers
+  within 30 s, the put within its upload window. acceptance drops a file's `File`: nothing
+  sends it again.
 - **answers.** a line is unknown only where an answer was lost after the server could act:
   a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
   stopped`. 401 and 426 answer before any route: handoff. a storage failure at a first
@@ -141,24 +142,30 @@ for every surface and for the intake's slips. nothing survives a reload.
   confirm opens it to review. an undeclared refusal reads `couldn’t import this.` and warns
   its request id.
 - **replay.** `retry` sends the same id, guard and session again. `changed` takes one reread
-  for the batch's changed lines and its waiting lines that replay no unknown; `no start` for
-  the batch's no-start lines, and `library gone` for its own line, whatever the line's verb.
-  a reread gives a link a fresh id. `retryWithout` drops every library the refusal's reread found
-  missing. `reselect` starts a fresh session; the expired one stays in imports.
+  for the batch's changed lines and its waiting lines that replay no unknown, and `library
+  gone` one for its own line, whatever the line's verb. a reread gives a link a fresh id.
+  `offline` and `no start` send the batch's lines that never left again: a line holding a
+  guard keeps it and its id, since an id only goes out with one guard; a line whose freeze
+  failed rereads. `retryWithout` drops every library the refusal's reread found missing.
+  `reselect` starts a fresh session; the expired one stays in imports.
 - **truth.** for accepted, unsettled lines, on acceptance and each clock advance, one pass
   at a time: `GET /media/source-attempts/{id}` per link, two at a time, following
   supersession; `POST /media/summaries/resolve` over the media ids, 100 a request; and for
   a failed or dead run one `GET /imports/{ref}`, which decides readable, the reason or
-  removed. each read answers within 30 s; a failed pass waits for the next advance. the
-  host retains the observer while any accepted line is unsettled.
+  removed. each read answers within 30 s. a line whose own read fails sits the pass out,
+  holding no other back; a failed summaries read fails the pass. either waits for the next
+  advance. the host retains the observer while any accepted line is unsettled.
 - **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
   raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
-  `retry` replays that batch's unknown lines.
+  `retry` replays that batch's unknown lines. a batch that settles while a surface shows
+  lines never slips, then or later: that surface speaks its settle.
 - **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
   removed lines leave. everything else stays until `×`.
 
 - **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
-- **I12** an unknown line's retry replays its frozen id, guard and confirmation, never a fresh read.
+- **I12** a line once unknown keeps its frozen id, guard and confirmation until a retry of
+  `changed` or `library gone`, or a reselect, re-freezes it: every retry before then, a held
+  send's included, replays them, never a fresh read.
 - **I13** `running` counts waiting, sending, uploading and verifying lines; `unsettled` adds
   accepted lines not yet readable, failed or removed. the work owner stops browser work while
   `running` is positive and is unconfirmed while a line sends, verifies or is unknown.

@@ -2,14 +2,13 @@
 
 import { forwardRef, type MouseEventHandler } from "react";
 import { ChevronDown } from "lucide-react";
-import LibraryChooser, { type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
+import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { libraryDestinations, type LibraryDestination } from "@/lib/libraries/api";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
-import { compareLibraryNames, libraryNames } from "@/lib/libraries/views";
 import styles from "./DestinationChooser.module.css";
 
 export type DestinationChange = { destination: LibraryDestination; included: boolean };
@@ -32,7 +31,7 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
   readonly controls: { readonly kind: "dialog" } | { readonly kind: "region"; readonly id: string };
 }>(function DestinationTrigger(props, ref) {
   const names = props.chosen.toSorted(compareLibraryNames).map(library => library.name);
-  const summary = names.length === 0 ? props.emptyLabel : libraryNames(props.chosen);
+  const summary = names.length === 0 ? props.emptyLabel : names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
   return <button ref={ref} type="button" className={styles.trigger} aria-expanded={props.expanded}
     aria-haspopup={props.controls.kind === "dialog" ? "dialog" : undefined}
     aria-controls={props.controls.kind === "region" ? props.controls.id : undefined}

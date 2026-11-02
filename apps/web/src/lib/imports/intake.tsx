@@ -163,6 +163,11 @@ const sameLibraries = (a: readonly LibraryDestination[], b: readonly LibraryDest
   a.length === b.length && a.every(library => b.some(other => other.id === library.id));
 const fileOf = (line: Entry) => line.source.kind === "File" ? line.source.file : null;
 
+/** An upload's confirm that admission held at its turn: nothing left. */
+class ConfirmHeld extends Error {
+  constructor(readonly refusal: LineRefusal) { super("confirm held unsent"); }
+}
+
 function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<typeof createDestinationCreation>) {
   const listeners = new Set<() => void>();
   let state = EMPTY;
@@ -335,7 +340,9 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const at = (stage: LineStage) => { if (alive(scope) && !stop.signal.aborted) update(id, current => ({ ...current, stage })); };
       at({ kind: "Sending" });
       try {
-        const accepted = await uploadIngestFile({ file, attempt: line.upload, guard: line.guard, exclusive,
+        const accepted = await uploadIngestFile({ file, attempt: line.upload, guard: line.guard,
+          // the confirm may start long after the put, so its turn asks admission again
+          exclusive: run => exclusive(() => { const held = unsent(); return held === null ? run() : Promise.reject(new ConfirmHeld(held)); }),
           signal: AbortSignal.any([scope.signal, stop.signal]),
           onPhaseChange: phase => at(phase === "Uploading" ? { kind: "Uploading", sentBytes: 0 } : phase === "Verifying" ? { kind: "Verifying" } : { kind: "Sending" }),
           onProgress: sentBytes => at({ kind: "Uploading", sentBytes }) });
@@ -375,6 +382,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   async function fail(id: string, error: unknown, scope: AbortController) {
     const line = get(id);
     if (line === null || isAbortError(error)) return;
+    if (error instanceof ConfirmHeld) return refuse(id, error.refusal);
     const confirming = line.stage.kind === "Verifying";
     if (error instanceof UploadSessionError) return uploadFail(line, error.outcome, confirming, scope);
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
@@ -471,10 +479,13 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       ? { ...line, stage: change(line.stage) } : line);
   }
 
-  /** Every read answers within ANSWER_MS, so a stalled one fails the pass and the next
-   * clock advance runs another. */
+  /** Every read answers within ANSWER_MS. A line whose own read fails waits for the next
+   * clock advance and holds no other line back; a failed summaries read fails the pass. */
   async function truthPass(signal: AbortSignal) {
-    const open = () => entries.flatMap(line => line.stage.kind === "Accepted" && linePhase(line.stage) === "Accepted" ? [{ line, stage: line.stage }] : []);
+    // a link whose source read failed may have moved, so its last media's summary could
+    // settle it falsely: it sits this pass out
+    const unread = new Set<string>();
+    const open = () => entries.flatMap(line => line.stage.kind === "Accepted" && linePhase(line.stage) === "Accepted" && !unread.has(line.id) ? [{ line, stage: line.stage }] : []);
     const links = open().flatMap(({ line, stage }) => line.sourceAttemptId === null ? [] : [{ id: line.id, attempt: line.sourceAttemptId, mediaId: stage.mediaId }]);
     const sources = await runBoundedTasks({ items: links, concurrency: 2,
       run: link => requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchAcceptedSource(link.attempt, signal) }) });
@@ -484,6 +495,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         accepted(id, mediaId, stage => ({ ...stage, mediaId: source.value.media_id, importRef: source.value.import_ref,
           href: `/media/${source.value.media_id}?source_attempt_id=${encodeURIComponent(attempt)}` }));
       else if (isApiError(source.error) && source.error.status === 404) accepted(id, mediaId, stage => ({ ...stage, truth: { kind: "Removed" } }));
+      else if (isApiError(source.error) && !isSameSystemApiDefect(source.error)) unread.add(id);
       else throw source.error;
     });
     const ids = [...new Set(open().map(({ stage }) => stage.mediaId))];
@@ -494,19 +506,20 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         }) });
       for (const { media_id, summary } of data.items) {
         for (const { line, stage } of open().filter(({ stage }) => stage.mediaId === media_id)) {
-          const truth: Truth = summary === null ? { kind: "Removed" }
+          const truth: Truth | null = summary === null ? { kind: "Removed" }
             : summary.processing_status === "pending" ? { kind: "Queued" }
             : summary.processing_status === "extracting" ? { kind: "Processing" }
             : summary.processing_status === "ready_for_reading" ? { kind: "Readable", summary }
             : await failedTruth(stage.importRef, summary, signal);
-          accepted(line.id, media_id, current => ({ ...current, truth }));
+          if (truth !== null) accepted(line.id, media_id, current => ({ ...current, truth }));
         }
       }
     }
   }
 
-  /** A failed or dead run: readable still if a copy can be read or played, else its reason. */
-  async function failedTruth(importRef: string, summary: Schema<"MediaSummaryOut">, signal: AbortSignal): Promise<Truth> {
+  /** A failed or dead run: readable still if a copy can be read or played, else its reason.
+   * Null when the detail read failed: the line waits for the next pass. */
+  async function failedTruth(importRef: string, summary: Schema<"MediaSummaryOut">, signal: AbortSignal): Promise<Truth | null> {
     try {
       const { item } = await requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchImportDetail(importRef, signal) });
       if (item.can_read || item.can_play) return { kind: "Readable", summary };
@@ -514,6 +527,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       return code === "E_MEDIA_NOT_FOUND" ? { kind: "Removed" } : { kind: "Failed", code, reason: reasonLine(item) };
     } catch (error) {
       if (isApiError(error) && error.status === 404) return { kind: "Removed" };
+      if (isApiError(error) && !isSameSystemApiDefect(error)) return null;
       throw error;
     }
   }
@@ -572,14 +586,15 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     publish();
     pump();
   }
-  /** The same id, guard and session again. */
-  const resend = (line: Entry) => enqueue([{ ...line, stage: { kind: "Waiting" }, replay: line.stage.kind === "Unknown" }]);
+  /** The same id, guard and session again. A line once unknown may have landed, so it stays
+   * a replay until it is re-frozen. */
+  const resent = (line: Entry): Entry => ({ ...line, stage: { kind: "Waiting" }, replay: line.replay || line.stage.kind === "Unknown" });
   /** A fresh guard at the next freeze: a link takes a fresh id, an upload keeps its session
    * and generation once a refusal opened it to review. */
-  const refreeze = (lines: readonly Entry[]) => enqueue(lines.map(line => {
+  const refrozen = (line: Entry): Entry => {
     if (line.upload !== null) reviewUploadAttempt(line.upload);
     return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false };
-  }));
+  };
   const refusalOf = (line: Entry) => line.stage.kind === "Refused" ? line.stage.refusal.kind : null;
 
   function reselect(id: string, file: File) {
@@ -587,7 +602,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (line === null || refusalOf(line) !== "Expired") return;
     const refusal = uploadFileRefusal(file);
     const next: Entry = { ...line, source: { kind: "File", name: file.name, sizeBytes: file.size, file }, upload: createUploadAttempt(), confirmUnanswered: false };
-    if (refusal === null) return refreeze([next]);
+    if (refusal === null) return enqueue([refrozen(next)]);
     entries = entries.map(entry => entry.id === id ? next : entry);
     refuse(id, refusal === "TooBig" ? { kind: "TooBig", fileKind: getFileUploadKind(file)! } : { kind: refusal });
   }
@@ -677,16 +692,20 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     retry(id: string) {
       const line = get(id);
       if (line === null) return;
-      if (line.stage.kind === "Unknown") return resend(line);
+      if (line.stage.kind === "Unknown") return enqueue([resent(line)]);
       if (line.stage.kind !== "Refused") return;
       const batch = entries.filter(other => other.batch === line.batch);
       switch (line.stage.refusal.kind) {
         // one reread re-freezes the batch: a removal must not cost a press per line
-        case "Changed": return refreeze(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting" && !other.replay));
-        case "NoStart": return refreeze(batch.filter(other => refusalOf(other) === "NoStart"));
-        case "LibraryGone": return refreeze([line]);
-        case "Offline": return line.guard === null ? refreeze([line]) : resend(line);
-        case "Active": case "Undeclared": case "BytesLost": case "NotPrepared": case "NotChecked": return resend(line);
+        case "Changed": return enqueue(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting" && !other.replay).map(refrozen));
+        // nothing left, so one press sends the batch's held lines again. an id goes out with
+        // one guard only, so a line holding one resends what it may have sent before, perhaps
+        // as an unknown's replay; a line whose freeze failed holds none and reads afresh
+        case "Offline": case "NoStart":
+          return enqueue(batch.filter(other => refusalOf(other) === "Offline" || refusalOf(other) === "NoStart")
+            .map(other => other.guard === null ? refrozen(other) : resent(other)));
+        case "LibraryGone": return enqueue([refrozen(line)]);
+        case "Active": case "Undeclared": case "BytesLost": case "NotPrepared": case "NotChecked": return enqueue([resent(line)]);
         case "Expired": {
           const file = fileOf(line);
           return file === null ? undefined : reselect(id, file);
@@ -701,7 +720,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const line = get(id);
       if (line?.stage.kind !== "Refused" || line.stage.refusal.kind !== "LibraryGone") return;
       const missing = line.stage.refusal.missing;
-      refreeze([{ ...line, into: line.into.filter(library => !missing.some(gone => gone.id === library.id)) }]);
+      enqueue([refrozen({ ...line, into: line.into.filter(library => !missing.some(gone => gone.id === library.id)) })]);
     },
     reselect,
     /** Stops an upload's bytes and removes its session; the line leaves. */
@@ -777,7 +796,8 @@ export function useImportIntake() {
   };
 }
 
-/** A surface showing lines registers while mounted; slips wait while any does. */
+/** A surface showing lines registers while mounted. A batch that settles while any does
+ * never raises a slip, then or later: that surface speaks its settle. */
 export function useImportLinesShown(): void {
   const intake = useIntake();
   useLayoutEffect(() => intake.view(), [intake]);

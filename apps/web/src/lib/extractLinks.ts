@@ -3,13 +3,20 @@
  * repeats, and the text that held none. Whitespace separates; urls glued together split
  * where a scheme starts, unless a `/`, `=` or `%` precedes it, as in a redirect parameter;
  * trailing punctuation and unbalanced closing brackets are prose, not url. A link is
- * returned as written. `UrlsAndDomains`, the import field's rule alone, also reads a bare
- * domain as its https url.
+ * returned as first written; a repeat is one that parses to the same url, so
+ * `https://a.com` and `https://A.com/` are one. `UrlsAndDomains`, the import field's rule
+ * alone, also reads a bare domain as its https url.
  */
 export function extractLinks(text: string, accept: "Urls" | "UrlsAndDomains"): { links: string[]; rest: string } {
   const links: string[] = [];
   const rest: string[] = [];
-  const keep = (link: string) => { if (!links.includes(link)) links.push(link); };
+  const seen = new Set<string>();
+  const keep = (link: string) => {
+    const url = new URL(link).href;
+    if (seen.has(url)) return;
+    seen.add(url);
+    links.push(link);
+  };
   for (const token of text.split(/\s+/)) {
     if (token === "") continue;
     const starts = [...token.matchAll(/https?:\/\//gi)].map(match => match.index)
