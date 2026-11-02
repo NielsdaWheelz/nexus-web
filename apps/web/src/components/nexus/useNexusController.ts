@@ -309,8 +309,10 @@ export function useNexusController() {
           const armed = kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
           next = { identity: "", rows, held: rows.length, armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
         } else {
-          const latchedKey = latched === null ? null : previous.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
-          next = keystroke(previous, parsed.text, syncRows(sync), latchedKey, now);
+          // The blank list is law 7's context, not a query: the first keystroke holds nothing from it.
+          const from = previous.identity === "" ? EMPTY : previous;
+          const latchedKey = latched === null ? null : from.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
+          next = keystroke(from, parsed.text, syncRows(sync), latchedKey, now);
           // Lookup arms nothing until the user does (target behaviour, `/`).
           if (parsed.intent.kind === "CommandLookup") next = { ...next, armed: null, previous: null };
         }
