@@ -1,11 +1,11 @@
 "use client";
 
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import type { Verb, Verbs } from "@/components/feedback/stage";
 import { isStaleBuild } from "@/lib/api/client";
 import { staleBuild } from "@/lib/api/failure";
-import { updateRemedy } from "@/lib/native/admission";
+import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
@@ -28,6 +28,25 @@ interface State {
 }
 
 const RELOAD: Verb = { label: "reload", commandKey: "Reload", run: () => window.location.reload() };
+
+/** A failed pane's one fact. A stale build's follows the remedy as it changes: reload is offered
+ * only while reload can replace the build. */
+function PaneFailure({ failure, onBack, speak, bindRegion }: {
+  failure: NonNullable<State["failure"]>;
+  onBack: Props["onBack"];
+  speak: boolean;
+  bindRegion: (element: HTMLElement | null) => void;
+}) {
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  const back: Verb | null = onBack ? { label: "go back", commandKey: "GoBack", run: onBack } : null;
+  const fact = failure === "StaleBuild" ? staleBuild() : failure === "ModuleLoad" ? "couldn’t open this pane." : "this pane stopped unexpectedly.";
+  const verbs: Verbs | undefined = failure === "StaleBuild" ? remedy === "Reload" ? [RELOAD] : undefined
+    : failure === "ModuleLoad" ? back ? [RELOAD, back] : [RELOAD]
+    : back ? [back, RELOAD] : [RELOAD];
+  return <section ref={bindRegion} className={styles.paneFailure} aria-label={fact} tabIndex={-1}>
+    <Fact line={{ fact }} verbs={verbs} speak={speak} />
+  </section>;
+}
 
 /** Expected read failures stay with their owners. This boundary contains defects; a new visit
  * resets it. A stale build offers reload alone, and only where reload can replace it. */
@@ -71,25 +90,14 @@ export class PaneRouteErrorBoundary extends Component<Props, State, boolean> {
 
   render() {
     const { failure } = this.state;
-    const back: Verb | null = this.props.onBack ? { label: "go back", commandKey: "GoBack", run: this.props.onBack } : null;
-    const fact = failure === "StaleBuild" ? staleBuild() : failure === "ModuleLoad" ? "couldn’t open this pane." : "this pane stopped unexpectedly.";
-    const verbs: Verbs | undefined = failure === "StaleBuild" ? updateRemedy() === "Reload" ? [RELOAD] : undefined
-      : failure === "ModuleLoad" ? back ? [RELOAD, back] : [RELOAD]
-      : back ? [back, RELOAD] : [RELOAD];
     return <div
       ref={element => { this.shell = element; }}
       className={styles.paneErrorBoundaryShell}
       data-pane-error-boundary-shell="true"
       style={{ minWidth: this.props.slotMinWidth }}
     >
-      {failure ? <section
-        ref={(element) => { this.region = element; }}
-        className={styles.paneFailure}
-        aria-label={fact}
-        tabIndex={-1}
-      >
-        <Fact line={{ fact }} verbs={verbs} speak={this.props.isActive} />
-      </section> : <div className={styles.paneContent}>{this.props.children}</div>}
+      {failure ? <PaneFailure failure={failure} onBack={this.props.onBack} speak={this.props.isActive}
+        bindRegion={element => { this.region = element; }} /> : <div className={styles.paneContent}>{this.props.children}</div>}
     </div>;
   }
 }
