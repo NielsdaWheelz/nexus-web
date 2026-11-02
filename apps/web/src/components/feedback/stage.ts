@@ -15,7 +15,7 @@ import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
-import { subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
+import { onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
 
 export type Address = { kind: "Pane"; paneId: string } | { kind: "Workspace" };
@@ -288,13 +288,13 @@ export function createStage() {
       settle();
       return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
     },
-    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. `frame`
-     * is the modal the owner renders inside, which may not yet stand on the stack when both mount
-     * in one commit; an owner above its frame has none, and takes the topmost. Turning to risk
-     * presents and speaks whatever the row had settled into. */
+    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. It
+     * belongs to the topmost modal at raise, unless `frame`, the modal the owner renders inside, is
+     * mounting in the same commit and does not yet stand on the stack. Turning to risk presents and
+     * speaks whatever the row had settled into. */
     hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { frame: Layer | null; risk: boolean }): void {
       const weight = risk ? "Risk" : "Held";
-      const slip = slipOf(key) ?? raise({ key, address, modal: frame ?? topModal(), weight, line, verbs, attempt });
+      const slip = slipOf(key) ?? raise({ key, address, modal: frame === null || onOverlayStack(frame) ? topModal() : frame, weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
       const atRisk = risk && slip.row.weight !== "Risk";
       if (atRisk && slip.row.tucked) land(slip);

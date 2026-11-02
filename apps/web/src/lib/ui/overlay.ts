@@ -103,6 +103,10 @@ const isModal = (layer: Layer) => layer.options.current.kind === "modal";
 export function topModal(): Layer | null {
   return layers.findLast(isModal) ?? null;
 }
+/** A frame's children commit before it registers, so a layer can be rendered and not yet stand. */
+export function onOverlayStack(layer: Layer): boolean {
+  return layers.includes(layer);
+}
 function topmost(layer: Layer): boolean {
   if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
   const options = layer.options.current;
