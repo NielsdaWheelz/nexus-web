@@ -13,6 +13,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT, type FindRow } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
+import { PANE_COMMAND_RESOLVING_REASON } from "@/lib/panes/paneChrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink, type TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -29,7 +30,7 @@ function findFeedback(result: FindResult | null): {
   readonly description: string;
 } | null {
   if (result === null)
-    return { placement: "Inline", visible: false, content: null, description: "available once this pane loads." };
+    return { placement: "Inline", visible: false, content: null, description: PANE_COMMAND_RESOLVING_REASON };
   switch (result.kind) {
     case "Idle":
     case "Searching":
