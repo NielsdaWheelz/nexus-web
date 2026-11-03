@@ -149,7 +149,7 @@ export default function AccountMenu(props: {
   const [shape, setShape] = useState<Mark>("Solid");
   if (mark !== null && mark !== shape) setShape(mark);
   const state = condition !== null ? conditionLine(condition, commitFailed).fact : STATUS_COPY[status];
-  // `syncing`'s only detail is a running preparation's clause (`syncDetail`).
+  // `syncDetail` gives `syncing` no detail but a running preparation's clause.
   const preparation = status === "syncing" ? detail : null;
   const live = accountRows(condition, commitFailed, preparation, {
     signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },

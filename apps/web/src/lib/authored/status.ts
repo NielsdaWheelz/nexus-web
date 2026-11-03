@@ -55,11 +55,12 @@ export function uploadStall({ status, detail, failure }: { status: SyncStatus; d
       return new ApiError(0, "E_NETWORK", message, { sent: false });
   }
 }
-/** A failure's sentence; for `syncing`, the running reading-search preparation's clause once writing
- * has caught up, and nothing otherwise: healthy sync has no other detail. Progress reports durable
- * rows, never an estimated total or completion time. */
+/** A failure's sentence. `syncing` states no failure: it is admitted, prepared and retries silently,
+ * so its detail is only the running reading-search preparation's clause once writing has caught up,
+ * never a sentence a sign-in or update left until its turn ends. Progress reports durable rows,
+ * never an estimated total or completion time. */
 export function syncDetail(facts: SyncFacts, error: string | null): string | null {
-  if (error !== null || syncStatus(facts) !== "syncing") return error;
+  if (syncStatus(facts) !== "syncing") return error;
   if (facts.pending || facts.failure !== null || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head)) return null;
   const progress = facts.scope_progress;
   if (progress === null) return "preparing reading search.";
