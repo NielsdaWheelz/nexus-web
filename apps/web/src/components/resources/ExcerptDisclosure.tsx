@@ -63,7 +63,7 @@ function useFullExcerpt(observed: ResourceItem) {
     return () => controller.abort();
   }, [subject, local, body, readingRef, request, fail]);
   const resource = query.data?.rows[0]?.resource;
-  const conflict = local ? resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision : remote.conflict;
+  const conflict = local && resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision;
   const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)) : null : remote.item;
   const retry = () => {
     if (local) query.retry();
@@ -81,9 +81,9 @@ function useFullExcerpt(observed: ResourceItem) {
       setRequest(previous => ({ mode: "Reload", attempt: previous.attempt + 1 }));
     }
   };
-  useFailedReadRepair(remote.error !== null, remote.pending, retry);
+  useFailedReadRepair(remote.error !== null || remote.conflict, remote.pending, retry);
   // Before the reading's scope hydrates, absent and not yet read look alike: the preview stands, silent.
-  return { item: full ?? subject, conflict, absent: local && query.data?.scope_available === true && (resource === undefined || resource.excerpt === null),
+  return { item: full ?? subject, conflict, captureRefused: !local && remote.conflict, absent: local && query.data?.scope_available === true && (resource === undefined || resource.excerpt === null),
     query, error: remote.error, pending: local ? query.pending : remote.pending, retry, reload };
 }
 
@@ -94,7 +94,10 @@ function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boo
   return <>
     {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} pending={loaded.query.pending} retry={loaded.query.retry} noun="the full excerpt" /> : null}
     {loaded.error ? <Failed error={loaded.error} noun="full excerpts" retry={{ run: loaded.retry, busy: loaded.pending }} /> : null}
-    {loaded.conflict ? <Fact line={{ fact: "this excerpt has changed." }} verbs={[{ label: "show new version", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending }]} />
+    {loaded.captureRefused ? <Fact line={{ fact: "couldn’t load the full excerpt." }} verbs={[
+      { label: "retry", commandKey: `Excerpt.retry:${item.ref}`, run: loaded.retry, busy: loaded.pending },
+      { label: "show current excerpt", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending },
+    ]} /> : loaded.conflict ? <Fact line={{ fact: "this excerpt has changed." }} verbs={[{ label: "show new version", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending }]} />
       : loaded.absent ? <Fact line={{ fact: "no excerpt here for this reading." }} />
         : quotation ? <ResourceQuotation item={loaded.item} /> : <ResourceBody body={loaded.item.preview.body} full />}
   </>;
