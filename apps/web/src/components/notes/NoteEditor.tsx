@@ -78,6 +78,7 @@ import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedb
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -657,7 +658,17 @@ function NoteEditorContent(props: NoteEditorProps) {
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, signal: controller.signal });
+        let prepared = task.upload.guard;
+        if (prepared === null) {
+          try { prepared = await readAcquisitionGuard([], controller.signal); }
+          catch (error) {
+            if (controller.signal.aborted || signal.aborted) return;
+            setAttachment(null);
+            if (!handleUnauthenticated(error)) fail(error, NOT_ADDED);
+            return;
+          }
+        }
+        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, guard: prepared, signal: controller.signal });
         if (controller.signal.aborted || signal.aborted || readAttachment()?.controller !== controller) return;
         if (!upload.available) {
           setAttachment(null);
