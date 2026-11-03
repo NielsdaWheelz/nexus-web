@@ -5,7 +5,7 @@
 // invitation or immediate-sharing owner. Query, admission and keyed suggestion
 // belong to this field; a selected person displays until the viewer types again.
 // The hint, the count and an empty result speak as they change. A retry that heals withdraws its
-// control, so focus that rode it returns to the input.
+// control, so focus that rode it returns to the nearest home.
 
 import { useId, useRef, useState } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
@@ -87,12 +87,11 @@ export default function PeopleSearch({
   const status = selected !== null || q === "" ? null
     : q.length < 3 ? "enter at least 3 characters."
       : !admitted || results.length === 0 ? null
-        : `${results.length} ${results.length === 1 ? "result" : "results"}`;
+        : `${results.length} ${results.length === 1 ? "result" : "results"}.`;
   const empty = selected === null && q.length >= 3 && admitted && results.length === 0;
-  const root = useRef<HTMLDivElement>(null);
 
   return (
-    <div ref={root} tabIndex={-1} className={styles.root}>
+    <div tabIndex={-1} className={styles.root}>
       <Input
         ref={input}
         type="search"
