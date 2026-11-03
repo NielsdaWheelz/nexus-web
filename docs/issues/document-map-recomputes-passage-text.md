@@ -1,7 +1,7 @@
 # the document map computes passage text twice
 
-status: open; confirmed in source, cost measured. accepted by the connections scroll
-work, whose spec forbids the wire or schema change a fix needs.
+status: open; confirmed in source, cost measured. connections scroll retains the
+extra helper rather than expanding the hydration/marker interface in this change.
 
 problem: `resource_items_out` computes every content passage's `text_parts` while it
 hydrates, inside `project_excerpts` in full mode
@@ -20,7 +20,8 @@ nearly the whole cost. no wrong output.
 
 fix: the hydration's `exact` has to reach `build_markers`. either the item contract
 carries a passage's plain text, or the map callers take previews from the projections
-they already hold. both change `resource_items_out`'s or the item's contract.
+they already hold. the latter changes an internal interface; it needs no wire or
+schema change.
 
 resolved when `build_markers` spawns no helper of its own, and every marker's preview
 is unchanged.

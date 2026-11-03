@@ -405,7 +405,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({});
   if (projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}>
-    <li {...rootProps} ref={attachRow} className={cx(styles.row, inRow && styles.inRow, rootProps?.className)}
+    <li {...rootProps} ref={attachRow} className={cx(styles.row, props.inSource && styles.inSource, inRow && styles.inRow, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${label}`}
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref}>
       <div className={styles.head}>
