@@ -73,7 +73,10 @@ export function VerbControl({ verb, contextId, onActivated }: { verb: Verb; cont
   const events = {
     onMouseEnter: () => hold("pointer", true),
     onMouseLeave: () => hold("pointer", false),
-    onFocus: () => hold("focus", true),
+    onFocus: () => {
+      navigated.current = false;
+      hold("focus", true);
+    },
     onBlur: () => hold("focus", false),
   };
   // A blocked control stops activation before this runs; a blocked link has no href.
@@ -130,7 +133,7 @@ function FactVerbs({ verbs, contextId }: { verbs?: Verbs; contextId: string }) {
 
 /** Says `text` once, politely, while `speak` holds, and again each time `text` changes. `speak`
  * may come true late: the announcement stays mounted, so one sentence never speaks twice. */
-function Speech({ text, speak }: { text: string; speak: boolean }) {
+function Spoken({ text, speak }: { text: string; speak: boolean }) {
   const [said, setSaid] = useState({ text, occurrence: {} });
   if (said.text !== text) setSaid({ text, occurrence: {} });
   return <Announcement text={text} level={speak ? "Polite" : "None"} occurrence={said.occurrence} />;
@@ -143,7 +146,7 @@ export function Fact({ line, verbs, speak = false }: { line: Line; verbs?: Verbs
   return <div className={styles.fact}>
     <p id={lineId} className={styles.line}>{text}</p>
     <FactVerbs verbs={verbs} contextId={lineId} />
-    <Speech text={text} speak={speak} />
+    <Spoken text={text} speak={speak} />
   </div>;
 }
 
@@ -168,6 +171,6 @@ export function Field({ id, line, verbs }: { id: string; line: Line; verbs?: Ver
   return <div className={styles.field}>
     <span id={id}>{text}</span>
     <FactVerbs verbs={verbs} contextId={id} />
-    <Speech text={text} speak={speak} />
+    <Spoken text={text} speak={speak} />
   </div>;
 }

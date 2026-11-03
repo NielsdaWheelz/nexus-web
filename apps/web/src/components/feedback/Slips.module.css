@@ -11,8 +11,8 @@
 
 /* A dialog has no actions region a frame could stand clear of, so a modal anchor stands in flow
    at its panel's end, clear of every projection: its frame and tab take room below the panel's
-   content, and only while they stand, rather than cover its controls. A panel at its height
-   limit gives that room from its scrolling body. */
+   content, and only while they stand, rather than cover its controls. A panel clips and scrolls
+   its body, never itself, so at its height limit the body gives that room. */
 .modalAnchor {
   position: relative;
   inset: auto;
