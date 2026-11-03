@@ -59,7 +59,10 @@ server components: callFastAPI ────────────────�
   `outcomeUnknown` partition modeled non-defect errors: an unsent request, answered
   4xx (including 401/426), or pre-handler `E_AUTH_UNAVAILABLE` is refused;
   every other sent failure is unknown. `E_DATABASE_BUSY` is unknown because a
-  transaction may have committed before a later refresh fails. unknown outcomes
+  transaction may have committed before a later refresh fails. this applies to the
+  coded response: the edge still maps `DatabaseBusyError` to generic
+  `409 E_RESOURCE_CONFLICT`, whose ambiguous causes remain a
+  [separate protocol limit](../issues/capture-conflicts-share-one-code.md). unknown outcomes
   keep the owner's sealed intent and explicit retry policy; their shared reason
   is `UNKNOWN_OUTCOME_REASON`. these predicates never decide a read's fallback.
   `transportOf` is total over modeled errors; domain codes are translated ahead
