@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -31,18 +31,20 @@ export default function ConversationDestinationOverlay({ open, mediaId, hasSourc
   onSelectConversation(conversation: Pick<ConversationListItem, "id" | "title">): void;
 }) {
   const isMobile = useIsMobileViewport();
-  return <PickerSurface active={open} onClose={onClose} anchor={anchor} panelId={panelId} title={TITLE}
+  const slipContent = useRef<HTMLDivElement>(null);
+  return <PickerSurface slipContent={slipContent} active={open} onClose={onClose} anchor={anchor} panelId={panelId} title={TITLE}
     initialFocus={container => isMobile && wasOverlayInvokedByTouch() ? container
       : container.querySelector<HTMLInputElement>('input[role="combobox"]')}
     skipReturnFocus={() => true}>
-    {open ? <Picker mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null}
+    {open ? <Picker scrollRef={slipContent} mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null}
   </PickerSurface>;
 }
 
 /** Title search and source scope admit choices only for the exact settled query. A failed first
  * read stands in the list region, outside listbox markup; a failed refresh over shown rows says
  * nothing. */
-function Picker({ mediaId, hasSourceChats, onSelect }: {
+function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
+  scrollRef: RefObject<HTMLDivElement | null>;
   mediaId: string;
   hasSourceChats: boolean | null;
   onSelect(conversation: Pick<ConversationListItem, "id" | "title">): void;
@@ -110,6 +112,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       onChange={event => setQuery(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
+    <div ref={scrollRef} className={styles.destinationBody}>
     {failed ? <Failed error={failed.error} noun="chats" retry={{ run: () => void failed.refetch(), busy: failed.retrying }} />
       : selectable && items.length === 0 ? <Fact line={{ fact: emptyTitle }} /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
@@ -124,6 +127,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
           </span>
         </div>;
       })}
+    </div>
     </div>
     {readFeedback.announcement}
   </div>;

@@ -2,7 +2,7 @@
 
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
@@ -33,7 +33,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   );
 }
 
-export default function NexusPages({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
+export default function NexusPages({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
   const { page } = controller;
   switch (page.kind) {
     case "Root":
@@ -90,6 +90,7 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
     case "Add":
       return (
         <AddPanelBoundary
+          scrollRef={scrollRef}
           activeDefect={controller.addDefect}
           resetKey={page.sessionId}
           session={controller.addSession}
@@ -98,6 +99,7 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
           onDefect={controller.reportAddDefect}
         >
           <AddPanel
+            scrollRef={scrollRef}
             key={page.sessionId}
             session={controller.addSession}
             mobile={mobile}

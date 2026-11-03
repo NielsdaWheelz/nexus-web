@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, type RefObject } from "react";
 import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser from "@/components/libraries/LibraryChooser";
 import type { LibraryPlacementTarget } from "@/lib/libraries/api";
@@ -16,7 +17,9 @@ export default function PlacementOverlay({
   readonly skipReturnFocus?: () => boolean;
 }) {
   useMobileChromeHold(session !== null);
+  const slipContent = useRef<HTMLDivElement>(null);
   return <PickerSurface
+    slipContent={slipContent}
     active={session !== null}
     inline={inline}
     onClose={onClose}
@@ -27,14 +30,15 @@ export default function PlacementOverlay({
     focusKey={session?.key}
     panelId={panelId}
   >
-    {session ? <PlacementEditor key={session.key} targets={session.targets} /> : null}
+    {session ? <PlacementEditor scrollRef={slipContent} key={session.key} targets={session.targets} /> : null}
   </PickerSurface>;
 }
 
-export function PlacementEditor({ targets }: { readonly targets: readonly LibraryPlacementTarget[] }) {
+export function PlacementEditor({ targets, scrollRef }: { readonly targets: readonly LibraryPlacementTarget[]; readonly scrollRef?: RefObject<HTMLDivElement | null> }) {
   const view = useLibraryPlacements(targets);
   return <>
     <LibraryChooser
+      scrollRef={scrollRef}
       context={JSON.stringify(targets.map(target => `${target.kind}:${target.id}`).toSorted())}
       membershipKind="Confirmed"
       rows={view.items}

@@ -25,13 +25,13 @@
   justify-content: center;
 }
 
-/* The panel clips and its body scrolls, so the stage's modal anchor stays on the panel's floor. */
+/* The panel clips its independently scrolling body. */
 .sheet {
   display: flex;
   flex-direction: column;
   width: calc(100vw - var(--space-4));
   max-width: 480px;
-  max-block-size: 80dvh;
+  max-block-size: min(80dvh, 100%);
   overflow: hidden;
   margin-bottom: var(--viewport-safe-bottom);
   background: var(--surface-2);

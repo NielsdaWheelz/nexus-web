@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
@@ -107,7 +107,9 @@ export default function AddPanel({
   onClose,
   onOpen,
   onDefect,
+  scrollRef,
 }: {
+  scrollRef?: RefObject<HTMLElement | null>;
   session: AddContentSessionController;
   openingSources: ReadonlySet<string>;
   mobile: boolean;
@@ -675,7 +677,7 @@ export default function AddPanel({
       {creationShown && creation.error?.retry && creation.error.commandKey !== undefined
         ? <Hold id={creation.error.commandKey} line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
           verbs={[{ label: "retry", run: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey }]} /> : null}
-      <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
+      <div ref={element => { listRef.current = element; if (scrollRef) scrollRef.current = element; }} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
         {savedFailure ? <Failed error={savedFailure.error} noun="saved sources" retry={{ run: savedFailure.retry, busy: savedFailure.busy }} /> : null}
         {savedFeedback ? <div className={styles.intakeFeedback}><Fact line={savedFeedback} /></div> : null}

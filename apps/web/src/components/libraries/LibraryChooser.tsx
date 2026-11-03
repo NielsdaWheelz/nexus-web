@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
 import { Fact, Field } from "@/components/feedback/Fact";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -74,10 +74,11 @@ function progress(row: ChooserRow): string | null {
  * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
  * gates stands disabled with the reason. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty,
+  context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty, scrollRef,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly membershipKind: "Confirmed" | "Chosen";
   readonly rows: readonly ChooserRow[];
   readonly onToggle: (change: { id: string; included: boolean }) => boolean;
@@ -168,6 +169,7 @@ export default function LibraryChooser({
           }}
         />
       </div>
+      <div ref={scrollRef} className={styles.body}>
       {summary !== null ? <p className={`${styles.summary} ${collection.detail}`}>{summary}</p> : null}
       {shownFailure ? <div className={styles.region}>{shownFailure}</div> : null}
       {loading && rows.length === 0 && !shownFailure ? <div className={styles.ruling}><Ruling /></div> : null}
@@ -209,6 +211,7 @@ export default function LibraryChooser({
       {nothing ? <div className={styles.region}>{refused
         ? <Field id={invalidId} line={{ fact: invalid }} />
         : <Fact line={{ fact: q === "" ? empty : "no libraries match." }} />}</div> : null}
+      </div>
     </div>
   );
 }

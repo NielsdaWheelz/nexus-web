@@ -42,6 +42,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const addBody = useRef<HTMLElement>(null);
   const composing = useRef(false);
   const placementPress = useRef<string | null>(null);
   const taskPointerId = useRef<number | null>(null);
@@ -293,6 +294,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
 
   return (
     <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available" flushBottom={controller.page.kind === "Root"}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : undefined}
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
@@ -300,7 +302,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         onPointerDownCapture={(event) => { taskPointerId.current = event.pointerId; }}
         onPointerCancelCapture={(event) => { if (taskPointerId.current === event.pointerId) taskPointerId.current = null; }}
         onClickCapture={admitClick}>
-        {controller.page.kind === "Root" ? root : <NexusPages controller={controller} mobile />}
+        {controller.page.kind === "Root" ? root : <NexusPages scrollRef={addBody} controller={controller} mobile />}
       </div>
     </MobileSheet>
   );

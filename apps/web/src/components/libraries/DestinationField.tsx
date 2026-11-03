@@ -23,13 +23,14 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const slipContent = useRef<HTMLDivElement>(null);
   const resendVerbs = useResendVerbs();
   const holdId = error?.commandKey ?? "library-creation";
   return <div style={{ minWidth: 0 }}>
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
-    <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
+    <PickerSurface slipContent={slipContent} active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
+      <DestinationChooser scrollRef={slipContent} context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
     </PickerSurface>
     {error ? <Hold id={holdId} line={{ fact: error.content.title, reason: error.content.message }}
       verbs={error.retry ? resendVerbs({ label: "retry", commandKey: holdId, run: error.retry, busy: error.busy }) : undefined} /> : null}
