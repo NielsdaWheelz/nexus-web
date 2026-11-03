@@ -2,9 +2,10 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import { Fact, Failed, Field, VerbControl } from "@/components/feedback/Fact";
-import { Hold, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
+import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
+import { staleBuild } from "@/lib/api/failure";
 import type { ApiError } from "@/lib/api/client";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
@@ -121,6 +122,7 @@ export default function AddPanel({
   const id = useId();
   const admission = useRemoteAdmission();
   const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
   const updateVerbs = admission === "UpdateRequired" ? transportVerbs("Update") : null;
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
@@ -457,10 +459,10 @@ export default function AddPanel({
           {feedback && feedbackId ? editable
             ? <Field id={feedbackId} line={feedback} />
             : <div id={feedbackId}>{item.kind === "AcceptanceUnresolved" && item.reason === "StatusUnknown"
-              ? <Hold id={`add:${state.sessionId}:${item.id}`} attempt={item.attempt} line={feedback}
-                verbs={admission === "UpdateRequired" ? updateVerbs ?? undefined : [{ label: "retry", commandKey: `retry add:${item.id}`, busy,
-                  run: () => run(() => session.reconcileAcceptance(item.id)) }]} />
-              : <Fact line={feedback} verbs={updateVerbs ?? undefined} />}</div>
+              ? <Hold id={`add:${state.sessionId}:${item.id}`} attempt={item.attempt}
+                {...resendFeedback({ line: feedback, resend: { label: "retry", commandKey: `retry add:${item.id}`, busy,
+                  run: () => run(() => session.reconcileAcceptance(item.id)) } })} />
+              : <Fact line={admission === "UpdateRequired" ? { ...feedback, reason: staleBuild() } : feedback} verbs={updateVerbs ?? undefined} />}</div>
             : null}
           {split ? (
             <Button
@@ -675,7 +677,7 @@ export default function AddPanel({
       <div className={styles.visuallyHidden} role="status" aria-live="polite">{liveStatus}</div>
       <footer className={styles.footer}>
         <p>{populatedCount > 0 ? counts : `up to ${MAX_ADD_ITEMS} items`}</p>
-        {admission === "UpdateRequired" ? updateVerbs?.map((verb, index) => <VerbControl key={index} verb={verb} contextId={`${id}-update`} />) : <Button
+        {admission === "UpdateRequired" ? <Fact line={{ fact: staleBuild() }} verbs={updateVerbs ?? undefined} /> : <Button
           emphasis="strong"
           disabled={creation.creating || busy || (readyCount === 0 && !done)}
           onClick={() => {

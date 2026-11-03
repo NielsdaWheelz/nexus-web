@@ -194,7 +194,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const root = <>
     <h2 ref={headingRef} className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
     <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-      {[controller.announcement, typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+      {typed && !controller.pending ? `${results} results shown.` : null}
     </div>
     <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
       {/* Typed, the continuations are a band above the scrollport: farthest, and arrivals never move them. */}

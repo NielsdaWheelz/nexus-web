@@ -102,7 +102,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
         <bdi>{inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}</bdi>
       </span>
       {shown ? <span className={styles.evidence}><ExcerptText excerpt={shown.excerpt} match={shown} /></span>
-        : facts || row.reserveDetail ? <span className={styles.facts}>{facts || "\u00a0"}</span> : null}
+        : facts ? <span className={styles.facts}>{facts}</span> : null}
     </span>
   </>;
 }
@@ -228,7 +228,8 @@ export function NexusNotices({ controller, returnFocus, id }: {
         retry={isStaleBuild(failure.error) || failure.error.code === "E_INVALID_REQUEST" ? undefined
           : { run: () => controller.retry(source), busy: controller.retrying.has(source) }} />)}
     {controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={{ fact: controller.lookupGuidance }} speak /></div> : null}
-    {kind === "Notice" ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
+    {kind === "Pending" && !controller.groups.some(group => group.id === "Results" && group.rows.length > 0) ? <Ruling /> : null}
+    {kind === "Notice" || kind === "Empty" ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
       if (action === "related") controller.retryRelated();
       else controller.retrySearch();
       back();

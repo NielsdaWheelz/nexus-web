@@ -348,7 +348,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </NexusPaneDrag>
       <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.pending ? null : status].filter(Boolean).join(" ")}
+        {controller.pending ? null : status}
       </div>
       {excerpt ? <ExcerptDialog item={excerpt} onClose={() => setExcerpt(null)} returnFocusTo={() => inputRef.current} /> : null}
     </>

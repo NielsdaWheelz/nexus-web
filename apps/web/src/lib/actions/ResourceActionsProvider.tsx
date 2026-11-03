@@ -13,6 +13,7 @@ import {
 import {
   Hold,
   useOutcome,
+  useResendFeedback,
   type Outcome,
 } from "@/components/feedback/Feedback";
 import type { Line, Retract } from "@/components/feedback/stage";
@@ -242,6 +243,7 @@ export default function ResourceActionsProvider({
     return () => controller.abort();
   }, [session]);
   const feedback = useOutcome();
+  const resendFeedback = useResendFeedback();
   const read = useLectern();
   const commands = useLecternCommands();
   const observedItems = read.status === "ready" ? read.data.items : null;
@@ -268,7 +270,7 @@ export default function ResourceActionsProvider({
   // attempt withdraws the previous attempt's report.
   const [attempts] = useState(() => new Map<string, { retract: Retract | null }>());
   // A write that may have gone through stands until its verb runs again.
-  const [unknown, setUnknown] = useState<ReadonlyMap<string, { readonly line: Line; readonly attempt: number }>>(new Map());
+  const [unknown, setUnknown] = useState<ReadonlyMap<string, { readonly kind: "Local" | "Remote"; readonly line: Line; readonly attempt: number }>>(new Map());
   const [confirmation, setConfirmation] = useState<{ readonly command: ActionCommand; readonly outcome: Outcome } | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
@@ -403,7 +405,7 @@ export default function ResourceActionsProvider({
           if (signal.aborted || attempts.get(key) !== attempt) return;
           if (error instanceof ResourceActionFailure) return report(() => outcome.say(error.line));
           if (error instanceof ResourceActionUnknown) {
-            setUnknown(current => new Map(current).set(key, { line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
+            setUnknown(current => new Map(current).set(key, { kind: "Local", line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
             return;
           }
           if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact, reason: "your position isn’t saved yet." }));
@@ -415,7 +417,7 @@ export default function ResourceActionsProvider({
             case "Domain": return report(() => outcome.say(failure.line, failure.retry ? [retry] : undefined));
             case "Transport": return report(() => outcome.fail(error, failure.fact, failure.retry ? retry : undefined));
             case "Unknown":
-              setUnknown(current => new Map(current).set(key, { line: failure.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
+              setUnknown(current => new Map(current).set(key, { kind: "Remote", line: failure.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
               return;
           }
         } finally {
@@ -430,18 +432,22 @@ export default function ResourceActionsProvider({
     ? consumption.commands.pendingCollection(overlay.selection.kind === "Podcast"
       ? { kind: "Podcast", podcast_id: overlay.selection.podcast_id } : overlay.selection)?.commandKey : undefined;
   const lecternReview = overlay?.kind === "CollectionLectern" && lectern.collectionPending !== null &&
-    JSON.stringify(overlay.target) === JSON.stringify(lectern.collectionPending.target);
+    (overlay.target.kind === "Library" && lectern.collectionPending.target.kind === "Library"
+      ? overlay.target.library_id === lectern.collectionPending.target.library_id
+      : overlay.target.kind === "Podcast" && lectern.collectionPending.target.kind === "Podcast" &&
+        overlay.target.podcast_id === lectern.collectionPending.target.podcast_id);
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,
     overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
-    retainedFeedback: <>{[...unknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt} line={held.line} />)}
+    retainedFeedback: <>{[...unknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt}
+      {...(held.kind === "Local" ? { line: held.line } : resendFeedback({ line: held.line, resend: null }))} />)}
       {chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
       {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
         <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
       {lectern.collectionFailure && !lecternReview ? <Hold id={lectern.collectionFailure.key} attempt={lectern.collectionFailure.attempt}
         line={lectern.collectionFailure.line} verbs={lectern.collectionFailure.verbs} /> : null}
       {podcastLibraryCreation.holds}</>,
-  }), [ctx, run, busy, defect, overlay, close, unknown, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds]);
+  }), [ctx, run, busy, defect, overlay, close, unknown, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds, resendFeedback]);
 
   return (
     <RuntimeContext.Provider value={runtime}>

@@ -93,8 +93,6 @@ export interface NexusRow {
   readonly icon: NexusIcon;
   /** The facts line's byline or reason: contributors, a source, a state word. */
   readonly detail?: string | null;
-  /** Keep the supplement line's geometry while its text changes. */
-  readonly reserveDetail?: boolean;
   /** Bylines a query may match as Substring. */
   readonly keywords?: readonly string[];
   readonly state?: "Current" | "Minimized";
