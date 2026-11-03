@@ -28,7 +28,7 @@ interface ImportCommands {
   discardCapture(sessionId: string): void;
 }
 const Context = createContext<ImportCommands | null>(null);
-const keyOf = (command: Command) => `${command.sessionId}:${command.kind}`;
+const keyOf = (command: Command) => `${command.sessionId}:${command.kind === "RetryUpload" ? "RetryUpload" : "RemoveUpload"}`;
 const subjectOf = (item: ImportItem): Subject => ({ sessionId: item.ref.slice("upload:".length), title: item.title });
 
 export function ImportCommandsProvider({ commands, children }: { commands: ImportCommands; children: ReactNode }) {
@@ -57,11 +57,13 @@ export function useImportCommandOwner() {
     selection.current = subject;
     input.current?.click();
   }, []);
-  const send = useCallback((command: Command): void => {
+  const send = useCallback((requested: Command): void => {
     if (!live.current || !ctx.isActive()) return;
     const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
     if (current?.id !== pane.visitId || resolvePaneRouteModel(current.href).id !== "imports") return;
-    const key = keyOf(command);
+    const key = keyOf(requested);
+    const retained = read().find(entry => keyOf(entry.command) === key);
+    const command = retained?.unknown ? retained.command : requested;
     if (read().some(entry => entry.command.sessionId === command.sessionId && entry.sending)) return;
     const id = command.kind === "RetryUpload" ? "RetryUpload" : "RemoveUpload";
     const fact = command.kind === "DiscardCapture" ? "couldn’t discard this capture." : UPLOAD_COMMAND_FACT[command.kind];
@@ -88,11 +90,13 @@ export function useImportCommandOwner() {
           if (outcomeUnknown(error)) {
             set(entries => entries.map(entry => entry.command === command ? { ...entry, unknown: entry.unknown + 1 } : entry));
           } else {
-            if (!prior?.unknown) clear();
+            if (!prior?.unknown || error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+              || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected")) clear();
             if (error instanceof UploadSessionError && command.kind === "RetryUpload") {
               const refusal = retryUploadRefusal(error);
               if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [{ ...retry, run: () => prior?.unknown ? send(command) : choose(command) }] : undefined);
-            } else outcome.fail(error, fact, retry);
+            } else outcome.fail(error, fact, command.kind === "RetryUpload" && !prior?.unknown
+              ? { ...retry, run: () => choose(command) } : retry);
           }
         } finally {
           set(entries => entries.map(entry => entry.command === command ? { ...entry, sending: false } : entry));

@@ -7,7 +7,7 @@
  * reviewed choices with those same bytes. No request identity is persisted. */
 
 import { publishChange } from "@/lib/api/changes";
-import { ApiError, apiFetch, isApiError, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
@@ -128,18 +128,19 @@ export interface UploadAttempt {
   guard: AcquisitionGuard | null;
   session: Schema<"UploadRequired"> | null;
   confirmation: Schema<"ConfirmUploadRequest"> | null;
+  confirmation_unsettled: boolean;
   bytes_uploaded: boolean;
   review_required: boolean;
   expired: boolean;
 }
 
 export function createUploadAttempt(id = crypto.randomUUID()): UploadAttempt {
-  return { id, guard: null, session: null, confirmation: null, bytes_uploaded: false, review_required: false, expired: false };
+  return { id, guard: null, session: null, confirmation: null, confirmation_unsettled: false, bytes_uploaded: false, review_required: false, expired: false };
 }
 
 /** Explicit review after a known refusal. An unknown confirmation cannot be edited. */
 export function reviewUploadAttempt(attempt: UploadAttempt): void {
-  if (!attempt.review_required) return;
+  if (!attempt.review_required || attempt.confirmation_unsettled) return;
   attempt.guard = null;
   attempt.confirmation = null;
   attempt.review_required = false;
@@ -207,14 +208,22 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
     }
     onPhaseChange?.("Verifying");
     attempt.confirmation ??= { generation: upload.generation, ...attempt.guard! };
+    if (signal?.aborted) throw signal.reason;
+    const unsettled = attempt.confirmation_unsettled;
+    attempt.confirmation_unsettled = true;
     try {
-      return (await call("Confirm", () => apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
+      const published = (await call("Confirm", () => apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
         `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
         { method: "POST", body: JSON.stringify(attempt.confirmation), signal },
       ))).data;
+      attempt.confirmation_unsettled = false;
+      return published;
     } catch (error) {
-      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
-        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden") attempt.review_required = true;
+      if (isRefusal(error) || error instanceof UploadSessionError) attempt.confirmation_unsettled = unsettled;
+      if (error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+        || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected")) attempt.confirmation_unsettled = false;
+      if (!attempt.confirmation_unsettled && (isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
+        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden")) attempt.review_required = true;
       if (error instanceof UploadSessionError && error.outcome.kind === "Expired") attempt.expired = true;
       if (error instanceof UploadSessionError && error.outcome.kind === "BytesMissing") attempt.bytes_uploaded = false;
       throw error;
