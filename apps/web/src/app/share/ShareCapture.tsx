@@ -2,7 +2,7 @@
 
 // The Android share sheet's capture card (`/share?text=`). Links get their list,
 // a destination field (create allowed) and Save; each link is saved under its
-// own id, kept for the page's life, so Retry resends the same acceptance. Plain
+// own id, kept for the page's life. An accepted link retries only its reads. Plain
 // text is appended to today's daily note once per attempt, under a date and a
 // note id fixed on first send. Results offer Open (in the shell, through
 // `nexus-share://open`) and Done.
@@ -18,11 +18,11 @@ import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
-import { isApiError, outcomeUnknown } from "@/lib/api/client";
+import { captureApiAccount, isCurrentApiAccount, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
-import { addMediaFromUrl } from "@/lib/imports/ingest";
+import { addMediaFromUrl, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance, type AcceptedIngest } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 import { dailyId, linkId } from "@nexus/authored/identity";
@@ -40,7 +40,16 @@ import styles from "./share.module.css";
 type Result =
   | { label: string; ok: true; status: string; path: string; available: boolean }
   /** `transport` is an api refusal's, whose verbs it decides; null is a local note's, whose verb is `retry`. */
-  | { label: string; ok: false; transport: Transport | null; recovery: "Retry" | "Review" | "Unknown"; attempt: number; local_commit: boolean; line: Line };
+  | { label: string; ok: false; transport: Transport | null; recovery: "Retry" | "Review" | "Unknown" | "Read"; attempt: number; local_commit: boolean; line: Line };
+
+type UrlCommand = {
+  id: string;
+  guard: AcquisitionGuard;
+  account: ReturnType<typeof captureApiAccount>;
+  unconfirmed: boolean;
+  attempt: number;
+  accepted: Extract<MediaAcceptance, { kind: "Url" }> | null;
+};
 
 const SAVE_FAILED = "couldn’t save this.";
 /** A refusal as a result row: sign-in is the workspace's; an unknown outcome resends the same id; a
@@ -136,7 +145,7 @@ function ShareCaptureContent({
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard;unconfirmed:boolean;attempt:number }>());
+  const commands = useRef(new Map<string, UrlCommand>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
   const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: Promise<boolean>; failure: LocalCommitError | null; committed: boolean; check: () => Promise<boolean>; run: () => Promise<boolean> } | null>(null);
   const sentAttempt = useRef<number | null>(null);
@@ -147,6 +156,8 @@ function ShareCaptureContent({
   const captureDate = account?.capture?.localDate ?? null;
   const guard = useWorkGuard();
 
+
+  useLayoutEffect(() => () => { commands.current = new Map(); }, [trimmed, accountId]);
 
   useLayoutEffect(()=>guard.register({id:"share-submitted-acquisition",scope:{kind:"surface",id:"share"},
     subscribe:destinationCreation.subscribe,
@@ -218,39 +229,60 @@ function ShareCaptureContent({
 
   if (defect !== null) throw defect.error;
 
-  async function saveUrl(url: string): Promise<Result> {
-    const command = commands.current.get(url);
-    if (command === undefined) throw new Error("share submission has no frozen acquisition command");
+  async function saveUrl(url: string, command: UrlCommand): Promise<Result> {
     const previouslyUnknown = command.unconfirmed;
     try {
-      command.unconfirmed=true;
-      const accepted = await addMediaFromUrl({ url,id:command.id,guard:command.guard });
-      command.unconfirmed=false;
-      return {
-        label: url,
-        ok: true,
-        available: accepted.available,
-        status: captureStatusLine(accepted),
-        path: accepted.href,
-      };
+      let accepted: Extract<AcceptedIngest, { kind: "Url" }>;
+      if (command.accepted !== null) {
+        const receipt = command.accepted;
+        const current = await fetchAcceptedSource(receipt.sourceAttemptId);
+        accepted = { ...receipt, mediaId: current.media_id, importRef: current.import_ref,
+          href: `/media/${current.media_id}?source_attempt_id=${encodeURIComponent(receipt.sourceAttemptId)}`,
+          available: await mediaAcquisitionAvailable(current.media_id) };
+      } else {
+        command.unconfirmed = true;
+        accepted = await addMediaFromUrl({ url, id: command.id, guard: command.guard, onAccepted: receipt => {
+          if (commands.current.get(url) !== command || !isCurrentApiAccount(command.account)) return;
+          command.accepted = receipt;
+          command.unconfirmed = false;
+        } });
+      }
+      command.unconfirmed = false;
+      return { label: url, ok: true, available: accepted.available, status: captureStatusLine(accepted), path: accepted.href };
     } catch (error) {
-      command.unconfirmed = previouslyUnknown || outcomeUnknown(error);
       command.attempt += 1;
-      if (!command.unconfirmed && isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
+      if (command.accepted !== null) {
+        command.unconfirmed = false;
+        if (!isApiError(error)) throw error;
+        if (error.status === 404) return { label: url, ok: true, available: false,
+          status: captureStatusLine({ ...command.accepted, available: false }), path: command.accepted.href };
+        return { label: url, ok: false, transport: transportOf(error), recovery: "Read", attempt: command.attempt,
+          local_commit: false, line: { fact: "saved.", reason: "couldn’t load source details." } };
+      }
+      command.unconfirmed = previouslyUnknown || outcomeUnknown(error);
+      if (commands.current.get(url) === command && !command.unconfirmed && isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
       return failed(url, error, command.attempt, command.unconfirmed);
     }
   }
 
   async function save(targets: readonly string[]): Promise<void> {
-    if (saving || creating) return;
+    if (saving || creating || targets.some(url => {
+      const command = commands.current.get(url);
+      return command !== undefined && !isCurrentApiAccount(command.account);
+    })) return;
+    const owner = commands.current;
+    const account = captureApiAccount();
+    const active = () => commands.current === owner && isCurrentApiAccount(account);
     setSaving(true);
     setReviewUrls(null);
     try {
       if (targets.some(url => !commands.current.has(url))) {
         const snapshot = await libraryDestinations();
-        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false,attempt:0 });
+        if (!active()) return;
+        for (const url of targets) if (!owner.has(url)) owner.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision), account, unconfirmed: false, attempt: 0, accepted: null });
       }
     } catch (error) {
+      if (!active()) return;
       if (isApiError(error)) setResults(targets.map(url => failed(url, error)));
       else setDefect({ error });
       setSaving(false);
@@ -258,12 +290,19 @@ function ShareCaptureContent({
     }
     // one at a time: the server serializes an account's acquisitions, and a
     // concurrent one can exhaust its retries into a refusal.
-    runBoundedTasks({ items: targets, concurrency: 1, run: saveUrl })
+    runBoundedTasks({ items: targets, concurrency: 1, run: url => {
+      if (!active()) return Promise.resolve(null);
+      const command = owner.get(url);
+      if (command === undefined) throw new Error("share submission has no frozen acquisition command");
+      return saveUrl(url, command);
+    } })
       .then((outcomes) => {
-        const settled = outcomes.map((outcome) => {
+        if (!active()) return;
+        const settled: Result[] = [];
+        for (const outcome of outcomes) {
           if (outcome.kind === "Rejected") throw outcome.error;
-          return outcome.value;
-        });
+          if (outcome.value !== null) settled.push(outcome.value);
+        }
         setResults((current) =>
           current === null
             ? settled
@@ -273,8 +312,8 @@ function ShareCaptureContent({
               ),
         );
       })
-      .catch((error: unknown) => setDefect({ error }))
-      .finally(() => setSaving(false));
+      .catch((error: unknown) => { if (active()) setDefect({ error }); })
+      .finally(() => { if (active()) setSaving(false); });
   }
 
   const retry = (result: Result) => {

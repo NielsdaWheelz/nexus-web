@@ -267,7 +267,7 @@ export default function SettingsAccountPaneBody() {
           patch(
             { calendar_time_zone: zone },
             "couldn’t update your calendar time zone.",
-            { fact: "enter an IANA time zone, such as America/Los_Angeles." },
+            { fact: "enter a recognized time zone." },
           )
         }
       />

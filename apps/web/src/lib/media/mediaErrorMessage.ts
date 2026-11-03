@@ -41,5 +41,5 @@ export function mediaSourceLine(processingStatus: MediaDetail["processing_status
     // justify-defect: last_error_code is same-system source state.
     throw new Error(`Unsupported media source error code: ${code}`);
   const { title, explanation } = FAILURE_COPY[code];
-  return { fact: title, reason: explanation };
+  return explanation === null ? { fact: title } : { fact: title, reason: explanation };
 }

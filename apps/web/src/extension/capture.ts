@@ -73,7 +73,7 @@ export interface ViewState {
     displayName: string | null;
   } | null;
   /** a disconnect nexus did not confirm: the credential is kept, Retry offered */
-  revocationFailure: CaptureFailure | null;
+  revocationFailure: { kind: "Refused" | "Unknown"; failure: CaptureFailure; attempt: number } | null;
   /** origins Firefox must grant before login or save; granted ones omitted */
   requiredOrigins: string[];
   draft: {
@@ -241,7 +241,7 @@ function readFailure(code: string, message: string): DocumentRead {
   return { kind: "failed", failure: { code, message, requestId: null, status: null, offline: false } };
 }
 
-const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "this link isn’t a PDF or EPUB.");
+const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "this link isn’t a pdf or epub.");
 
 /** The last path segment of `url`, decoded, or null. */
 export function urlFilename(url: string): string | null {
