@@ -4,12 +4,12 @@ import { useId, useSyncExternalStore } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { admissionReason, resendVerbs } from "@/lib/collections/admissionReason";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { prepareCollectionConsumption, type CollectionSelection } from "@/lib/consumption/api";
 import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
@@ -28,6 +28,7 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   readonly onClose: () => void;
 }) {
   const { ctx } = useActionRuntime();
+  const resendFeedback = useResendFeedback();
   const source = usePaneFreeServerValue({ key: `collection-state-review:${ctx.accountId}:${JSON.stringify(selection)}`, stale: "", load: signal => prepareCollectionConsumption(selection, signal) });
   const podcast = selection.kind === "Podcast";
   const verb = podcast ? desiredState === "finished" ? "played" : "unplayed" : desiredState === "finished" ? "finished" : "unread";
@@ -68,12 +69,12 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           {source.data.items.length === 0 ? <Fact line={{ fact: `no items to mark ${verb}.` }} /> : null}
         </>}
       {pending?.failed ? <Hold id={pending.commandKey} attempt={pending.attempt}
-        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-        verbs={[
-          ...resendVerbs({ label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending",
-            run: () => ctx.consumption.retry(pending.commandKey) }, remoteReady),
-          { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending", run: () => ctx.consumption.forget(pending.commandKey) },
-        ]} /> : null}
+        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending",
+            run: () => ctx.consumption.retry(pending.commandKey) }, sends: remoteReady,
+          secondary: { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending",
+            run: () => ctx.consumption.forget(pending.commandKey) },
+        })} /> : null}
       <div className={styles.actions}>
         <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || reviewing || checking || undefined} aria-describedby={gate === null ? undefined : gateId}
           disabled={!armed} onClick={submit}>mark {verb}</Button>

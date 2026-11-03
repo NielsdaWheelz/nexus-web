@@ -9,9 +9,10 @@
 // library gone: a 404 answers for it over shown settings too, unless this dialog deleted it.
 // The draft name survives all of it.
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useLayoutEffect } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { CommandVerb } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
@@ -19,16 +20,15 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { unstamped } from "@/lib/consumption/listening";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
-import { mayHaveLanded, NAME_REFUSED, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { NAME_REFUSED, refuseLibrary } from "@/lib/libraries/errors";
 import { libraryNameError } from "@/lib/libraries/views";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import styles from "./LibrarySettingsDialog.module.css";
@@ -58,7 +58,7 @@ export default function LibrarySettingsDialog({
 }) {
   const fail = useThrowLater();
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const { ctx } = useActionRuntime();
   const workspace = useLatestWorkspace();
   const rawLibrary = usePaneFreeServerValue({
@@ -122,7 +122,6 @@ export default function LibrarySettingsDialog({
   const rename = async () => {
     const value = state.read();
     const fact = `couldn’t rename “${current.name}”.`;
-    if (value.request === null && refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline, unconfirmed: false };
     state.set({ ...value, request, busy: "Rename" });
@@ -135,7 +134,7 @@ export default function LibrarySettingsDialog({
       if (signal.aborted) return;
       handleUnauthenticatedApiError(error);
       // A refusal settles a first send; after an unknown one it can't say whether that landed.
-      if (!mayHaveLanded(error) && value.request === null) {
+      if (!outcomeUnknown(error) && value.request === null) {
         const invalid = isApiError(error) && error.code === "E_NAME_INVALID";
         state.set(latest => ({ ...latest, busy: null, request: null, refusedName: invalid ? request.name : latest.refusedName }));
         if (!invalid) refuseLibrary(outcome, error, fact, "it was renamed meanwhile.");
@@ -148,7 +147,6 @@ export default function LibrarySettingsDialog({
   };
   const remove = async () => {
     const fact = `couldn’t delete “${current.name}”.`;
-    if (state.read().unknown?.command !== "Delete" && refusedUnsent(outcome, fact)) return;
     const signal = ctx.sessionSignal();
     setBusy("Delete");
     try {
@@ -164,7 +162,7 @@ export default function LibrarySettingsDialog({
     } catch (error) {
       if (signal.aborted) return;
       handleUnauthenticatedApiError(error);
-      if (!mayHaveLanded(error) && state.read().unknown?.command !== "Delete") {
+      if (!outcomeUnknown(error) && state.read().unknown?.command !== "Delete") {
         setBusy(null);
         refuseLibrary(outcome, error, fact);
       } else {
@@ -182,8 +180,7 @@ export default function LibrarySettingsDialog({
     <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
       <div className={styles.sections}>
         {unknown !== null ? <Hold id={`library-settings:${libraryId}:${unknown.command}`} attempt={unknown.attempt}
-          line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-          verbs={resendVerbs(resend)} /> : null}
+          {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend })} /> : null}
         {deleted ? <Fact line={{ fact: `“${current.name}” is deleted.`, reason: "your unsaved name is still here to copy." }} speak /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>

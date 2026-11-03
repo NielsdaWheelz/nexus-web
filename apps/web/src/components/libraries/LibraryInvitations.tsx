@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // Invitations waiting for the viewer, above the libraries index: each names the
 // library, the role and who sent it; Accept, or Decline after a confirm. Every
 // page is read (no cap); an answer rereads the list. This is auxiliary to the
@@ -18,8 +19,9 @@ import {
   viewerInvitationsPage,
   type ViewerInvitation,
 } from "@/lib/libraries/api";
+import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { refuseLibrary } from "@/lib/libraries/errors";
 import { installedApp } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
@@ -48,19 +50,18 @@ export default function LibraryInvitations() {
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   /** An answer whose outcome is unknown, until the reread it started lands. */
-  const [unknown, setUnknown] = useState<{ attempt: number } | null>(null);
+  const [unknown, setUnknown] = useState<{ libraryId: string; attempt: number } | null>(null);
   useEffect(() => { if (unknown !== null && list.fresh) setUnknown(null); }, [unknown, list.fresh]);
 
   const answer = async (invitation: ViewerInvitation, accept: boolean) => {
     const fact = `couldn’t ${accept ? "accept" : "decline"} the invitation to “${invitation.library_name}”.`;
-    if (refusedUnsent(outcome, fact)) return;
     setBusy(invitation.id);
     try {
       await respondToInvitation(invitation.id, accept);
       setDeclining(null);
     } catch (error) {
       handleUnauthenticatedApiError(error);
-      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      if (outcomeUnknown(error)) setUnknown(current => ({ libraryId: invitation.library_id, attempt: current?.libraryId === invitation.library_id ? current.attempt + 1 : 0 }));
       else refuseLibrary(outcome, error, fact);
     } finally {
       setAnswered((n) => n + 1);
@@ -70,7 +71,7 @@ export default function LibraryInvitations() {
 
   // The hold stands whatever admission does: unmounting it would say the answer resolved.
   const hold = unknown === null ? null
-    : <Hold id="library-invitation-answer" attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: "it may have gone through." }} />;
+    : <Hold id={`library-invitation-answer:${unknown.libraryId}`} attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }} />;
   if (installedApp && admission !== "Ready") return hold;
   const shown = list.items.length > 0;
   return <>

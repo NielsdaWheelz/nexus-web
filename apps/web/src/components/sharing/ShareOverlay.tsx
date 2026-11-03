@@ -1,9 +1,10 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Copy, Send, Share2 } from "lucide-react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { Retract } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
@@ -22,8 +23,6 @@ import {
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
-import { refusedUnsent } from "@/lib/libraries/errors";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { ShareSession } from "@/lib/sharing/controller";
@@ -94,7 +93,6 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
 /** What the grant editor borrows from the panel: a change's admission and outcome, and share. */
 interface PanelActions {
   /** True when admission refuses the change unsent, once that is said. */
-  refusedUnsent: (fact: string) => boolean;
   /** A change landed: an unknown outcome under the same key is settled. */
   landed: (key: string) => void;
   /** A change failed: refused, it speaks once; unknown, it holds until a read settles it. */
@@ -108,7 +106,7 @@ const SHARE_REASONS: Readonly<Record<string, string>> = { E_USER_NOT_FOUND: "thi
 function SharePanel({ session, onClose }: { session: ShareSession; onClose: () => void }) {
   const { target } = session;
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   // A failed read stands where the options would until a replacement read lands; over a shown
   // snapshot, a failed reread says nothing, except that a held change's `check` that fails holds
   // it again. Either reruns on a repair; a defect throws.
@@ -161,7 +159,6 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   if (defect !== null) throw defect.error;
 
   const actions: PanelActions = {
-    refusedUnsent: fact => refusedUnsent(outcome, fact),
     landed: key => setUnknown(current => current?.key === key ? null : current),
     fail: (error, key, fact) => {
       if (lifetime.current?.signal.aborted || handleUnauthenticatedApiError(error)) return;
@@ -250,10 +247,9 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         />
       ) : null}
       {unknown !== null ? <Hold id={`share-change:${unknown.key}`} attempt={unknown.attempt}
-        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-        verbs={resendVerbs({ label: "check", commandKey: "share-check", busy: loading, run: () => void load().then(landed => {
+        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend: { label: "check", commandKey: "share-check", busy: loading, run: () => void load().then(landed => {
           if (!landed) setUnknown(current => current === null ? null : { ...current, attempt: current.attempt + 1 });
-        }) })} /> : null}
+        }) } })} /> : null}
     </div>
   );
 }
@@ -308,7 +304,6 @@ function GrantEditor(props: {
     key: string,
     fact: string,
   ) => {
-    if (actions.refusedUnsent(fact)) return false;
     setBusy(key);
     const id = attempts.current.get(key) ?? crypto.randomUUID();
     attempts.current.set(key, id);
@@ -331,7 +326,6 @@ function GrantEditor(props: {
   };
 
   const revoke = async (id: string, fact: string) => {
-    if (actions.refusedUnsent(fact)) return;
     setBusy(id);
     try {
       await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });

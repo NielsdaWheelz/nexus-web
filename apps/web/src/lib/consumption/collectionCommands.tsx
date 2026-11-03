@@ -8,26 +8,26 @@
  * holds every unknown outcome until it lands or is forgotten. A refusal speaks once;
  * acknowledged changes speak through the items themselves.
  */
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { Outcome } from "@/components/feedback/Feedback";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
-import { admissionRefusal, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { admissionRefusal, isApiError, outcomeUnknown, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { resendVerbs } from "@/lib/collections/admissionReason";
 import { isAbortError } from "@/lib/errors";
 import { ProgressPreparationError } from "./progressFence";
 import type { ConsumptionUndo, withProgressFence } from "./state";
 import { applyCollectionConsumption, undoCollectionConsumption, type CollectionTarget } from "./api";
 import type { WorkGuard } from "@/lib/unsavedWork";
-import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
+import { remoteReady } from "@/lib/native/admission";
 
 type Request = Schema<"CollectionConsumptionRequest">;
 type Receipt = Schema<"CollectionConsumptionUndoReceipt">;
 export interface StateChange { readonly mediaId: string; readonly revision: number }
 /** An account-level write whose outcome is unknown, for the account to hold. `occurrence` is its
  * identity, for a presenter that keys on one. */
-export interface HeldWrite { readonly key: string; readonly occurrence: object; readonly attempt: number; readonly line: Line; readonly verbs: readonly [CommandVerb] }
+export interface HeldWrite { readonly key: string; readonly occurrence: object; readonly attempt: number; readonly line: Line; readonly resend: CommandVerb }
 interface Entry {
   readonly key: string;
   readonly target: CollectionTarget;
@@ -75,9 +75,9 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
     snapshot = { failures: [...entries.values()].flatMap((entry): HeldWrite[] => entry.unconfirmed === 0 ? [] : [{
       key: entry.key, occurrence: entry, attempt: entry.unconfirmed - 1,
       line: { fact: entry.kind === "Undo" ? `not sure undoing “${entry.title}” saved.` : `not sure marking “${entry.title}” ${verb(entry.target, entry.desiredState)} saved.`,
-        reason: "it may have gone through." },
-      verbs: resendVerbs({ label: "retry", commandKey: entry.key, busy: entry.phase === "Sending",
-        run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) }, remoteReady),
+        reason: UNKNOWN_OUTCOME_REASON },
+      resend: { label: "retry", commandKey: entry.key, busy: entry.phase === "Sending",
+        run: () => entry.kind === "Undo" ? commands.undo(entry.key) : commands.retry(entry.key) },
     }]), undoItems: [
       ...[...inverses.values()].map(inverse => ({ commandKey: inverse.key, target: inverse.target, title: inverse.title,
         actionLabel: inverseLabel(inverse.target, inverse.receipt.applied_status, inverse.receipt.items.length, inverse.scopeLabel),
@@ -129,7 +129,6 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
   async function send(entry: Entry, scope: AbortController) {
     if (!current(entry, scope)) return;
     entry.phase = "Sending"; emit();
-    let sent = false;
     try {
       const result = await fence(entry.mediaIds, () => requestWithDeadline<Schema<"CollectionConsumptionOut"> | Schema<"CollectionConsumptionUndoOut"> | null>({
         signal: scope.signal, timeoutMs: 30_000,
@@ -138,7 +137,6 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
           // Preparation may await a progress flush. Admission must still hold
           // at this synchronous boundary before apiFetch can transmit bytes.
           if (!remoteReady()) throw admissionRefusal();
-          sent = true;
           return entry.kind === "Apply" ? applyCollectionConsumption(entry.body, signal) : undoCollectionConsumption(entry.body, signal);
         },
       }));
@@ -161,26 +159,25 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
       if (result.undo !== null && !superseded) retainUndo(entry, result.undo);
     } catch (error) {
       if (!current(entry, scope)) return;
-      if (sent) invalidateReads("Consumption", "Podcasts");
+      if (isApiError(error) && error.sent) invalidateReads("Consumption", "Podcasts");
       const defect = !(error instanceof ProgressPreparationError) && ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error));
-      const refused = !sent || isRefusal(error);
-      if (!refused) handleUnauthenticatedApiError(error);
-      if (!refused || entry.unconfirmed > 0) {
+      if (defect) { fail({ error }); return; }
+      handleUnauthenticatedApiError(error);
+      if (outcomeUnknown(error) || entry.unconfirmed > 0) {
         entry.unconfirmed += 1;
         entry.phase = "Unconfirmed"; emit();
       } else {
         retire(entry);
         // A retained undo was never sent: its inverse stays offered, and this line can retry it.
-        const retained = !sent && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision);
+        const retained = !(isApiError(error) && error.sent) && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision);
         if (retained && entry.receipt !== null) retainUndo(entry, entry.receipt);
         const verbs: Verbs | undefined = retained ? [{ label: "retry", commandKey: entry.key, run: () => commands.undo(entry.key) }] : undefined;
         const fact = commandFact(entry);
         if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, verbs);
         else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the items changed meanwhile." });
         else if (isApiError(error) && error.status === 404) outcome.say({ fact, reason: "it’s no longer available." });
-        else if (!defect) outcome.fail(error, fact, verbs?.[0]);
+        else outcome.fail(error, fact, verbs?.[0]);
       }
-      if (defect) fail({ error });
     }
   }
   const commands = {
@@ -206,9 +203,7 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
     subscribe, snapshot: () => snapshot, supersede, commands,
     start() {
       const scope = new AbortController(); lifetime = scope;
-      // A hold's retry states admission's reason, which moves without any entry moving.
-      const unsubscribe = subscribeAdmission(emit);
-      return () => { unsubscribe(); scope.abort(); if (lifetime !== scope) return; lifetime = null;
+      return () => { scope.abort(); if (lifetime !== scope) return; lifetime = null;
         for (const entry of entries.values()) entry.unregister(); entries.clear();
         inverses.clear(); emit(); };
     },

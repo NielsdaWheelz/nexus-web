@@ -10,11 +10,12 @@
 // force retires silently, unacknowledged, so any successor is refused as a conflict; any
 // other intent is refused. A refusal speaks once per lane, counting the successors it
 // refused; an item's own reason speaks only for one item. A creation's resend that is
-// refused, unsent or answered, holds again: only its first send's refusal settles it.
+// refused, unsent or answered, stays unknown until it lands or the user stops tracking it.
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { ChooserRow } from "@/components/libraries/LibraryChooser";
 import type { Line } from "@/components/feedback/stage";
 import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
@@ -23,17 +24,15 @@ import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
-import { admissionRefusal, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { isApiError, outcomeUnknown, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { requestWithRetry, useFailedReadRepair } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
 import { isAbortError } from "@/lib/errors";
 import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
 import { refuseLibrary } from "@/lib/libraries/errors";
-import { remoteAttemptAllowed } from "@/lib/native/admission";
-import { useWorkGuard } from "@/lib/unsavedWork";
+import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
@@ -48,6 +47,7 @@ export interface LibraryPlacementSession {
   readonly options: LibraryPlacementOpenOptions;
 }
 interface Change {
+  unregister(): void;
   readonly id: string;
   readonly row: Target;
   readonly libraryId: string;
@@ -73,6 +73,7 @@ interface Target {
   unavailable: boolean;
 }
 interface Creation {
+  unregister(): void;
   readonly id: string;
   readonly name: string;
   readonly initial_items: readonly string[];
@@ -95,7 +96,10 @@ const LOCKED: Record<"PodcastSubscription" | "RequiresAdmin", string> = {
 const keyOf = (target: LibraryPlacementTarget) => `${target.kind}:${target.id}`;
 const resourceRef = (target: LibraryPlacementTarget) => `media:${target.id}`;
 
-function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refuse: (refusal: Refusal) => void) {
+function createOwner(signIn: (error: unknown) => boolean, changed: () => void, refuse: (refusal: Refusal) => void, guard: WorkGuard) {
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+  const emit = () => { changed(); for (const listener of listeners) listener(); };
   const targets = new Map<string, Target>();
   const creations = new Map<string, Creation>();
   const lanes = new Map<string, Change[]>();
@@ -157,6 +161,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     return row.reading;
   }
   const remove = (change: Change) => {
+    change.unregister();
     const index = change.row.queue.indexOf(change);
     if (index !== -1) change.row.queue.splice(index, 1);
     const lane = lanes.get(change.libraryId)!;
@@ -192,14 +197,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
           if (change.predecessor.acknowledgedRevision === null) { refuseLane(change, null); break; }
           change.expectedRevision = change.predecessor.acknowledgedRevision;
         }
-        if (!remoteAttemptAllowed()) {
-          // Refused unsent: a resend leaves its earlier outcome as unknown as it was.
-          const refusal = admissionRefusal();
-          signIn(refusal);
-          if (change.unconfirmed > 0) { change.phase = "Unknown"; break; }
-          refuseLane(change, refusal);
-          break;
-        }
         change.phase = "Sending";
         emit();
         try {
@@ -220,7 +217,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
           if (!active || lifetime !== run || run.signal.aborted) return;
           signIn(error);
           change.row.dirty = true;
-          if (!isRefusal(error)) {
+          if (isDefect(error)) { defect = { error }; break; }
+          if (outcomeUnknown(error)) {
             change.unconfirmed += 1;
             change.phase = "Unknown";
             break;
@@ -255,9 +253,12 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     const cell = row.data?.find(item => item.library_id === libraryId);
     if (!cell || row.removalRevision === null) return;
     const lane = lanes.get(libraryId) ?? [];
-    const change: Change = { id: crypto.randomUUID(), row, libraryId, name: cell.name, included: desired, expectedRevision: cell.order_revision,
+    const change: Change = { unregister: () => {}, id: crypto.randomUUID(), row, libraryId, name: cell.name, included: desired, expectedRevision: cell.order_revision,
       removalRevision: desired ? row.removalRevision : null, predecessor: lane.at(-1) ?? null,
       acknowledgedRevision: null, phase: "Queued", unconfirmed: 0 };
+    change.unregister = guard.register({ id: `library-placement:${change.id}`, scope: { kind: "account" }, subscribe,
+      read: () => ({ changed: false, unconfirmed: row.queue.includes(change), stopsBrowserWork: false }),
+    });
     row.queue.push(change);
     lane.push(change);
     lanes.set(libraryId, lane);
@@ -270,18 +271,20 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
     void drain(change.libraryId);
   };
   async function create(attempt: Creation) {
-    if (!active || attempt.running || defect !== null) return;
+    if (!active || creations.get(attempt.id) !== attempt || attempt.running || defect !== null) return;
     attempt.running = true;
     emit();
     const run = lifetime;
     const outcome = await sendCreation(attempt);
-    if (!active || lifetime !== run) return;
+    if (!active || lifetime !== run || creations.get(attempt.id) !== attempt) return;
     attempt.running = false;
     if (outcome.kind === "Created") {
       creations.delete(attempt.id);
+      attempt.unregister();
       retryRead(attempt.targets);
     } else if (outcome.kind === "Refused" && attempt.unconfirmed === 0) {
       creations.delete(attempt.id);
+      attempt.unregister();
       signIn(outcome.error);
       refuse({ fact: `couldn’t create “${attempt.name}”.`, error: outcome.error });
       retryRead(attempt.targets);
@@ -341,7 +344,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
   return {
     defect: () => defect,
     start() { active = true; if (lifetime.signal.aborted) lifetime = new AbortController(); lanes.forEach((_lane, id) => void drain(id)); },
-    stop() { active = false; lifetime.abort(); },
+    stop() { active = false; lifetime.abort(); for (const attempt of creations.values()) attempt.unregister(); for (const lane of lanes.values()) for (const change of lane) change.unregister(); },
     invalidate() { for (const row of targets.values()) { row.dirty = true; if (row.visible > 0) void read(row); } },
     show, view,
     /** The changes and creations whose outcome is unknown, each with its resend. */
@@ -350,10 +353,18 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         ...[...lanes.values()].flatMap(lane => lane[0]?.unconfirmed ? [lane[0]] : []).map(change => ({
           id: `library-placement:${change.id}`, attempt: change.unconfirmed - 1,
           fact: change.included ? `not sure adding to “${change.name}” saved.` : `not sure removing from “${change.name}” saved.`,
-          busy: change.phase !== "Unknown", retry: () => check(change) })),
+          busy: change.phase !== "Unknown", retry: () => check(change), stopTracking: null })),
         ...[...creations.values()].filter(attempt => attempt.unconfirmed > 0).map(attempt => ({
           id: `library-creation:${attempt.id}`, attempt: attempt.unconfirmed - 1,
-          fact: `not sure creating “${attempt.name}” saved.`, busy: attempt.running, retry: () => void create(attempt) })),
+          fact: `not sure creating “${attempt.name}” saved.`, busy: attempt.running, retry: () => void create(attempt),
+          stopTracking: () => {
+            if (!active || creations.get(attempt.id) !== attempt || attempt.running
+              || !guard.confirmLoss({ scopes: [], ownerIds: [`library-creation:${attempt.id}`] })) return;
+            creations.delete(attempt.id);
+            attempt.unregister();
+            retryRead(attempt.targets);
+            emit();
+          } })),
       ];
     },
     admit(scope: readonly LibraryPlacementTarget[], libraryId: string, desired: boolean): boolean {
@@ -373,9 +384,12 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void, refu
         || current.pendingNames.some(pending => pending.toLowerCase() === name.toLowerCase())) return false;
       const removal = rows[0]?.removalRevision;
       if (removal === null || removal === undefined) return false;
-      const attempt: Creation = { id: crypto.randomUUID(), name, initial_items: rows.map(row => resourceRef(row.target)),
+      const attempt: Creation = { unregister: () => {}, id: crypto.randomUUID(), name, initial_items: rows.map(row => resourceRef(row.target)),
         expected_removal_revision: removal, targets: rows, running: false, unconfirmed: 0 };
       creations.set(attempt.id, attempt);
+      attempt.unregister = guard.register({ id: `library-creation:${attempt.id}`, scope: { kind: "account" }, subscribe,
+        read: () => ({ changed: false, unconfirmed: creations.get(attempt.id) === attempt, stopsBrowserWork: false }),
+      });
       void create(attempt);
       return true;
     },
@@ -413,19 +427,19 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const outcome = useOutcome();
   const latestOutcome = useRef(outcome);
   latestOutcome.current = outcome;
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
+  const workGuard = useWorkGuard();
   const [, changedOwner] = useReducer((value: number) => value + 1, 0);
   const [owner] = useState(() => createOwner(signIn, changedOwner, refusal => {
     if ("line" in refusal) latestOutcome.current.say(refusal.line);
     else refuseLibrary(latestOutcome.current, refusal.error, refusal.fact, CONFLICT);
-  }));
+  }, workGuard));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
   const externalRef = useRef(external);
   externalRef.current = external;
   const [destinationCreation] = useState(createDestinationCreation);
   const creation = useDestinationCreation("external-media", destinationCreation);
-  const workGuard = useWorkGuard();
   useLayoutEffect(() => workGuard.register({ id: "external-library-creation", scope: { kind: "account" },
     subscribe: destinationCreation.subscribe,
     read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
@@ -473,8 +487,10 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   return <Context.Provider value={{ owner, controller }}>
     {children}
     {owner.holds().map(held => <Hold key={held.id} id={held.id} attempt={held.attempt}
-      line={{ fact: held.fact, reason: "it may have gone through." }}
-      verbs={resendVerbs({ label: "retry", commandKey: held.id, run: held.retry, busy: held.busy })} />)}
+      {...resendFeedback({ line: { fact: held.fact, reason: UNKNOWN_OUTCOME_REASON },
+        resend: { label: "retry", commandKey: held.id, run: held.retry, busy: held.busy },
+        secondary: held.stopTracking === null ? undefined : { label: "stop tracking", commandKey: `stop:${held.id}`, run: held.stopTracking, busy: held.busy },
+      })} />)}
     {creation.holds}
     <PickerSurface active={external !== null || session !== null} title="libraries"
       focusKey={session !== null ? `stored:${session.key}` : external?.key}

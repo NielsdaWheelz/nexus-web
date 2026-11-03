@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { ArrowRightLeft, UserMinus } from "lucide-react";
 
 // The Members tab for an admin of a named library: invite an existing user, the
@@ -35,8 +36,9 @@ import {
   type LibraryMember,
   type LibraryRole,
 } from "@/lib/libraries/api";
+import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { refuseLibrary } from "@/lib/libraries/errors";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
@@ -88,14 +90,14 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   useEffect(() => { if (unknown !== null && settled) setUnknown(null); }, [unknown, settled]);
   /** Runs one command; true when it landed. `fact` says what a refusal couldn't do. */
   const run = async (fact: string, command: () => Promise<void>) => {
-    if (busy || refusedUnsent(outcome, fact)) return false;
+    if (busy) return false;
     setBusy(true);
     try {
       await command();
       return true;
     } catch (error) {
       handleUnauthenticatedApiError(error);
-      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      if (outcomeUnknown(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
       else refuseLibrary(outcome, error, fact);
       return false;
     } finally {
@@ -106,7 +108,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   };
   if (!shown || library === null) return null;
   const held: ReactNode = unknown === null ? null : <Hold id={`library-members:${library.id}`} attempt={unknown.attempt}
-    line={{ fact: "not sure that saved.", reason: "it may have gone through." }} />;
+    line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }} />;
   return { library, members, invitations, busy, held, run };
 }
 

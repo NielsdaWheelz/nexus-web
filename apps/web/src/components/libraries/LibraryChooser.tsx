@@ -31,6 +31,7 @@ export interface ChooserRow {
 /** Only for callers outside this lane until they pass `failure`; L7 deletes it. */
 export interface ChooserError {
   readonly occurrence: object;
+  readonly attempt?: number;
   readonly content: FeedbackContent;
   readonly retry: (() => void) | null;
   readonly retryLabel?: string;
