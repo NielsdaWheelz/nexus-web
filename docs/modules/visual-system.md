@@ -230,9 +230,12 @@ immediately. tucking changes presentation only. the tab retains no command,
 draft, history or loss guard and disappears when its owners resolve.
 
 typing ghosts a standing slip and stops its clock; new ordinary slips wait for
-the pause, at most eight seconds. risk does not wait. only the topmost modal,
-else the active pane or standalone host, speaks. short facts and reasons enter
-the live region, never controls; risk is assertive and other lines polite.
+the pause, at most eight seconds. risk does not wait. eligible shown slips speak
+through the root announcement pair, or the topmost modal's pair while it is open;
+a fully visible inactive pane's slip remains eligible. in-flow facts and fields
+speak only in the topmost modal, else the active pane or standalone host. short
+facts and reasons enter the live region, never controls; risk is assertive and
+other lines polite.
 appearance takes no focus. a withdrawing verb restores only focus it owns.
 `mod+.` reaches the first slip control; escape closes or tucks and returns focus.
 coarse-pointer downward swipe dismisses plain rows and tucks held rows when
