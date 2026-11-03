@@ -17,6 +17,8 @@ feedback-homes was specified before the lexicon. when it merges main:
   ruling between `Icon.Down` (more that way) and `Icon.Disclose` (in place).
 - the octagon's recovery control at `components/feedback/Feedback.tsx:124` draws
   `Icon.Warning` on main; it leaves with the octagon.
+- danger feedback draws `Icon.Warning` in the danger tone; info draws nothing,
+  with no sign, no slot and an ink title.
 
 resolved when the feedback-homes cut merges with `--check-swept` and
 `./scripts/test` passing, and the tuck's sign is ruled.
