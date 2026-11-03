@@ -288,7 +288,8 @@ function UnavailableSavedMedia({ error }: { readonly error: { readonly code: str
   usePaneChrome({ displayTitle: "source", header: { kind: "Resource", resource: { status: "Unavailable" } } });
   usePaneReturnReady(true);
   const speak = useActiveRegion();
-  // L0a's catalog lines, while their code set is open.
+  // the fallback is for a non-catalog error the catalog read carries (readCatalogStatus,
+  // refreshCatalog); it has no home until L7.
   return <Fact line={catalogLine(error) ?? { fact: "couldn’t open the saved catalog." }} speak={speak} />;
 }
 

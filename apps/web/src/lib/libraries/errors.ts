@@ -81,7 +81,7 @@ export function libraryErrorFeedback(
   const modeled = modeledApiError(error, fail, signIn);
   if (modeled === null) return null;
   const catalog = catalogLine(modeled);
-  if (catalog !== null) return { tone: "Warning", title: catalog.fact, message: catalog.reason };
+  if (catalog !== null) return { tone: modeled.code === "E_CATALOG_COVERAGE" || modeled.code === "E_CATALOG_UNAVAILABLE" ? "Neutral" : "Warning", title: catalog.fact, message: catalog.reason };
   const transport = apiTransportFeedback(modeled, title);
   if (transport !== null) return transport;
   if (modeled.status < 400 || modeled.status >= 500) {
