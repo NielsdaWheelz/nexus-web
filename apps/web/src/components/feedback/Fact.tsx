@@ -4,7 +4,7 @@
  * read, `Field` sits under its input. `VerbControl` is every feedback verb, in flow or floating.
  *
  * Invariants: a line speaks once per sentence it shows, so a changed line speaks again. A verb
- * that withdraws while it holds focus gives focus back to the place it stood, never the body. */
+ * that withdraws while it holds focus gives focus to its nearest home, if it has one. */
 import { Check } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Button from "@/components/ui/Button";
