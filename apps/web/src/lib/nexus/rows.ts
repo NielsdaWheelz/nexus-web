@@ -11,6 +11,7 @@ import {
   Link as LinkIcon,
   MessageSquarePlus,
   Play,
+  Plus,
   Search,
 } from "lucide-react";
 import type { Schema } from "@/lib/api/wire";
@@ -121,7 +122,7 @@ export function resourceAction(item: ResourceItem): NexusAction {
 function targetMenu(ref: string | null, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "TargetMenu" }> {
   return {
     kind: "TargetMenu", resourceRef: ref === null ? null : assumeCanonicalResourceRef(ref),
-    closePanes: panes.map((pane, index) => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${index + 1}` : "close pane" })),
+    closePanes: panes.map(pane => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${pane.position}` : "close pane" })),
   };
 }
 
@@ -379,7 +380,7 @@ export function continuations(query: NexusQuery, principalCount: number): NexusR
 }
 
 function textRow(text: string, detail?: string): NexusRow {
-  return { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: FileText, detail,
+  return { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Plus, detail,
     action: { kind: "Available", target: { kind: "UseText", text } }, ...UNSCORED, rank: rank("Navigation", "Substring") };
 }
 

@@ -147,6 +147,8 @@ export type NexusSource = "Direct" | "Lexical" | "Hybrid" | "Reference";
 
 export interface NexusPane {
   readonly id: string;
+  /** One-based position in workspace strip order, independent of matching subsets and mru. */
+  readonly position: number;
   readonly href: string;
   readonly resourceRef: string | null;
   readonly visibility: "visible" | "minimized";

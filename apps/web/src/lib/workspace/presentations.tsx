@@ -79,9 +79,15 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return {entries: new Map(previous.entries).set(key, {facts, store_revision: storeRevision, used_revision: usedRevision ?? before?.used_revision}), semanticRevision: previous.semanticRevision + (unchanged && usedRevision === undefined ? 0 : 1)};
     });
   }, []);
-  const remoteLocators = locators.filter(locator => !authored(locator) && locator.kind !== "x_capture");
-  const captureLocators = locators.filter(locator => locator.kind === "x_capture");
-  const remoteKey = JSON.stringify([accountId, remoteLocators, recent.snapshot?.entries.map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, observation, foreground]);
+  const remoteLocators = locators.filter(locator => !authored(locator) && locator.kind !== "x_capture")
+    .sort((a, b) => panePresentationLocatorKey(a).localeCompare(panePresentationLocatorKey(b)));
+  const captureLocators = locators.filter(locator => locator.kind === "x_capture")
+    .sort((a, b) => panePresentationLocatorKey(a).localeCompare(panePresentationLocatorKey(b)));
+  // Only revisions whose remote evidence may reconcile a recent target invalidate this batch.
+  const recentRemoteRevisions = (recent.snapshot?.entries ?? [])
+    .filter(entry => entry.target.kind !== "preview" && entry.target.kind !== "x_capture" && !authored(entry.target))
+    .map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort();
+  const remoteKey = JSON.stringify([accountId, remoteLocators, recentRemoteRevisions, changes, observation, foreground]);
   const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, stale: remoteKey, load: async signal => {
     const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
     for (let offset = 0; offset < remoteLocators.length; offset += 100) {
@@ -90,7 +96,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
     return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
   } });
-  const captureKey = JSON.stringify([accountId, captureLocators, recent.snapshot?.entries.filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]), changes, foreground]);
+  const captureKey = JSON.stringify([accountId, captureLocators, (recent.snapshot?.entries ?? []).filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort(), changes, foreground]);
   const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${accountId}` : null, stale: captureKey, load: async signal => {
     while (!signal.aborted) {
       const { command_seq } = await store.readReplica();
@@ -132,7 +138,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   const titleError = remote.status === "loading" ? null : remote.error;
   const remoteFailed = titleError !== null;
   const titleOccurrence = useFeedbackOccurrence(remoteFailed, remoteKey);
-  const titlePending = remote.status === "failed" ? remote.retrying : remote.status === "ready" && remote.refreshing;
+  const titlePending = remote.status === "loading" || (remote.status === "failed" ? remote.retrying : remote.refreshing);
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, name:route.defaultLabel, detail: null, status: "Ready" };
@@ -252,8 +258,12 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     }
   }, [recent, forRecent, local.entries, state.panes, remote, remoteFresh, isRecentRemoved]);
   const remoteRefetch = remote.refetch, captureRefetch = captures.refetch;
-  // The same keys re-run their loads; the held titles stay shown until the new ones land (nexus-open-blanks-remote-titles).
-  const retryTitles = useCallback(() => { void remoteRefetch().catch(() => {}); void captureRefetch().catch(() => {}); }, [remoteRefetch, captureRefetch]);
+  const capturePending = captures.status === "loading" || (captures.status === "failed" ? captures.retrying : captures.refreshing);
+  // Opening joins an adequate pending read; restarting it would discard the first useful facts.
+  const retryTitles = useCallback(() => {
+    if (!titlePending) void remoteRefetch().catch(() => {});
+    if (!capturePending) void captureRefetch().catch(() => {});
+  }, [remoteRefetch, captureRefetch, titlePending, capturePending]);
   const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleFailure: titleError !== null ? {error: titleError, occurrence: titleOccurrence, pending: titlePending} : null }), [forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleError, titleOccurrence, titlePending]);
   useEffect(() => {
     for (const pane of state.panes) {

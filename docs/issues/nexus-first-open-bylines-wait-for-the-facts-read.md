@@ -1,30 +1,32 @@
-# the first open after load paints tab rows without bylines for ~200ms
+# cold palette opens before remote pane bylines are known
 
-status: repaired, browser verification pending · origin: 2026-11-02 palette s3 lab · area: web / workspace presentations (s2)
+status: open · area: browser workspace admission / workspace presentations
 
-criterion 10 wants every remote pane's byline in the palette's first frame. on a
-fresh page the strip shows titles from the catalog (`presentations.tsx`, the
-`saved` branch returns `detail: null`) until the canonical facts read lands; the
-held-facts repair (be48f886b) keeps a *previous* ready map across a re-key, so it
-cannot cover an open that comes before the first read settles.
+round 2 at c8f27acf0 proves the first-frame requirement still fails in both
+engines. desktop mounts no catalog provider: `DeviceWorkspace.tsx` alone mounts
+it. `BrowserWorkspace.tsx:43-50` loads account, profile and workspace; stored
+visits carry title hints, not contributors, and the shell receives empty seeds.
 
-evidence: lab run `20261102-120048-554a7e7740c0` (tree bdc4ea307), palette-10
-chromium: first frame `["here. Moby-Dick; or, The Whale","Sir Gawain and the
-Green Knight","The Garden of Forking Paths",…]`, 13 frames (~200ms) without
-`Herman Melville` etc., then bylines. the names come from `rowFacts` /
-`paneCandidateName` over `presentation.detail`, unchanged by s3. s2's run
-20261102-102236 had chromium green on this test, so the gap is timing (inferred).
+exact evidence: run `20261102-160429-d8fb80411e6c`, palette-10 chromium trace:
+Meta+k at 537407.181; first successful workspace-presentations response completes
+at 537815.602, about 408ms later. it contains all three required authors. three
+earlier requests for identical locators were aborted. firefox also loses authors
+for the first three sampled frames. palette-07 chromium types `ka` at 397447.715;
+its initial facts complete at 397470.157, after synchronous rows have frozen their
+lines for that query. the third book has no other completed detail read at open.
 
-impact: the byline appears ~200ms after open on the first open of a session; the
-row's second line appears then (36px → 52px), moving the rows below it.
+impact: cold blank rows gain a line and move siblings; typed rows retain missing
+bylines. the stable read identity repairs revalidation blanking and the catalog
+branch supplies installed-device facts, but neither provides unseen browser facts.
 
-fix: the catalog branch of `forVisit` carries the catalog's contributors as the
-byline, so a title known before the canonical read already has its facts.
+narrow repair: opening no longer restarts an adequate pending read; freshness
+normalizes empty recents, ignores unrelated authored/capture revisions and layout
+order, and retains remote recent revision checks needed for removal safety.
 
-repair: the account presentation read now revalidates its stable key through
-`stale`, retaining facts in the existing read owner without a render-mutated ref.
-the catalog media branch supplies contributor bylines alongside its title.
+blocker: an explicit admission policy is pending owner choice. initial bootstrap
+can supply remote facts before publishing a cold workspace, or palette admission
+can wait for them. do not add hidden delays, guess authors, or add a desktop cache.
 
-resolved when: palette-10's first-frame byline test and palette-07's synchronous
-latch journey pass in both engines on the repaired source; a cold device without
-catalog or canonical facts must still expose its actual loading state.
+resolved when the chosen admission contract preserves local authored authority
+and ordinary offline opening, and palette-10 and palette-07 pass in both engines
+without weakening first-frame byline assertions.

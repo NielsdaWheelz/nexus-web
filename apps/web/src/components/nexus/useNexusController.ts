@@ -177,8 +177,9 @@ export function useNexusController() {
   const find = useNexusFind({ open, composing, query: parsed, retainedLocalTargets });
   const panes = useMemo<NexusPane[]>(
     () =>
-      state.panes.map((pane) => ({
+      state.panes.map((pane, index) => ({
         id: pane.id,
+        position: index + 1,
         href: pane.current_visit.href,
         resourceRef: presentations.resourceRefForVisit(pane.current_visit),
         visibility: pane.visibility,
@@ -190,15 +191,18 @@ export function useNexusController() {
   const currentPane = panes.find(pane => pane.current) ?? null;
 
   // Most recently active first, session-local, seeded from layout order (owner decision 5).
-  const [activated, setActivated] = useState<readonly string[]>([]);
-  useEffect(() => {
-    const active = state.active_primary_pane_id;
-    setActivated(current => current[0] === active ? current : [active, ...current.filter(id => id !== active)]);
-  }, [state.active_primary_pane_id]);
-  const mru = useMemo(() => {
-    const known = activated.filter(id => panes.some(pane => pane.id === id));
-    return [...known, ...panes.filter(pane => !known.includes(pane.id)).map(pane => pane.id)];
-  }, [activated, panes]);
+  const [mru, setMru] = useState<readonly string[]>(() => [state.active_primary_pane_id,
+    ...state.panes.filter(pane => pane.id !== state.active_primary_pane_id).map(pane => pane.id)]);
+  useLayoutEffect(() => {
+    setMru(current => {
+      const active = state.active_primary_pane_id;
+      const present = new Set(state.panes.map(pane => pane.id));
+      const kept = current.filter(id => present.has(id));
+      const added = state.panes.filter(pane => !kept.includes(pane.id)).map(pane => pane.id);
+      const next = [active, ...kept.filter(id => id !== active), ...added.filter(id => id !== active)];
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [state.active_primary_pane_id, state.panes]);
   const previousPaneId = mru.find(id => id !== state.active_primary_pane_id) ?? null;
 
   const recentItems = useMemo(() => {

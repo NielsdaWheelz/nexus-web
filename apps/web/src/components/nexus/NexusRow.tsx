@@ -29,8 +29,6 @@ import styles from "./Nexus.module.css";
 
 type Match = Schema<"SearchMatchOut">;
 export type NexusVerb = Extract<ActionDescriptor, { kind: "command" | "link" }>;
-/** Codepoints of context the evidence line keeps before its first matched range. */
-const EVIDENCE_LEAD = 24;
 
 /** Passage-bodied items other than highlights are titled by their work and always show their window. */
 function isPassage(item: ResourceItem): boolean {
@@ -75,13 +73,12 @@ function rowEvidence(row: NexusRow, title: string): Match | null {
   return row.match;
 }
 
-/** One line shows only its start: open the window a few words before the first range so the matched words paint. */
+/** A single clamped line begins at its first match; preceding context cannot hide it at large text sizes. */
 function windowed(match: Match): Match {
   const first = match.ranges[0];
-  if (!first || first.start <= EVIDENCE_LEAD) return match;
+  if (!first || first.start === 0) return match;
   const points = Array.from(match.excerpt.text);
-  const space = points.indexOf(" ", first.start - EVIDENCE_LEAD);
-  const start = space >= 0 && space < first.start ? space + 1 : first.start - EVIDENCE_LEAD;
+  const start = first.start;
   return {
     excerpt: { ...match.excerpt, text: points.slice(start).join(""), truncated_before: true },
     ranges: match.ranges.map(range => ({ start: range.start - start, end: range.end - start })),
@@ -205,7 +202,7 @@ export function nexusRowVerbs(
   const capture = row.matchingPassage?.item ?? row.item;
   if (capture?.preview.body.kind === "passage" && capture.preview.body.capture_revision !== null)
     occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
-  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) if (pane.id !== closing)
+  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes)
     occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
   const paneRef = tab === null ? null : controller.panes.find(pane => pane.id === tab)?.resourceRef ?? null;
   const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : paneRef === null ? null : assumeCanonicalResourceRef(paneRef);
