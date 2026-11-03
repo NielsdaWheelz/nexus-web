@@ -10,6 +10,7 @@
 // to the slot (`--control-icon-size`, `.menuItemIcon`); waiting belongs to `control.tsx`.
 import {
   Ellipsis,
+  EyeOff,
   Headphones,
   LayoutList,
   ListOrdered,
@@ -34,6 +35,7 @@ export type Glyph = LucideIcon;
 export const Stop: Glyph = Square;                    // halt what is running; what is done stays
 
 // Verbs.
+export const Hide: Glyph = EyeOff;                    // conceal it; it stays
 export const More: Glyph = Ellipsis;                  // more commands
 
 // Transport.

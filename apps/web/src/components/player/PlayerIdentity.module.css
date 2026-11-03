@@ -1,68 +1,50 @@
-.srOnly {
-  position: fixed;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
+.identity { display: flex; align-items: center; min-width: 0; color: var(--ink); }
 
-.identity {
+/* a link or the mini's opener: the control keeps its focus ring and drops its own box. */
+.identity.opener {
+  justify-content: flex-start;
   width: 100%;
-  max-width: 100%;
-  min-width: 0;
   min-height: 44px;
   height: auto;
-  border: 0;
   padding: 0;
-  justify-content: flex-start;
-  gap: var(--space-3);
+  gap: 0;
+  color: var(--ink);
+  font-weight: inherit;
   text-align: start;
   white-space: normal;
 }
 
-/* the mini's identity takes the row's free width. */
-.mini { flex: 1 1 auto; }
+.identity.opener:hover { background: transparent; }
+.identity.opener:hover .title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 
-/* Identity owns its content layout; the control owns its paint. */
-.identityContent {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  max-width: 100%;
-}
+/* art, then two lines; the row never wraps, the lines truncate. */
+.row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; max-width: 100%; }
 
-.artworkBox { position: relative; flex: 0 0 auto; display: inline-flex; }
-.identityStatus { position: absolute; right: -2px; bottom: -2px; display: inline-flex; padding: 2px; border-radius: var(--radius-full); background: var(--surface-1); color: var(--ink); }
+.art { position: relative; flex: none; display: block; }
 
-.artwork,
-.placeholder {
-  flex: 0 0 auto;
-  object-fit: cover;
+.frame {
+  display: block;
+  box-sizing: border-box;
+  border: var(--stroke-hairline) solid var(--edge);
   border-radius: var(--radius-sm);
 }
 
-.placeholder {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink-muted);
-  background: var(--surface-2);
-  border: var(--stroke-hairline) solid var(--edge);
-  font-family: var(--font-serif);
-  font-size: var(--text-xl);
+/* presence, not colour, is the signal, so forced colours keep it. */
+.dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--danger-ink);
+  box-shadow: 0 0 0 2px var(--surface-1);
 }
 
-.identityCopy {
-  flex: 1 1 auto;
-  display: grid;
-  min-width: 0;
-  gap: var(--space-1);
-}
+.copy { display: grid; gap: var(--space-1); min-width: 0; }
 
 .title,
-.subtitle {
+.line2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -70,16 +52,40 @@
 
 .title {
   color: var(--ink);
-  font-family: var(--font-serif);
-  font-size: var(--text-base);
-  line-height: var(--leading-tight);
+  font: var(--weight-regular) var(--text-base) / 1.2 var(--font-serif);
 }
 
-.subtitle {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
+/* a state word, not an episode. */
+.plain { font-family: var(--font-sans); color: var(--ink-muted); }
+
+.line2 { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.3; }
+
+/* line 2 is a link only in `Empty` and `UpdateRequired`, whose words never truncate. the press
+   reaches 24px, centred on the word, without growing the line. */
+.line2:has(> .link) { overflow: visible; }
+
+.link { position: relative; color: var(--accent); }
+
+.link::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block: calc(50% - 12px);
 }
 
-/* the sheet has the room to wrap what the bar and mini truncate. */
-.sheet .title,
-.sheet .subtitle { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.muted .title { color: var(--ink-muted); }
+.muted .art { opacity: 0.6; }
+
+/* the fold: time left leads line 2 once the folio's column is gone. */
+.fold { display: none; }
+
+@container player (width < 46rem) {
+  .fold { display: inline; }
+}
+
+/* the sheet has the room to wrap. */
+.sheet .title { font-size: var(--text-lg); white-space: normal; overflow-wrap: anywhere; }
+
+@media (forced-colors: active) {
+  .dot { forced-color-adjust: none; background: CanvasText; box-shadow: 0 0 0 2px Canvas; }
+}

@@ -1,13 +1,28 @@
-/* keys keep their size; a narrow row wraps instead. */
+/* each key 44px, gap 0; an absent key's slot stays, unseen. */
 .utilities {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2);
   min-width: 0;
 }
 
-.utilities > button { flex: 0 0 auto; }
+.slot { display: inline-flex; flex: none; }
 
-.sheet { justify-content: center; }
+.key { --control-icon-size: 20px; width: 44px; height: 44px; }
+
+.absent { visibility: hidden; }
+
+@container player (width < 60rem) {
+  .absent { display: none; }
+}
+
+@container player (width < 46rem) {
+  .belowFold { display: none; }
+}
+
+@container player (width < 36rem) {
+  .belowNarrow { display: none; }
+}
+
+/* the sheet's row, centred, with room between labelled keys. */
+.sheet { justify-content: center; gap: var(--space-2); }
