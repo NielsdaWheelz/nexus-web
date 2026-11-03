@@ -1,5 +1,6 @@
 // Remote reader roots: identity, facets and canonical source context. Local authored
 // annotations and links never pass through these helpers.
+import { Glasses, Highlighter, Link, NotebookTabs, type LucideIcon } from "lucide-react";
 import type { Schema } from "@/lib/api/wire";
 import type { MarkAnchor, TextRange } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
@@ -18,6 +19,9 @@ export type Filter = keyof Schema<"ReaderEvidenceCountsOut">;
 export const FILTERS: readonly Filter[] = ["highlights", "citations", "links", "machine_links"];
 export const FILTER_LABELS: Record<Filter, string> = {
   highlights: "highlights", citations: "citations", links: "links", machine_links: "librarian links",
+};
+export const FILTER_ICONS: Record<Filter, LucideIcon> = {
+  highlights: Highlighter, citations: NotebookTabs, links: Link, machine_links: Glasses,
 };
 
 export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {

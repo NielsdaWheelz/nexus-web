@@ -23,5 +23,14 @@ target or was skipped.
 impact: a keyboard user who removes a link loses their place; the next Tab starts from
 the top of the document.
 
-resolved when: the journey passes (it is XFAIL with this defect; the journey's focus log
-names whether the control was removed, disabled or made inert).
+current evidence: companion density moves disclosure below the menu. the server-fact
+`mutate()` in `ResourceOutlineRow.tsx` now uses `outlineRowFocusTarget` from
+`ResourceOutlineList.tsx`: the neighbour's bullet, or its named row if the bullet is
+disabled. the former first-focusable query could select `NoteEditor.tsx`'s unnamed
+`tabindex=-1` shell. this repairs target selection; it does not establish that later
+refresh retains focus. local authored unlink still delegates to its outline owner.
+the historical loss above has not been requalified.
+
+resolved when: real local-unlink and server-fact-removal journeys keep focus on a
+connected named neighbour after refresh, including a disabled neighbour bullet;
+record whether any lost target was removed, disabled or made inert.

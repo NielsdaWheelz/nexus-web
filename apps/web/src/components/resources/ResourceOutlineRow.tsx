@@ -53,7 +53,7 @@ import { authoredItem } from "@/lib/notes/presentation";
 import ReaderExcerpt from "./ReaderExcerpt";
 import {ResourceTypeIcon} from "./ResourceType";
 import ResourceMetadata from "./ResourceMetadata";
-import {ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
+import {outlineRowFocusTarget, ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
 import factualStyles from "./ResourceContent.module.css";
 
@@ -308,7 +308,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const open = projection.kind === "resource" &&
     (outline?.view.folds.get(occurrenceKey) ?? localOpen ?? (highlightId !== null && !props.inSource));
   useLayoutEffect(()=>{
-    if(!hasControl&&lostArrowFocus.current){const row=element.current,bullet=row?.querySelector<HTMLElement>("[data-outline-bullet]");(bullet&&!bullet.matches(":disabled")?bullet:row)?.focus({preventScroll:true});}
+    if(!hasControl&&lostArrowFocus.current&&element.current)outlineRowFocusTarget(element.current).focus({preventScroll:true});
     lostArrowFocus.current=false;
   },[hasControl]);
   const childrenId = useId();
@@ -329,7 +329,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     // A nested fact may retire its whole ancestor once its list refreshes.
     const neighbours = fallback && row?.parentElement !== fallback ? [fallback]
       : [row?.nextElementSibling, row?.previousElementSibling, row?.parentElement?.closest("li")].flatMap(node => node
-        ? [node.querySelector<HTMLElement>("[data-row-focusable]:not(:disabled)") ?? (node as HTMLElement)] : []);
+        ? [outlineRowFocusTarget(node as HTMLElement)] : []);
     if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
     let ownsFocus = true;
     const release = () => { ownsFocus = false; };
@@ -384,14 +384,13 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       aria-label={`${open ? "collapse" : "expand"} linked resources for ${label}`} aria-expanded={open}
       aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
       onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>
-    : <span className={styles.spacer} aria-hidden="true"/>;
+    : null;
   if (projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}>
     <li {...rootProps} ref={attachRow} className={cx(styles.row, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${label}`}
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref}>
       <div className={styles.head}>
-        {disclosure}
         {commands.length ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]}
           label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({})}
@@ -413,7 +412,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
             fork: touch && runtime && item.activation.kind === "route" && item.activation.href !== null
               ? paneForkLink({ runtime, target: { href: item.activation.href, labelHint: label }, disabledReason: null }) : null,
           }} showSourceSubject={item !== null && item.action_ref !== item.ref}
-          sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/></div>
+          sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/>
+          {disclosure}</div>
       </div>
       {open ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
         <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/></section></div> : null}

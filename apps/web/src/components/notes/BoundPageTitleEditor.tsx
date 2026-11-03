@@ -11,6 +11,7 @@ import type { EditorHistory } from "@/lib/notes/structure";
 import {FeedbackBusy} from "@/components/feedback/Feedback";
 import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
 import Textarea from "@/components/ui/Textarea";
+import styles from "./BoundPageTitleEditor.module.css";
 import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -169,7 +170,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     <FeedbackBusy subject={pageRef} pending={pending}/>
     <AuthoredReadFailure error={error} occurrence={occurrence} pending={pending} retry={retry}/>
     {document ? <DocumentReadFailure document={document}/> : null}
-    <Textarea bare autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
+    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
     onSelect={() => {inputIntent.current++; const at = selection(); beforeSelection.current = at; onSelectionChange?.(at);}}

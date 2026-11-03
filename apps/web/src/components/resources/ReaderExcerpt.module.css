@@ -3,12 +3,18 @@
   max-width: 100%;
   color: var(--ink-muted);
   font-family: var(--reader-font-family, var(--font-serif));
-  font-size: var(--reader-font-size-px, var(--text-md));
-  line-height: var(--reader-line-height, var(--leading-normal));
+  /* the reader's size is inline on this element alone, so the companion's scale and cap meet it
+     here. 14 is the serif matching the companion's sans 13; unset tokens give the reader's size. */
+  font-size: min(var(--reader-font-size-px, var(--text-md)),
+    max(.875rem, calc(var(--reader-font-size-px, var(--text-md)) * var(--excerpt-scale, 1))),
+    var(--excerpt-max-size, 100rem));
+  line-height: var(--content-line-height, var(--reader-line-height, var(--leading-normal)));
   overflow-wrap: anywhere;
   white-space: normal;
   font-weight: var(--weight-regular);
 }
+/* a quote's heading reads as quote. the attribute outweighs `.renderer h1`, whose order is not ours. */
+.excerpt[data-structure] :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; line-height: inherit; }
 .excerpt > :first-child, .excerpt > :first-child > :first-child { margin-block-start: 0; }
 .excerpt > :last-child, .excerpt > :last-child > :last-child { margin-block-end: 0; }
 .excerpt .tableScroll table { margin-block: 0; }

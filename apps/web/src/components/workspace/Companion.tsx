@@ -636,7 +636,7 @@ export default function Companion(props: {
       {host && open && activeId !== null ? createPortal(
         <CompanionPresentationContext value={presentation}>
           <OverlayContext value={portalParent}>
-            <div className={styles.contents} onKeyDown={columnKeyDown}>
+            <div className={styles.contents} data-presentation={presentation} onKeyDown={columnKeyDown}>
               {presentation === "Column" ? header(close) : null}
               {panels}
             </div>

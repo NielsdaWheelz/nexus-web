@@ -87,8 +87,8 @@
   min-inline-size: 0;
 }
 
-/* Every press reaches the native radio; the label paints its focus. */
-.segmentInput {
+/* Every press reaches the native input, which covers its label; the label paints its focus. */
+.coveringInput {
   position: absolute;
   inset: 0;
   inline-size: 100%;
@@ -98,10 +98,42 @@
   cursor: inherit;
 }
 
+/* the element outweighs `selection.target`, whose order is not ours. */
+label.facet {
+  gap: var(--space-1);
+  padding-inline: var(--space-1);
+  color: var(--ink);
+}
+
+/* keeps hover on the input beneath it */
+.facetIcon {
+  position: relative;
+  display: inline-flex;
+  pointer-events: none;
+}
+
+label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon {
+  color: var(--ink-faint);
+}
+
+/* a slash, as lucide's `EyeOff` draws one */
+label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(50% - var(--stroke-hairline) / 2);
+  inset-block: -1px;
+  inline-size: var(--stroke-hairline);
+  background: currentColor;
+  transform: rotate(-45deg);
+}
+
 @media (any-pointer: coarse) {
   .choice { min-block-size: max(var(--size-xl), 2.75rem); }
 }
 
 @media (forced-colors: active) {
   .choice:has(input:disabled) { color: GrayText; }
+  label.facet { color: CanvasText; }
+  /* `.surface` opts out of forced colours, so the dim would survive; off keeps only its slash */
+  label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon { color: inherit; }
 }

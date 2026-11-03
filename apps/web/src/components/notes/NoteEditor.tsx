@@ -194,7 +194,6 @@ export interface NoteEditorProps {
   editable: boolean;
   label: string;
   placeholder?: string;
-  compact?: boolean;
   inspection?: NoteInspection | null;
   embeddedItem?: ResourceItem | null;
   /** Terminal bodies keep rich content, but embeds cannot reopen the outline. */
@@ -913,9 +912,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const nativeEntry = state.selection instanceof TextSelection && field?.row_id !== null && field?.row_id !== undefined &&
           state.selection.from >= field.from && state.selection.to <= field.to && !latest.current.projection?.itemText(field.row_id);
         return {
-          class: latest.current.compact
-            ? `${styles.view} ${styles.compact}`
-            : styles.view,
+          class: styles.view,
           role: activeReference(state) !== null ? "combobox" : "textbox",
           "aria-readonly": String(
             !latest.current.editable || busy.current || inputMode.current !== "text",
