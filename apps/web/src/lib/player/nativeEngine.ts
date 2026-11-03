@@ -475,7 +475,7 @@ export function createNativeEngine(
         committed = true;
         return header(await call("queue_commit", { queue_id: next.queue_id }, { timeoutMs: LOAD_TIMEOUT_MS }));
       } catch (error) {
-        if (committed && nativeUnavailable(error)) return unansweredChange();
+        if (committed && nativeUnavailable(error) && error.message !== "NotConnected") return unansweredChange();
         await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
         throw queueError(error, false);
       }
@@ -484,7 +484,7 @@ export function createNativeEngine(
       if (unanswered > 0) throw new QueueCommandError("Unsettled");
       try { return header(await call("queue_command", { ...input }, { timeoutMs: LOAD_TIMEOUT_MS })); }
       catch (error) {
-        if (!nativeUnavailable(error)) throw queueError(error, false);
+        if (!nativeUnavailable(error) || error.message === "NotConnected") throw queueError(error, false);
         return unansweredChange();
       }
     },

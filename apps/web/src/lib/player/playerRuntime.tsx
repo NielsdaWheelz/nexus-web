@@ -928,7 +928,9 @@ export function GlobalPlayerProvider({
         if (target !== engineRef.current) return;
         void nativeRefresh(target, header);
         if (mine !== latest.current || target !== engineRef.current || header.current_entry_id === null) return;
-        await target.queue.command({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play, position_ms: positionMs } });
+        try {
+          await target.queue.command({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play, position_ms: positionMs } });
+        } finally { settleNative(target); }
         return;
       }
       if (!(await ownership.current?.acquire(true, null)) || mine !== latest.current) return;
@@ -1077,8 +1079,12 @@ export function GlobalPlayerProvider({
           else await owner.play(knownDescriptor ?? undefined);
         } else if (owner.queue !== null) {
           const saved = queueViewRef.current.header!;
-          void nativeRefresh(owner, await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
-            command: { kind: "select", entry_id: current.id, play: true, position_ms: null } }));
+          let selected: QueueHeader;
+          try {
+            selected = await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
+              command: { kind: "select", entry_id: current.id, play: true, position_ms: null } });
+          } finally { settleNative(owner); }
+          void nativeRefresh(owner, selected);
         } else await activate(current, true, mine, knownDescriptor, null);
       }, { kind: "Episode", mediaId });
     }
