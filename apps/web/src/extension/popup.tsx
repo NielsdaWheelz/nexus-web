@@ -13,7 +13,7 @@ import { StrictMode, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Announcement, FeedbackProvider } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
-import { sentence, type Line } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
@@ -189,7 +189,7 @@ function Popup() {
     const line = notice ?? { fact: "opening…" };
     return <main className={styles.popup} ref={frame} tabIndex={-1} aria-busy="true">
       <Fact line={line} />
-      <Announcement text={sentence(line)} level="Polite" />
+      <Announcement text={line.reason ? `${line.fact} ${line.reason}` : line.fact} level="Polite" />
     </main>;
   }
 
@@ -234,11 +234,11 @@ function Popup() {
   const replacementLine = replacement !== null && phase?.kind !== "saved"
     ? { fact: "this replaces the imported article.", reason: replacement.title ?? undefined } : null;
   // one popup speaker; the fact controls stay mounted when their sentence changes.
-  const spoken = notice ?? revocationLine ?? captureLine ?? accountLine ?? statusLine ?? sourceLine ?? replacementLine;
+  const spoken: Line | null = notice ?? revocationLine ?? captureLine ?? accountLine ?? statusLine ?? sourceLine ?? replacementLine;
 
   return (
     <main className={styles.popup} ref={frame} tabIndex={-1}>
-      <Announcement text={spoken === null ? "" : sentence(spoken)} level="Polite" />
+      <Announcement text={spoken === null ? "" : spoken.reason ? `${spoken.fact} ${spoken.reason}` : spoken.fact} level="Polite" />
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
