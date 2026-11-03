@@ -42,6 +42,7 @@ interface SettingsDraft {
   request: { name: string; rawDraft: string | null; expectedName: string; unconfirmed: boolean } | null;
   busy: "Rename" | "Delete" | null;
   confirming: boolean;
+  /** The delete endpoint acknowledged the operation, including invisible absence. */
   deleted: boolean;
   unknown: Unconfirmed | null;
   /** The name the server refused as invalid, while the draft still says it. */
@@ -186,7 +187,7 @@ export default function LibrarySettingsDialog({
     <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
       <div className={styles.sections}>
         {recovery}
-        {deleted ? <Fact line={{ fact: `“${current.name}” is deleted.`, reason: "your unsaved name is still here to copy." }} speak /> : null}
+        {deleted ? <Fact line={{ fact: "this library isn’t available.", reason: "your unsaved name is still here to copy." }} speak /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>
           <div className={styles.row}>
