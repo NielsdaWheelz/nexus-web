@@ -45,7 +45,12 @@ text remains explicit in copy rather than claiming searchable content.
 
 `related_imports` is a required array of `{relation: "article" | "thread", item: ImportItem}`. native x carrier inspections supply distinct visible one-hop relationships even when thread publication failed. each item uses its own current attempt and source/search state; no parent status aggregates or controls its child. deleted or invisible resources are omitted, and reading never retries or reacquires anything.
 
-imports sends no write of its own. its commands go to their owners with their retry rules: `POST /media/{id}/retry` and `/repair` (`recoverMedia`, the offer's exact expectation; a stale one is 409 and reads "This import changed"), `POST /media/uploads` with the session's own id and the original file, and `DELETE /media/uploads/{id}` (a session that published meanwhile is done), metadata research and review through `lib/media`.
+imports commands use their domain endpoints and retry rules:
+`POST /media/{id}/retry` and `/repair` carry the offer's exact expectation;
+`POST /media/uploads` carries the session's id and original file;
+`DELETE /media/uploads/{id}` also settles a session published meanwhile.
+metadata research and review use `lib/media`. a generic409 alone proves no
+changed-import cause.
 
 row shortcuts and overflow share the same open, offered recovery and upload
 commands. at row content widths up to 520px only more remains beside identity;
@@ -54,8 +59,9 @@ when ready, independently of title selection, which opens the import inspector.
 overflow open is a command with plain/shift intent: close precedes asynchronous
 validation. wide/title anchors retain native browser gestures.
 unpublished upload menus are immediate; media menus retain canonical preparation.
-retry upload synchronously opens the existing file input, then file selection
-uses the session's existing attempt owner. cancellation creates no command.
+an initial upload retry synchronously opens the visit's file input. selection
+creates its retained attempt; cancellation creates no command. an uncertain
+upload retries its original file, guard, generation and confirmation.
 metadata retains its canonical menu projectors and direct recovery owner, including
 the existing eager source-remedy read and visible feedback. responsive hosts use
 owner-defined control markers; they do not interpret metadata workflow internals.
@@ -110,6 +116,14 @@ entry, including calls from previously retained controls.
 there is no storage, startup restore, replay or browser-restart recovery. other
 commands keep their existing owners and retry rules.
 
+`lib/imports/commands.tsx` owns upload and capture-removal commands for one
+imports visit. list rows and the companion use that same owner. pending and
+uncertain commands retain their own controls across filtering, selection and
+inspector closure; those presentation changes prove no outcome. the common
+work guard protects their in-flight and uncertain lifetime. removal and discard
+name the same session deletion, so acceptance settles that one intent.
+neither a read nor a restored view sends a command.
+
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
 
 ## acquisition recovery
@@ -118,8 +132,11 @@ every attempted source or metadata admission wakes imports, including an unknown
 and current-reference supersession; [libraries](library.md) owns retention and
 placement revisions. import views never infer current saving from a past receipt.
 
-[add content](add-content.md) owns live upload recovery. a guard refusal permits
-review against the same staged generation before expiry; an unknown confirmation
-retains its exact command. losing that owner requires file reselection/recapture.
-imports exposes its existing retry-upload action rather than durable confirmation
-recovery or a second placement command owner.
+[add content](add-content.md) and imports retain live upload attempts in their
+respective owners. callers prepare acquisition guards separately from sending,
+so a failed guard read cannot become an unknown write. a known refusal permits
+review against the staged generation before expiry. an unsettled confirmation
+keeps its exact command through later refusal; only a proven publication fence
+or settlement releases it. an in-call abort lacks a dispatch fact and preserves
+that immutable confirmation conservatively. losing the visit requires file
+reselection; neither owner persists replay state across browser restart.
