@@ -10,6 +10,7 @@
 // consumed; unavailable activation enters the same navigator as resolved links.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useActiveRegion } from "@/components/feedback/Feedback";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
@@ -151,6 +152,7 @@ export default function PdfSurface({
     { kind: "Opening" | "Open" } | { kind: "Failed"; retrying: boolean }
   >({ kind: "Opening" });
   const [attempt, setAttempt] = useState(0);
+  useFailedReadRepair(status.kind === "Failed", status.kind === "Opening" || status.kind === "Failed" && status.retrying, () => setAttempt(n => n + 1));
   const speak = useActiveRegion();
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);

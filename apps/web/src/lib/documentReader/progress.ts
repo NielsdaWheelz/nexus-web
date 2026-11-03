@@ -23,7 +23,7 @@ export type Handoff =
       readonly canonical: CursorSnapshot;
       readonly device: Locator;
     };
-export type SaveFailure = { readonly error: unknown; readonly offline: boolean };
+export type SaveFailure = { readonly error: unknown };
 export type ProgressState =
   | { readonly kind: "Loading" }
   | {
@@ -120,7 +120,7 @@ export function createProgressSync(
   /** Since the last settlement: one lost save, sent once more unsaid, or a failure said. Whatever
    * clears it restarts the count, so the next lost save has its resend too. */
   let failure: { readonly kind: "Resending" } | ({ readonly kind: "Said" } & SaveFailure) | null = null;
-  const said = (error: unknown) => ({ kind: "Said" as const, error, offline: navigator.onLine === false });
+  const said = (error: unknown) => ({ kind: "Said" as const, error });
   let observation: { readonly result: ProgressUnobserved; readonly locator: Locator | null; readonly resolution: "Canonical" | "Device" | null } | null = null;
   let movementPaused = false;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */

@@ -13,20 +13,18 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Hold, useOutcome, type FeedbackContent } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
-import { remoteAdmission, remoteReady } from "@/lib/native/admission";
-import type { RemoteAdmission } from "@/lib/native/contracts";
+import { Hold, useOutcome, useResendVerbs, useTransportVerbs, type FeedbackContent } from "@/components/feedback/Feedback";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import {
   apiFetch,
   isApiError,
   isStaleBuild,
-  isUnauthenticatedApiError,
+  isRefusal,
   outcomeUnknown,
   requestWithDeadline,
   type ApiError,
 } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -37,7 +35,6 @@ import {
   reconnectMetadataOperations,
   startMetadataAccount,
 } from "@/lib/media/mediaMetadataOperations";
-import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 
@@ -91,48 +88,21 @@ function refusalReason(error: ApiError): string {
   }
 }
 
-/** What a request would meet now, from admission alone: signed out, stale, or unreachable. While
- * admission checks, or is ready, no reason is true yet: null. */
-export function admissionTransport(admission: RemoteAdmission): Transport | null {
-  switch (admission) {
-    case "SignInRequired": return "SignIn";
-    case "UpdateRequired": return "Update";
-    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
-    case "Checking":
-    case "Ready":
-      return null;
-  }
-}
-
-/** A command admission holds back unsent: its fact, and why where a reason is true. */
-export function unadmitted(fact: string): { line: Line; verbs: Verbs | null } {
-  const transport = admissionTransport(remoteAdmission());
-  return transport === null ? { line: { fact }, verbs: null }
-    : { line: TRANSPORT_LINES[transport].command(fact), verbs: transportVerbs(transport, { signIn: null }) };
-}
-
-/** A sent request whose answer never came, or that failed upstream: the server may have taken it.
- * A lapsed session was answered, and offline nothing left the device. `offline` is the device's
- * state when the request failed. An installed client's admission refusal is unsent too, but wears a
- * sent request's code, so it reads as unsure until it has its own. */
-export function mayHaveLanded(error: unknown, offline = navigator.onLine === false): error is ApiError {
-  return outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED" && !(offline && error.status === 0);
-}
-
-/** A failed save of state this tab still holds, by what it met; `offline` is the device's state
- * when it failed. One the device never sent has no verb while it stays offline, and `retry` once
- * back: nothing resends it on its own. One the server may have taken is `unsure`, one it refused
- * is `kept`, and the transport says the rest, so a stale build offers reload alone. Its owner
- * renders it again on reconnect, so the verb returns with the connection. */
-export function heldSaveFailure(error: ApiError, offline: boolean, retry: Verb, copy: {
-  readonly fact: string; readonly unsure: Line; readonly kept: Line;
-}): { line: Line; verbs: Verbs | null } {
-  if (offline && error.status === 0) return navigator.onLine === false
-    ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null } : { line: copy.kept, verbs: [retry] };
-  if (mayHaveLanded(error, offline)) return { line: copy.unsure, verbs: [retry] };
-  const transport = transportOf(error);
-  return transport === "Refused" ? { line: copy.kept, verbs: [retry] }
-    : { line: TRANSPORT_LINES[transport].command(copy.fact), verbs: transportVerbs(transport, { retry, signIn: null }) };
+/** A kept save uses the shared write partition and the shell's current remedies. */
+export function useHeldSaveFailure() {
+  const transportVerbs = useTransportVerbs();
+  const resendVerbs = useResendVerbs();
+  return (error: ApiError, retry: CommandVerb, copy: {
+    readonly fact: string; readonly unsure: Line; readonly kept: Line;
+  }): { line: Line; verbs: Verbs | null } => {
+    if (outcomeUnknown(error)) return { line: copy.unsure, verbs: resendVerbs(retry) };
+    const transport = transportOf(error);
+    if (transport === "Offline") return navigator.onLine === false
+      ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null }
+      : { line: copy.kept, verbs: resendVerbs(retry) };
+    return { line: transport === "Refused" ? copy.kept : TRANSPORT_LINES[transport].command(copy.fact),
+      verbs: transportVerbs(transport, { retry }) };
+  };
 }
 
 function localFailure(line: Line, verbs: Verbs | null, error: ApiError | null): AdmissionResult {
@@ -197,13 +167,9 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
       entry.error = isApiError(error) ? error : null;
       entry.unconfirmed += 1;
       publish();
-      if (isUnauthenticatedApiError(error)) {
-        handleUnauthenticatedApiError(error);
-        return { kind: "Pending", key: entry.key };
-      }
-      if (isAbortError(error) || mayHaveLanded(error)) return { kind: "Pending", key: entry.key };
-      // what is left at status 0 never left the device: offline, nothing started.
-      if (isApiError(error) && (definiteRefusal(intent, error) || isStaleBuild(error) || error.code === "E_RATE_LIMITED" || error.status === 0)) {
+      handleUnauthenticatedApiError(error);
+      if (isAbortError(error) || outcomeUnknown(error)) return { kind: "Pending", key: entry.key };
+      if (isRefusal(error)) {
         if (!fresh) return { kind: "Pending", key: entry.key };
         retire(entry);
         return definiteRefusal(intent, error) ? localFailure({ fact: FACT[intent.kind], reason: refusalReason(error) }, null, null)
@@ -238,10 +204,6 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
     pending: (kind: AdmissionIntent["kind"], mediaId: string) =>
       snapshot.find(entry => entry.intent.kind === kind && entry.intent.mediaId === mediaId) ?? null,
     admit(original: AdmissionIntent): Promise<AdmissionResult> {
-      if (!remoteReady()) {
-        const { line, verbs } = unadmitted(FACT[original.kind]);
-        return Promise.resolve(localFailure(line, verbs, null));
-      }
       const scope = lifetime;
       if (scope === null || !live(scope)) return Promise.resolve({ kind: "OwnerGone" });
       const key = `media-admission:${accountId}:${original.kind}:${original.mediaId}`;
@@ -309,7 +271,7 @@ export function MediaAdmissionsHost() {
 
 function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
   const owner = useMediaAdmissions();
-  const online = useConnectivity() === "Online";
+  const resendVerbs = useResendVerbs();
   const throwLater = useThrowLater();
   const { fail } = useOutcome();
   const resource = usePaneFreeServerValue({
@@ -318,13 +280,13 @@ function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
     load: signal => resolveResourceItem(`media:${entry.intent.mediaId}`, signal),
   });
   const label = resource.status === "ready" && !resource.data.missing ? resource.data.label : null;
-  const stale = isStaleBuild(entry.error) ? entry.error : null;
+  const refused = isRefusal(entry.error) ? entry.error : null;
   const fact = FACT[entry.intent.kind];
-  useEffect(() => stale === null ? undefined : fail(stale, fact), [fact, fail, stale]);
-  if (entry.unconfirmed === 0 || stale !== null) return null;
+  useEffect(() => refused === null ? undefined : fail(refused, fact), [fact, fail, refused]);
+  if (entry.unconfirmed === 0) return null;
   const subject = entry.intent.kind === "SourceRefresh" ? "the source refresh" : "the metadata search";
   return <Hold id={entry.key} attempt={entry.unconfirmed}
-    line={{ fact: label === null ? `not sure ${subject} started.` : `not sure ${subject} started for “${label}”.`, reason: "it may have gone through." }}
-    verbs={[{ label: "retry", commandKey: `retry ${entry.key}`, busy: entry.kind === "sending", disabledReason: online ? undefined : "you’re offline.",
-      run: () => { void owner.retry(entry.key).catch(error => throwLater({ error })); } }]} />;
+    line={{ fact: label === null ? `not sure ${subject} started.` : `not sure ${subject} started for “${label}”.`, reason: UNKNOWN_OUTCOME_REASON }}
+    verbs={resendVerbs({ label: "retry", commandKey: `retry ${entry.key}`, busy: entry.kind === "sending",
+      run: () => { void owner.retry(entry.key).catch(error => throwLater({ error })); } })} />;
 }

@@ -6,8 +6,10 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
-import type { Line, Verb, Verbs } from "@/components/feedback/stage";
-import { heldSaveFailure } from "@/lib/media/admissions";
+import { useTransportVerbs } from "@/components/feedback/Feedback";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import type { Line, CommandVerb, Verbs } from "@/components/feedback/stage";
+import { useHeldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
@@ -110,11 +112,22 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
 
 /** A failed save of the server cursor, said in the reader's lane by what it met. A same-system
  * defect throws to the boundary. */
-export function positionSaveFailure({ error, offline }: SaveFailure, retry: Verb): { readonly line: Line; readonly verbs: Verbs | null } {
-  const fact = "your reading position isn’t saving.";
-  const held = { fact, reason: "this tab still holds it." };
-  if (!isApiError(error)) return { line: held, verbs: [retry] };
-  return heldSaveFailure(error, offline, retry, { fact, unsure: { fact: "not sure your reading position saved.", reason: held.reason }, kept: held });
+export function usePositionFeedback() {
+  const heldSaveFailure = useHeldSaveFailure();
+  const transportVerbs = useTransportVerbs();
+  return {
+    saveFailure({ error }: SaveFailure, retry: CommandVerb): { readonly line: Line; readonly verbs: Verbs | null } {
+      const fact = "your reading position isn’t saving.";
+      const held = { fact, reason: "this tab still holds it." };
+      if (!isApiError(error)) throw error;
+      return heldSaveFailure(error, retry, { fact, unsure: { fact: "not sure your reading position saved.", reason: held.reason }, kept: held });
+    },
+    loadFailure(error: unknown, retry: CommandVerb): { readonly line: Line; readonly verbs: Verbs | null } {
+      if (!isApiError(error)) throw error;
+      const transport = transportOf(error);
+      return { line: TRANSPORT_LINES[transport].command("couldn’t load your reading position."), verbs: transportVerbs(transport, { retry }) };
+    },
+  };
 }
 
 /** An exact resource root's own place in the document map. */
