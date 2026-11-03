@@ -51,16 +51,21 @@ const sameVerb = (a: Verb, b: Verb) => "href" in a
   ? "href" in b && a.label === b.label && a.href === b.href
   : "commandKey" in b && a.commandKey === b.commandKey;
 
+/** Where a withdrawn verb's focus goes, and how, in place of its home: a slip's room keeps it among
+ * the room's own controls. */
+type Withdrawal = { target(): HTMLElement | null; give(next: HTMLElement): void };
+
 /** A held control never changes its command: what was under the pointer or focus stays, blocked.
  * `onActivated` runs before a command, and after a link that navigated. A verb withdrawn while it
- * holds focus returns it home, unless it navigated, which took focus with it. */
-export function VerbControl({ verb, contextId, onActivated }: { verb: Verb; contextId: string; onActivated?: () => void }) {
+ * holds focus returns it home, or to `withdrawal`'s target, unless it navigated, which took focus
+ * with it. */
+export function VerbControl({ verb, contextId, onActivated, withdrawal }: { verb: Verb; contextId: string; onActivated?: () => void; withdrawal?: Withdrawal }) {
   const [held, setHeld] = useState<Verb | null>(null);
   const interaction = useRef({ pointer: false, focus: false });
   const root = useRef<HTMLSpanElement>(null);
   const navigated = useRef(false);
   const reasonId = useId();
-  useFocusReturn(root, home => navigated.current ? null : home);
+  useFocusReturn(root, home => navigated.current ? null : withdrawal ? withdrawal.target() : home, withdrawal?.give);
   const replaced = held !== null && !sameVerb(held, verb);
   const shown = replaced ? held : verb;
   const reason = replaced ? "this action is no longer available" : shown.disabledReason;

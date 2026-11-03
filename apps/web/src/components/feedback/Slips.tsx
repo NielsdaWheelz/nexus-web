@@ -291,6 +291,7 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
   const [outgoing, setOutgoing] = useState(slip.replaced);
   const [onset, setOnset] = useState(stacked && outgoing === null ? row.weight === "Risk" ? "Risk" : "Notice" : undefined);
   useFocusReturn(element, focus.stay, focus.pass);
+  const withdrawal = { target: focus.stay, give: focus.pass };
   const plain = row.weight === "Plain";
   const activated = (verb: Verb) => () => {
     focus.navigated.current = "href" in verb;
@@ -316,8 +317,8 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
         <span className={styles.fact}>{row.line.fact}</span>{row.line.reason ? <span className={styles.reason}> {row.line.reason}</span> : null}
       </span>
     </p>
-    {row.verbs ? <VerbControl verb={row.verbs[0]} contextId={lineId} onActivated={activated(row.verbs[0])} /> : null}
-    {row.verbs?.[1] ? <VerbControl verb={row.verbs[1]} contextId={lineId} onActivated={activated(row.verbs[1])} /> : null}
+    {row.verbs ? <VerbControl verb={row.verbs[0]} contextId={lineId} onActivated={activated(row.verbs[0])} withdrawal={withdrawal} /> : null}
+    {row.verbs?.[1] ? <VerbControl verb={row.verbs[1]} contextId={lineId} onActivated={activated(row.verbs[1])} withdrawal={withdrawal} /> : null}
     {plain
       ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.dismiss(row.key)} />
       : <Button className={styles.close} iconOnly icon={<ChevronDown />} aria-label="tuck notice" tooltip={NO_HINT} onClick={() => stage.tuck(row.key)} />}
