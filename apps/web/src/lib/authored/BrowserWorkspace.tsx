@@ -1,23 +1,30 @@
 "use client";
 /** Desktop adapter for the shared installed shell. A confirmed local binding
- * opens without credentials; first provisioning requires verified server data. */
+ * opens without credentials; first provisioning requires verified server data.
+ * Remote pane facts settle once before publication; a modeled failure admits local
+ * writing with the title reader’s existing failure/retry state. */
 import { useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
 import { FeedbackState } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
+import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
+import { readPresentationFacts, remotePresentation, type InitialPresentations } from "@/lib/workspace/presentationRead";
 import { enterWorkspace } from "@/lib/workspace/model";
 import { readBrowserAdmission, beginBrowserSignIn, browserSignedOut, readBrowserRetiring, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
 import { finishBrowserRetirement, type BrowserRetirementPending } from "./signOut";
+// Metadata is optional for local admission; bound its one cold read to five seconds.
+const INITIAL_FACTS_TIMEOUT_MS = 5_000;
+
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
-  const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string }) | null>(null);
+  const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string; presentations: InitialPresentations }) | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
   const [retiring, setRetiring] = useState(false);
   const [retirementPending, setRetirementPending] = useState<BrowserRetirementPending | null>(null);
@@ -26,9 +33,11 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   const retiredReceipt = useRef(false);
   useEffect(() => {
     let live = true;
+    const controller = new AbortController();
     let handlingRetirement = false;
     const finishRetirement = async () => {
       handlingRetirement = true;
+      controller.abort();
       if (live) { setBinding(null); setRetiring(true); setRetirementPending(null); setFailure(null); }
       await finishBrowserRetirement(retiredReceipt.current, phase => { if (live) setRetirementPending(phase); });
       if (live) { setRetiring(false); setSignedOut(true); }
@@ -56,8 +65,28 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
       const tooLong = raw.length > MAX_WORKSPACE_HREF_LENGTH;
       const canonical = url.pathname === "/" || tooLong ? null : normalizeWorkspaceHref(parseNexusOpenUrl(url)?.href ?? raw);
       const href = canonical === null ? null : resolveTodayHref(canonical, saved.account.calendar_time_zone);
-      if (live) { setBinding({ ...saved, lifetime, workspace: enterWorkspace(saved.workspace, null, href) }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
+      const workspace = enterWorkspace(saved.workspace, null, href);
+      const locators = new Map<string, PanePresentationLocator>();
+      for (const pane of workspace.panes) {
+        const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator;
+        if (locator !== null && remotePresentation(locator)) locators.set(panePresentationLocatorKey(locator), locator);
+      }
+      const accountId = saved.account.account_id;
+      let presentations: InitialPresentations;
+      try {
+        // Bound cold metadata admission so a silent connection cannot hold local writing indefinitely.
+        const data = await requestWithDeadline({ signal: controller.signal, timeoutMs: INITIAL_FACTS_TIMEOUT_MS,
+          request: signal => readPresentationFacts([...locators.values()], signal, accountId),
+        });
+        presentations = { status: "success", data };
+      } catch (error) {
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        presentations = { status: "failure", error };
+      }
+      if (handlingRetirement) return;
+      if (live) { setBinding({ ...saved, lifetime, workspace, presentations }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
     })().catch(async error => {
+      if (!live || handlingRetirement) return;
       let ended = false;
       try { ended = await browserSignedOut(); } catch { /* Preserve the original startup failure. */ }
       if (!live) return;
@@ -70,7 +99,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
       void finishRetirement().catch(error => { if (live) setFailure(error instanceof Error ? error : new Error("local notes could not be removed")); });
     };
     window.addEventListener("nexus:authored-retired", retired);
-    return () => { live = false; window.removeEventListener("nexus:authored-retired", retired); };
+    return () => { live = false; controller.abort(); window.removeEventListener("nexus:authored-retired", retired); };
   }, [attempt]);
   const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
   if (retiring) return <FeedbackState
@@ -92,6 +121,6 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
     browserLifetime={binding.lifetime} readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
-    seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}
+    initialPresentations={binding.presentations} seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}
   /></AuthenticatedWorkspaceErrorBoundary></WorkProvider>;
 }

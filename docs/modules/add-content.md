@@ -96,13 +96,15 @@ branches on the same table, after the guard:
 | --- | --- | --- |
 | palette, nothing sent | root, origin restored | same |
 | palette, sent | root, query cleared | close |
-| outside | root, overview | close to opener |
+| outside | blank root | close to opener |
 
-restored means the query, the mode, the import row selected and focus in the
-combobox. a phone has no row selection: from search, focus lands in the search
-input; from the overview, on the import row, since focusing that input enters
-search. a query is never restored after a send. pickers consume esc first. the
-defect view has no arrow and keeps esc.
+restored means the query and its blank/typed root, with the originating row armed
+when it still exists. desktop focus rests in the combobox. on a phone, returning
+to an unsent typed origin focuses the field; returning to blank focuses the
+originating row or import row and keeps the keyboard down. after a send, the
+arrow clears the query and returns to blank with the import row armed. pickers
+consume esc first. the defect view has no arrow and keeps esc. both roots record
+scroll on their actual list scrollport and restore it once the rows compose.
 
 ## saved placement
 

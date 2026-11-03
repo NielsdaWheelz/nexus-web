@@ -928,7 +928,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             ...Object.fromEntries(
               FORMATS.map(([name, , key]) => [key, run(() => format(name))]),
             ),
-            "Mod-k": run(openLink),
+            "Mod-Shift-k": run(openLink),
             "Mod-a": (state, dispatch) => {
               const field = editingField(state);
               const selection = field ? TextSelection.create(state.doc, field.from, field.to) : new AllSelection(state.doc);
@@ -1620,7 +1620,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             icon={<Link2 size={16} aria-hidden="true" />}
             disabled={presentation === "code"}
             aria-label="Link"
-            tooltip={{text: "Link (⌘/Ctrl+K)"}}
+            tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
           />

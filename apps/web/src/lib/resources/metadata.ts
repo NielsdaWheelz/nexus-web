@@ -37,7 +37,6 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
   );
   const parts: ResourceMetadataPart[] = [];
   if (occurrenceLabel?.trim()) parts.push({ kind: "text", key: "occurrence", text: occurrenceLabel, href: null, date: null });
-  if (item.missing) parts.push({ kind: "text", key: "identity", text: identity, href: null, date: null });
   if (body.kind === "prose" && body.role?.trim()) parts.push({ kind: "text", key: "role", text: body.role, href: null, date: null });
   if (source && source.ref !== item.ref && (source.title?.trim() || source.activation?.href))
     parts.push({ kind: "text", key: "source", text: source.title?.trim() ? source.title : "source", href: source.activation?.href ?? null, date: null });

@@ -56,12 +56,15 @@ a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
 oracle and atlas routes. shared defaults for scales, sans and mono faces,
-spacing, motion, dimensions, focus metrics, scrims, highlights and shell geometry
+spacing, motion, dimensions, focus metrics, highlights and shell geometry
 live in a `:root`-only block before reduced-motion overrides. nested rooms inherit
 them from the nearest ancestor, including overrides supplied by context owners.
 the press block (`:root, [data-theme="dark"]`) declares only tokens another room
 overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
-the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
+the section-title font role and modal scrim. `--overlay-scrim` is room-owned:
+press `rgb(0 0 0 / 0.5)`, study `rgb(60 50 30 / 0.22)`, solar
+`rgb(5 15 10 / 0.45)`. dialog, sheet, hover preview, share and nexus consume it;
+`--overlay-scrim-soft` retains its shared default. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
@@ -198,6 +201,10 @@ containing width; control targets remain owned by their controls.
 adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
+the armed `Collection` row is `--surface-2` plus a 2px leading inset
+`--accent` bar, app-wide. forced colours replace that shadow with a `Highlight`
+outline. arming has no transition. literal `ResourceContent` matches underline
+in the accent at the room's hairline thickness, without changing font weight.
 
 search/catalog results use `compactViewport`'s six-row preferred budget (32px
 fine, 44px coarse), not a result-count limit. actions and standalone chapters use
@@ -222,6 +229,36 @@ marks. adapters own labels/descriptions and acknowledgement semantics. feedback
 and retry controls remain outside listboxes. editor suggestions stay inline;
 the editor retains focus and its insertion transaction. native selects and the
 launcher's specialized grid keyboard controller retain their own semantics.
+
+## nexus palette
+
+`Nexus.module.css` owns desktop arrangement; `Switchboard.module.css` owns
+the sheet, mobile page frames and disc. selection paint remains in `Collection`,
+match paint in `ResourceContent`, scrims in the room blocks.
+
+both surfaces use one 40px gutter; caret and titles share its x. palette glyphs
+are 16px with 1.5px stroke, currently set by one palette css rule over direct
+lucide imports. titles are sans 15px/400 in press and study, serif 18px/500 in
+solar. heads, facts and hints use `--ink-muted`. rows have square corners and
+one title plus at most one supplement; the resource identity never changes
+weight when matched or armed.
+
+the desktop card is at most 640px wide, on `--surface-canvas`, with a 48px
+query and 36px ordinary rows (44px for coarse pointers). typed holds 70dvh with
+a fixed continuation footer; arrivals consume the result scrollport above it.
+blank remains content-sized within that cap. the sheet has 48px row/control
+targets and a horizontally scrolling inline rail, with no key hints. rank one
+touches the bottom field; dom order is rank order, painted bottom-up. group heads
+are last in their reversed groups and retain accessible group labels.
+
+desktop open uses 120ms bloom: opacity .7→1, scale .985→1 and y −4→0;
+scrim fades over the same interval. close is instant. arriving rows use a 200ms
+opacity onset; held rows do not animate. rail open uses 100ms glide and 4px
+travel; rail focus paints immediately. `MobileSheet` owns its 220ms transform.
+reduced motion removes these animations; forced colours retain boundaries and
+the armed outline. disc swipes show a destination/clamp chip for 600ms without
+animation. the [release record](../issues/release-palette.md) owns glyph and
+feedback handoff debt.
 
 ## choice controls
 
