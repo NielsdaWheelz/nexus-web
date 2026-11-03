@@ -1,4 +1,5 @@
-/* A region sets --ruling-pitch to its row or reader line pitch. */
+/* A region sets --ruling-pitch to its row or reader line pitch. --ruling-elapsed is how long the
+   region's wait has run, so a ruling that continues one starts its clocks partway. */
 .ruling {
   --pitch: var(--ruling-pitch, var(--size-xl));
   position: relative;
@@ -10,7 +11,7 @@
   );
   mask-image: linear-gradient(to bottom, black, transparent);
   opacity: 0;
-  animation: ruling-in var(--duration-deliberate) var(--ease-glide) 200ms forwards;
+  animation: ruling-in var(--duration-deliberate) var(--ease-glide) calc(200ms - var(--ruling-elapsed, 0ms)) forwards;
 }
 
 @keyframes ruling-in {
@@ -24,7 +25,7 @@
   font-size: var(--text-xs);
   line-height: var(--pitch);
   visibility: hidden;
-  animation: still-opening 1ms 8s forwards;
+  animation: still-opening 1ms calc(8s - var(--ruling-elapsed, 0ms)) forwards;
 }
 
 @keyframes still-opening {
