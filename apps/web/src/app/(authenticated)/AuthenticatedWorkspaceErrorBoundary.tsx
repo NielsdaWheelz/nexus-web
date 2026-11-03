@@ -7,7 +7,8 @@ import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAcco
 import { isStaleBuild } from "@/lib/api/client";
 import { staleBuild } from "@/lib/api/failure";
 import { subscribeAdmission, updateRemedy } from "@/lib/native/admission";
-import { getWritingRuntime, hasUncommittedWriting, writingStoreStopped } from "@/lib/notes/runtime";
+import { getWritingRuntime, hasUncommittedWriting } from "@/lib/notes/runtime";
+import { authoredStoreStopped } from "@/lib/authored/client";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import styles from "./layout.module.css";
@@ -97,7 +98,7 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
     return () => { live = false; };
   }, [failed, runtime, saveState]);
   const copyable = failed ? retained : "";
-  const stopped = failed && writingStoreStopped(saveState?.error);
+  const stopped = owner !== null && authoredStoreStopped(owner);
   const editsVerb: Verb | null = copyable === "" ? null : { label: "copy note edits", commandKey: "CopyNoteEdits", run: () => { void copy(); } };
   // A stopped store refuses every call, so it copies then restarts, through the same loss
   // confirmation as any other exit. A failed retry republishes its error into the runtime.

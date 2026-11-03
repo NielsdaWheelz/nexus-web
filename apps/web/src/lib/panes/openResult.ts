@@ -1,7 +1,6 @@
 // A delayed result may land only while its initiating task still owns attention.
 // Mutation identity, retry and mounted form state remain with the feature owner.
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
-import { truncateText } from "@/lib/display/format";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, getInteractionOwnerBelow, type Layer } from "@/lib/ui/overlay";
@@ -105,7 +104,7 @@ export async function openAsyncResult({
   const label = subject ?? result.target.labelHint;
   // Navigation moved on before the result was ready: this is the result's only way open,
   // so it waits for an unblocked workspace like any other non-success outcome.
-  ctx.feedback.say({ fact: label === undefined ? result.title : `${result.title} · ${truncateText(label, 40)}` }, [{
+  ctx.feedback.say({ fact: label === undefined ? result.title : `“${label}” is ready to open.` }, [{
     label: result.openLabel,
     href: result.target.href,
     onActivate: event => {

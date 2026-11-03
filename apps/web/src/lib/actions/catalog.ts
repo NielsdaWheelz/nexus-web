@@ -36,8 +36,8 @@ import {
 } from "lucide-react";
 import type { Line } from "@/components/feedback/stage";
 import { outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { CONFLICT_NOTICE } from "@/lib/imports/copy";
+import { staleBuild } from "@/lib/api/failure";
+import { CONFLICT_REASON } from "@/lib/imports/copy";
 import { remoteAdmission } from "@/lib/native/admission";
 
 type Group =
@@ -357,14 +357,11 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
   const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
   if (id === "Playback") switch (error.code) {
     case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
-    case "E_PLAYBACK_REFUSED":
-    case "E_PLAYBACK_STALE": return domain({ fact: `couldn’t ${label.replace(/…$/, "").toLowerCase()}.`, reason: error.message }, true);
-    case "E_PLAYBACK_UNCONFIRMED": return { kind: "Unknown", line: { fact: "not sure playback started.", reason: "it may have gone through." } };
   }
   if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
     return domain({ fact: "couldn’t change the lectern.", reason: "it changed since this menu opened." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact: CONFLICT_NOTICE.title, reason: CONFLICT_NOTICE.message });
+    return domain({ fact, reason: CONFLICT_REASON });
   if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
   switch (error.code) {
     case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });
@@ -375,11 +372,4 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
     case "E_LIMIT": return domain({ fact, reason: "the destination is full." });
   }
   return { kind: "Transport", fact, retry: id === "Playback" };
-}
-
-/** The player's one sentence for a refused verb; lib/player reads its title until L7. */
-export function actionFailure(id: ActionId, label: string, error: ApiError): { readonly title: string } {
-  const outcome = actionOutcome(id, label, label, error);
-  const line = outcome.kind === "Transport" ? TRANSPORT_LINES[transportOf(error)].command(outcome.fact) : outcome.line;
-  return { title: line.reason ? `${line.fact} ${line.reason}` : line.fact };
 }

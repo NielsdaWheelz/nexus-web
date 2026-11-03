@@ -6,7 +6,6 @@
 // local read settles; the server's verbs settle in the trailing region (loading, ready or failed),
 // never gating, reordering or replacing the local snapshot. The menu and the verb rail both project it.
 import { useCallback, useState } from "react";
-import { isStaleBuild } from "@/lib/api/client";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
@@ -86,8 +85,7 @@ export function useContextualActions({
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
       !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)),
   } : trailingFailure ? {
-    kind: "Failed", request, feedback: trailingFailure.feedback, pending: remote?.kind === "Loading",
-    retry: trailingFailure.error && isStaleBuild(trailingFailure.error) ? null : () => resource.prepare(request),
+    kind: "Failed", request, error: trailingFailure.error,
   } : { kind: "Loading", request };
   // Verified device actions remain usable while the same remote owner retries.
   if (!resourceRef) return { ...identity, kind: "Immediate", content: initial };

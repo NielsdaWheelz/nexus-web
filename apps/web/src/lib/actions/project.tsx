@@ -1,7 +1,7 @@
 import type { Line } from "@/components/feedback/stage";
 import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assertNever } from "@/lib/assertNever";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { installedApp, remoteAdmission, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
 import type { PodcastActionFacts, PodcastActionFocus } from "./inlineActions";
 import PodcastSubscriptionIcon from "@/components/podcasts/PodcastSubscriptionIcon";
@@ -25,13 +25,13 @@ import type {
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isStaleBuild } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
+import { admissionReason as currentAdmissionReason, staleBuild, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
   deleteConversation,
 } from "@/lib/chat/conversationIndex";
-import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
+import { getConversationCommands, readConversationTree, repeatMessage, sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { lecternFull } from "@/lib/lectern/lectern";
@@ -46,9 +46,9 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { getWritingRuntime } from "@/lib/notes/runtime";
-import { localMutation, type LocalItem } from "@/lib/offline/localContent";
+import { LocalMutationObservationError, localMutation, type LocalItem } from "@/lib/offline/localContent";
 import type { PlaybackSource } from "./playbackSource";
-import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
+import { queueBlock, type PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
 } from "@/lib/podcasts/api";
@@ -96,6 +96,11 @@ export class ResourceActionFailure extends Error {
   constructor(readonly line: Line) { super(line.fact); }
 }
 
+/** The native command left without a receipt; only its surviving account owner holds it. */
+export class ResourceActionUnknown extends Error {
+  constructor(readonly line: Line) { super(line.fact); }
+}
+
 interface Options {
   readonly state?: { readonly label: string; readonly icon: LucideIcon };
   /** A client fact blocking the verb; the server's reason wins. */
@@ -132,13 +137,8 @@ export function projectLecternAction({
   const disconnected = installedApp && !ctx.online;
   const retry = !disconnected && !request && collectionPending === null && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
-  const copy = currentIntent === "Ensure" ? { sending: "Adding…", check: "Check add" } : { sending: "Removing…", check: "Check removal" };
   const label = request
-    ? {
-        Sending: copy.sending,
-        Checking: copy.check,
-        Unconfirmed: copy.check,
-      }[request.phase]
+    ? "retry"
     : disconnected ? "Lectern"
     : collectionPending !== null ? state.label
     : retry ? "Retry checking Lectern"
@@ -146,7 +146,10 @@ export function projectLecternAction({
   let disabledReason: string | undefined;
   let waiting = false;
   const wait = (reason: string) => { disabledReason = reason; waiting = true; };
-  if (disconnected) disabledReason = admissionReason();
+  if (request && !remoteReady()) {
+    disabledReason = currentAdmissionReason() ?? "checking your session.";
+    waiting = remoteAdmission() === "Checking";
+  } else if (disconnected) disabledReason = admissionReason();
   else if (request && request.phase !== "Unconfirmed") wait("a lectern change is in progress.");
   else if (busy.has("LecternMembership")) wait(BLOCKED_COPY.Busy);
   else if (!request) {
@@ -555,7 +558,7 @@ export function projectResourceActions(
       if (outcome.kind === "Gone") {
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
       } else if (outcome.kind === "Failed") {
-        ctx.feedback.say({ fact: outcome.feedback.title, reason: outcome.feedback.message });
+        sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id, title: facts.label, owner, present });
       }
@@ -570,7 +573,7 @@ export function projectResourceActions(
     const present = (outcome: CommandOutcome) => {
       if (!ctx.isActive()) return;
       if (outcome.kind === "Failed") {
-        ctx.feedback.say({ fact: outcome.feedback.title, reason: outcome.feedback.message });
+        sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
           retry: requested => {
@@ -626,13 +629,7 @@ export function projectResourceActions(
   };
 
   const { queue } = ctx.player;
-  const queueWait = !queue.known ? queue.error === null : queue.phase === "Preparing" || queue.phase === "Saving";
-  const queueDisabled = !queue.known
-    ? queue.error === null ? "the queue is still loading." : "the last queue change didn’t settle."
-    : queue.phase === "Ready" ? undefined
-    : queue.phase === "Uncertain" ? "the last queue change didn’t settle."
-    : queue.phase === "Preparing" ? "the queue is still loading."
-    : queue.phase === "Saving" ? "the queue is saving." : "the player isn’t available.";
+  const queueBlocked = queueBlock(queue, ctx.player.state, "Queue");
   const append = (next: boolean) => {
     const entry = { id: crypto.randomUUID(), media_id: id };
     const header = queue.header;
@@ -647,8 +644,8 @@ export function projectResourceActions(
       ({ triggerEl }) => metadata(triggerEl),
       { tracked: false },
     ],
-    AddToQueue: [() => append(false), { disabledReason: queueDisabled, waiting: queueWait }],
-    PlayNext: [() => append(true), { disabledReason: queueDisabled, waiting: queueWait }],
+    AddToQueue: [() => append(false), { disabledReason: queueBlocked?.reason, waiting: queueBlocked?.waiting }],
+    PlayNext: [() => append(true), { disabledReason: queueBlocked?.reason, waiting: queueBlocked?.waiting }],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
       ({ triggerEl }) => {
@@ -689,7 +686,7 @@ export function projectResourceActions(
       if (ctx.podcasts.pending(`episode-save:${id}`) !== null) return;
       const snapshot = await placements({ kind: "Media", id }, ctx.sessionSignal());
       if (!ctx.isActive() || snapshot.all_membership.included) return;
-      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: `${facts.label} · all`, command: {
+      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: facts.label, library: null, command: {
         kind: "EpisodeSave", mediaId: id, libraryId: snapshot.all_membership.library_id,
         body: { included: true, expected_order_revision: snapshot.all_membership.order_revision,
           expected_removal_revision: snapshot.removal_revision },
@@ -1000,6 +997,10 @@ export function projectDownloadActions(input: {
       await localMutation(op, args);
     } catch (error) {
       if (!ctx.isActive()) return;
+      if (error instanceof LocalMutationObservationError) {
+        if (error.observation.receipt !== null) return;
+        throw new ResourceActionUnknown({ fact: `not sure the download change for “${title}” saved.`, reason: UNKNOWN_OUTCOME_REASON });
+      }
       const code = error instanceof Error ? error.message : "";
       throw new ResourceActionFailure(code === "Storage" ? { fact: `couldn’t download “${title}”.`, reason: "this device is out of storage." }
         : { fact: `couldn’t change the download of “${title}”.`, reason: code === "Unsupported" ? "this item can’t be downloaded."
