@@ -27,7 +27,9 @@ export type Verb = CommandVerb | LinkVerb;
 export type Verbs = readonly [Verb] | readonly [Verb, Verb];
 export type Weight = "Plain" | "Held" | "Risk";
 export type Row = {
-  key: object; address: Address; modal: Layer | null;
+  /** A held row's is its owner's `id`, so a new owner of that id takes the row over; a said
+   * row's is its own. */
+  key: object | string; address: Address; modal: Layer | null;
   weight: Weight; line: Line; verbs: Verbs | null;
   /** Keys speech. */
   attempt: number;
@@ -77,6 +79,8 @@ const VERB_MS = 8000;
 const HELD_MS = 8000;
 const TYPING_PAUSE_MS = 1200;
 const TYPING_WAIT_MS = 8000;
+/** An owner of an id that mounts this soon after its last owner left takes the row as it stands. */
+const HANDOFF_MS = 100;
 
 type Clock = { remaining: number; running: { since: number; timer: ReturnType<typeof setTimeout> } | null };
 type Room = { id: number; anchor: Anchor; element: HTMLElement; holds: Set<HoldKind> };
@@ -141,6 +145,8 @@ export function createStage() {
   const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
   let speaker: Room | null = null;
   let view: StageView = { rooms: [], typing: false, speech };
+  /** Mounted owners per held id, and the dismissal that waits out a handoff once none is left. */
+  const owners = new Map<string, { count: number; leaving: ReturnType<typeof setTimeout> | null }>();
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
   const renewClock = (slip: Slip) => {
@@ -247,7 +253,7 @@ export function createStage() {
     if (slip.row.tucked) conclude(slip);
     settle();
   }
-  const slipOf = (key: object) => slips.find(slip => slip.row.key === key);
+  const slipOf = (key: object | string) => slips.find(slip => slip.row.key === key);
   const pause = () => {
     if (typing === null) return;
     clearTimeout(typing);
@@ -288,11 +294,11 @@ export function createStage() {
       settle();
       return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
     },
-    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. It
-     * belongs to the topmost modal at raise, unless `frame`, the modal the owner renders inside, is
-     * mounting in the same commit and does not yet stand on the stack. Turning to risk presents and
-     * speaks whatever the row had settled into. */
-    hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { frame: Layer | null; risk: boolean }): void {
+    /** A mounted owner's row, keyed by its id, so tucking survives a new attempt and a new owner.
+     * It belongs to the topmost modal at raise, unless `frame`, the modal the owner renders inside,
+     * is mounting in the same commit and does not yet stand on the stack. Turning to risk presents
+     * and speaks whatever the row had settled into. */
+    hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "address" | "line" | "verbs" | "attempt"> & { key: string; frame: Layer | null; risk: boolean }): void {
       const weight = risk ? "Risk" : "Held";
       const slip = slipOf(key) ?? raise({ key, address, modal: frame === null || onOverlayStack(frame) ? topModal() : frame, weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
@@ -301,16 +307,34 @@ export function createStage() {
       slip.row = { ...slip.row, address, weight, line, verbs, attempt, tucked: slip.row.tucked && !atRisk };
       if (renewed) renewClock(slip);
       if (atRisk) slip.spoken = null;
-      // Effect replay dismisses a mounted owner's key and holds it again; the owner stands.
+      // An owner that comes back while its row is still leaving takes it back.
       if (slip.leaving === "Dismissed" || atRisk) slip.leaving = null;
       settle();
     },
-    /** A close, or a mounted owner's resolution. */
-    dismiss(key: object): void {
+    /** A close. */
+    dismiss(key: object | string): void {
       const slip = slipOf(key);
       if (slip) leave(slip, "Dismissed");
     },
-    tuck(key: object): void {
+    /** A mounted owner of `id`. The row resolves once its last owner leaves and no other mounts
+     * within the handoff, so a holder moving between parents keeps its row, tuck and speech. */
+    own(id: string): Retract {
+      const owner = owners.get(id) ?? { count: 0, leaving: null };
+      owners.set(id, owner);
+      if (owner.leaving !== null) clearTimeout(owner.leaving);
+      owner.leaving = null;
+      owner.count += 1;
+      return () => {
+        owner.count -= 1;
+        if (owner.count > 0) return;
+        owner.leaving = setTimeout(() => {
+          owners.delete(id);
+          const slip = slipOf(id);
+          if (slip) leave(slip, "Dismissed");
+        }, HANDOFF_MS);
+      };
+    },
+    tuck(key: object | string): void {
       const slip = slipOf(key);
       if (slip) leave(slip, "Tucking");
     },
@@ -329,7 +353,7 @@ export function createStage() {
       settle();
     },
     /** The row's exit has played. */
-    gone(key: object): void {
+    gone(key: object | string): void {
       const slip = slipOf(key);
       if (!slip?.leaving) return;
       conclude(slip);

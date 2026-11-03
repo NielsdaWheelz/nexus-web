@@ -18,9 +18,11 @@ import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import { useThrowLater } from "@/lib/api/serverState";
 import { isAbortError } from "@/lib/errors";
+import type { RemoteAdmission } from "@/lib/native/contracts";
+import { remoteAdmission, remoteAttemptAllowed, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
@@ -28,7 +30,7 @@ import { hasActiveModal, OverlayContext, subscribeOverlayStack, topModal, useInt
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
 import Slips from "./Slips";
-import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
+import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type CommandVerb, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
 import styles from "./Feedback.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
@@ -201,7 +203,7 @@ export interface Outcome {
 export function useOutcome(): Outcome {
   const stage = useStage();
   const address = useAddress();
-  const { signIn } = useContext(ShellContext);
+  const verbsFor = useTransportVerbs();
   const throwLater = useThrowLater();
   const say = useCallback<Outcome["say"]>((line, verbs) => stage.say({ address, line, verbs: verbs ?? null }), [stage, address]);
   const fail = useCallback<Outcome["fail"]>((error, title, verb) => {
@@ -211,22 +213,58 @@ export function useOutcome(): Outcome {
       return () => {};
     }
     const transport = transportOf(error);
-    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
-  }, [stage, address, signIn, throwLater]);
+    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: verbsFor(transport, { retry: verb }) });
+  }, [stage, address, verbsFor, throwLater]);
   return useMemo(() => ({ say, fail }), [say, fail]);
 }
 
-/** A fact that stands while its owner holds it: mounted is present, unmounted is resolved.
- * `id` keys the tucked bit; `attempt` keys speech, so a failed retry speaks again. */
+/** A transport's verbs, for a lane that builds a line itself: the owner's `retry`, the shell's
+ * sign-in, or reload where reload can work. One function per shell, so a callback or a list may
+ * call it; it reads admission when called, and its owner renders again as admission moves. */
+export function useTransportVerbs(): (transport: Transport, options?: { retry?: Verb }) => Verbs | null {
+  const { signIn } = useContext(ShellContext);
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => transportVerbs(transport, { retry, signIn }), [signIn]);
+}
+
+/** What admission refuses remote work for now. F2's mapping in lib/api replaces this. */
+function admissionTransport(admission: RemoteAdmission): Transport | null {
+  switch (admission) {
+    case "Ready":
+    case "Checking": return null;
+    case "SignInRequired": return "SignIn";
+    case "UpdateRequired": return "Update";
+    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
+  }
+}
+
+/** A held write's verbs as admission stands when called: a stale build offers reload alone,
+ * where reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself, busy
+ * while admission checks, and disabled with admission's reason while the press could not leave
+ * this device. One function per shell, as `useTransportVerbs` is. */
+export function useResendVerbs(): (resend: CommandVerb) => Verbs {
+  const verbsFor = useTransportVerbs();
+  useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  return useCallback((resend: CommandVerb): Verbs => {
+    const admission = remoteAdmission();
+    const transport = admissionTransport(admission);
+    const instead = transport === "SignIn" || transport === "Update" ? verbsFor(transport) : null;
+    if (instead) return instead;
+    const unsent = transport !== null && (transport === "Offline" || !remoteAttemptAllowed());
+    return [{ ...resend, busy: resend.busy || admission === "Checking",
+      disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason }];
+  }, [verbsFor]);
+}
+
+/** A fact that stands while its owner holds it: mounted is present, unmounted is resolved. `id`
+ * keys the row, so an owner that moves between parents keeps its row, its tuck and its speech;
+ * `attempt` keys speech, so a failed retry speaks again. */
 export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
   const stage = useStage();
   const address = useAddress();
   const frame = useContext(OverlayContext);
-  const [held, setHeld] = useState({ id, key: {} });
-  if (held.id !== id) setHeld({ id, key: {} });
-  const { key } = held;
-  useLayoutEffect(() => { stage.hold({ key, address, frame, risk, line, verbs: verbs ?? null, attempt }); });
-  useLayoutEffect(() => () => stage.dismiss(key), [stage, key]);
+  useLayoutEffect(() => { stage.hold({ key: id, address, frame, risk, line, verbs: verbs ?? null, attempt }); });
+  useLayoutEffect(() => stage.own(id), [stage, id]);
   return null;
 }
 
