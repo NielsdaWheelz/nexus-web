@@ -306,7 +306,7 @@ export function useNexusController() {
     const blank = { panes, mru, recent: recentItems, playback: playbackItem, useText, layoutOrder: reordering, panesExpanded };
     const sync = { query: parsed, panes, mru, recent: recentItems, usage, latched,
       reference: find.reference, referenceFailed: find.referenceFailed, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing };
-    if (fresh) { retired.current = false; clearTimeout(pendingFire.current ?? undefined); }
+    if (fresh) clearTimeout(pendingFire.current ?? undefined);
     const previous = latestList.current;
     let next = previous;
     if (fresh || previous === EMPTY) {
@@ -666,6 +666,7 @@ export function useNexusController() {
 
   /** An open request resets to Root or Add; a nonempty document selection pre-arms `use this text…` (law 7). */
   function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null) {
+    retired.current = false;
     reorder.cancel({ silent: true });
     setPanesExpanded(false);
     setRecentlyClosedExpanded(false);
@@ -702,7 +703,10 @@ export function useNexusController() {
     setRail(null);
     setUseText(null);
     setQueryState(next);
-    if (next !== query) rootScroll.current.Typed = 0;
+    if (next !== query) {
+      retired.current = false;
+      rootScroll.current.Typed = 0;
+    }
   }
 
   /** Deliberate arming (law 3): arrows, tab, pointer travel, focus on a row's control. */
