@@ -1,26 +1,21 @@
 "use client";
-import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
-import { useEffect, useId, useRef, useState } from "react";
-import { Hold, useOutcome, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
+import { useEffect, useId, useMemo, useRef } from "react";
+import { useOutcome, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed, VerbControl } from "@/components/feedback/Fact";
 import { sentence } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
-import {
-  useActionRuntime,
-} from "@/lib/actions/ResourceActionsProvider";
+import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
+import { ResourceActionFailure, type ActionCommand } from "@/lib/actions/project";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { isApiError } from "@/lib/api/client";
 import { admissionTransport, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
-  METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
 import { useMediaAdmissions } from "@/lib/media/admissions";
-import { outcomeUnknown } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -38,51 +33,29 @@ async function landing(control: HTMLElement, work: () => Promise<void>) {
     target.focus({ preventScroll: true });
 }
 
-/** Review one exact no-findings job (history passes its own; the menu is unrelated). */
-export function MetadataReviewButton({
-  mediaId,
-  jobId,
-}: {
-  readonly mediaId: string;
-  readonly jobId: string;
-}) {
-  const [pending, setPending] = useState(false);
-  const [unknown, setUnknown] = useState<number | null>(null);
-  const { say, fail } = useOutcome();
+/** Review one exact no-findings job through the account's retained action owner. */
+export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: string; readonly jobId: string }) {
+  const { run } = useActionRuntime();
+  const contextId = useId();
   const fact = "couldn’t mark this reviewed.";
+  const ref = `media:${mediaId}`;
+  const busy = useBusyActionIds(ref).has("ReviewMetadataResult");
   const resendFeedback = useResendFeedback();
-  const review = async (trigger: HTMLElement | null) => {
-    if (pending) return;
-    setPending(true);
-    try {
-      await (trigger ? landing(trigger, () => submitMetadataResultReview(mediaId, jobId)) : submitMetadataResultReview(mediaId, jobId));
-      setUnknown(null);
-    } catch (error) {
-      handleUnauthenticatedApiError(error);
-      if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) say({ fact, reason: "this result isn’t available." });
-      else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") say({ fact, reason: "this result changed." });
-      else if (outcomeUnknown(error)) setUnknown(attempt => (attempt ?? -1) + 1);
-      else fail(error, fact);
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <>
-    <Button
-      data-metadata-action=""
-      aria-disabled={pending || undefined}
-      aria-busy={pending || undefined}
-      tooltip={{ text: METADATA_REVIEW_HELP }}
-      onClick={(event) => void review(event.currentTarget)}
-    >
-      mark reviewed
-    </Button>
-    {unknown === null ? null : <Hold id={`metadata-review:${jobId}`} attempt={unknown}
-      {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
-        resend: { label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending } })} />}
-    </>
-  );
+  const command = useMemo<ActionCommand>(() => ({ ref, id: "ReviewMetadataResult", label: "mark reviewed", title: "",
+    confirmation: null, tracked: true, rawWrite: true,
+    execute: acknowledged => submitMetadataResultReview(mediaId, jobId, acknowledged).catch(error => {
+      if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND"))
+        throw new ResourceActionFailure({ fact, reason: "this result isn’t available." });
+      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") throw new ResourceActionFailure({ fact });
+      throw error;
+    }),
+  }), [ref, mediaId, jobId]);
+  const presentation = resendFeedback({ line: { fact }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
+    run: () => run(command), busy } });
+  return <span data-metadata-action="">
+    <span id={contextId} className="sr-only">{sentence(presentation.line)}</span>
+    {presentation.verbs === null ? <Fact line={presentation.line} /> : <VerbControl contextId={contextId} verb={presentation.verbs[0]} />}
+  </span>;
 }
 
 /**
