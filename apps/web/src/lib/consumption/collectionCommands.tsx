@@ -16,7 +16,7 @@ import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { ProgressPreparationError } from "./progressFence";
+import { ProgressPreparationError, PROGRESS_PREPARATION_FACT } from "./progressFence";
 import type { ConsumptionUndo, withProgressFence } from "./state";
 import { applyCollectionConsumption, undoCollectionConsumption, type CollectionTarget } from "./api";
 import type { WorkGuard } from "@/lib/unsavedWork";
@@ -173,7 +173,7 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
         if (retained && entry.receipt !== null) retainUndo(entry, entry.receipt);
         const verbs: Verbs | undefined = retained ? [{ label: "retry", commandKey: entry.key, run: () => commands.undo(entry.key) }] : undefined;
         const fact = commandFact(entry);
-        if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, verbs);
+        if (error instanceof ProgressPreparationError) outcome.say({ fact: PROGRESS_PREPARATION_FACT }, verbs);
         else if (isApiError(error) && error.status === 404) outcome.say({ fact, reason: "it’s no longer available." });
         else outcome.fail(error, fact, verbs?.[0]);
       }

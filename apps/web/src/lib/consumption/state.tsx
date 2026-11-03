@@ -24,7 +24,7 @@ import {
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { createCollectionCommands, type HeldWrite } from "./collectionCommands";
-import { ProgressPreparationError } from "@/lib/consumption/progressFence";
+import { ProgressPreparationError, PROGRESS_PREPARATION_FACT } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson } from "@/lib/api/wire";
 import { remoteReady } from "@/lib/native/admission";
@@ -165,7 +165,7 @@ function createConsumptionCommands(
       } else {
         entry.status = "Offered";
         publish();
-        if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, retry(entry));
+        if (error instanceof ProgressPreparationError) outcome.say({ fact: PROGRESS_PREPARATION_FACT }, retry(entry));
         else if (isApiError(error) && error.code === "E_LIMIT") outcome.say({ fact, reason: "the lectern is full." }, retry(entry));
         else outcome.fail(error, fact, retry(entry)[0]);
       }

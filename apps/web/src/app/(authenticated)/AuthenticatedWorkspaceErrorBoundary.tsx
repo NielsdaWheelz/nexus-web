@@ -118,7 +118,8 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
       tabIndex={-1}
       className={styles.error}
     >
-      <Fact line={{ fact: stale ? staleBuild() : "the workspace stopped unexpectedly." }} verbs={two(draftsVerb, reloadVerb)} speak />
+      <Fact line={{ fact: stale ? staleBuild() : "the workspace stopped unexpectedly." }} verbs={reloadVerb === null ? undefined : [reloadVerb]} speak />
+      {draftsVerb !== null ? <Fact line={{ fact: "your drafts are available." }} verbs={[draftsVerb]} speak /> : null}
       {failed && runtime !== null ? <Fact line={{ fact: stopped ? "local notes stopped." : "some note edits aren’t saved yet." }} verbs={saveVerbs(runtime)} speak /> : null}
       {manual && copyable !== "" ? <>
         <Fact line={{ fact: "copying isn’t available here.", reason: "select the text and copy it." }} />
