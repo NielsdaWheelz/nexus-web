@@ -21,7 +21,7 @@ export default function PlayerUtilities(props: {
   readonly chaptersRef: RefObject<HTMLButtonElement | null>;
   readonly onToggleChapters: () => void;
 } & (
-  | { readonly variant: "Bar"; readonly tiered: boolean; readonly upNext: ReactNode; readonly more: ReactNode }
+  | { readonly variant: "Bar"; readonly upNext: ReactNode; readonly more: ReactNode }
   | { readonly variant: "Sheet" }
 )) {
   const { keys, speed, chaptersExpanded, chaptersId, chaptersRef, onToggleChapters } = props;
@@ -35,9 +35,10 @@ export default function PlayerUtilities(props: {
     {keys.has("chapters") ? chapters : null}
     <Button size="comfortable" icon={<Icon.Stop />} aria-label="stop playback" onClick={commands.stop}>stop</Button>
   </div>;
-  // an absent key holds its slot unseen; a tier-hidden one leaves for more.
+  // an absent key holds its slot unseen; a tier-hidden one leaves for more, so tiers apply only
+  // while more is offered.
   const slot = (key: BarKey, node: ReactNode, tier: string | null = null) =>
-    <span className={cx(styles.slot, !keys.has(key) && styles.absent, props.tiered && tier)}>{node}</span>;
+    <span className={cx(styles.slot, !keys.has(key) && styles.absent, keys.has("more") && tier)}>{node}</span>;
   return <div className={styles.utilities}>
     {slot("speed", speed)}
     {slot("chapters", chapters, styles.belowFold)}

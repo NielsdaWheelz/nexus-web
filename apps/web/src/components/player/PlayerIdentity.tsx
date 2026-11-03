@@ -10,6 +10,7 @@ import { barClock, type BarMode } from "@/lib/player/barModel";
 import * as Player from "@/lib/player/playerRuntime";
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import PlayerFolio from "./PlayerFolio";
 import { unavailableMessages } from "./PlayerFailures";
 import styles from "./PlayerIdentity.module.css";
@@ -34,20 +35,21 @@ const QUIET: View = { subject: null, line1: null, line2: null, description: null
 /**
  * The episode before the state: line 1 is the title whenever an episode is known, and a state word
  * takes it only when there is none. A pending subject paints a frame and no text. The bar and sheet
- * link to a known episode; the mini opens the sheet in the modes that have one. Session only: the
- * fold's minutes are the folio's own leaf.
+ * link to a known episode; the mini opens the sheet in the modes that have one; `Empty` links the
+ * lectern. `open` activates a link's workspace target. Session only: the fold's minutes are the
+ * folio's own leaf.
  */
 export default function PlayerIdentity(props: {
   readonly mode: BarMode;
-  readonly openLectern: (event: TargetActivationEvent) => void;
+  readonly open: (event: TargetActivationEvent, target: WorkspaceTarget) => void;
 } & (
-  | { readonly variant: "Bar" | "Sheet"; readonly open: (event: TargetActivationEvent, subject: Subject) => void }
+  | { readonly variant: "Bar" | "Sheet" }
   | { readonly variant: "Mini"; readonly buttonRef: Ref<HTMLButtonElement>; readonly onOpenSheet: () => void }
 )) {
-  const { mode, variant } = props;
+  const { mode, variant, open } = props;
   const chapter = Player.useCurrentChapter();
   const late = useLate(mode.kind === "Unknown");
-  const view = identityView(mode, variant, chapter, late, props.openLectern);
+  const view = identityView(mode, variant, chapter, late, open);
   const size = variant === "Sheet" ? 64 : 44;
   const { subject } = view;
   const contents = <span className={styles.row}>
@@ -72,14 +74,15 @@ export default function PlayerIdentity(props: {
       aria-label={`open now playing${name === null ? "" : `: ${name}`}${show}`} aria-description={description}>{contents}</Button>;
   }
   if (subject === null || !view.linked) return <div className={className}>{contents}</div>;
-  const open = props.open;
-  return <ButtonLink href={`/media/${subject.mediaId}`} className={cx(className, styles.opener)} data-workspace-rich-target="true"
-    onClick={event => open(event, subject)} onKeyDown={event => open(event, subject)}
-    aria-label={`open ${subject.title}${show}`} aria-description={description}>{contents}</ButtonLink>;
+  const href = `/media/${subject.mediaId}`;
+  const episode = (event: TargetActivationEvent) => open(event, { href, labelHint: subject.title });
+  return <ButtonLink href={href} className={cx(className, styles.opener)} data-workspace-rich-target="true"
+    onClick={episode} onKeyDown={episode} aria-label={`open ${subject.title}${show}`} aria-description={description}>{contents}</ButtonLink>;
 }
 
 function identityView(mode: BarMode, variant: "Bar" | "Sheet" | "Mini", chapter: Schema<"ChapterOut"> | null, late: boolean,
-  openLectern: (event: TargetActivationEvent) => void): View {
+  open: (event: TargetActivationEvent, target: WorkspaceTarget) => void): View {
+  const lectern = (event: TargetActivationEvent) => open(event, { href: "/lectern", labelHint: "lectern" });
   // A load's identity. The sheet's readout carries the chapter, so its line 2 names the show; the
   // fold's minutes lead line 2 in the mini always and in the bar under 46rem.
   const playing = (loaded: Extract<BarMode, { kind: "Active" }>["loaded"]): Pick<View, "subject" | "line2"> => {
@@ -98,7 +101,7 @@ function identityView(mode: BarMode, variant: "Bar" | "Sheet" | "Mini", chapter:
     case "Empty":
       return { ...QUIET, line1: "nothing queued",
         // eslint-disable-next-line @next/next/no-html-link-for-pages -- the workspace's own gesture opens it
-        line2: <a href="/lectern" className={styles.link} data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>open lectern</a> };
+        line2: <a href="/lectern" className={styles.link} data-workspace-rich-target="true" onClick={lectern} onKeyDown={lectern}>open lectern</a> };
     case "Finished": return { ...QUIET, line1: "queue finished", line2: mode.count === 1 ? "1 episode" : `${mode.count} episodes` };
     case "UpdateRequired":
       return { ...QUIET, line1: unavailableMessages.UpdateRequired,

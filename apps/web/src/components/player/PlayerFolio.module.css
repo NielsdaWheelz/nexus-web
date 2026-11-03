@@ -9,11 +9,18 @@
   white-space: nowrap;
 }
 
+/* under 46rem the minutes fold into line 2, so one screen shows one clock. */
+@container player (width < 46rem) {
+  .folio { display: none; }
+}
+
 .exact { display: none; }
 
-/* attention: the rail's keyboard focus (a play key's never counts), a scrub, or a still phase. */
-:global([data-player-bar]:is([data-cold="true"], [data-scrub="true"], :has(input[type="range"]:focus-visible))) .rest { display: none; }
-:global([data-player-bar]:is([data-cold="true"], [data-scrub="true"], :has(input[type="range"]:focus-visible))) .exact { display: inline; }
+/* attention: cold or scrubbing, or the rail's keyboard focus (a play key's never counts). */
+.folio[data-exact="true"] .rest,
+:global([data-player-bar]:has(input[type="range"]:focus-visible)) .rest { display: none; }
+.folio[data-exact="true"] .exact,
+:global([data-player-bar]:has(input[type="range"]:focus-visible)) .exact { display: inline; }
 
 /* and the pointer, where there is one that hovers. */
 @media (hover: hover) {

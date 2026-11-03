@@ -38,16 +38,15 @@ function useLiveClock(clock: BarClock, origin: PlayerOrigin) {
   useEffect(() => { retire(positionMs); }, [retire, positionMs]);
   const live = clock.kind === "Live" ? clock.loaded : null;
   const durationMsKnown = live === null ? 0 : durationMs > 0 ? durationMs : live.source.descriptor.duration_ms ?? 0;
-  const cold = live === null || live.phase === "Paused" || live.phase === "Ended" || live.playbackFailed || live.error !== null;
-  return { live, positionMs, durationMs: durationMsKnown, cold };
+  return { live, positionMs, durationMs: durationMsKnown };
 }
 
 const fill = (fraction: number) => ({ "--played": Math.min(1, Math.max(0, fraction)) }) as CSSProperties;
 
 function Edge({ clock, origin }: { readonly clock: BarClock; readonly origin: PlayerOrigin }) {
-  const { live, positionMs, durationMs, cold } = useLiveClock(clock, origin);
+  const { live, positionMs, durationMs } = useLiveClock(clock, origin);
   const fraction = live !== null ? durationMs > 0 ? positionMs / durationMs : 0 : clock.kind === "Still" ? clock.progress : null;
-  return <span className={styles.edge} data-cold={cold} aria-hidden="true">
+  return <span className={styles.edge} data-cold={clock.cold} aria-hidden="true">
     <span className={styles.line} />
     {fraction !== null ? <span className={styles.played} style={fill(fraction)} /> : null}
   </span>;
@@ -60,7 +59,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   readonly draft: number | null;
   readonly onDraft: (draft: number | null) => void;
 }) {
-  const { live, positionMs, durationMs, cold } = useLiveClock(clock, origin);
+  const { live, positionMs, durationMs } = useLiveClock(clock, origin);
   const { playbackSubject } = Player.usePlayerSession();
   const seekable = clock.kind === "Live" && clock.seekable && playbackSubject !== null && durationMs > 0;
   const chapters = live?.source.descriptor.chapters ?? NO_CHAPTERS;
@@ -168,7 +167,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   const current = chapterAt(chapters, shown);
   const played = live !== null ? durationMs > 0 ? shown / durationMs : 0 : clock.kind === "Still" ? clock.progress : null;
   const band = <div ref={rail} className={variant === "Bar" ? styles.rail : styles.band}
-    data-cold={cold} data-inert={!seekable} data-approach={point !== null && !scrubbing} data-scrub={scrubbing}
+    data-cold={clock.cold} data-inert={!seekable} data-approach={point !== null && !scrubbing} data-scrub={scrubbing}
     onPointerMove={event => {
       if (!seekable) return;
       if (scrub.current?.pointerId === event.pointerId) {

@@ -28,8 +28,8 @@ export default function PlayerTransport({ variant, mode, keys, discRef, previous
   const offerPause = pendingPlayback !== null || loaded?.phase === "Playing" || loaded?.phase === "Buffering";
   const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
   const busy = loaded?.phase === "Buffering" ? "buffering" : pendingPlayback !== null && !queueBusy ? "starting" : null;
-  // only a playing bar narrows; at rest every key fits.
-  const tiered = mode.kind === "Active" || mode.kind === "Advancing";
+  // a narrow bar sheds a key only to more, so only while more is offered; at rest every key fits.
+  const tiered = keys.has("more");
   const key = (name: BarKey, label: string, icon: ReactElement, act: () => void,
     options: { ref?: Ref<HTMLButtonElement>; tooltip?: string; className?: string; busy?: string | null } = {}) => {
     const state = keys.get(name);

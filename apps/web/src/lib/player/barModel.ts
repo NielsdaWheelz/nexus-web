@@ -114,8 +114,9 @@ export function liveKeys(mode: BarMode, session: PlayerSession): ReadonlyMap<Bar
       offer("upNext", true);
       break;
     case "Starting": offer("disc", true); offer("upNext", true); break;
+    // the load being replaced keeps its keys in place; only the disc acts on it, per offerPause.
     case "Advancing":
-      for (const key of ALL) if (key !== "chapters" || mode.loaded.source.descriptor.chapters.length > 0) offer(key, key === "disc" || key === "upNext");
+      for (const key of ALL) if (key !== "chapters" || mode.loaded.source.descriptor.chapters.length > 0) offer(key, key === "disc");
       break;
     case "Active": {
       const subject = playbackSubject !== null;
@@ -153,21 +154,25 @@ export function miniKeys(mode: BarMode): ReadonlySet<MiniKey> {
 }
 
 /** What the rule and the folio read: the clock of a confirmed load (seekable) or of one being
- * replaced (held), else a still progress and the summary's minutes left at 1×. */
+ * replaced (held), else a still progress and the summary's minutes left at 1×. Cold: nothing
+ * sounds, so the rule withdraws its colour and a live folio shows the exact clock. */
 export type BarClock =
-  | { readonly kind: "Live"; readonly loaded: Loaded; readonly seekable: boolean }
-  | { readonly kind: "Still"; readonly progress: number | null; readonly remainingMinutes: number | null };
+  | { readonly kind: "Live"; readonly loaded: Loaded; readonly seekable: boolean; readonly cold: boolean }
+  | { readonly kind: "Still"; readonly progress: number | null; readonly remainingMinutes: number | null; readonly cold: true };
+
+/** Paused, ended or failed: a failure stops the sound whatever the phase says. */
+const cold = ({ phase, playbackFailed, error }: Loaded) => phase === "Paused" || phase === "Ended" || playbackFailed || error !== null;
 
 export function barClock(mode: BarMode): BarClock {
   switch (mode.kind) {
-    case "Active": return { kind: "Live", loaded: mode.loaded, seekable: true };
-    case "Advancing": return { kind: "Live", loaded: mode.loaded, seekable: false };
-    case "Finished": return { kind: "Still", progress: 1, remainingMinutes: null };
+    case "Active": return { kind: "Live", loaded: mode.loaded, seekable: true, cold: cold(mode.loaded) };
+    case "Advancing": return { kind: "Live", loaded: mode.loaded, seekable: false, cold: cold(mode.loaded) };
+    case "Finished": return { kind: "Still", progress: 1, remainingMinutes: null, cold: true };
     case "Stopped":
-      return mode.episode.kind === "Named" ? { kind: "Still", progress: mode.episode.progress, remainingMinutes: mode.episode.remainingMinutes }
-        : { kind: "Still", progress: null, remainingMinutes: null };
+      return mode.episode.kind === "Named" ? { kind: "Still", progress: mode.episode.progress, remainingMinutes: mode.episode.remainingMinutes, cold: true }
+        : { kind: "Still", progress: null, remainingMinutes: null, cold: true };
     case "Unknown": case "Empty": case "UpdateRequired": case "Starting": case "NotResponding":
-      return { kind: "Still", progress: null, remainingMinutes: null };
+      return { kind: "Still", progress: null, remainingMinutes: null, cold: true };
     default: return assertNever(mode);
   }
 }
@@ -188,9 +193,11 @@ export function positionAt(x: number, width: number, durationMs: number, snaps: 
 /** Time left in your time: media time at `rate`, ceiled to the minute as the server ceils
  * `remaining_minutes`, so it never claims less than remains. Your time falls at wall speed at any
  * steady rate, so unattended the text changes once a minute. Minutes are padded past the hour so
- * the right-aligned folio keeps one width. */
-export function folioRest(remainingMs: number, rate: number, approximate: boolean): string {
-  const minutes = Math.ceil(Math.max(0, remainingMs) / rate / 60_000);
+ * the right-aligned folio keeps one width. Nothing left prints nothing: a finished episode replays
+ * from 0, so `0m left` would contradict the next press. */
+export function folioRest(remainingMs: number, rate: number, approximate: boolean): string | null {
+  const minutes = Math.ceil(remainingMs / rate / 60_000);
+  if (minutes <= 0) return null;
   const left = minutes < 60 ? `${minutes}m left` : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m left`;
   return approximate ? `≈ ${left}` : left;
 }

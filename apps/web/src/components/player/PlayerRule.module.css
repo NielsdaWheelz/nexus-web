@@ -219,9 +219,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* solar's gilt outranks `.played`, so forced colours name its room too. */
 @media (forced-colors: active) {
   .line,
   .played,
+  :global([data-theme="elvish"]) .played,
   .played::after,
   .stem,
   .tick {
