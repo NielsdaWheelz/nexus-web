@@ -69,6 +69,7 @@ export function useImportCommandOwner() {
     const fact = command.kind === "DiscardCapture" ? "couldn’t discard this capture." : UPLOAD_COMMAND_FACT[command.kind];
     const retry = { label: "retry", commandKey: key, run: () => send(command) };
     run({ ref: `upload:${command.sessionId}`, id, label: id === "RetryUpload" ? "retry upload" : "remove upload",
+      feedbackLabel: id === "RetryUpload" ? "retry upload" : "remove upload",
       title: command.title, confirmation: null, tracked: true, execute: async () => {
         const prior = read().find(entry => keyOf(entry.command) === key);
         set(entries => [...entries.filter(entry => keyOf(entry.command) !== key), { command, unknown: prior?.unknown ?? 0, sending: true }]);

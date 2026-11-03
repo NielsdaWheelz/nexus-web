@@ -89,7 +89,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
       invoke: () => {
         if (updateRequired || !available) return;
         if (playing) { ctx.player.commands.pause(); return; }
-        run({ ref, id: "Playback", title, label, tracked: false, confirmation: null, execute: async () => {
+        run({ ref, id: "Playback", title, label, feedbackLabel: label.toLowerCase(), tracked: false, confirmation: null, execute: async () => {
           if (subject.kind !== "External") return;
           return ctx.player.commands.playPreviewAudio({ target: subject.target, resolveDescriptor: async () => {
             const signal = ctx.sessionSignal();

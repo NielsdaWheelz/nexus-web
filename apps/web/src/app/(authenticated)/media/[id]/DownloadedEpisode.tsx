@@ -217,7 +217,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const sourceUnavailable = entry?.local?.disposition === "SourceUnavailable";
   const loaded = player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === id;
   const play = useCallback((ms: number | null) => {
-    run({ ref: `media:${id}`, id: "Playback", label: "play", title: capture.rendition.title, confirmation: null, tracked: false,
+    run({ ref: `media:${id}`, id: "Playback", label: "play", feedbackLabel: "play", title: capture.rendition.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: id, knownDescriptor: null, positionMs: ms, source: null, recapture: false }) });
   }, [capture.rendition.title, id, playAudio, run]);
   const openTime = (event: TargetActivationEvent, ms: number) => {

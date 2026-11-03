@@ -43,7 +43,7 @@ export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: str
   const ref = `media:${mediaId}`;
   const busy = useBusyActionIds(ref).has("ReviewMetadataResult");
   const resendFeedback = useResendFeedback();
-  const command = useMemo<ActionCommand>(() => ({ ref, id: "ReviewMetadataResult", label: "mark reviewed", title: "",
+  const command = useMemo<ActionCommand>(() => ({ ref, id: "ReviewMetadataResult", label: "mark reviewed", feedbackLabel: "mark reviewed", title: "",
     confirmation: null, tracked: true, rawWrite: true,
     execute: acknowledged => submitMetadataResultReview(mediaId, jobId, acknowledged).catch(error => {
       if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND"))
@@ -125,6 +125,7 @@ export default function MetadataResearchActions({
       ref,
       id: "RetryMetadata",
       label: metadataResearchLabel(null, retry.purpose),
+      feedbackLabel: metadataResearchLabel(null, retry.purpose).toLowerCase(),
       title: "",
       confirmation: null,
       tracked: false,
@@ -139,7 +140,7 @@ export default function MetadataResearchActions({
   };
   const pendingFeedback = pending === null ? null : resendFeedback({ line: { fact: "metadata search" },
     resend: { label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
-      run: () => run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
+      run: () => run({ ref, id: "RetryMetadata", label: "retry", feedbackLabel: "retry", title: "", confirmation: null, tracked: false,
         execute: () => admissions.retry(pending.key) }) } });
   return (
     <>
