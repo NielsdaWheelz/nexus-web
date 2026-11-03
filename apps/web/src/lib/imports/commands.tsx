@@ -74,15 +74,18 @@ export function useImportCommandOwner() {
         set(entries => [...entries.filter(entry => keyOf(entry.command) !== key), { command, unknown: prior?.unknown ?? 0, sending: true }]);
         const clear = () => set(entries => entries.filter(entry => entry.command !== command));
         try {
-          if (command.kind === "RetryUpload" && command.upload.guard === null) {
-            try { command.upload.guard = await readAcquisitionGuard([], ctx.sessionSignal()); }
-            catch (error) {
-              if (!prior?.unknown) clear();
-              outcome.fail(error, fact, retry);
-              return;
+          if (command.kind === "RetryUpload") {
+            let guard = command.upload.guard;
+            if (guard === null) {
+              try { guard = await readAcquisitionGuard([], ctx.sessionSignal()); }
+              catch (error) {
+                if (!prior?.unknown) clear();
+                outcome.fail(error, fact, retry);
+                return;
+              }
             }
+            await uploadIngestFile({ file: command.file, attempt: command.upload, guard, signal: ctx.sessionSignal() });
           }
-          if (command.kind === "RetryUpload") await uploadIngestFile({ file: command.file, attempt: command.upload, signal: ctx.sessionSignal() });
           else await removeUploadSession(command.sessionId);
           clear();
         } catch (error) {

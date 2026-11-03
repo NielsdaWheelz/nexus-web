@@ -9,7 +9,7 @@
 import { publishChange } from "@/lib/api/changes";
 import { ApiError, apiFetch, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
+import { placements, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
 import { resolvePodcastEpisode } from "@/lib/podcasts/api";
 import {
@@ -146,13 +146,14 @@ export function reviewUploadAttempt(attempt: UploadAttempt): void {
   attempt.review_required = false;
 }
 
-/** A live attempt reuses its staged bytes and exact confirmation after response loss.
+/** The caller prepares the acquisition guard before entering this write. A live attempt reuses
+ * its staged bytes and exact confirmation after response loss.
  * A fence or authority refusal permits explicit review with the same session/generation.
  * Losing the owner requires file reselection; expired bytes cannot be resumed. */
 export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseChange, onImportRef }: {
   file: File;
   attempt: UploadAttempt;
-  guard?: AcquisitionGuard;
+  guard: AcquisitionGuard;
   signal?: AbortSignal;
   onPhaseChange?: (phase: UploadPhase) => void;
   onImportRef?: (ref: string) => void;
@@ -161,7 +162,7 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
   if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
   if (attempt.expired) throw outcome({ kind: "Expired" });
   if (attempt.review_required) throw new ApiError(409, "E_RESOURCE_CONFLICT", "save needs review");
-  attempt.guard ??= guard ?? await readAcquisitionGuard([], signal);
+  attempt.guard ??= guard;
   onPhaseChange?.("Preparing");
   let published: Schema<"Published">;
   if (attempt.session === null) {
