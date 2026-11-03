@@ -19,7 +19,8 @@ import {applyDraftBody} from "@/lib/notes/editorBinding";
 import {useEditorDraft} from "@/lib/notes/editorHost";
 import {LocalCommitError, isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {useWorkGuard} from "@/lib/unsavedWork";
-import {getInteractionGeneration} from "@/lib/ui/overlay";
+import {getInteractionGeneration, interactionOwnedElsewhere, useInteractionOwner} from "@/lib/ui/overlay";
+import {usePointerGesture} from "@/lib/ui/pointerGesture";
 import {createLink, prepareLink, prepareTarget, LinkInputRefusal, type LinkTarget} from "@/lib/resourceGraph/links";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
 import BoundNoteEditor from "./BoundNoteEditor";
@@ -65,7 +66,27 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
   const readDraft = draft.read, setDraft = draft.set;
   const allowFocus = useRef(mayFocus); allowFocus.current = mayFocus;
   const hasBody = resource?.body_pm_json !== null && resource?.body_pm_json !== undefined;
-  useEffect(() => {if (hasBody) setEditing(true);}, [hasBody]);
+  const section = useRef<HTMLElement>(null);
+  const within = (target: EventTarget | null) => target instanceof Node && section.current?.contains(target) === true;
+  const settle = useRef<(next: EventTarget | null) => void>(() => {});
+  // No `within`: the field's own press counts too, because one that light-dismisses a held
+  // menu closes it at pointerdown, before focus is back in the field.
+  const {active} = usePointerGesture({enabled: value === null && editing && !hasBody, onComplete: () => settle.current(null)});
+  const interaction = useInteractionOwner();
+  settle.current = next => {
+    const doc = opened.document?.doc, current = input.read();
+    if (hasBody || !doc || active() || interactionOwnedElsewhere(section.current) || current.reference || current.hyperlink || current.attachment) return;
+    if (within(next) || within(document.activeElement)) return;
+    if (editor.current?.settleNativeInput() === false) return;
+    if (!bodyHasContent(readBody(doc))) setEditing(false);
+  };
+  const open = input.value.reference || input.value.hyperlink || input.value.attachment;
+  useEffect(() => {
+    if (hasBody) {setEditing(true); return;}
+    const doc = opened.document?.doc, update = () => settle.current(null);
+    update(); doc?.on("update", update);
+    return () => doc?.off("update", update);
+  }, [hasBody, open, interaction, opened.document]);
   const begin = useCallback(() => {
     if (!opened.document || readDraft() !== null) return;
     pendingFocus.current ??= {token: -1, generation: getInteractionGeneration()};
@@ -139,7 +160,7 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
     draft.set(current => current?.doc === submitted.doc ? {...current, committing: true} : current);
     ownHistory.boundary();
     const finish = () => {
-      setBusy(false); setFailure(null); setEditing(true);
+      setBusy(false); setFailure(null); setEditing(bodyHasContent(readBody(document.doc)));
       const latest = draft.read();
       if (latest?.doc !== submitted.doc) return;
       if (latest.revision === revision) {latest.doc.destroy(); draft.set(null);}
@@ -170,20 +191,17 @@ export default function HighlightAnnotation({highlightRef, occurrenceKey, editab
   if ((!resource?.authored_by_viewer || resource.kind !== "highlight") && value === null && !editing) return feedback;
   if (!offerBlank && !hasBody && !editing && value === null) return feedback;
   if (!editable) return <>{feedback}{resource?.body_pm_json ? <NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}} revision={0} label="annotation" editable={false} history={null} onEdit={() => {}} atomicEmbeds/> : null}</>;
-  return <section aria-label="annotation" data-highlight-annotation={highlightRef}>
+  return <section ref={section} aria-label="annotation" data-highlight-annotation={highlightRef} onBlur={event => settle.current(event.relatedTarget)}>
     {feedback}
     {read.data !== null && !resource && (value || editing) ? <p role="status">this highlight is unavailable. your writing is kept. <Button reserveIcon icon={copied.copied ? <Check/> : undefined} onClick={copyWriting}>copy</Button></p> : null}
     {value ? <>
-      <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} compact history={null}
+      <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} history={null}
         reference={{source_ref: highlightRef, label: "annotation", onActiveChange: reference => draft.set(current => current && {...current, reference}), onSelected: (target, item) => draft.set(current => current && {...current, reference: false, links: [...current.links, {target, label: item.label}], revision: current.revision + 1})}}
         onEditorReady={ready} onSave={() => queueMicrotask(save)} onEdit={edit => {const current = draft.read(); if (!current || current.committing) return; applyDraftBody(current.doc, edit.before, edit.after); draft.set({...current, body: edit.after, revision: current.revision + 1});}}
         onLinkInputActiveChange={hyperlink => draft.set(current => current && {...current, hyperlink})}
         onAttachmentActiveChange={attachment => draft.set(current => current && {...current, attachment})}/>
       <Button emphasis="strong" reserveIcon aria-busy={busy} disabled={!resource || busy || value.committing || value.reference || value.hyperlink || value.attachment} onClick={save}>save annotation</Button>
       <Button disabled={busy || value.committing} onClick={cancel}>cancel</Button>
-    </> : hasBody || editing ? <>
-      <BoundNoteEditor noteRef={highlightRef} history={ownHistory ?? undefined} label="edit annotation" editable={resource !== undefined} onAttachmentActiveChange={attachment => input.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => input.set(value => ({...value, hyperlink}))} document={opened.document ?? undefined} onEditorReady={ready} inspection={inspection} reference={writing ? {source_ref: highlightRef, label: "annotation", onActiveChange: reference => input.set(value => ({...value, reference})), onSelected: (target, item) => link(target, item.label)} : null}/>
-      <Button disabled={!hasBody} onClick={() => editor.current?.clear?.()}>clear annotation</Button>
-    </> : <Button disabled={!opened.document} onClick={begin}>annotate</Button>}
+    </> : hasBody || editing ? <BoundNoteEditor noteRef={highlightRef} history={ownHistory ?? undefined} label="edit annotation" editable={resource !== undefined} onAttachmentActiveChange={attachment => input.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => input.set(value => ({...value, hyperlink}))} document={opened.document ?? undefined} onEditorReady={ready} inspection={inspection} reference={writing ? {source_ref: highlightRef, label: "annotation", onActiveChange: reference => input.set(value => ({...value, reference})), onSelected: (target, item) => link(target, item.label)} : null}/> : <Button disabled={!opened.document} onClick={begin}>annotate</Button>}
   </section>;
 }

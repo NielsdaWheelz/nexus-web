@@ -29,7 +29,7 @@ export interface ContextActionSection {
  * failed), never gating, reordering or replacing the local snapshot.
  */
 type ContextualMenuProps = Pick<ActionMenuProps,
-  "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
+  "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor" | "hold"
 > & {
   readonly actionFocus?: PodcastActionFocus;
   readonly title: string;

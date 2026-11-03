@@ -9,7 +9,7 @@ import {FeedbackBusy, FeedbackFailure} from "@/components/feedback/Feedback";
 import {OutlineEmbeddingOccurrence, useEditorDraft} from "@/lib/notes/editorHost";
 import {useWritingRuntime} from "@/lib/notes/hooks";
 import {useAuthoredAccountId} from "@/lib/authored/provider";
-import {OutlineController, OutlineActionRefusal, type BranchRequest, type RootField} from "@/lib/notes/outlineController";
+import {OutlineController, OutlineActionRefusal, type BranchRequest, type OutlineSession, type RootField} from "@/lib/notes/outlineController";
 import {OutlinePendingInput} from "@/lib/notes/outlinePending";
 import {OutlineHistory} from "@/lib/notes/structure";
 import {useOutlineWindow} from "@/lib/notes/useOutlineWindow";
@@ -26,6 +26,7 @@ import type {ResourceProjection} from "@nexus/authored/types";
 import type {FocusSelection} from "@/lib/notes/editorTypes";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import NoteEditor, {type NoteEditorHandle} from "./NoteEditor";
+import OutlineDrag from "./OutlineDrag";
 import OutlineEditorRows from "./OutlineEditorRow";
 import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
 import {useAuthoredPaneRoot} from "./AuthoredPaneRoot";
@@ -39,9 +40,12 @@ export interface LocalOutlineHandle {
   rootText(): string;
 }
 type Props = {rootRef: string; rootField?: RootField; prelude?: readonly Intent[]; apiRef?: React.RefObject<LocalOutlineHandle | null>;
-  filter?: string; occurrencePrefix?: string; ancestors?: readonly string[]};
+  filter?: string; occurrencePrefix?: string;
+  /** The link the pane was opened through; the outline omits it, so the parent is not listed as a child. */
+  entering?: string};
 const EMPTY_INTENTS: readonly Intent[] = [];
 const SharedOutline = createContext<OutlineController | null>(null);
+type Session = OutlineSession & {input: OutlinePendingInput; revision: number};
 const pendingRisk = (value: {input: OutlinePendingInput}) => value.input.risk();
 const pendingCopy = (value: {input: OutlinePendingInput}) => value.input.copyText();
 
@@ -63,6 +67,8 @@ export interface LocalOutlineRoot {
   rootRead: OutlineRootMetadata;
   error: unknown | null;
   retry(): void;
+  /** The session's first content is on screen: every window it first requested, the root's and each open branch's, painted or
+   * failed. A pane's return position waits for it; it stays true for the controller afterwards. */
   ready: boolean;
   view: ReactNode;
 }
@@ -70,20 +76,24 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
 
 /** The route and editing host consume one root read; descendants retain their
  * own collectors. Canonical root metadata survives paging and refresh failure. */
-export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef}: Props): LocalOutlineRoot {
+export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
   const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
   const inherited = useContext(ResourceBranch);
-  const branch = useMemo(() => inherited.ancestors.has(rootRef) ? inherited : {...inherited, ancestors: new Map(inherited.ancestors).set(rootRef, {kind: "root"} as const)}, [inherited, rootRef]);
+  const branch = useMemo(() => {
+    const rooted = inherited.ancestors.has(rootRef) ? inherited : {...inherited, ancestors: new Map(inherited.ancestors).set(rootRef, {kind: "root"} as const)};
+    return entering ? {...rooted, traversedEdgeIds: new Set(rooted.traversedEdgeIds).add(entering)} : rooted;
+  }, [inherited, rootRef, entering]);
   const [, setRevision] = useState(0);
   const notify = useCallback(() => setRevision(value => value + 1), []);
-  const pending = useEditorDraft(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(), revision: 0}), pendingRisk, pendingCopy);
+  const pending = useEditorDraft<Session>(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(), revision: 0, opened: new Set(), identities: new Map()}), pendingRisk, pendingCopy);
   const setPending = pending.set;
   const changed = useCallback(() => setPending(value => ({...value, revision: value.revision + 1})), [setPending]);
   const [failure, setFailure] = useState<unknown | null>(null);
   const [mounted, setMounted] = useState<{id: string; controller: OutlineController} | null>(null);
   const [editor, setEditor] = useState<OutlineController | null>(null);
+  const [painted, setPainted] = useState<OutlineController | null>(null);
   const input = pending.value.input;
   const current = mounted?.controller.runtime === runtime && mounted.controller.pending === input && mounted.controller.rootRef === rootRef && mounted.controller.rootBranch === branch ? mounted : null;
   const request = current?.controller.requests.get(input.root_id) ?? {parent_id: input.root_id, ref: rootRef, branch, cursor: null, anchor: null, limit: 48};
@@ -104,7 +114,7 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   useLayoutEffect(() => {
     if (!runtime) return;
     const history = new OutlineHistory(runtime, setFailure);
-    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard);
+    const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard, pending.value);
     setMounted({id: crypto.randomUUID(), controller});
     if (apiRef) apiRef.current = controller;
     return () => {if (apiRef?.current === controller) apiRef.current = null; controller.close(); history.close();};
@@ -121,11 +131,13 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
     rootRead={read} onReady={setEditor}/>
     : <FeedbackBusy subject={`${accountId}:${rootRef}`} pending/>;
-  return {rootEditor: published, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read.error, retry: read.retry, ready: current !== null && editor === current.controller, view};
+  if (current && painted !== current.controller && editor === current.controller &&
+    [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
+  return {rootEditor: published, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read.error, retry: read.retry, ready: current !== null && painted === current.controller, view};
 }
 
 function MountedOutline({controller, pending, rootRef, rootField, filter, occurrencePrefix, failure, setFailure, rootRead, onReady}: {
-  controller: OutlineController; pending: ReturnType<typeof useEditorDraft<{input: OutlinePendingInput; revision: number}>>;
+  controller: OutlineController; pending: ReturnType<typeof useEditorDraft<Session>>;
   rootRef: string; rootField: RootField | undefined; filter: string; occurrencePrefix: string; failure: unknown | null;
   setFailure: React.Dispatch<React.SetStateAction<unknown | null>>;
   rootRead: ReturnType<typeof useOutlineWindow>; onReady(controller: OutlineController | null): void;
@@ -175,12 +187,12 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   const rootState = controller.branchRead(pending.value.input.root_id);
   if (error !== null && !(error instanceof OutlineActionRefusal) && !isAuthoredStorageFailure(error)) throw error;
   return <SharedOutline value={controller}>
-    <div data-outline-session={pending.value.input.root_id} onFocusCapture={event => {
+    <div data-outline-session={pending.value.input.root_id} data-pane-return-scope={`outline:${pending.value.input.root_id}`} onFocusCapture={event => {
       if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
       if (!(next instanceof Element && (next.closest(`[data-outline-session="${pending.value.input.root_id}"]`) || next.closest("[data-outline-commands]")))) controller.setFocused(false);
-    }}>
+    }}><OutlineDrag controller={controller}>
       {error !== null && incident ? <FeedbackFailure scope="Local" occurrence={incident.occurrence}
         content={{tone: "Warning", title: error instanceof OutlineActionRefusal ? error.message : pendingError !== null ? "couldn’t apply this writing" : "couldn’t open linked resources"}}
         announcement="Polite" actions={pendingError !== null ? pendingCopyAvailable ? [
@@ -201,11 +213,11 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       {[...controller.requests.values()].filter(request => request.parent_id !== pending.value.input.root_id).map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items"
-        placeholder="write or @ to link" compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
+        placeholder="write or @ to link" history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} onEditorReady={editorReady}/>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
-    </div>
+    </OutlineDrag></div>
   </SharedOutline>;
 }
 

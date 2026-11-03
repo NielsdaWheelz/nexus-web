@@ -72,7 +72,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {scan.feedback ? <FeedbackFailure scope="Local" occurrence={scan.occurrence} content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
       <AuthoredReadFailure {...localRead} title="couldn’t refresh connections" retry={() => {self.retry(); linked.retry(); mentions.retry();}}/>
       {empty ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" /> : null}
-      <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
+      <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
         <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>

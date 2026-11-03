@@ -15,5 +15,5 @@ export default function NoteBodyPreview({body}: {body: NoteBody}) {
     element.current.replaceChildren(content);
     displayed.current = body;
   }, [body]);
-  return <div ref={element} className={`${styles.view} ${styles.compact}`}/>;
+  return <div ref={element} className={styles.view}/>;
 }

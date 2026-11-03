@@ -6,7 +6,7 @@ import {readBody} from "@nexus/authored/documents";
 import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {NoteEdit, FocusSelection} from "./editorTypes";
-import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineHistory, OutlineOccurrence, OutlinePlacement, RangePublication} from "./structure";
+import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
 import {LocalCommitError, type LocalCommit, type WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
@@ -47,6 +47,7 @@ export class OutlinePendingInput {
   private inflight = 0;
   private finishing = false;
   private resumeAgain = false;
+  private idlers: (() => void)[] = [];
   error: unknown | null = null;
   connect(owner: InputOwner): () => void {
     if (this.owner?.history !== owner.history)
@@ -102,12 +103,6 @@ export class OutlinePendingInput {
       retained.link = value;
       const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);
     }).catch(error => {this.error = error; this.notify();});
-  }
-  private occurrence(id: string): OutlineOccurrence {
-    const row = this.row(id), bound = this.bound.get(id), link = bound?.link ?? row.link;
-    if (!row.ref || !link) throw new Error("the occurrence has no admitted relationship");
-    return {ref: row.ref, parent_ref: row.parent_ref, document: bound?.document ?? this.current().document(row.ref),
-      parent: this.current().document(row.parent_ref), link};
   }
   bookmark(row: PendingOutlineField, selection: FocusSelection | null): InputBookmark {
     if (row.ref === null) return null;
@@ -168,12 +163,14 @@ export class OutlinePendingInput {
     owner.history.editor(document, row.origin).record(edit, undefined, this.bookmark(row, edit.selectionAfter) ?? undefined);
     owner.notify(); this.resume();
   }
-  create(row: PendingOutlineField): void {
+  /** `before` is the caret the gesture started from; `stays` keeps it there afterwards (a birth above), else the newborn's end takes it. */
+  create(row: PendingOutlineField, before: InputBookmark = null, stays = false): void {
     const owner = this.current();
     const placement = this.placement(row.parent_id, row.parent_ref, row.after_id, row.before_id);
-    const admitted = owner.history.create({placement, body: row.body, change: {before: null, after: document => this.bookmark({...row, ref: document.ref}, "end"), placements_after: document => [this.placementBookmark({...row, ref: document.ref})!]}});
+    const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => stays ? before : this.bookmark({...row, ref: document.ref}, "end"), placements_after: document => [this.placementBookmark({...row, ref: document.ref})!]}});
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
+    this.place(row.row_id, row.after_id, row.before_id ?? null);
     this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
@@ -209,9 +206,16 @@ export class OutlinePendingInput {
     if (result.kind === "refusal") refused(result.reason); else this.range(result.plan, {refused});
   }
   rangeHeld(row_id: string): boolean {return (this.bound.get(row_id)?.reservations ?? 0) > 0;}
+  /** A range gesture is still held or unsettled: the shown order may trail it. */
+  busy(): boolean {return [...this.bound.values()].some(bound => (bound.reservations ?? 0) > 0 || bound.next !== undefined);}
+  /** Resolves once no range gesture is in flight. A birth or join reads the shown rows, which trail a gesture; it waits here. */
+  idle(): Promise<void> {return this.busy() ? new Promise(resolve => this.idlers.push(resolve)) : Promise.resolve();}
+  private settleIdle(): void {if (!this.busy()) for (const resolve of this.idlers.splice(0)) resolve();}
   range(plan: RangePlan, callbacks: {refused(reason: RangeReason): void}): void {
     const owner = this.current(), snapshot = owner.rangeSnapshot();
-    const selected = plan.selection_before?.kind === "blocks" ? plan.selection_before.row_ids : plan.selection_before ? [plan.selection_before.row_id] : [];
+    // The selection charges the gesture; every row the plan changes (an adopted sibling too) is captured and bound.
+    const selected = [...new Set([...(plan.selection_before?.kind === "blocks" ? plan.selection_before.row_ids : plan.selection_before ? [plan.selection_before.row_id] : []),
+      ...plan.changes.map(change => change.before.row_id)])];
     const selectedIds = new Set(selected), captured = new Map<string, PendingOutlineField>();
     for (const id of selected) {
       const row = this.fields.get(id) ?? owner.occurrence(id);
@@ -251,6 +255,10 @@ export class OutlinePendingInput {
       return {states: pinned, bytes};
     };
     const initial = pin(true);
+    // A plan's null anchors mean last among the siblings it saw; rows born beside them since stay after, so the last
+    // sibling the gesture's snapshot knew (else the parent) anchors the row in the displayed order.
+    const anchor = (row_id: string, after: Placement): string | null => after.after_id ?? (after.before_id !== null ? null
+      : snapshot.rows.filter(peer => peer.parent_id === after.parent_id && peer.selectable && peer.row_id !== row_id).at(-1)?.row_id ?? (after.parent_id === this.root_id ? null : after.parent_id));
     const reserve = (pinned: {states: ReadonlyMap<string, Promise<RangeState>>; bytes: number}, displayed: RangeSnapshot, action: "undo" | "redo" | null): RangePublication => {
       const charged = this.bound.get(selected[0]!);
       const bytes = pinned.bytes + (displayed === snapshot ? 0 : new TextEncoder().encode(JSON.stringify(displayed)).byteLength);
@@ -280,7 +288,7 @@ export class OutlinePendingInput {
           bound.reservations = (bound.reservations ?? 0) - 1;
           if (!bound.captureBytes && !bound.reservations && !bound.next && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
         }
-        this.resume(); this.notify();
+        this.resume(); this.notify(); this.settleIdle();
       };
       const settle = (id: string, state: Promise<RangeState>) => {
         const successor = successors.get(id); if (!successor) return;
@@ -291,6 +299,7 @@ export class OutlinePendingInput {
             bound.next = undefined; bound.link = value.link;
             if (!bound.captureBytes && !bound.reservations && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
           }
+          this.settleIdle();
         }).catch(error => {this.error = error; this.notify();});
       };
       return {
@@ -305,7 +314,9 @@ export class OutlinePendingInput {
             const row = this.fields.get(change.before.row_id) ?? captured.get(change.before.row_id);
             if (!row) continue;
             const after = change.after;
+            // A reparented row's relationship is unknown until the receipt; a stale link would seed its branch request with the wrong edge.
             const field: PendingOutlineField = after ? {...row, parent_id: after.parent_id, parent_ref: after.parent_ref, after_id: after.after_id,
+              link: after.parent_id === row.parent_id && after.parent_ref === row.parent_ref ? row.link : null,
               before_id: after.before_id ?? undefined, hidden: false, pending: changed.has(row.row_id) || row.pending, relocating: crypto.randomUUID(),
               previousParent: row.relocating ? row.previousParent : row.parent_id, previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined}
               : {...row, hidden: true, pending: changed.has(row.row_id) || row.pending, settledRevision: undefined};
@@ -315,7 +326,7 @@ export class OutlinePendingInput {
               const prepared = {...field, body: field.kind === "title" ? bodyText(document.doc.getText("title").toString()) : readBody(document.doc)};
               if (changed.has(row.row_id)) this.freeze(prepared, document); else this.fields.set(row.row_id, prepared);
             }
-            if (after) this.place(row.row_id, after.after_id, after.before_id);
+            if (after) this.place(row.row_id, anchor(row.row_id, after), after.before_id);
           }
           for (const [id, successor] of successors) {
             const link = links.get(id);
@@ -340,7 +351,7 @@ export class OutlinePendingInput {
               const hidden = after === null;
               if (row.hidden !== hidden || after && (row.parent_id !== after.parent_id || row.parent_ref !== after.parent_ref || row.after_id !== after.after_id || (row.before_id ?? null) !== after.before_id)) repaired = true;
               this.fields.set(row.row_id, {...row, ...(after ? {parent_id: after.parent_id, parent_ref: after.parent_ref, after_id: after.after_id, before_id: after.before_id ?? undefined} : {}), hidden, settledRevision: receipt.store_revision});
-              if (after) this.place(row.row_id, after.after_id, after.before_id);
+              if (after) this.place(row.row_id, anchor(row.row_id, after), after.before_id);
             }
             if (repaired || JSON.stringify(final.plan.selection_after) !== JSON.stringify(accepted.selection_after)) this.owner?.installRange(final.plan, mayFocus, action);
             this.resume(); this.notify();
@@ -360,14 +371,27 @@ export class OutlinePendingInput {
       });
       const byId = new Map(rows.map(row => [row.row_id, row])), children = new Map<string | null, typeof rows>();
       for (const row of rows) {const siblings = children.get(row.parent_id) ?? []; siblings.push(row); children.set(row.parent_id, siblings);}
-      for (const [id, state] of predecessors) {
+      // Every relocated row leaves its sibling list first; each re-enters once its after anchor is present (placements are
+      // two-sided: a null after with a before means first, null on both sides means last, as rebuild and storage read it),
+      // so a run moved past one neighbour resolves as a chain at a fixpoint.
+      const relocated = [...predecessors].flatMap(([id, state]) => {
         const row = byId.get(id), placement = state.placement, original = originalPlacement(id);
-        if (!row || !placement || original && placement.parent_id === original.parent_id && placement.parent_ref === original.parent_ref &&
-          placement.after_id === original.after_id && placement.before_id === original.before_id) continue;
-        const siblings = children.get(row.parent_id)!; siblings.splice(siblings.indexOf(row), 1);
-        const before = placement.before_id ? siblings.findIndex(peer => peer.row_id === placement.before_id) : -1;
-        const after = placement.after_id ? siblings.findIndex(peer => peer.row_id === placement.after_id) : -1;
-        siblings.splice(before >= 0 ? before : after >= 0 ? after + 1 : siblings.length, 0, row);
+        return !row || !placement || original && placement.parent_id === original.parent_id && placement.parent_ref === original.parent_ref &&
+          placement.after_id === original.after_id && placement.before_id === original.before_id ? [] : [{row, placement}];
+      });
+      for (const {row} of relocated) {const siblings = children.get(row.parent_id)!; siblings.splice(siblings.indexOf(row), 1);}
+      let waiting = relocated;
+      while (waiting.length) {
+        const deferred: typeof waiting = [];
+        for (const item of waiting) {
+          const siblings = children.get(item.row.parent_id)!, {after_id, before_id} = item.placement;
+          const after = after_id === null ? -1 : siblings.findIndex(peer => peer.row_id === after_id);
+          if (after_id !== null && after < 0) {deferred.push(item); continue;}
+          const before = before_id === null ? -1 : siblings.findIndex(peer => peer.row_id === before_id);
+          siblings.splice(after_id !== null ? after + 1 : before_id !== null ? Math.max(before, 0) : siblings.length, 0, item.row);
+        }
+        if (deferred.length === waiting.length) {for (const item of deferred) children.get(item.row.parent_id)!.push(item.row); break;}
+        waiting = deferred;
       }
       const ordered: typeof rows = [], visited = new Set<string>();
       const append = (row: typeof rows[number]) => {
@@ -377,27 +401,13 @@ export class OutlinePendingInput {
       for (const row of rows) if (row.parent_id === null || !byId.has(row.parent_id)) append(row);
       const occurrences: OccurrenceBookmark[] = ordered.flatMap(row => row.ref === null ? [] : [{row_id: row.row_id, ref: row.ref,
         placement: predecessors.get(row.row_id)?.placement ?? null, link: predecessors.get(row.row_id)?.link ?? null}]);
-      const result = planRange(plan.command, {rows: ordered}, plan.selection_before);
+      const result = planRange(plan.command, {rows: ordered}, plan.selection_before, plan.destination);
       return result.kind === "refusal" ? result : {...result, snapshot: {rows: ordered}, occurrences, plan: plan.command === "remove" && plan.selection_before?.kind === "text"
         ? {...result.plan, selection_after: plan.selection_after} : result.plan};
     };
     const documents = selected.flatMap(id => {const row = captured.get(id); const document = row?.ref ? owner.document(row.ref) : null; return document ? [document] : [];});
     owner.history.range({plan, documents, snapshot, metadata: () => [...captured.values()], canRetain: () => this.owner?.canRetain() ?? false, prepare, publication, reserve: action => reserve(pin(false), this.owner?.rangeSnapshot() ?? snapshot, action), active: () => this.owner === owner,
       refused: callbacks.refused});
-  }
-  move(row_id: string, peer: {row_id: string; link: LinkState | null}, direction: "up" | "down", selection: FocusSelection | null): void {
-    const owner = this.current(), row = this.row(row_id), token = crypto.randomUUID();
-    const captured = owner.capture(), resolve = selection !== null && captured?.kind === "text" && captured.row_id === row_id && captured.ref === row.ref ? captured.resolve : null;
-    const placement = this.placement(row.parent_id, row.parent_ref, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : undefined);
-    const target = {...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined};
-    const before = this.bookmark(row, selection), after = this.bookmark(target, selection);
-    const admitted = owner.history.move({occurrence: this.occurrence(row_id), placement, change: {
-      before: before?.kind === "text" ? {...before, resolve} : before, after: after?.kind === "text" ? {...after, resolve} : after,
-      placements_before: [this.placementBookmark(row)!], placements_after: [this.placementBookmark(target, true)!]}});
-    this.fields.set(row_id, {...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined,
-      relocating: token, previousParent: row.relocating ? row.previousParent : row.parent_id, previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined});
-    this.place(row_id, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : null);
-    owner.publish([], admitted.committed); this.watch([row_id], admitted, new Map([[row_id, admitted.link]]));
   }
   resume(): void {
     if (this.finishing) {this.resumeAgain = true; return;}

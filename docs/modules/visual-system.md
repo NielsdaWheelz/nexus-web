@@ -158,6 +158,14 @@ independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` 
 native intrinsic value width; the whole control wraps before its label stacks.
 `Stacked` forms keep their layout.
 
+content in a companion beside a text is a third type role. a `Column` or `Sheet`
+companion sets `--content-font-size` 13px, `--content-meta-font-size` 12px and
+`--content-line-height` `--leading-snug` on its contents, and `--excerpt-scale`
+`.875` and `--excerpt-max-size` `--text-md` for quotes ([highlight](highlight.md)). a `FullScreen`
+companion replaces the text, so it is a page and sets none. resource outline rows,
+ordinary note bodies and page titles read the tokens with their own sizes as fallback. notes
+outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
+
 `PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
 the clear slot, so typing/clearing preserves the input's bounds and node.
 applied text, chips, visible status and reset wrap in one compact summary;
@@ -225,9 +233,9 @@ and refresh content sits outside the listbox. it has no search field or visible
 category heading. command menus and library membership retain their own content
 and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
 
-choice triggers and segments have a 32px minimum height; triggers, option rows
-and segments have at least 44px with any coarse pointer. text can increase those
-heights. engagement uses existing colour and motion tokens; reduced motion
+choice triggers, segments and facets have a 32px minimum height; triggers, option
+rows, segments and facets have at least 44px with any coarse pointer. text can
+increase those heights. engagement uses existing colour and motion tokens; reduced motion
 removes transitions. chat's three-control composition, native effort gauge/range
 and whole-control wrapping belong to [chat](chat.md#generation-selection), not
 this primitive.
@@ -246,6 +254,14 @@ be a node, such as a font named in its own face, beside a decorative icon.
 choices and group-description layouts. names reference label-only spans;
 help and caller descriptions remain separate. refs address the actual inputs.
 inline choices use native checked marks without selected backplates.
+
+`ChoiceField`'s `Facet` presentation is a set member shown as a glyph and a short
+visible label over a covering native checkbox, with the segment's surface and
+target and no selected marker. checked is the rest state and stays quiet;
+unchecked dims the glyph and slashes it from top left to bottom right while the
+label stays legible and unchanged. disabled paint overrides both. forced colours
+keep only the slash. `help` composes a `Tooltip` on the input without replacing
+the native input when help changes.
 
 `Selection.module.css` owns surface, target and selected appearance for native
 segments, menu radios, companion tabs and pane activation. selected is a neutral
@@ -278,8 +294,9 @@ ordinary prose links and specialized widgets retain their own semantics.
 quiet is the default. `emphasis="strong"` marks a principal commitment;
 `tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
 minimum; compact controls use their host minimum or 32px. any coarse pointer
-enforces at least 44px in both axes. the existing dense outline exception is
-24px with fine input; mobile headers remain 48px. geometry hooks are
+enforces at least 44px in both axes, except for controls inside authored outline
+rows, which follow the row geometry below. the existing dense outline exception
+is 24px with fine input; mobile headers remain 48px. geometry hooks are
 `--control-min-size`, `--control-icon-size`, `--control-font-size` and
 `--control-radius`. callers own layout and adornments, never internal selectors
 or competing interaction paint. fields retain their separate density tokens.
@@ -325,7 +342,7 @@ handlers and refs without owning interaction state. `ActionMenu` supplies behavi
 aria bindings, not a visual class. semantic custom triggers own their appearance.
 resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
-inside a reserved action column that never shifts content.
+at the top of the row's right column; the trigger never shifts content.
 
 ### index rows
 
@@ -354,10 +371,16 @@ and intrinsic search, details and outline presentations keep their own layout.
 the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
 outline styles own control minima: 24px with a fine pointer, 44px with any coarse
-pointer. each control basis is the maximum of that minimum and one `--text-md`
-glyph plus two `--space-1` gaps. leading/trailing slots, disclosure and spacers
-share the basis in both dimensions; enlarged type can widen existing columns.
-default geometry and nesting increments are unchanged. note-pane margins follow containing width,
+pointer. each resource-outline control basis is the maximum of that minimum and
+one `--text-md` glyph plus two `--space-1` gaps; enlarged type can widen existing
+columns. `ResourceOutlineRow`'s control column and text measure belong to its
+[anatomy](resource-references.md#controls-and-composition).
+authored outline rows instead size their controls to the line, in 25px rows with
+a fine pointer and 32px rows with any coarse pointer, where the 28px bullet spans
+its row and no disclose slot is drawn. their type remains 14px fine / 16px coarse
+at 1.5 line height, including inside a companion. an embedded resource row keeps
+its controls inline at the far end of the authored row.
+note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.

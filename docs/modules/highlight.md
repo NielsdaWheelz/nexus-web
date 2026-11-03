@@ -25,11 +25,13 @@ remain readable without reconstructing an unknown original full-source extent.
 
 the body uses the shared note grammar and editor. empty prose projects as absent;
 whitespace, breaks, images, embeds and empty code are content. canonical yjs bytes
-remain present even when the nullable annotation projection is absent. clearing
-is one undoable edit of observed inline content and presentation, preserving the
-body root, mounted editor and history. unseen concurrent inserts survive clear.
-an unseen annotation edit can revive an observed-deleted highlight; a later
-observing delete hides both quotation and annotation.
+remain present even when the nullable annotation projection is absent. an
+annotation is a field of its highlight, with no identity or lifetime: it has no
+delete verb, and deleting its text empties it. emptying edits observed inline
+content, preserving the body root and history, and unseen concurrent inserts
+survive it. one more delete in an empty code body returns it to prose, which
+makes it blank. an unseen annotation edit can revive an observed-deleted highlight;
+a later observing delete hides both quotation and annotation.
 
 the greatest `(lamport,replica_id)` wins each scalar register. publication,
 locator, canonical quote evidence and frozen excerpt move together. canonical
@@ -57,7 +59,10 @@ endpoints, literal text projection, bounded views and capture revision. native
 reader ranges enter through `text/excerpt.ts` before canonical normalization;
 server captures use `services/source_excerpt.py` and the same semantic helper.
 paragraphs, explicit breaks, preformatted whitespace, inline emphasis, lists,
-tables and direction remain source facts. current reader typography owns reflow.
+tables and direction remain source facts. current reader typography owns reflow,
+except that a `Column` or `Sheet` companion sets the leading and caps the size at
+`min(reader, max(14px, reader * --excerpt-scale), --excerpt-max-size)` through its
+content tokens, and a quote's headings take the quote's size and leading.
 the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.
@@ -110,12 +115,19 @@ capture and never loads a live authored resource to replace it.
 ## presentation and access
 
 reader, compact/downloaded reader, outline and detail surfaces share one annotation
-editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`
-and `clear annotation`. a blank row placed in its open source shows neither `annotate`
+editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`.
+blank has one look. an emptied field stays mounted, with its undo, only while focus
+or open input is inside it. `HighlightAnnotation` unmounts its bound editor once query
+and document both read absent, focus has left, native input has settled, no reference,
+link or attachment input is open, no press is still activating, wherever it began
+(`usePointerGesture`), and no overlay that does not contain the field owns interaction,
+because `ActionMenu` kills a menu whose anchor moved. keyboard departure unmounts at
+once. nothing is announced, and undo ends there. other occurrences follow the
+projection. a blank row placed in its open source shows neither `annotate`
 nor a linked-items field: its menu opens the annotation in place, and its branch opens
 at its first link. related resources remain separate. copy-passage and
 frozen message quotations contain only source words. a question draft has separate
-ownership; submission neither copies nor clears the saved annotation. authorized
+ownership; submission neither copies nor empties the saved annotation. authorized
 context assembly can read annotation explicitly.
 
 `/highlights/:id` reads the local authored capture, annotation and relationships,
@@ -153,8 +165,8 @@ field. saved annotation passages retain their passage id at the highlight
 destination. lexical evidence retains
 the existing precedence over semantic-only matches; scores from those two systems
 are not compared directly. `authored_text_indexing` owns note and highlight
-text publication under the existing revision, claim and body fences. clearing or
-deletion withdraws annotation evidence independently of quotation evidence.
+text publication under the existing revision, claim and body fences. emptying
+withdraws annotation evidence independently of quotation evidence.
 
 tools create highlights through the same authored command. annotation-only undo
 clears the observed body under the account head lock, never deleting the highlight

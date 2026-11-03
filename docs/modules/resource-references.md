@@ -295,10 +295,19 @@ depth; the command accessory lives outside it.
 disclosure tests the complete projected child graph with exact occurrence exclusions,
 independently of loaded adjacency pages. canonical authored children are read from
 local indexed state; server-owned facts have separate bounded, batched availability.
-saved passage-owner adjacency counts too. empty or unconfirmed rows reserve inert
-control slots; confirmed nonempty rows alone have expand/collapse buttons. terminal
-return controls remain navigation. availability never closes a branch or unmounts
-writing. removing a focused chevron returns focus to the same occurrence's bullet.
+saved passage-owner adjacency counts too. confirmed nonempty rows alone have
+expand/collapse buttons, and no row reserves a slot for one: a disclosure or terminal
+return sits under the row's `⋯`, in a right column the content's first lines wrap
+around, so late proof can rewrap those lines once. the content floats a hole one
+control width and one gap wide: one control's height less its two `--space-1`
+insets, or down to the disclosure's foot. later lines take the full measure; a
+textarea instead takes the column's width as end padding.
+terminal return controls remain navigation. a mounted earlier occurrence receives
+focus on its bullet, or on its named row when that bullet is disabled. an unmounted
+occurrence delegates reveal to the host, which owns window admission and focus.
+return to the host root uses its root callback, or the root list when none is supplied.
+availability never closes a branch or unmounts writing. removing a focused chevron
+uses the same bullet-or-row focus target on its occurrence.
 ordinary insertion and nesting keep their existing local command owners.
 
 highlight rows render one captured quotation and their owned annotation editor.

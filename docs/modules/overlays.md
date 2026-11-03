@@ -45,7 +45,9 @@ eligible page transient. a transient of a covered modal never outranks a newer
 modal, and a page transient never outranks a modal. `eligible()` is read at
 dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
-same rule; a sheet's scope is its `panelId`. tooltips never become this owner.
+same rule; a sheet's scope is its `panelId`. `interactionOwnedElsewhere(element)`
+reads it too, ignoring an owner whose element or boxes contain `element`; a null
+element counts any owner. tooltips never become this owner.
 `useOverlay` subscribes to its layer's registration, coverage and depth. for a
 tooltip, `topmost` additionally requires a live trigger inside the current
 owner's boxes or modal panel, or on the page when no owner is open. hidden,
@@ -58,6 +60,12 @@ the interaction generation advances on interactive admission and real browser
 traversal, including back within a retained modal; a frame's own closing
 traversal is excluded.
 citation previews close with pane deactivation or a new destination/entry.
+
+`getOverlayOpeners()` lists the trigger each open interactive layer recorded at
+open ([return focus](#focus)), whether or not it still holds focus; tooltips
+record none. a host that holds still while a layer it opened is up reads this,
+not focus: a press that never focused its trigger still holds, and light dismiss
+releases.
 
 a tooltip requires `trigger()`, `inside()` and `eligible()`: false means pending,
 true means visible. its options forbid command scope and return focus. it never
@@ -386,7 +394,7 @@ citation, Escape, an outside press and focus moving away close it. touch never
 hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
-**Tooltip**: plain-text help for native buttons and links. callers spread its
+**Tooltip**: plain-text help for native buttons, links and inputs. callers spread its
 callback ref, handlers and description onto the actual control, preserving the
 control's name and activation semantics. `triggerRef` composes its native ref
 without dropping react callback cleanup; callers combine existing description
@@ -426,8 +434,9 @@ z-indices.
 
 ## browser floor
 
-chromium 110+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
-`findLast`/`toReversed`, `:focus-visible` and `visualViewport`. the native android
+chromium 118+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
+`findLast`/`toReversed`, `:focus-visible`, `visualViewport` and logical `float` values.
+the native android
 shell requires system webview 144+ for its edge-to-edge safe-area and keyboard
 viewport contract; the android os version alone does not establish that floor.
 
