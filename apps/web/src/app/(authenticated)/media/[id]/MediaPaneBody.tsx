@@ -30,7 +30,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { transportOf } from "@/lib/api/failure";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
@@ -289,8 +289,7 @@ function UnavailableSavedMedia({ error }: { readonly error: { readonly code: str
   usePaneReturnReady(true);
   const speak = useActiveRegion();
   // L0a's catalog lines, while their code set is open.
-  const catalogLine = catalogErrorFeedback(error);
-  return <Fact line={catalogLine ? { fact: catalogLine.title, reason: catalogLine.message } : { fact: "couldn’t open the saved catalog." }} speak={speak} />;
+  return <Fact line={catalogLine(error) ?? { fact: "couldn’t open the saved catalog." }} speak={speak} />;
 }
 
 function SavedMedia({ summary, record }: { readonly summary: MediaSummary; readonly record: ServerValue<MediaDetail> }) {

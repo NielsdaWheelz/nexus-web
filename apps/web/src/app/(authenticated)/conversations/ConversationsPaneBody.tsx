@@ -6,7 +6,7 @@ import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogRead } from "@/lib/catalog/provider";
 import { catalogChats } from "@/lib/catalog/selectors";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
@@ -196,7 +196,7 @@ export default function ConversationsPaneBody() {
     );
   }
   // a cold read's failure stands where the list would; a failed refresh over shown rows says nothing
-  const saved = list.status === "failed" ? catalogErrorFeedback(list.error) : null;
+  const saved = list.status === "failed" ? catalogLine(list.error) : null;
   return (
     <div>
       {readFeedback.announcement}
@@ -207,7 +207,7 @@ export default function ConversationsPaneBody() {
         ariaLabel="Conversations"
         anchorKey={query.trim()}
         collectionBusy={busy}
-        error={list.status !== "failed" ? undefined : saved !== null ? <Fact line={{ fact: saved.title, reason: saved.message }} />
+        error={list.status !== "failed" ? undefined : saved !== null ? <Fact line={saved} />
           : <Failed error={list.error} noun="chats" retry={{ run: () => void list.refetch(), busy: list.retrying }} />}
         empty={<Fact line={{ fact: emptyTitle }} verbs={filtering ? undefined : [{
           label: "new chat",

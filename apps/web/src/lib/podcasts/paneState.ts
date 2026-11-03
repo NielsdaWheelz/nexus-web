@@ -13,7 +13,7 @@ import {
   type ApiError,
 } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -57,8 +57,8 @@ export function podcastErrorMessage(
   title: string,
 ): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const catalog = catalogErrorFeedback(error);
-  if (catalog !== null) return catalog;
+  const catalog = catalogLine(error);
+  if (catalog !== null) return { tone: "Warning", title: catalog.fact, message: catalog.reason };
   const transport = apiTransportFeedback(error, title);
   if (transport !== null) return transport;
   const content = (message: string): FeedbackContent => ({

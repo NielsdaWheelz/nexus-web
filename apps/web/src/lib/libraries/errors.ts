@@ -7,7 +7,7 @@ import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
 import type { Retract } from "@/components/feedback/stage";
 import { admissionRefusal, apiTransportFeedback, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { modeledApiError } from "@/lib/api/serverState";
 import { remoteAttemptAllowed } from "@/lib/native/admission";
 
@@ -80,8 +80,8 @@ export function libraryErrorFeedback(
 ): FeedbackContent | null {
   const modeled = modeledApiError(error, fail, signIn);
   if (modeled === null) return null;
-  const catalog = catalogErrorFeedback(modeled);
-  if (catalog !== null) return catalog;
+  const catalog = catalogLine(modeled);
+  if (catalog !== null) return { tone: "Warning", title: catalog.fact, message: catalog.reason };
   const transport = apiTransportFeedback(modeled, title);
   if (transport !== null) return transport;
   if (modeled.status < 400 || modeled.status >= 500) {
