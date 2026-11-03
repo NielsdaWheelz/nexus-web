@@ -9,7 +9,7 @@ import { isApiError } from "@/lib/api/client";
 
 const GONE = "it’s no longer available.";
 /** The server's name rule, where a refused name is said. */
-export const NAME_REFUSED = "names need 1 to 100 characters, and can’t be All.";
+export const NAME_REFUSED = "names need 1 to 100 characters, and can’t be all.";
 const REASONS: Readonly<Record<string, string>> = {
   E_LIBRARY_NOT_FOUND: "you no longer have this library.",
   E_MEDIA_NOT_FOUND: GONE,
@@ -17,7 +17,7 @@ const REASONS: Readonly<Record<string, string>> = {
   E_FORBIDDEN: "only its admins can do that.",
   E_OWNER_REQUIRED: "only its owner can do that.",
   E_LIBRARY_FORBIDDEN: "nexus manages this library.",
-  E_DEFAULT_LIBRARY_FORBIDDEN: "All can’t be changed this way.",
+  E_DEFAULT_LIBRARY_FORBIDDEN: "all can’t be changed this way.",
   E_OWNER_EXIT_FORBIDDEN: "the owner can’t leave or change role.",
   E_MEDIA_DELETING: "it’s being deleted.",
   E_INVITE_NOT_PENDING: "that invitation is no longer pending.",

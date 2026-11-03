@@ -71,7 +71,7 @@ const CREATED = "couldn’t create the library.";
 const CREATE_REFUSALS: Readonly<Record<string, Line>> = {
   E_FORBIDDEN: { fact: CREATED, reason: "this account doesn’t have permission." },
   E_LIBRARY_FORBIDDEN: { fact: CREATED, reason: "this account doesn’t have permission." },
-  E_NAME_INVALID: { fact: "this name can’t be used.", reason: "use 1 to 100 characters, other than “All”." },
+  E_NAME_INVALID: { fact: "this name can’t be used.", reason: "use 1 to 100 characters, other than “all”." },
   E_INVALID_REQUEST: { fact: CREATED },
   E_RESOURCE_CONFLICT: { fact: CREATED },
 };

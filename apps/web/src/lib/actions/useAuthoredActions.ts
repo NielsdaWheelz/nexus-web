@@ -70,7 +70,7 @@ export function useAuthoredActions(ref: string | null): {
         tone: entry.group === "Danger" ? "danger" : "default",
         separatorBefore: entry.group === "Danger" || undefined,
         disabled: disabledReason !== undefined || undefined, disabledReason, waiting: busy.has(actionId) || undefined,
-        onSelect: detail => run({ ref: owned, id: actionId, label, title, confirmation: options.confirmation,
+        onSelect: detail => run({ ref: owned, id: actionId, label, feedbackLabel: label.toLowerCase(), title, confirmation: options.confirmation,
           tracked: options.tracked, execute: () => execute(detail) }),
       };
     };

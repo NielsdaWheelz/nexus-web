@@ -553,7 +553,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     if (media.kind === "video") return setVideoAt(ms);
     if (media.kind !== "podcast_episode") return;
     run({
-      ref: `media:${id}`, id: "Playback", label: "play", title: media.title,
+      ref: `media:${id}`, id: "Playback", label: "play", feedbackLabel: "play", title: media.title,
       confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: id, knownDescriptor: media.playerDescriptor, positionMs: ms, source: null, recapture: false }),
     });
@@ -911,6 +911,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     ref: `media:${id}`,
     id: "Consumption",
     label: "finish and open next",
+    feedbackLabel: "finish and open next",
     title: media.title,
     confirmation: null,
     tracked: true,

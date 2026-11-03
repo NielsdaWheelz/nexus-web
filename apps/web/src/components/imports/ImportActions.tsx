@@ -46,7 +46,7 @@ function useOpenAction(item: ImportItem): Command | null {
     kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: null, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
-      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, title: item.title,
+      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, feedbackLabel: ACTION_CATALOG.Open.label.toLowerCase(), title: item.title,
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
@@ -80,7 +80,7 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
     kind: "command", id: offer.kind, label, icon: <Glyph aria-hidden="true" />, disabled: busy.has(offer.kind),
     disabledReason: busy.has(offer.kind) ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => run({
-      ref, id: offer.kind, label, title: "", confirmation: null, tracked: true,
+      ref, id: offer.kind, label, feedbackLabel: label.toLowerCase(), title: "", confirmation: null, tracked: true,
       execute: () => recoverMedia(mediaId, offer),
     }),
   };

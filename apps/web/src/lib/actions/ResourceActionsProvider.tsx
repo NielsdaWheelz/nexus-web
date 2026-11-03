@@ -415,7 +415,7 @@ export default function ResourceActionsProvider({
       }
       previous?.release();
       if (command.tracked || command.rawWrite || previous?.line) busy.set(key, command.tracked || command.rawWrite === true);
-      const named = `“${command.label.replace(/…$/, "")}”`;
+      const named = `“${command.feedbackLabel.replace(/…$/, "")}”`;
       const report = (raise: () => Retract) => {
         if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = raise();
       };
@@ -443,7 +443,7 @@ export default function ResourceActionsProvider({
           if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact: PROGRESS_PREPARATION_FACT }));
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-          const failure = actionOutcome(command.id, command.label, command.title, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
+          const failure = actionOutcome(command.id, command.feedbackLabel, command.title, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
           if (failure.kind === "Unknown") {
             attempt.phase = "Unknown";
             if (attempt.line === null) { attempt.line = failure.line; attempt.attempt = 0; }

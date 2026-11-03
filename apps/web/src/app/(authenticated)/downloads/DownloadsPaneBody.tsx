@@ -93,7 +93,7 @@ export default function DownloadsPaneBody() {
   }
   function play(item: LocalItem) {
     if (player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === item.media_id && player.phase === "Playing") return pause();
-    run({ ref: `media:${item.media_id}`, id: "Playback", label: "play", title: item.title, confirmation: null, tracked: false,
+    run({ ref: `media:${item.media_id}`, id: "Playback", label: "play", feedbackLabel: "play", title: item.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: item.media_id, knownDescriptor: null, positionMs: null, source: null, recapture: false }) });
   }
   if (!localContentAvailable) return <Fact line={{ fact: "downloads need the android app." }} />;
