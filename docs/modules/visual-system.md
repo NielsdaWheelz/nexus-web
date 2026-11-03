@@ -11,9 +11,10 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
-- `components/feedback/Feedback.tsx`: session provider, outcomes and mounted holds;
+- `components/feedback/Feedback.tsx`: host provider, outcomes and mounted holds;
   `stage.ts` owns addressing and visible-time clocks, `Slips.tsx` owns placement,
-  and `Fact.tsx` and `Ruling.tsx` own in-flow facts and empty-region waits.
+  `Fact.tsx` and `Ruling.tsx` own in-flow facts and empty-region waits, and
+  `Announcement.tsx` owns the short live region.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
@@ -179,6 +180,15 @@ or verbs. desktop menus contain verbs, options and their own row marks. a picker
 empty list region may show its own fact, outside listbox markup; account conditions
 belong only to the account menu.
 
+`FeedbackProvider` requires the host's real `Shell`; a missing stage or shell
+is a contract error. the authenticated workspace, share capture and shelf own
+their respective sign-in operations. browser startup's modeled failure branch
+mounts its own provider with its existing render environment and startup sign-in;
+opening the authenticated workspace replaces that branch with the account's stage.
+`stage.ts` defines addresses, `Line`, verbs and transport projection. `useOutcome`
+and mounted `Hold` are the command owners' presentation interface. in-flow facts
+and the standalone `Announcement` need no command stage.
+
 `useResendFeedback` gives a retained remote write its current line and verbs.
 the owner supplies the fact, exact resend and any secondary command. a stale
 build keeps that fact, supplies the shared update reason, and offers reload
@@ -195,6 +205,11 @@ one stage sits above command owners. a row addresses its invoking pane or the
 workspace. fully visible panes have anchors; other pane addresses fall to the
 root. phones and maximized layouts use the active pane. composers anchor above
 their inputs; reader strips and shown mobile chrome contribute clearance.
+root, pane and modal rooms place their notice frame and restore tab in disjoint
+slots of one centered overlay group. the tab slot stays fixed through tuck and
+restore, so the frame sits slightly off center but keeps its width and reachable
+controls. the slots reserve no document space. root clearance measures actual
+pane frames and tabs; standalone capture anchors to the page, outside its card.
 a row raised under a modal belongs to that modal; unrelated rows wait.
 risk always follows the topmost modal. modal geometry and its constrained-content
 exception belong to [overlays](overlays.md#feedback-placement).
@@ -566,6 +581,6 @@ compared by value, since lucide exports each drawing under several names (`X`,
 `XIcon`). eslint fails on a lucide import outside the registry (`lucide-react` or
 any subpath), a registry import other than `* as Icon`, computed `Icon[name]`, a
 dynamic glyph import, raw `svg` or `strokeWidth` outside their owners, and a
-capitalised literal as a `fail` title, sparing only a compound PascalCase kind tag
+capitalised literal as a `fail` title or `say` fact, sparing only a compound PascalCase `fail` kind tag
 (`"SourceChanged"`). flat config replaces a rule's options per block, so a block
 that restricts imports or syntax for its own files spreads the shared lists.

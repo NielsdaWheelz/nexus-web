@@ -96,11 +96,11 @@ server components: callFastAPI ────────────────�
   bounds repair caused by success elsewhere. writes never subscribe to this wake.
   refresh failure over shown data stays unrendered and owned for a later repair.
   a pane return paints the visit's snapshot, then refetches.
-  the arrival provider starts accepted route entry's declared reads
+  `ServerArrivalsProvider` starts accepted route entry's declared reads
   while lazy code loads; the same one-use account/visit/route owner holds pending,
   successful or failed outcomes until effect-time claims. mounted hooks own the
-  result thereafter. retirement cancels unused work; no completed-read cache
-  remains. bootstrap consumption observations reach the existing native owner
+  result thereafter. `ServerArrivalsSpent` closes that entry offer and retires
+  unclaimed work. retirement cancels unused work; no completed-read cache remains. bootstrap consumption observations reach the existing native owner
   once its account facts and transport are ready.
   `initialRead: ServerReadSeed<T>` supplies one completed read for a hook's
   initial key: success carries data and its accepted-stale token; modeled failure

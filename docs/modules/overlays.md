@@ -484,8 +484,9 @@ content boundary; the stage does not guess it from descendants.
 the sibling anchor is outside the panel's clipping. placement follows actual
 visual bounds during the modal family's finite entrance and drag motion. the
 available rectangle bounds the frame's scrolling and the tab's whole hit area.
-frame and tab occupy separate parts of the same overlay group, so restoring
-cannot cover the tab or change the frame's width. constrained groups can be
+frame and tab occupy separate parts of the same overlay group in every room,
+including root and pane anchors, so restoring cannot cover the tab or change
+the frame's width. constrained groups can be
 narrower and require scrolling. pointer, focus and press holds preserve the
 standing controls when feedback changes; keyboard, viewport and panel motion
 remain owned geometry changes. plain rows raised elsewhere wait behind the
