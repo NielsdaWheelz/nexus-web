@@ -128,6 +128,9 @@ owners in every browser tab; failed cleanup resumes under that retirement marker
 rather than republishing late callbacks. native sign-out revokes the presented
 bearer best effort and answers 204 without cookie effects; durable local cleanup
 and credential clearing belong to native.
+a bridge timeout leaves sign-out uncertain. a typed incomplete cleanup states
+only that sign-out did not finish; partial deletion does not prove which bytes
+remain. neither outcome invents a current account-data observation.
 
 ## api identity (`python/nexus/auth/middleware.py`)
 

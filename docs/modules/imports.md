@@ -74,6 +74,13 @@ url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&befo
 
 web-recovery sessions are relevant while unpublished, viewer-owned, eligible, and bound to the latest source attempt. the newest session narrates the source obligation: awaiting bytes is active at upload; verification failure and capability expiry need attention at validate and upload respectively. every awaiting sibling counts as unfinished work. `pending_captures` lists all relevant siblings newest first with their state, acceptance, expiry and failure code. advancing the source attempt removes them from this projection. history combines the media events, its original upload session if any, and all viewer-owned web-recovery session events. `original_source` supplies the original ordinary-web url and a query-free label; current attribution follows the published capture.
 
+`FAILURE_COPY` has two distinct consumers: `reason` labels ordinary rows and
+history; `title` and nullable `explanation` compose the media failure fact.
+that complete fact stays within fourteen lowercase designed words. explanations
+state only facts supported by the code’s producers; actual recovery offers own
+actions. saved-copy claims require the item’s `can_read` predicate and never
+follow from a failure code alone. the inspector omits an absent explanation.
+
 ## invariants
 
 - **I1** summary, page and detail apply the same classification rules; separate reads can observe different moments.
