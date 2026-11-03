@@ -12,9 +12,10 @@ const RATE_FLASH_MS = 1200;
 const time = (ms: number) => formatClock(ms / 1000);
 
 /**
- * Rest publishes at most once a real minute between subject/rate/mode transitions. Without a
- * draft, a seek may leave the previous sample until then; silence skipping is not a seek signal.
- * Exact attended time stays live. All forms are decorative: the rail owns time speech.
+ * Warm rest publishes at most once a real minute between subject/rate/mode transitions. A warm
+ * seek without a draft may leave the previous sample until then; silence skipping is not a seek
+ * signal. Cold observations and exact attended time stay live. All forms are decorative: the rail
+ * owns time speech.
  */
 export default function PlayerFolio(props: { readonly clock: BarClock } & (
   | { readonly variant: "Bar"; readonly draft: number | null; readonly panelOpen: boolean }
@@ -36,7 +37,7 @@ export default function PlayerFolio(props: { readonly clock: BarClock } & (
   else {
     const before = sample.current;
     const now = performance.now();
-    if (before === null || before.subject !== playbackSubject || before.rate !== live.rate || before.skip !== live.shortenPauses ||
+    if (clock.cold || before === null || before.subject !== playbackSubject || before.rate !== live.rate || before.skip !== live.shortenPauses ||
       before.cold !== clock.cold || before.known !== (duration > 0) || before.drafting !== drafting || now - before.at >= REST_SAMPLE_MS) {
       sample.current = { subject: playbackSubject, rate: live.rate, skip: live.shortenPauses, cold: clock.cold,
         known: duration > 0, drafting, at: now, rest: duration > 0 ? folioRest(duration - positionMs, live.rate, live.shortenPauses) : null };
