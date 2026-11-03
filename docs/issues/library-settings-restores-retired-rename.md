@@ -1,24 +1,30 @@
-# library settings restores a rename after its unavailable read
+# an unavailable library read discards unanswered settings commands
 
-problem: the settings owner clears request/unknown when its read returns404,
-but a previously dispatched rename can later restore that request in its catch.
-the unavailable early return renders no Hold, so the restored loss guard can
-have no visible command recovery.
+problem: settings clears rename request and Rename/Delete uncertainty when its
+read returns404. membership loss is masked as the same404, so this read has no
+command-settlement authority. a previously dispatched rename can later restore
+its request behind the unavailable early return, which renders no Hold. recovery
+can disappear while an unconfirmed loss guard remains.
 
-evidence at integration57f76e33: `apps/web/src/components/LibrarySettingsDialog.tsx`
-86 derives gone;99 clears request/unknown;104-115 renders unavailable before
-the held owner;143 restores the captured request after a modeled unknown reply.
-the historical lane recorded the race in repair3 but left it unresolved. root
-confirmed these transitions in source; no runtime schedule has been induced.
+evidence at integration57f76e33:
+- `apps/web/src/components/LibrarySettingsDialog.tsx:86,99,104-115,143,148-183`
+  derives gone, clears both commands, hides recovery and restores late outcomes.
+- `python/nexus/services/libraries.py:109-126` masks missing membership as404;
+  rename263-289 commits through the serializable owner before acknowledgement.
+  delete292-341 has its own idempotent acknowledgement; a read404 is not that204.
+- `lib/actions/ResourceOverlays.tsx:60-63,85-90` mounts settings in a synthetic
+  overlay visit. accepted guarded close abandons its cell; old setters cannot
+  mutate a new entry. no new lifecycle owner is needed.
 
-inspect the complete read/rename authority and retained draft lifetime before
-repairing: a masked404 may mean unavailable membership, not permanent deletion.
-do not invent settlement authority from it or merely hide a retained command.
-fix at the existing settings draft/command owner, preserving exact frozen rename
-and current transport remedies. no new protocol, inventory or lifecycle owner.
+fix at the existing settings draft: preserve unresolved commands through read404,
+render their existing recovery while unavailable, and retry frozen rename fields
+or the absolute delete id without requiring current read data. retain accepted
+acknowledgement, first-refusal and earlier-unknown distinctions. no protocol,
+inventory or generic retry framework change.
 
-resolved when a delayed real-owner rename response after an unavailable read
-cannot create inaccessible pending recovery or an obsolete guard, and genuine
-unanswered intent remains reachable until authoritative settlement or deliberate
-guarded abandonment. qualify the adverse schedule in both engines and review
-the accepted/known-refusal/unknown branches independently.
+resolved when delayed refused/unknown results after real membership404 preserve
+reachable exact recovery, an actual acknowledgement settles it, and guarded
+abandon/reopen isolates the old cell. prove both engines and independent review.
+source audit confirmed; first baseline reached unavailable but an exact-text
+locator stopped before its target assertion, so no automated product-red verdict
+is claimed yet.
