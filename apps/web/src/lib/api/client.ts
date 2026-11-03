@@ -117,15 +117,19 @@ export function isSameSystemApiDefect(
 /**
  * A write's modeled failure is exactly one of `isRefusal` and `outcomeUnknown`; a same-system
  * defect is neither and throws. Refused, nothing ran: it never left this client (admission, a
- * sealed revision, a stalled upload), or the server answered 4xx, a lapsed session's 401 and a
- * stale build's 426 included. Unknown, it may have run: it was sent and no answer came, a deadline
- * passed after the send, or the server answered 5xx. No 5xx proves a rollback: 502 and 504 come
- * from past the answerer; `E_DATABASE_BUSY` is a pool checkout a handler may make after its own
- * commit (python/nexus/api/edge.py, services/extension_sessions.py commits and then refreshes);
- * `E_AUTH_UNAVAILABLE` may end a provider write that got no answer (lib/account/settings.server.ts).
+ * sealed revision, a stalled upload), the server answered 4xx, a lapsed session's 401 and a stale
+ * build's 426 included, or it answered `E_AUTH_UNAVAILABLE`, which every emitter answers before
+ * the route runs: lib/api/proxy.ts before `forward`, python's auth middleware before any route,
+ * lib/account/settings.server.ts before its operation or from the identity list's read (its
+ * writes answer a silent provider as the outcome `Failed`). Unknown, it may have run: it was sent
+ * and no answer came, a deadline passed after the send, or the server answered another 5xx. 502
+ * and 504 come from past the answerer; `E_DATABASE_BUSY` is a pool checkout a handler may make
+ * after its own commit (python/nexus/api/edge.py; services/extension_sessions.py commits, then
+ * refreshes).
  */
 export function isRefusal(error: unknown): error is ApiError {
-  return isApiError(error) && !isSameSystemApiDefect(error) && (!error.sent || error.status >= 400 && error.status < 500);
+  return isApiError(error) && !isSameSystemApiDefect(error)
+    && (!error.sent || error.status >= 400 && error.status < 500 || error.code === "E_AUTH_UNAVAILABLE");
 }
 
 /** The other half of `isRefusal`'s partition: its owner holds the write until a press settles it.
