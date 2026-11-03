@@ -939,7 +939,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
           {arrivalNotice}
           {transcriptChrome}
           {captureHint}
-          {transcript ? (
+          {transcript && media.processing_status !== "suspended" ? (
             <TranscriptState media={media} holdFocus={holdTranscriptFocus}
               announcement={paneActive ? "Polite" : "None"}
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}

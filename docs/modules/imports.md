@@ -216,6 +216,8 @@ doors reject more than 100 files into the visit's field feedback without admitti
 
 the first attempt read shows a `Ruling`; an accepted unsettled source shows its waiting
 fact and `all imports`. only a settled identity replaces the route with its reader;
+an exact dead source job settles identity without declaring content usable or successful.
+explicit repair, retry or refresh can reopen identity work.
 that passive replacement preserves the active pane and its open controls. the
 poll returns its read promise, so a slow source read completes before another starts.
 the read's busy state gates polling across pane visibility changes as well.
@@ -229,8 +231,9 @@ the rail reads unsettled work from the intake; a library door supplies that libr
 destination through the same navigation intent.
 
 - **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
-- **I12** a line once unknown keeps its frozen id, guard and confirmation until a retry of
-  `changed` or `library gone`, or a reselect, re-freezes it: every retry before then, a held
+- **I12** a line once unknown keeps its frozen id, guard and confirmation until an
+  authoritative refusal permits `changed` or `library gone` review, or a reselect
+  re-freezes it. refreezing retires that confirmation and its uncertainty; every retry before then, a held
   send's included, replays them, never a fresh read. an unsent or pre-route-refused retry
   preserves that uncertainty and its dismiss confirmation.
 - **I13** `running` counts waiting, sending, uploading and verifying lines; `unsettled` adds
@@ -277,7 +280,7 @@ home; authored recovery opens downloads, whose workspace owns sign-in and setup.
 and current-reference supersession; [libraries](library.md) owns retention and
 placement revisions. import views never infer current saving from a past receipt.
 
-the intake owns live upload recovery (`replay` above). a guard refusal permits
+the intake owns live upload recovery (`replay` above). an authoritative guard refusal permits
 review against the same staged generation before expiry; an unknown confirmation
 retains its exact command. losing that owner requires file reselection/recapture.
 imports exposes its existing retry-upload action rather than durable confirmation

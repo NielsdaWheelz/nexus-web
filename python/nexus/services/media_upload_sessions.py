@@ -48,7 +48,7 @@ from nexus.db.models import (
     ProcessingStatus,
     XArticleInspection,
 )
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import DatabaseBusyError, retry_read_committed, retry_serializable
 from nexus.db.session import get_repeatable_read_db, transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
@@ -676,7 +676,8 @@ def confirm_session(
     Retry rule: a published session answers ``Published`` whatever the generation;
     it includes fresh placements, never a new filing; an expired unpublished upload
     is 409 ``E_UPLOAD_CAPABILITY_EXPIRED``. A stale generation is 409 ``E_UPLOAD_GENERATION_STALE``; a recorded rejection
-    answers its code again.
+    answers its code again. Lock timeout or retry exhaustion is 503 ``E_DATABASE_BUSY``:
+    it cannot resolve an earlier confirmation, so the client retains that command.
     """
 
     def read_current() -> Published | _Generation:
@@ -696,7 +697,13 @@ def confirm_session(
         _require_current(db, session, generation)
         return _Generation.of(session)
 
-    current = retry_read_committed(db, "upload.confirm.read", read_current)
+    try:
+        current = retry_read_committed(db, "upload.confirm.read", read_current)
+    except DatabaseBusyError as exc:
+        logger.warning("db.resource_busy", exc_info=True)
+        raise ApiError(
+            ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+        ) from exc
     if isinstance(current, Published):
         return current
     client = get_storage_client()
@@ -828,7 +835,13 @@ def confirm_session(
         record_input_change(db, owners=(f"media:{media.id}",))
         return result
 
-    return retry_serializable(db, "upload.confirm", publish)
+    try:
+        return retry_serializable(db, "upload.confirm", publish)
+    except DatabaseBusyError as exc:
+        logger.warning("db.resource_busy", exc_info=True)
+        raise ApiError(
+            ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+        ) from exc
 
 
 def _new_media(

@@ -7,8 +7,9 @@ a defect; it is never discarded or joined. Provider and other external effects s
 outside the operation. Every Exception rolls the owned attempt back; a BaseException
 (a cancellation) is left to the session's close. Serialization failures, deadlocks,
 TransactionRestart and named first-sight races retry. Lock timeout raises
-DatabaseBusyError without another attempt. The api maps busy attempts and exhausted
-transaction retries to 409; workers keep their existing transient queue retry.
+DatabaseBusyError without another attempt. The api edge maps unclaimed busy attempts
+and exhausted transaction retries to 409; confirmation and auth bootstrap claim them
+as 503 before that fallback. Workers keep their existing transient queue retry.
 """
 
 from collections.abc import Callable
