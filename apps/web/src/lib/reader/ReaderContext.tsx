@@ -21,7 +21,7 @@ import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { CommandVerb } from "@/components/feedback/stage";
 import { admissionError, apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { admissionReason } from "@/lib/api/failure";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useHeldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -181,7 +181,7 @@ export function useReaderContext(): ReaderProfileCapability {
 /** The change applies here whatever its save met. */
 const SAVE_COPY = {
   fact: "couldn’t save reader settings.",
-  unsure: { fact: "not sure reader settings saved.", reason: "they may have gone through." },
+  unsure: { fact: "not sure reader settings saved.", reason: UNKNOWN_OUTCOME_REASON },
   kept: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." },
 };
 

@@ -376,7 +376,7 @@ function StatusStrip({ reader, speak, saveFailure, loadFailure, returnFocus }: {
           { label: "stay here", commandKey: "KeepDevicePosition", run: () => void reader.resolveHandoff("Device"), busy: !!ready?.saving },
         ]} />
       ) : null}
-      {saveFailed ? <Fact key={`${saveFailed.line.fact}${saveFailed.line.reason ?? ""}`} line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
+      {saveFailed ? <Fact line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
       {unavailable && !exploring && !unresolved ? (
         <Fact line={{ fact: "your saved reading position no longer matches this version." }} speak={speak} />
       ) : null}

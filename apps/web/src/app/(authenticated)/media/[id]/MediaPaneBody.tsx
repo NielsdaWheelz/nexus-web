@@ -965,7 +965,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         lane={
           <>
-            {boundsPrompt ? <Fact key={`${boundsPrompt.fact}${boundsPrompt.reason ?? ""}`} line={boundsPrompt} speak={speak}
+            {boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
               verbs={bounds?.phase === "Selecting" ? [{ label: "cancel", commandKey: "CancelHighlightBounds", run: verbs.cancelBounds }] : undefined} /> : null}
             {isMobile && verbs.composer.reselection ? <Fact line={{ fact: "select the passage again." }} speak={speak}
               verbs={[{ label: "cancel", commandKey: "CancelReselection", run: verbs.dismissSelection }]} /> : null}

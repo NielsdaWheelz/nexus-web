@@ -40,7 +40,7 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
   const guard = useWorkGuard();
   const run = async (body: Schema<"PartCandidateDecision">, retry = false) => {
     if (draft.read().busy || draft.read().request !== null && !retry) return;
-    draft.set(value => ({ ...value, request: body, busy: true }));
+    draft.set(value => ({ ...value, request: body, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
       await decidePart(source, candidate, body);
     } catch (failure) {

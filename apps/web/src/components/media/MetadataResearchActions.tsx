@@ -25,20 +25,14 @@ import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations"
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 
-/** Where focus goes once a control leaves: its pane's landmark, else its dialog. */
-function homeOf(control: HTMLElement): () => HTMLElement | null {
-  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-  const dialog = control.closest<HTMLElement>("[role=dialog]");
-  return () => findPaneLandmarkFocusTarget(paneId) ?? dialog;
-}
-
 /** Repair focus only when the control owning it actually left the document. */
 async function landing(control: HTMLElement, work: () => Promise<void>) {
   const held = document.activeElement === control;
-  const home = homeOf(control);
+  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+  const dialog = control.closest<HTMLElement>("[role=dialog]");
   await work();
   const active = document.activeElement;
-  const target = home();
+  const target = findPaneLandmarkFocusTarget(paneId) ?? dialog;
   if (held && !control.isConnected && active === document.body && target?.isConnected)
     target.focus({ preventScroll: true });
 }
@@ -169,7 +163,7 @@ export default function MetadataResearchActions({
     <>
       <span id={reasonId} className="sr-only">{ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
       {reviewJob !== null ? (
-        <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
+        <MetadataReviewButton key={reviewJob} mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
         <span data-metadata-action=""><VerbControl contextId={reasonId} verb={resendVerbs({

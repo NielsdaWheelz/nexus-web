@@ -116,7 +116,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   const saved = async (id: string | null) => { returnedPart.current = id; await refresh(); };
   const run = async (request: Command, retry = false) => {
     if (commands.read().busy || commands.read().request !== null && !retry) return;
-    commands.set(value => ({ ...value, request, busy: true }));
+    commands.set(value => ({ ...value, request, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
       if (request.kind === "discover") await discoverParts(source, request.body);
       else await decidePart(source, request.candidate, request.body);
@@ -199,7 +199,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
         if (!blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
       }}>{operation?.status === "dead" || operation?.outcome === "superseded" ? "retry" : "extract independent works"}</Button> : null}
       {/* a job's progress stays quiet; its death speaks, once per line. */}
-      {operationText ? <Fact key={operationText} line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
+      {operationText ? <Fact line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
         {/* the contents stay inert until the reader shows their version; a load that ended behind it says so */}
         {behind && mounted.status === "ready" && !mounted.refreshing && acted.current === pair
