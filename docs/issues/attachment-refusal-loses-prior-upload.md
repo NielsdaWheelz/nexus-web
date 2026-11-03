@@ -21,3 +21,9 @@ fence; shared UploadAttempt.confirmation_unsettled prevents review from rewritin
 possibly dispatched confirmation. prove unknown-confirm503, later409, wait past8s,
 then deliberate same-byte retry, with no automatic write on wake. root owns the
 bounded l2b/l4 follow-up; no new registry or upload protocol is needed.
+
+partial repair: NoteEditor now retains its frozen file/attempt and unknown through typed
+BytesMissing, Unresolved, authority refusal and ordinary transport refusal using
+confirmation_unsettled. shared permanent publication fences still retire the attempt.
+connection-attachment repair and fresh review of both consumers remain required;
+this record stays open until both owners are qualified.

@@ -679,18 +679,19 @@ function NoteEditorContent(props: NoteEditorProps) {
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
-        // Unresolved holds and its retry replays the same attempt: an unknown outcome, or bytes
-        // that never landed. Review: a resend re-reads the guard. A final refusal clears, saying
-        // its upload outcome's reason, else the transport's. A malformed intent is a defect.
+        // A later refusal cannot settle an earlier confirmation. Only acceptance or an exact
+        // publication fence retires it; retry keeps the same bytes and confirmation.
+        // A malformed intent and same-system transport defects retain their failure boundary.
         if (outcomeUnknown(error)) hold(UNKNOWN);
         else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
           const line = { fact: NOT_ADDED, reason: captureErrorFeedback(error, "AddAttachment").message };
-          if (error.outcome.kind === "Unresolved") hold(UNKNOWN);
+          if (task.upload.confirmation_unsettled || error.outcome.kind === "Unresolved") hold(UNKNOWN);
           else if (error.outcome.kind === "BytesMissing") hold(line);
           else { setAttachment(null); say(line); }
         }
+        else if (task.upload.confirmation_unsettled && isApiError(error) && !isSameSystemApiDefect(error)) hold(UNKNOWN);
         else { setAttachment(null); if (!handleUnauthenticated(error)) fail(error, NOT_ADDED); }
       } finally {
         unsubscribe();
