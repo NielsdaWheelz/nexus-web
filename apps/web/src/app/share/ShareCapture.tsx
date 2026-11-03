@@ -394,7 +394,7 @@ function ShareCaptureContent({
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
   const transportVerbs = useTransportVerbs();
   const resendVerbs = useResendVerbs();
-  const verb: CommandVerb = { label: result.recovery === "Review" ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving };
+  const verb: CommandVerb = { label: result.recovery === "Review" ? "review libraries" : "retry", commandKey: result.recovery === "Review" ? "ReviewCaptureResult" : "RetryCaptureResult", run: retry, busy: saving };
   if (result.recovery === "Unknown") return <Hold id={`share-capture:${result.label}`} attempt={result.attempt} line={result.line} verbs={resendVerbs(verb)} />;
   return <>
     <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb })) ?? undefined} />
