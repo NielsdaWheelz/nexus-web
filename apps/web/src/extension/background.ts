@@ -991,7 +991,7 @@ async function save(signal: AbortSignal): Promise<void> {
       const megabytes = Math.round(limit / 2 ** 20);
       throw failure(
         "E_FILE_TOO_LARGE",
-        `this ${bytes.kind} is over ${megabytes} MB.`,
+        `this ${bytes.kind} is over ${megabytes} megabytes.`,
       );
     }
     const { id, target, destinations, submission } = requireDraft();
