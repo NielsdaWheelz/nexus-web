@@ -10,7 +10,7 @@
 // and its slip carries the retry. A link step that fails other than in local storage is
 // a defect.
 import { useRef } from "react";
-import { Paperclip } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { Line, Verbs } from "@/components/feedback/stage";
@@ -215,7 +215,7 @@ export function useConnectionAttachments(selfRef: string) {
       onDrop: (event: React.DragEvent<HTMLElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); event.stopPropagation(); attachFiles(files); } },
     },
     control: <>
-      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || task?.retryLink != null || writing === null} aria-busy={task?.running} icon={<Paperclip size={14} aria-hidden="true" />} />
+      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || task?.retryLink != null || writing === null} aria-busy={task?.running} icon={<Icon.Upload size={14} aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
       {task?.owed ? <Hold id={`ConnectionAttachments:${task.id}:${task.owed}`} attempt={task.attempt} line={owedLine(task.owed, task.files[task.index]!.file.name)}
         verbs={[{ label: "retry", commandKey: `ConnectionAttachments.retry:${task.id}`, run: () => void run(task), busy: task.running }]} /> : null}

@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // User links, mentions and embeds are local authored facts and render from the
 // device store online and offline. Server facts render in their own section,
@@ -6,7 +7,6 @@
 // is a ruling; a local storage failure says so until its rows have shown, and a
 // defect in any local read throws to the boundary.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -67,7 +67,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         <div className={styles.headerActions}>
           <ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
-          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={scan.start} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
+          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={scan.start} disabled={scanning} aria-busy={scanning} icon={<Icon.Search size={14} aria-hidden="true" />} /> : null}
         </div>
       </div>
 
@@ -79,7 +79,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
         <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>
-          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resourceRef={resource.ref} authoredByViewer={resource.authored_by_viewer}
+          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resource={resource}
             occurrenceKey={`connections:${selfRef}/mention:${resource.ref}`} incoming={null} />)}
         </ResourceOutlineList>
         {mentions.data.next_cursor !== null ? <Button type="button" onClick={mentions.more}>show more</Button> : null}

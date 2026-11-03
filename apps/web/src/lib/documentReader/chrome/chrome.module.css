@@ -219,6 +219,22 @@
   list-style: none;
 }
 
+.highlightChoices > li {
+  min-width: 0;
+}
+
+.highlightChoices button {
+  max-width: 100%;
+}
+
+.highlightChoiceLabel {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .annotationList ul {
   display: grid;
   gap: var(--space-4);

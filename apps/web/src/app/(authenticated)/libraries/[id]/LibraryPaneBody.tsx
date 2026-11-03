@@ -7,7 +7,7 @@
 // the text filter stays local.
 
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
-import { Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -270,7 +270,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       kind: "command",
       id: "ViewAction.Library.AddContent",
       label: "Add content",
-      icon: <Plus size={20} aria-hidden="true" />,
+      icon: <Icon.Add aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>
         requestNexusOpen({

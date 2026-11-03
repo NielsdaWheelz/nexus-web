@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { forwardRef, type MouseEventHandler, type RefObject } from "react";
-import { ChevronDown } from "lucide-react";
 import { Failed } from "@/components/feedback/Fact";
 import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -36,7 +36,7 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
     aria-label={`${props.accessibleLabel ?? props.label}: ${names.length === 0 ? props.emptyLabel : names.join(", ")}`}
     disabled={props.disabled} onClick={props.onToggle}>
     <span className={styles.label}>{props.label}</span><span className={styles.summary}>{summary}</span>
-    <ChevronDown size={15} aria-hidden="true" data-open={props.expanded || undefined} />
+    <Icon.Choose size={16} aria-hidden="true" />
   </button>;
 });
 

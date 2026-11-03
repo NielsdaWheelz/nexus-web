@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import { Field } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -76,15 +76,15 @@ function Sections({ reader }: { readonly reader: Reader }) {
       <div className={styles.row}>
         <div className={styles.position}>
           {previous ? <Tooltip text={`Previous ${noun}`} renderTrigger={(help) => (
-            <ReaderLink {...help} reader={reader} target={previous} className={buttonClassName({ iconOnly: true })} aria-label={`Previous ${noun}`}><ChevronLeft size={20} aria-hidden="true" /></ReaderLink>
-          )} /> : <Button iconOnly icon={<ChevronLeft />} disabled aria-label={`Previous ${noun}`} />}
+            <ReaderLink {...help} reader={reader} target={previous} className={buttonClassName({ iconOnly: true })} aria-label={`Previous ${noun}`}><Icon.Left size={20} aria-hidden="true" /></ReaderLink>
+          )} /> : <Button iconOnly icon={<Icon.Left />} disabled aria-label={`Previous ${noun}`} />}
           <span className={styles.count}>
             <span className="sr-only">{index < 0 ? transcript ? "chapters" : `Before the first of ${sections.length} sections` : `${noun} ${index + 1} of ${sections.length}`}</span>
             <span aria-hidden="true">{index < 0 ? "—" : index + 1}<span className={styles.countTotal}> / {sections.length}</span></span>
           </span>
           {next ? <Tooltip text={`Next ${noun}`} renderTrigger={(help) => (
-            <ReaderLink {...help} reader={reader} target={next} className={buttonClassName({ iconOnly: true })} aria-label={`Next ${noun}`}><ChevronRight size={20} aria-hidden="true" /></ReaderLink>
-          )} /> : <Button iconOnly icon={<ChevronRight />} disabled aria-label={`Next ${noun}`} />}
+            <ReaderLink {...help} reader={reader} target={next} className={buttonClassName({ iconOnly: true })} aria-label={`Next ${noun}`}><Icon.Right size={20} aria-hidden="true" /></ReaderLink>
+          )} /> : <Button iconOnly icon={<Icon.Right />} disabled aria-label={`Next ${noun}`} />}
         </div>
         <ActionMenu
           label={index < 0 ? label : `${label}; select ${noun}`}
@@ -95,7 +95,7 @@ function Sections({ reader }: { readonly reader: Reader }) {
             <Button {...props} className={styles.sectionTrigger}>
               <span className={styles.sectionContent}>
                 <span className={styles.sectionTitle}>{label}</span>
-                <ChevronDown size={14} className={styles.sectionChevron} aria-hidden="true" />
+                <Icon.Choose size={14} className={styles.sectionChevron} aria-hidden="true" />
               </span>
             </Button>
           )}
@@ -135,7 +135,7 @@ function Pages({ reader }: { readonly reader: Reader }) {
       <div className={styles.row}>
         <div className={styles.position}>
           <Tooltip text="Previous page" renderTrigger={(help) => (
-            <ReaderLink {...help} reader={reader} target={target(Math.max(1, pdf.page - 1))} className={buttonClassName({ iconOnly: true })} aria-label="Previous page" disabled={pdf.page <= 1}><ChevronLeft size={20} aria-hidden="true" /></ReaderLink>
+            <ReaderLink {...help} reader={reader} target={target(Math.max(1, pdf.page - 1))} className={buttonClassName({ iconOnly: true })} aria-label="Previous page" disabled={pdf.page <= 1}><Icon.Left size={20} aria-hidden="true" /></ReaderLink>
           )} />
           <label className={styles.page}>
             <span>Page</span>
@@ -173,15 +173,15 @@ function Pages({ reader }: { readonly reader: Reader }) {
             <span id={totalId}>/ {pdf.pages}</span>
           </label>
           <Tooltip text="Next page" renderTrigger={(help) => (
-            <ReaderLink {...help} reader={reader} target={target(Math.min(pdf.pages, pdf.page + 1))} className={buttonClassName({ iconOnly: true })} aria-label="Next page" disabled={pdf.page >= pdf.pages || atEnd}><ChevronRight size={20} aria-hidden="true" /></ReaderLink>
+            <ReaderLink {...help} reader={reader} target={target(Math.min(pdf.pages, pdf.page + 1))} className={buttonClassName({ iconOnly: true })} aria-label="Next page" disabled={pdf.page >= pdf.pages || atEnd}><Icon.Right size={20} aria-hidden="true" /></ReaderLink>
           )} />
         </div>
         <div className={styles.zoom} role="group" aria-label="pdf zoom">
-          <Button iconOnly icon={<Minus />} aria-label="zoom out" disabled={pdf.scale <= PDF_ZOOM.min} onClick={() => reader.setZoom(pdf.scale - PDF_ZOOM.step)} />
+          <Button iconOnly icon={<Icon.ZoomOut />} aria-label="zoom out" disabled={pdf.scale <= PDF_ZOOM.min} onClick={() => reader.setZoom(pdf.scale - PDF_ZOOM.step)} />
           <Button aria-label={`fit pdf to width; current zoom ${Math.round(pdf.scale * 100)} percent`} onClick={() => reader.setZoom(null)}>
             {pdf.zoom === null ? "fit width" : `${Math.round(pdf.scale * 100)}% · fit width`}
           </Button>
-          <Button iconOnly icon={<Plus />} aria-label="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)} />
+          <Button iconOnly icon={<Icon.ZoomIn />} aria-label="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)} />
         </div>
       </div>
       {current?.error ? <Field id={errorId} line={{ fact: current.error }} /> : null}

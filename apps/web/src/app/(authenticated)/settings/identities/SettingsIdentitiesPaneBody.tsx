@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
-import { Unlink } from "lucide-react";
 
 import { useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
@@ -118,7 +118,7 @@ export default function SettingsIdentitiesPaneBody() {
                               {
                                 kind: "command",
                                 id: "unlink-identity",
-                                icon: <Unlink size={16} aria-hidden="true" />,
+                                icon: <Icon.Remove aria-hidden="true" />,
                                 label: "Unlink",
                                 tone: "danger",
                                 disabled:

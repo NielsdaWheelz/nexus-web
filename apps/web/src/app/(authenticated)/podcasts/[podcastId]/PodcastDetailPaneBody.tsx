@@ -6,7 +6,7 @@
 // the visible pane.
 
 import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
@@ -382,7 +382,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   </p>
                 </div>
                 <Button ref={detailsButton} className={styles.detailButton}
-                  icon={expanded ? <ChevronDown /> : <ChevronRight />}
+                  icon={<Icon.Disclose open={expanded} />}
                   aria-expanded={expanded} aria-controls={detailId}
                   onClick={() => {
                     if (expanded && detailPanel.current?.contains(document.activeElement)) detailsButton.current?.focus();

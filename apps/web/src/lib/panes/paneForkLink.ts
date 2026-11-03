@@ -1,6 +1,5 @@
 "use client";
 
-import { createElement } from "react";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
@@ -12,10 +11,9 @@ export function paneForkLink({ runtime, target, disabledReason }: {
   readonly target: WorkspaceTarget;
   readonly disabledReason: string | null;
 }): Extract<ActionDescriptor, { kind: "link" }> {
-  const action = ACTION_CATALOG.OpenInNewPane;
   return {
-    kind: "link", id: "Row.OpenInNewPane", label: action.label.toLowerCase(),
-    icon: createElement(action.icon, { size: 16, "aria-hidden": true }), href: target.href,
+    kind: "link", id: "Row.OpenInNewPane", label: ACTION_CATALOG.OpenInNewPane.label.toLowerCase(),
+    icon: null, href: target.href,
     disabled: disabledReason !== null, disabledReason: disabledReason ?? undefined,
     restoreFocusOnClose: false,
     onActivate: event => {

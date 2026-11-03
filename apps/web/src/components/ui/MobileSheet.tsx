@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
-import { X } from "lucide-react";
 import { MODAL_GEOMETRY_CHANGE } from "@/lib/ui/overlay";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
@@ -146,7 +146,7 @@ export default function MobileSheet({
               <div className={styles.titleRow}>
                 <h2 className={styles.title}>{ariaLabel}</h2>
                 <button type="button" className={styles.close} aria-label={`close ${ariaLabel}`} onClick={requestDismiss}>
-                  <X size={16} aria-hidden="true" />
+                  <Icon.Dismiss size={16} aria-hidden="true" />
                 </button>
               </div>
             ) : null}

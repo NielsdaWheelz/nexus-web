@@ -168,14 +168,6 @@
   opacity: 1;
 }
 
-.leading > [data-outline-disclose] > .control > svg {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-
-.leading > [data-outline-disclose] > .control[aria-expanded="true"] > svg {
-  transform: rotate(90deg);
-}
-
 /* the bullet is the slot's own one-line box. the note marker is drawn as a 6px dot over its transparent text;
    glyph markers draw themselves. the 16px halo behind either says the row hides children. */
 .bullet {
@@ -233,8 +225,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .bullet::before,
-  .leading > [data-outline-disclose] > .control,
-  .leading > [data-outline-disclose] > .control > svg {transition: none;}
+  .leading > [data-outline-disclose] > .control {transition: none;}
 }
 
 /* forced colours drop fills: the selection keeps a system outline, the halo its ring, the dot its ink. */

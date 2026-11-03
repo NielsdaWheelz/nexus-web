@@ -46,7 +46,7 @@ function useOpenAction(item: ImportItem): Command | null {
     },
   });
   return mediaRef !== null && (item.can_read || item.can_play) ? {
-    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />, disabled: busy,
+    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: null, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
       ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, title: item.title,
@@ -78,9 +78,9 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
   const ref = mediaId === null ? null : `media:${mediaId}`;
   const busy = useBusyActionIds(ref);
   if (mediaId === null || ref === null || offer === null) return null;
-  const { label, icon: Icon } = ACTION_CATALOG[offer.kind];
+  const { label, icon: Glyph } = ACTION_CATALOG[offer.kind];
   return {
-    kind: "command", id: offer.kind, label, icon: <Icon size={16} aria-hidden="true" />, disabled: busy.has(offer.kind),
+    kind: "command", id: offer.kind, label, icon: <Glyph aria-hidden="true" />, disabled: busy.has(offer.kind),
     disabledReason: busy.has(offer.kind) ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => run({
       ref, id: offer.kind, label, title: "", confirmation: null, tracked: true,
@@ -144,12 +144,12 @@ function useUploadActions(item: ImportItem) {
   });
   const sendRemove = () => send("RemoveUpload", () => removeUploadSession(sessionId));
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
-    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon size={16} aria-hidden="true" />,
+    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
     onSelect: chooseFile,
   } : null;
   const remove: Command = {
-    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: <ACTION_CATALOG.RemoveUpload.icon size={16} aria-hidden="true" />,
+    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: null,
     tone: "danger", disabled: removing, disabledReason: removing ? "removing." : undefined,
     onSelect: () => {
       if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`)) sendRemove();

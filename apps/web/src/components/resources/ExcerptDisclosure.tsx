@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useContext, useEffect, useRef, useState, type ComponentProps } from "react";
 import type { ApiJson } from "@/lib/api/wire";
 import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
 import { modeledApiError, useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
@@ -12,6 +12,7 @@ import { authoredItem } from "@/lib/notes/presentation";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import ResourceBody from "./ResourceBody";
 import ResourceQuotation from "./ResourceQuotation";
 
@@ -102,6 +103,12 @@ function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boo
 /** Full ordinary bodies query frozen authored evidence; historical bodies stay supplied. */
 export function FullResourceBody({ item, historical = false }: { item: ResourceItem; historical?: boolean }) {
   const body = item.preview.body;
+  const resources = useContext(PreparedResourcesContext);
+  if (body.kind === "passage" && body.reading_ref === null && !historical) {
+    const full = resources?.get(item.ref)?.full;
+    if (full && full.captureRevision === body.capture_revision) return full.excerpt === null ? <p>excerpt unavailable in this reading.</p>
+      : <ResourceBody body={{...body, excerpt: full.excerpt}} full/>;
+  }
   return body.kind === "passage" && !historical && body.capture_revision !== null
     ? <LoadedExcerpt key={`${item.ref}:${body.capture_revision}:${body.reading_ref}`} item={item} quotation={false} />
     : <ResourceBody body={body} full />;

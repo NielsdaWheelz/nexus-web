@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { MouseEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -49,7 +49,7 @@ export default function QuotedPassage({ quote, onRemove, onRetry }: {
 }) {
   const refused = quote.kind === "Failed" ? unquotable(quote.error) : null;
   return <div className={styles.quote} role="group" aria-label="Quoted passage">
-    {onRemove ? <Button icon={<X />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
+    {onRemove ? <Button icon={<Icon.Dismiss />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
     {quote.kind === "Ready" || quote.kind === "Sent" ? <ResourceQuotation item={quote.selection.item} />
       : quote.kind === "Loading" ? null
       : refused !== null ? <Fact line={{ fact: refused }} />

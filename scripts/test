@@ -51,6 +51,7 @@ shellcheck "${shell_files[@]}"
   bun run build:android
   bun run build:extension
   bun run lint:css-tokens
+  bun run lint:icons
   wire="$(mktemp)"
   citation_markers="$(mktemp)"
   authored_helper="$(mktemp)"

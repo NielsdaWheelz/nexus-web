@@ -2,7 +2,7 @@
 
 // What both presenters share about a row: its gutter and two text lines, its spoken name, its verbs,
 // and the notices that follow the candidates.
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 // Row parts: resource bodies, menus, and visible search status.
@@ -76,7 +76,7 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
 
 /** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
 export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
-  const Icon = row.icon;
+  const Glyph = row.icon;
   const title = rowPrimaryText(row);
   let inline = titleMatch(row, title);
   // Synchronous pane/recent names have no remote match window; mark their literal name match here.
@@ -94,7 +94,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
   const shown = evidence && reason === null ? windowed(evidence) : null;
   return <>
     <span className={styles.gutter} aria-hidden="true">
-      {position === undefined ? <Icon size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
+      {position === undefined ? <Glyph size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
     </span>
     <span className={styles.text}>
       <span className={styles.title} title={title}>
@@ -170,7 +170,7 @@ export function nexusRowVerbs(
     const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
     const target = action.kind === "Available" && action.target.kind === "Resource" ? action.target : null;
     const passageHref = target && (target.activation.kind === "route" || target.activation.kind === "external") ? target.activation.href : null;
-    const icon = <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />;
+    const icon = ACTION_CATALOG.Open.icon;
     if (passageHref && target) occurrence.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href: passageHref, icon,
       onActivate: target.activation.kind === "external" ? undefined : (event) => {
         const intent = workspaceTargetActivationIntent(event);
@@ -189,7 +189,7 @@ export function nexusRowVerbs(
     occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
   if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) {
     if (here && resourceRef === null && pane.id === closing) continue;
-    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
+    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <Icon.Dismiss aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
   }
   return {
     pair: [...(here ? [] : [verb(false)]), ...(imports ? [] : [verb(true)])],

@@ -4,7 +4,7 @@
  * every room. It renders what `stage.ts` decided and reports what the hand did; it decides
  * nothing about where or when. A frame is a labelled region after its anchor's content in tab
  * order, so it is reachable without ever taking focus. Only the topmost room speaks. */
-import { ChevronDown, X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FocusEvent, type PointerEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
@@ -439,8 +439,8 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
     {row.verbs ? <VerbControl verb={row.verbs[0]} contextId={lineId} onActivated={activated(row.verbs[0])} withdrawal={withdrawal} /> : null}
     {row.verbs?.[1] ? <VerbControl verb={row.verbs[1]} contextId={lineId} onActivated={activated(row.verbs[1])} withdrawal={withdrawal} /> : null}
     {plain
-      ? <Button className={styles.close} iconOnly icon={<X />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.dismiss(row.key)} />
-      : <Button className={styles.close} iconOnly icon={<ChevronDown />} aria-label="tuck notice" tooltip={NO_HINT} onClick={() => stage.tuck(row.key)} />}
+      ? <Button className={styles.close} iconOnly icon={<Icon.Dismiss />} aria-label="close notice" tooltip={NO_HINT} onClick={() => stage.dismiss(row.key)} />
+      : <Button className={styles.close} iconOnly icon={<Icon.Disclose open />} aria-label="tuck notice" tooltip={NO_HINT} onClick={() => stage.tuck(row.key)} />}
   </div>;
 }
 

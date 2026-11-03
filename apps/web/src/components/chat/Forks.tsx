@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo, useRef, useState, type CSSProperties } from "react";
-import { GitBranch, Search } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
@@ -52,7 +52,7 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options }
   return (
     <>
       <Button
-        icon={<GitBranch />}
+        icon={<Icon.Forks />}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={index < 0 ? `continuations, ${options.length}` : `alternatives, ${index + 1} of ${options.length}`}
@@ -190,7 +190,7 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
         line={{ fact: "not sure the fork was renamed.", reason: MAY_HAVE }}
         verbs={[{ label: "retry", commandKey: `rename ${editing.id}`, busy: editing.pending, run: () => void rename() }]} /> : null}
       <label className={styles.search}>
-        <Search size={14} aria-hidden="true" />
+        <Icon.Search size={14} aria-hidden="true" />
         <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search forks" placeholder="Search forks" />
       </label>
       <p className={styles.faint}>{found}</p>

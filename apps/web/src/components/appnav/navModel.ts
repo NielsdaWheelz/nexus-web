@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+import type * as Icon from "@/lib/ui/icons";
 import {
   getDestination,
   type Destination,
@@ -8,7 +8,7 @@ import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 
 /** A destination as the rail and the account menu draw it. */
 export interface NavItem extends Destination {
-  readonly icon: LucideIcon;
+  readonly icon: Icon.Glyph;
 }
 
 function navItem(id: DestinationId): NavItem {

@@ -55,8 +55,9 @@ const UNAVAILABLE = (operation: MediaContinuation): ContinuationFailure =>
 
 /** The one recovery a failed continuation offers, wherever it is shown: a library's review
  * opens the picker; anything else sends again. */
-export function continuationRecoveryLabel(operation: MediaContinuation, failure: ContinuationFailure): string {
-  return failure.review && operation.destination.kind === "Library" ? "choose libraries" : "retry";
+export function continuationRecovery(operation: MediaContinuation, failure: ContinuationFailure): { readonly label: string; readonly retry: boolean } {
+  const review = failure.review && operation.destination.kind === "Library";
+  return { label: review ? "choose libraries" : "retry", retry: !review };
 }
 
 export function useMediaContinuationOwner(ctx: Context) {
@@ -308,7 +309,7 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
   const { say, fail } = useOutcome();
   const failure = operation.failure;
   const recover: Verb | null = failure === null || operation.phase === "unavailable" ? null
-    : { label: continuationRecoveryLabel(operation, failure), commandKey: `recover ${operation.intentId}`, run: () => owner.recover(operation.intentId) };
+    : { label: continuationRecovery(operation, failure).label, commandKey: `recover ${operation.intentId}`, run: () => owner.recover(operation.intentId) };
   useEffect(() => {
     if (failure === null || failure.unknown) return;
     return failure.error !== null ? fail(failure.error, failure.line.fact, recover ?? undefined) : say(failure.line, recover ? [recover] : undefined);

@@ -10,7 +10,7 @@ import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/ap
 import type { EpisodeState } from "@/lib/podcasts/api";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
-import { Minus, Undo2, type LucideIcon } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   ACTION_CATALOG,
   admissionReason,
@@ -97,7 +97,7 @@ export class ResourceActionFailure extends Error {
 }
 
 interface Options {
-  readonly state?: { readonly label: string; readonly icon: LucideIcon };
+  readonly state?: { readonly label: string; readonly icon: Icon.Glyph | null };
   /** A client fact blocking the verb; the server's reason wins. */
   readonly blocked?: BlockedReason;
   /** Copy that explains a block better than the generic reason. */
@@ -161,7 +161,7 @@ export function projectLecternAction({
     kind: "command",
     id: "LecternMembership",
     label,
-    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(retry ? Icon.Again : state.icon, { "aria-hidden": true }),
     disabled: retry ? read.retrying || undefined : disabledReason !== undefined || undefined,
     disabledReason,
     waiting: waiting || undefined,
@@ -212,7 +212,7 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
     : needsRemote && !ctx.online ? admissionReason() : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
-    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(state.icon, { "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
     onSelect: () => {
       if (needsRemote && !remoteReady()) return;
@@ -256,12 +256,11 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
   ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const id = desiredState === "finished" ? "MarkCollectionFinished" : "MarkCollectionUnread";
-  const entry = ACTION_CATALOG[id];
   const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
   const label = selection.kind === "Podcast" && selection.state !== "all"
     ? `Mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
     : `Mark all ${status}…`;
-  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -279,7 +278,7 @@ export function projectPodcastTranscriptAction({ podcastId, state, title, blocke
   const id = "TranscribePodcastEpisodes";
   const entry = ACTION_CATALOG[id];
   const label = state === "all" ? entry.label : `Transcribe ${state.replaceAll("_", " ")} episodes…`;
-  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -298,9 +297,9 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
   const facts = supplied.kind_facts;
   const result: ActionDescriptor[] = [];
   if (facts.website_href !== null) result.push({ kind: "link", id: "OpenSource", label: ACTION_CATALOG.OpenSource.label,
-    icon: createElement(ACTION_CATALOG.OpenSource.icon, { size: 16, "aria-hidden": true }), href: facts.website_href });
+    icon: null, href: facts.website_href });
   result.push({ kind: "command", id: "Metadata", label: ACTION_CATALOG.Metadata.label,
-    icon: createElement(ACTION_CATALOG.Metadata.icon, { size: 16, "aria-hidden": true }),
+    icon: null,
     onSelect: ({ triggerEl }) => {
       const focus = invocationFocus(triggerEl, returnFocus);
       const metadata: MetadataSubject = subject.kind === "DiscoveryPodcast" ? { kind: "DiscoveryPodcast", candidate: subject.candidate } : { kind: "DiscoveryPodcastPreview", preview: subject.preview };
@@ -308,7 +307,7 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
     },
   });
   result.push({ kind: "link", id: "OpenPodcastFeed", label: ACTION_CATALOG.OpenPodcastFeed.label,
-    icon: createElement(ACTION_CATALOG.OpenPodcastFeed.icon, { size: 16, "aria-hidden": true }), href: facts.feed_href });
+    icon: null, href: facts.feed_href });
 
   return result;
 }
@@ -379,7 +378,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
   disabledReason = installedApp && !ctx.online ? admissionReason() : disabledReason;
   return {
     kind: "command", id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label,
-    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { "aria-hidden": true }),
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, restoreFocusOnClose: false,
     onSelect: detail => {
       if (disabledReason !== null) return;
@@ -413,7 +412,7 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
   return {
     kind: "command", id: "PodcastLibraryRemoval", label,
     accessibleLabel: `Remove ${title} from ${libraryName}`,
-    icon: createElement(Minus, { size: 16, "aria-hidden": true }),
+    icon: createElement(Icon.Remove, { "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason, restoreFocusOnClose: false,
     onSelect: detail => {
       if (disabledReason !== undefined) return;
@@ -465,7 +464,7 @@ export function projectResourceActions(
   ): Extract<ActionDescriptor, { kind: "command" }> => {
     const entry: {
       readonly label: string;
-      readonly icon: LucideIcon;
+      readonly icon: Icon.Glyph | null;
       readonly group: string;
       readonly confirmation?: Confirmation;
     } = { ...ACTION_CATALOG[actionId], ...options.state };
@@ -478,7 +477,7 @@ export function projectResourceActions(
       kind: "command",
       id: actionId,
       label: entry.label,
-      icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+      icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
       tone: entry.group === "Danger" ? "danger" : "default",
       disabled: disabledReason !== undefined || undefined,
       disabledReason,
@@ -737,14 +736,14 @@ export function projectResourceActions(
     if (isStaleBuild(pending.error)) {
       const reload = ctx.remedy === "Reload";
       return make(actionId, null, () => { if (reload) window.location.reload(); }, {
-        state: { label: reload ? "Reload" : "Update Nexus", icon: ACTION_CATALOG.RefreshSource.icon },
+        state: { label: reload ? "Reload" : "Update Nexus", icon: null },
         disabledReason: reload ? undefined : staleBuild(),
         tracked: false,
       });
     }
     const sending = pending.kind === "sending";
     return make(actionId, null, () => ctx.admissions.retry(pending.key), {
-      state: { label: "Retry", icon: ACTION_CATALOG[actionId].icon },
+      state: { label: "Retry", icon: Icon.Again },
       tracked: false,
       disabledReason: sending ? "already sending." : !ctx.online ? admissionReason() : undefined,
       waiting: sending,
@@ -863,7 +862,8 @@ export function projectResourceActions(
             tracked: false,
             state: {
               label: metadataResearchLabel(null, retry.purpose),
-              icon: ACTION_CATALOG.RetryMetadata.icon,
+              // Search reads true of research, not of generating a title (law 2).
+              icon: retry.purpose === "title" ? null : ACTION_CATALOG.RetryMetadata.icon,
             },
             blocked: ctx.online ? undefined : "RequiresOnline",
             disabledReason:
@@ -900,7 +900,7 @@ export function projectResourceActions(
         );
       case "Recovery":
         if (action.offer.kind === "BrowserCapture") return { kind: "link", id: "BrowserCapture", label: ACTION_CATALOG.BrowserCapture.label,
-          icon: createElement(ACTION_CATALOG.BrowserCapture.icon, { size: 16, "aria-hidden": true }), href: action.offer.source_url, target: "_blank" };
+          icon: null, href: action.offer.source_url, target: "_blank" };
         const offer = action.offer;
         return make(offer.kind, blocked, () => recoverMedia(id, offer));
       default: {
@@ -957,7 +957,7 @@ export function projectConsumptionUndoActions(target: ActionContext["consumption
     return target.kind === "Podcast" && item.target.podcast_id === target.podcast_id;
   }).map(item => {
     const disabledReason = !ctx.online ? admissionReason() : undefined;
-    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Undo2, { size: 16, "aria-hidden": true }),
+    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Icon.Undo, { "aria-hidden": true }),
       disabled: disabledReason !== undefined || item.phase === "Sending", disabledReason, busy: item.phase === "Sending",
       onSelect: () => { if (disabledReason === undefined && item.phase !== "Sending") ctx.consumption.undo(item.commandKey); },
     };
@@ -981,13 +981,13 @@ export function projectDownloadActions(input: {
   const { mediaId, title, ctx, busy, run, server } = input;
   const states = ACTION_CATALOG.Download.states;
   const command = (
-    state: { readonly label: string; readonly icon: LucideIcon },
+    state: { readonly label: string; readonly icon: Icon.Glyph | null },
     execute: () => Promise<void>,
     options: { readonly id?: string; readonly confirmation?: Confirmation; readonly disabledReason?: string; readonly waiting?: boolean; readonly tone?: "danger" } = {},
   ): Extract<ActionDescriptor, { kind: "command" }> => {
     const disabledReason = busy.has("Download") ? BLOCKED_COPY.Busy : options.disabledReason;
     return {
-      kind: "command", id: options.id ?? "Download", label: state.label, icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+      kind: "command", id: options.id ?? "Download", label: state.label, icon: state.icon && createElement(state.icon, { "aria-hidden": true }),
       tone: options.tone ?? "default", disabled: disabledReason !== undefined || undefined, disabledReason,
       waiting: busy.has("Download") || options.waiting || undefined,
       onSelect: () => run({ ref: `media:${mediaId}`, id: "Download", label: state.label, title,

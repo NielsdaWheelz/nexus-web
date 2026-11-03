@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   useCallback,
   useEffect,
@@ -227,7 +227,7 @@ export function usePaneRefresh(input: {
           kind: "command",
           id: "Pane.Refresh",
           label: "Refresh",
-          icon: <RefreshCw size={16} aria-hidden="true" />,
+          icon: <Icon.Again aria-hidden="true" />,
           disabled: refresh.kind === "Resolving" || refreshing !== null,
           disabledReason:
             refresh.kind === "Resolving"
@@ -251,7 +251,7 @@ export function usePaneRefresh(input: {
         aria-valuenow={determinate?.finishedCount}
       >
         <span className={styles.refreshIndicatorContent}>
-          <RefreshCw
+          <Icon.Again
             className={styles.refreshIndicatorIcon}
             size={14}
             aria-hidden="true"

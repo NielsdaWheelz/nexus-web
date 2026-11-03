@@ -103,9 +103,9 @@ metadata is omitted only when the glyph/artwork supplies type. provenance, role,
 location and status remain. accessible title composition names type once among
 generated fragments; literal titles are unchanged, including a title `page`.
 
-`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map; `kind.ts` owns the
+`resourceRef.ts` owns an exhaustive scheme-to-sign/label map; `kind.ts` owns the
 medium and noun of each kind; `lib/resources/type.ts` composes them. all passage
-schemes use `TextQuote`. media of unheld kind keeps `FileText` and the noun `source`.
+schemes draw `Passage`. media of unheld kind draws `Page` and the noun `source`.
 resource-specific pane icons consume this vocabulary; a passage's source pane
 still describes its source. invalid canonical refs are defects. availability,
 loading and terminal occurrences do not change type. markers fetch nothing and
@@ -316,8 +316,9 @@ annotation links and insertions belong to the highlight.
 reader roots and source-owned membership never invent an incoming graph mutation.
 
 arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retain
-their own order. embeds share canonical body and batched `embedded_item`, while the
-containing note retains its own identity. only the exact directed nonordinal
+their own order. embeds retain canonical body and target identity; authored targets
+resolve through the local replica, server-owned targets through their item reader.
+the containing note retains its own identity. only the exact directed nonordinal
 `note_body`/`context` embed edge is suppressed. empty states require settled,
 exhausted reads without visible children or failure. index snippets, inline
 citations, picker options and document matches retain their existing semantics.

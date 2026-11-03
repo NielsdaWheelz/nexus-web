@@ -1,6 +1,5 @@
 "use client";
-
-import { ArrowLeft } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useId, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
 import { Field } from "@/components/feedback/Fact";
@@ -51,7 +50,7 @@ export default function CreateLibraryPanel({
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label={mobile ? "back" : "Back"} onClick={onBack} />
+        <Button iconOnly icon={<Icon.Left />} className={styles.iconButton} aria-label={mobile ? "back" : "Back"} onClick={onBack} />
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>

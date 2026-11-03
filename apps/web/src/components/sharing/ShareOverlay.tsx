@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, Send, Share2 } from "lucide-react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -214,7 +214,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
             <ShareCopyButton href={href} label="Copy link" />
             {typeof navigator.share === "function" ? (
               <Button
-                icon={<Share2 />}
+                icon={<Icon.Share />}
                 disabled={!href}
                 onClick={() => href && void actions.nativeShare(href, label)}
               >
@@ -482,7 +482,7 @@ function GrantEditor(props: {
                 ? guarded(
                     "Native",
                     <Button
-                      icon={<Share2 />}
+                      icon={<Icon.Share />}
                       disabled={busy !== null}
                       onClick={() => setConfirm("Native")}
                     >
@@ -502,7 +502,7 @@ function GrantEditor(props: {
               {guarded(
                 "X",
                 <Button
-                  icon={<Send />}
+                  icon={<Icon.Send />}
                   disabled={busy !== null}
                   onClick={() => setConfirm("X")}
                 >
@@ -573,7 +573,7 @@ function ShareCopyButton({href, label}: {href: string | null; label: string}) {
     }
   };
   return <>
-    <Button icon={copied.copied ? <Check /> : <Copy />} disabled={href === null} onClick={() => void copy()}>{label}</Button>
+    <Button icon={copied.copied ? <Icon.Check /> : <Icon.Copy />} disabled={href === null} onClick={() => void copy()}>{label}</Button>
     {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
     <Dialog open={manual} title="copy link" onClose={() => setManual(false)} initialFocus={panel => panel.querySelector('textarea')}>
       <textarea readOnly aria-label="link to copy" value={href ?? ""} onFocus={event => event.currentTarget.select()} />

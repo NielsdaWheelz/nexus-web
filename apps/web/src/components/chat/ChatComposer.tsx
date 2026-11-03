@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
-import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { Fact, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
@@ -222,13 +222,13 @@ export default function ChatComposer(props: {
         {sendWaits !== null ? <span id={waitsId} className="sr-only">{sendWaits}</span> : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
-            <GitBranch size={16} aria-hidden="true" />
+            <Icon.Forks size={16} aria-hidden="true" />
             <div>
               <strong>Fork reply</strong>
               {branch.quote ? <blockquote>{truncateText(branch.quote, 220)}</blockquote> : null}
             </div>
-            <Button iconOnly icon={<LocateFixed />} aria-label="Jump to parent message" onClick={() => scroll.scrollToMessage(branch.parentId)} />
-            <Button iconOnly icon={<X />} aria-label="Cancel branch reply" onClick={props.onClearBranch} disabled={locked} />
+            <Button iconOnly icon={<Icon.Locate />} aria-label="Jump to parent message" onClick={() => scroll.scrollToMessage(branch.parentId)} />
+            <Button iconOnly icon={<Icon.Dismiss />} aria-label="Cancel branch reply" onClick={props.onClearBranch} disabled={locked} />
           </section>
         ) : null}
         {quote ? (
@@ -293,7 +293,7 @@ export default function ChatComposer(props: {
             aria-label={sendLabel.current}
             aria-describedby={field ? fieldId : sendWaits !== null ? waitsId : undefined}
             aria-busy={sending}
-            icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
+            icon={recovery ? <Icon.Again aria-hidden="true" /> : run ? <Icon.Stop aria-hidden="true" /> : <Icon.Send aria-hidden="true" />} />
         </div>
         {recallTransport ? <Fact speak={isPaneActive} line={TRANSPORT_LINES[recallTransport].command("couldn’t load your last model.")} verbs={recallVerbs} /> : null}
       </div>

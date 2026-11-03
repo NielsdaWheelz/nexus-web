@@ -1,10 +1,10 @@
-import { Copy, Minus, Square, X, type LucideIcon } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { WorkspaceState } from "@/lib/workspace/model";
 
 export type PaneControl = {
   slot: "visibility" | "layout" | "close";
   command: "minimize" | "maximize" | "restore_canvas" | "close";
-  icon: LucideIcon;
+  icon: Icon.Glyph;
   label: string;
   tooltip: string;
   disabledReason: string | null;
@@ -22,21 +22,22 @@ export function paneControls({
   const pane = state.panes.find((item) => item.id === paneId);
   if (!pane) return [];
   const minimized = pane.visibility === "minimized";
+  // one command, two signs, each the inverse of the state it ends: a minimized pane
+  // comes back (Add), a maximized pane rejoins the others (Restore).
   const restore = {
     command: "restore_canvas",
-    icon: Copy,
     label: `Restore ${title} to layout`,
     tooltip: "return to multi-pane layout",
     disabledReason: null,
   } as const;
   const controls: PaneControl[] = [];
   if (minimized) {
-    controls.push({ slot: "visibility", ...restore });
+    controls.push({ slot: "visibility", ...restore, icon: Icon.Add });
   } else {
     controls.push({
       slot: "visibility",
       command: "minimize",
-      icon: Minus,
+      icon: Icon.Remove,
       label: `Minimize ${title}`,
       tooltip: "hide pane; keep it open",
       disabledReason: state.panes.filter((item) => item.visibility === "visible").length === 1
@@ -44,11 +45,11 @@ export function paneControls({
     });
   }
   controls.push(desktopMaximized && state.active_primary_pane_id === paneId
-    ? { slot: "layout", ...restore }
+    ? { slot: "layout", ...restore, icon: Icon.Restore }
     : {
         slot: "layout",
         command: "maximize",
-        icon: Square,
+        icon: Icon.Maximize,
         label: `Maximize ${title}`,
         tooltip: "show this pane alone",
         disabledReason: null,
@@ -56,7 +57,7 @@ export function paneControls({
   controls.push({
     slot: "close",
     command: "close",
-    icon: X,
+    icon: Icon.Dismiss,
     label: `Close ${title}`,
     tooltip: "close pane",
     disabledReason: null,

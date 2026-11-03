@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
@@ -41,6 +42,10 @@ import ResourceOutlineList, {
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import NoteBodyPreview from "./NoteBodyPreview";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
+import {authoredItem} from "@/lib/notes/presentation";
+import {hasAuthoredContent} from "@/lib/resourceGraph/resourceRef";
+import {embedDisplayLabel, localResourceHref} from "@/lib/resources/localResource";
 import ResourceLink from "@/components/resources/ResourceLink";
 import {
   enterOutlineOccurrence,
@@ -65,16 +70,9 @@ import {
   undo as ownUndo,
 } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import {
-  Bold,
-  Code2,
-  Italic,
-  Link2,
-  Strikethrough,
-  Underline,
-} from "lucide-react";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "./AuthoredReadFailure";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -205,7 +203,6 @@ export interface NoteEditorProps {
   label: string;
   placeholder?: string;
   inspection?: NoteInspection | null;
-  embeddedItem?: ResourceItem | null;
   /** Terminal bodies keep rich content, but embeds cannot reopen the outline. */
   atomicEmbeds?: boolean;
   focus?: {
@@ -227,11 +224,11 @@ export interface NoteEditorProps {
 
 // [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
 const FORMATS = [
-  ["strong", "Bold", "Mod-b", Bold],
-  ["em", "Italic", "Mod-i", Italic],
-  ["underline", "Underline", "Mod-u", Underline],
-  ["strikethrough", "Strikethrough", "Shift-Mod-s", Strikethrough],
-  ["code", "Inline code", "Mod-e", Code2],
+  ["strong", "Bold", "Mod-b", Icon.Bold],
+  ["em", "Italic", "Mod-i", Icon.Italic],
+  ["underline", "Underline", "Mod-u", Icon.Underline],
+  ["strikethrough", "Strikethrough", "Shift-Mod-s", Icon.Strikethrough],
+  ["code", "Inline code", "Mod-e", Icon.Code],
 ] as const;
 type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
@@ -1008,7 +1005,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             const entry = {ref, field: embeddedField, label: typeof node.attrs.label === "string" ? node.attrs.label : null, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
             setEmbeds(value => new Map(value).set(dom, entry));
           }
-          else dom.textContent = node.attrs.label ?? ref;
+          else dom.textContent = embedDisplayLabel(ref, node.attrs.field, node.attrs.label);
           return {
             dom,
             stopEvent: () => true,
@@ -1610,9 +1607,9 @@ function NoteEditorContent(props: NoteEditorProps) {
         const scope = owner !== null ? `${owner}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
         return createPortal(<OutlineEmbeddingOccurrence value={owner}><EmbeddedResource
-          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null} inRow={embed.row_id !== null}
+          resourceRef={embed.ref} field={embed.field} label={embed.label} inRow={embed.row_id !== null}
           scope={scope}
-          branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
+          branch={context?.branch ?? branch}
           beforeCollapse={beforeCollapse ? () => beforeCollapse(scope) : undefined}
           atomic={props.atomicEmbeds === true} onRevealRoot={() => shell.current?.focus()}
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
@@ -1633,11 +1630,11 @@ function NoteEditorContent(props: NoteEditorProps) {
           role="toolbar"
           aria-label="Text formatting"
         >
-          {FORMATS.map(([name, label, key, Icon]) => (
+          {FORMATS.map(([name, label, key, Glyph]) => (
             <Button
               key={name}
               iconOnly
-              icon={<Icon size={16} aria-hidden="true" />}
+              icon={<Glyph aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
               disabled={presentation === "code"}
@@ -1646,7 +1643,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               onClick={() => format(name)}
             />
           ))}
-          <Button iconOnly icon={<Code2 size={16} aria-hidden="true" />} aria-label="Code presentation"
+          <Button iconOnly icon={<Icon.Code aria-hidden="true" />} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
               const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
@@ -1660,7 +1657,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             }} />
           <Button
             iconOnly
-            icon={<Link2 size={16} aria-hidden="true" />}
+            icon={<Icon.Link aria-hidden="true" />}
             disabled={presentation === "code"}
             aria-label="Link"
             tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}
@@ -1854,14 +1851,11 @@ function inspectionPlugin(focus: () => void): Plugin<InspectionState | null> {
   });
 }
 
-/** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
 function EmbeddedResource({
   field, label,
   resourceRef,
-  supplied,
   scope,
   branch,
-  containingNoteRef: _containingNoteRef,
   atomic,
   inRow,
   onRevealRoot,
@@ -1870,44 +1864,45 @@ function EmbeddedResource({
   resourceRef: string;
   field: "annotation" | null;
   label: string | null;
-  supplied: ResourceItem | null;
   scope: string;
   branch: OutlineBranch;
-  containingNoteRef: string | null;
   atomic: boolean;
   inRow: boolean;
   onRevealRoot(): void;
   beforeCollapse?(): Promise<boolean>;
 }) {
   if (field === "annotation") return <EmbeddedAnnotation resourceRef={resourceRef} label={label}/>;
-  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} inRow={inRow} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
+  return <EmbeddedWholeResource resourceRef={resourceRef} scope={scope} branch={branch} atomic={atomic} inRow={inRow} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
 }
 function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
-  const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
-  const resource = read.data?.rows[0]?.resource;
+  const prepared = useContext(PreparedResourcesContext);
+  const held = prepared?.has(resourceRef) ?? false;
+  const read = useAuthoredQuery(held ? null : {kind: "resource", ref: resourceRef});
+  const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
   return <>
     <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
       ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
-      : read.data ? "annotation unavailable" : "annotation"}</a>
+      : held || read.data ? "annotation unavailable" : "annotation"}</a>
   </>;
 }
-function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, inRow, onRevealRoot, beforeCollapse}: {
-  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; inRow: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
+function EmbeddedWholeResource({resourceRef, scope, branch, atomic, inRow, onRevealRoot, beforeCollapse}: {
+  resourceRef: string; scope: string; branch: OutlineBranch; atomic: boolean; inRow: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
 }) {
+  const prepared = useContext(PreparedResourcesContext);
+  const held = prepared?.has(resourceRef) ?? false;
+  const read = useAuthoredQuery(held ? null : {kind: "resource", ref: resourceRef});
+  const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
+  const serverOwned = resource ? !resource.authored_by_viewer : (held || read.data !== null) && !hasAuthoredContent(resourceRef);
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const item =
-    supplied?.ref === resourceRef
-      ? supplied
-      : resolved?.ref === resourceRef
-        ? resolved
-        : null;
+  const item = resolved?.ref === resourceRef ? resolved : null;
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   useEffect(() => {
-    if (item) return;
+    // A missing authored target stays local. Server-only domains need no captured stub.
+    if (!serverOwned || item) return;
     const controller = new AbortController();
     setLoading(true);
     void resolveResourceItem(resourceRef, controller.signal).then(
@@ -1920,26 +1915,17 @@ function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containing
       },
     );
     return () => controller.abort();
-  }, [resourceRef, item, attempt, handleUnauthenticated]);
+  }, [resourceRef, serverOwned, item, attempt, handleUnauthenticated]);
   if (defect) throw defect.error;
-  if (item && atomic) return <ResourceLink item={item} />;
-  return item ? (
-    <ResourceOutlineList
-      scope={scope}
-      ariaLabel="Embedded resource"
-      branch={branch}
-      onRevealRoot={onRevealRoot}
-    >
-      <ResourceOutlineRow
-        beforeCollapse={beforeCollapse}
-        editable={false}
-        inRow={inRow}
-        incoming={null}
-        item={item}
-        occurrenceKey={scope}
-      />
-    </ResourceOutlineList>
-  ) : (
-    failure !== null ? <Failed error={failure} noun="embedded items" retry={{busy: loading, run: () => setAttempt(value => value + 1)}}/> : null
-  );
+  const owned = resource?.authored_by_viewer ? resource : null;
+  return <>
+    {!owned && !item && read.error !== null ? <AuthoredReadFailure {...read} noun="this item"/> : null}
+    {owned || item ? atomic ? <ResourceLink item={owned ? authoredItem(owned, null, localResourceHref(owned)) : item!}/> : (
+      <ResourceOutlineList scope={scope} ariaLabel="Embedded resource" branch={branch} onRevealRoot={onRevealRoot}>
+        <ResourceOutlineRow beforeCollapse={beforeCollapse} editable={false} inRow={inRow} incoming={null} defaultOpen={false}
+          {...owned ? {resource: owned} : {item: item!}} occurrenceKey={scope}/>
+      </ResourceOutlineList>
+     ) : failure !== null ? <Failed error={failure} noun="embedded items" retry={{busy: loading, run: () => setAttempt(value => value + 1)}}/>
+      : !resource && !serverOwned && (held || read.data) ? <span>not available on this device</span> : null}
+  </>;
 }

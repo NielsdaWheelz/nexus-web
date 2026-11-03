@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
@@ -167,7 +167,7 @@ export function useLibraryCreation() {
     kind: "command",
     id: "Libraries.Create",
     label: "New library",
-    icon: <Plus size={20} aria-hidden="true" />,
+    icon: <Icon.Add aria-hidden="true" />,
     onSelect: ({ triggerEl, openIntent }) => show(triggerEl, openIntent),
   };
   const draft = creation.kind === "Draft";

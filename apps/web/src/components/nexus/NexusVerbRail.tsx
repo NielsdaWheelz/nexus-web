@@ -7,7 +7,7 @@
 // runs the focused verb once through `activateDescriptor`; it owns no verb and reads only on open. The
 // rail and the menu each own their read, so opening the menu never unsettles the rail's verbs.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { Ellipsis } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { ControlContents } from "@/components/ui/control";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import selection from "@/components/ui/Selection.module.css";
@@ -186,7 +186,7 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
       onOpenChange={open => { if (open) setHeld(new Set(reads.map(verb => verb.id))); else onClose(false); }} renderTrigger={trigger =>
         <button {...trigger} data-action-id={MORE} tabIndex={focus === MORE ? 0 : -1}
           className={cx(selection.surface, selection.target, styles.verb, focus === MORE && selection.selected)}
-          onFocus={() => { if (focus !== MORE) focusRail(MORE); }}><span className={styles.glyph}><Ellipsis size={16} aria-hidden="true" /></span>{MORE}</button>} /> : null}
+          onFocus={() => { if (focus !== MORE) focusRail(MORE); }}><span className={styles.glyph}><Icon.More size={16} aria-hidden="true" /></span>{MORE}</button>} /> : null}
     <span className={styles.railBusy} aria-hidden="true"><ControlContents reserveIcon busy={busy} busyKey={id} /></span>
     {mobile ? null : <span id={`${id}-help`} className="sr-only">type to filter. enter runs the focused option. left or escape returns to the query.</span>}
   </div>;

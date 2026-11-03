@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
 import { Fact, Field } from "@/components/feedback/Fact";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -192,16 +192,16 @@ export default function LibraryChooser({
             </span>
             <span className={`${collection.adornment} ${styles.marks}`} aria-hidden="true">
               <ControlContents busy={row.progress === "Pending"}
-                icon={row.progress === "Uncertain" ? <CircleAlert /> : row.action.kind === "Locked" ? <Lock /> : undefined} />
-              <span className={styles.mark}>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Check size={16} />
-                : count.included > 0 ? <Minus size={16} /> : null}</span>
+                icon={row.progress === "Uncertain" ? <Icon.Warning /> : row.action.kind === "Locked" ? <Icon.Blocked /> : undefined} />
+              <span className={styles.mark}>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Icon.Check size={16} />
+                : count.included > 0 ? <Icon.Remove size={16} /> : null}</span>
             </span>
           </div>;
         })}
         {canCreate || createGate !== null ? <div {...navigation.optionProps(createKey)}
           aria-label={`create “${name}”`} aria-describedby={createGate === null ? undefined : `${base}-create-gate`}
           className={collection.row} data-tone="accent">
-          <Plus className={collection.adornment} size={16} aria-hidden="true" />
+          <Icon.Add className={collection.adornment} size={16} aria-hidden="true" />
           <span className={collection.content}>
             <span>create “{name}”</span>
             {createGate === null ? null : <span id={`${base}-create-gate`} className={collection.detail}>{createGate}</span>}

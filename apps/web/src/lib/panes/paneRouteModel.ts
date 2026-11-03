@@ -1,29 +1,7 @@
 // The pane router: href -> pane kind. One table of routes, a few trait sets,
 // and one resolver that derives every identity (routeKey, resource, mount key).
 // Isomorphic: the server bootstrap and the client resolve alike.
-import {
-  ALargeSmall,
-  ChartColumn,
-  Compass,
-  Download,
-  FileText,
-  Globe,
-  Keyboard,
-  Library,
-  Link2,
-  ListMusic,
-  ListTodo,
-  Map,
-  MessageSquare,
-  Mic,
-  Palette,
-  Scroll,
-  Search,
-  Settings,
-  Sparkles,
-  UserCog,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import type { Schema } from "@/lib/api/wire";
 import { conversationEndpoint } from "@/lib/chat/view";
@@ -44,39 +22,39 @@ import type { RecentValue } from "@/lib/recent/model";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
-  downloads: ["downloads", "Downloads", Download],
-  lectern: ["lectern", "Lectern", ListMusic],
-  libraries: ["libraries", "Libraries", Library],
+  downloads: ["downloads", "Downloads", Icon.Download],
+  lectern: ["lectern", "Lectern", Icon.Lectern],
+  libraries: ["libraries", "Libraries", Icon.Library],
   library: ["libraries/:id", "Library", resourceIconForScheme("library")],
-  browse: ["browse", "Browse", Compass],
-  browsePreview: ["browse/preview", "Preview", Compass],
+  browse: ["browse", "Browse", Icon.Browse],
+  browsePreview: ["browse/preview", "Preview", Icon.Browse],
   media: ["media/:id", "Source", resourceIconForScheme("media")],
-  xCapture: ["x/captures/:id", "Post", Scroll],
-  conversations: ["conversations", "Chats", MessageSquare],
-  conversationNew: ["conversations/new", "New chat", MessageSquare],
+  xCapture: ["x/captures/:id", "Post", Icon.WebText],
+  conversations: ["conversations", "Chats", Icon.Chat],
+  conversationNew: ["conversations/new", "New chat", Icon.NewChat],
   conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
-  podcasts: ["podcasts", "Podcasts", Mic],
+  podcasts: ["podcasts", "Podcasts", Icon.Podcast],
   podcastDetail: ["podcasts/:podcastId", "Podcast", resourceIconForScheme("podcast")],
-  search: ["search", "Search", Search],
+  search: ["search", "Search", Icon.Search],
   author: ["authors/:handle", "Author", resourceIconForScheme("contributor")],
-  notes: ["notes", "Notes", FileText],
-  pageNew: ["pages/new", "New page", FileText],
+  notes: ["notes", "Notes", Icon.Note],
+  pageNew: ["pages/new", "New page", Icon.Page],
   page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
   dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
   highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
-  imports: ["imports", "Imports", ListTodo],
-  stats: ["stats", "Stats", ChartColumn],
-  settings: ["settings", "Settings", Settings],
-  settingsAccount: ["settings/account", "Account", UserCog],
-  settingsReader: ["settings/reader", "Reader settings", ALargeSmall],
-  settingsAppearance: ["settings/appearance", "Appearance", Palette],
-  settingsIdentities: ["settings/identities", "Linked identities", Link2],
-  settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],
-  atlas: ["atlas", "The Atlas", Map],
-  oracle: ["oracle", "Oracle", Sparkles],
+  imports: ["imports", "Imports", Icon.Upload],
+  stats: ["stats", "Stats", Icon.Stats],
+  settings: ["settings", "Settings", Icon.Settings],
+  settingsAccount: ["settings/account", "Account", Icon.Account],
+  settingsReader: ["settings/reader", "Reader settings", Icon.ReaderSettings],
+  settingsAppearance: ["settings/appearance", "Appearance", Icon.Appearance],
+  settingsIdentities: ["settings/identities", "Linked identities", Icon.Link],
+  settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Icon.Keyboard],
+  atlas: ["atlas", "The Atlas", Icon.Atlas],
+  oracle: ["oracle", "Oracle", Icon.Oracle],
   oracleReading: ["oracle/:readingId", "Reading", resourceIconForScheme("oracle_reading")],
-} as const satisfies Record<string, readonly [string, string, LucideIcon]>;
+} as const satisfies Record<string, readonly [string, string, Icon.Glyph]>;
 
 export type PaneRouteId = keyof typeof ROUTES;
 type Traits<T> = Partial<Record<PaneRouteId, T>>;
@@ -167,7 +145,7 @@ export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
 interface PaneRouteTraits {
   defaultLabel: string;
   labelMode: "static" | "dynamic";
-  icon: LucideIcon;
+  icon: Icon.Glyph;
   section: DestinationId | null;
   header: PaneRouteHeaderContract;
   returnKind: PaneReturnKind;
@@ -232,7 +210,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
 const UNSUPPORTED: PaneRouteTraits = {
   defaultLabel: "Unavailable destination",
   labelMode: "static",
-  icon: Globe,
+  icon: Icon.Warning,
   section: null,
   // A pane on a path no route renders still has its header, so Back works.
   header: { kind: "Section", context: "None" },
@@ -346,7 +324,7 @@ export function sectionDestinationIdForHref(
   return resolvePaneRouteModel(href).section;
 }
 
-export function getPaneRouteIcon(href: string): LucideIcon {
+export function getPaneRouteIcon(href: string): Icon.Glyph {
   return resolvePaneRouteModel(href).icon;
 }
 

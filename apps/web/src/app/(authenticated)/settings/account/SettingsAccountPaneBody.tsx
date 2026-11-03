@@ -1,11 +1,11 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
-import { Check, Copy } from "lucide-react";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -266,7 +266,7 @@ export default function SettingsAccountPaneBody() {
               <code>{profile.email_ingest_address}</code>
             </p>
             <Button
-              icon={copied.copied ? <Check /> : <Copy />}
+              icon={copied.copied ? <Icon.Check /> : <Icon.Copy />}
               onClick={() => void copy(profile.email_ingest_address ?? "")}
             >
               Copy address

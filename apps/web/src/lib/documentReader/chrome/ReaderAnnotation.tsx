@@ -1,5 +1,6 @@
 "use client";
 
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { FullResourceBody } from "@/components/resources/ExcerptDisclosure";
 import { localResourceHref } from "@/lib/resources/localResource";
 import { authoredItem } from "@/lib/notes/presentation";
@@ -19,8 +20,9 @@ export function PlacementNote({ kind }: { readonly kind: keyof typeof PLACEMENT_
 
 /** The literal captured quote, never the current source text. */
 export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnnotation }) {
+  const projection = annotation.display?.projection ?? annotation.projection;
   return <>
-    <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef, localResourceHref(annotation.projection, { activationRef: annotation.readingRef }))} />
+    <FullResourceBody item={authoredItem(projection, annotation.readingRef, localResourceHref(projection, { activationRef: annotation.readingRef }))} />
     {annotation.placement.kind === "unlocated" ? <PlacementNote kind="unlocated" /> : null}
   </>;
 }
@@ -30,10 +32,10 @@ export function AnnotationList({ annotations }: { readonly annotations: readonly
   if (!annotations.length) return null;
   return <section className={styles.annotationList} aria-label="your highlights">
     <ul>
-      {annotations.map(annotation => <li key={annotation.ref}>
+      {annotations.map(annotation => annotation.display ? <PreparedResourcesContext key={annotation.ref} value={annotation.display.resources}><li>
         <AnnotationQuote annotation={annotation} />
-        <HighlightAnnotation highlightRef={annotation.ref} occurrenceKey={`unplaced:${annotation.ref}`} />
-      </li>)}
+        <HighlightAnnotation highlightRef={annotation.ref} resource={annotation.display.projection} occurrenceKey={`unplaced:${annotation.ref}`} />
+      </li></PreparedResourcesContext> : null)}
     </ul>
   </section>;
 }

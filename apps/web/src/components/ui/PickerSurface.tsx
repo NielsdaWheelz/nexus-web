@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // Where a picker shows: on desktop a panel anchored beside its trigger
 // (a transient layer: Escape, an outside press and, inside a modal, Back close
@@ -9,7 +10,6 @@
 
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import {
@@ -128,7 +128,7 @@ export default function PickerSurface({
           <h3 className={styles.title}>{title}</h3>
           <Button
             iconOnly
-            icon={<X />}
+            icon={<Icon.Dismiss />}
             className={styles.close}
             aria-label={`close ${title}`}
             onClick={onClose}

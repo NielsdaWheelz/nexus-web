@@ -19,6 +19,7 @@ import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import { createReaderAnnotations, sourceUnits, type AnnotationsState, type ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Decorations, Mark, MarkAnchor, NoteRef } from "@/lib/documentReader/DocumentReader";
 import { localPoint, structureOf, type ReaderDocument } from "@/lib/documentReader/model";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
 
 type WireDocumentMap = Schema<"ReaderDocumentMapOut">;
@@ -156,7 +157,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         : structure.fraction({ kind: "pdf", page: anchor.page, y: 0 });
       for (const annotation of localState.annotations) if (annotation.placement.kind === "placed")
         markers.push({ id: annotation.id, position: at(annotation.placement.anchor, false), end: at(annotation.placement.anchor, true),
-          kind: "Highlight", tone: "Highlight", label: "highlight", preview: annotation.excerpt.kind === "content" ? excerptTextParts(annotation.excerpt.body).exact : "table excerpt" });
+          kind: "Highlight", tone: "Highlight", label: "highlight", preview: localResourceLabel(annotation.projection) });
       for (const root of occurrences) {
         const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
         if (!extent) continue;

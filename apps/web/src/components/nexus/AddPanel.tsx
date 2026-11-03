@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
-import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
@@ -454,7 +454,7 @@ export default function AddPanel({
             />
           ) : (
             <div className={styles.sourceReceipt}>
-              {source?.kind === "File" ? <FileText size={16} aria-hidden="true" /> : <Link size={16} aria-hidden="true" />}
+              {source?.kind === "File" ? <Icon.Page size={16} aria-hidden="true" /> : <Icon.Link size={16} aria-hidden="true" />}
               <span className={styles.sourceLabel} title={label}>{label}</span>
             </div>
           )}
@@ -560,7 +560,7 @@ export default function AddPanel({
         </div>
         <div className={styles.rowActions}>
           {removable ? (
-            <Button iconOnly disabled={busy} onClick={() => removeItem(item.id)} aria-label={`remove ${label.trim() || `item ${index + 1}`}`} icon={<X size={16} aria-hidden="true" />} />
+            <Button iconOnly disabled={busy} onClick={() => removeItem(item.id)} aria-label={`remove ${label.trim() || `item ${index + 1}`}`} icon={<Icon.Dismiss aria-hidden="true" />} />
           ) : null}
         </div>
         {rowEditor || seedEditor ? <div className={styles.editorSlot}>{editorContent()}</div> : null}
@@ -608,12 +608,12 @@ export default function AddPanel({
     >
       <header className={styles.header}>
         <div className={styles.headingRow}>
-          <Button iconOnly icon={<span className={nexus.glyph}><ArrowLeft /></span>} aria-label="back" tooltip={{ text: "back to palette" }} onClick={onBack} />
+          <Button iconOnly icon={<span className={nexus.glyph}><Icon.Left /></span>} aria-label="back" tooltip={{ text: "back to palette" }} onClick={onBack} />
           <div className={styles.heading}>
             <h2 ref={headingRef} tabIndex={-1} data-add-heading="true">add content</h2>
             <p id={`${id}-paste-help`}>use line breaks or a comma and space. every item goes to All.</p>
           </div>
-          <Button iconOnly onClick={onClose} aria-label="close add content" icon={<span className={nexus.glyph}><X aria-hidden="true" /></span>} />
+          <Button iconOnly onClick={onClose} aria-label="close add content" icon={<span className={nexus.glyph}><Icon.Dismiss aria-hidden="true" /></span>} />
         </div>
         <div className={styles.intakeTools}>
           <input ref={reselectInputRef} type="file" className={styles.fileInput}
@@ -639,7 +639,7 @@ export default function AddPanel({
               chooseFilesRef.current?.focus();
             }}
           />
-          <Button ref={chooseFilesRef} disabled={busy} aria-disabled={full || undefined} aria-describedby={full ? `${id}-limit` : undefined} icon={<Upload size={15} aria-hidden="true" />} onClick={() => {
+          <Button ref={chooseFilesRef} disabled={busy} aria-disabled={full || undefined} aria-describedby={full ? `${id}-limit` : undefined} icon={<Icon.Upload aria-hidden="true" />} onClick={() => {
             setAnnouncement(null);
             fileInputRef.current?.click();
           }}>choose files</Button>
@@ -670,7 +670,7 @@ export default function AddPanel({
             aria-haspopup={mobile ? undefined : "dialog"}
             aria-controls={mobile ? panelId : undefined}
             onClick={(event) => toggleEditor({ kind: "DraftBulk", anchorEl: event.currentTarget })}
-          ><span className={styles.libraryButtonLabel}>{varies ? "varies by item" : "libraries"}<ChevronDown size={14} aria-hidden="true" /></span></Button>
+          ><span className={styles.libraryButtonLabel}>{varies ? "varies by item" : "libraries"}<Icon.Choose size={14} aria-hidden="true" /></span></Button>
         </div>
         <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to the current unsubmitted items; use for new items to change defaults</span>
       </header>

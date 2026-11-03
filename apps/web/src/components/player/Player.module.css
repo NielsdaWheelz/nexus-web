@@ -127,9 +127,8 @@
 }
 
 .playPause { --control-radius: var(--radius-full); }
-.numberedSkip { display: inline-flex; position: relative; align-items: center; justify-content: center; }
-.numberedSkip > svg { width: 28px; height: 28px; stroke-width: 1.5; }
-.numberedSkip > span { position: absolute; top: 8px; font-family: var(--font-mono); font-size: calc(var(--text-xs) * 0.75); font-weight: var(--weight-semibold); line-height: 1; }
+/* the skips carry their numerals in the drawing, signed at 28px. */
+.skip { --control-icon-size: 28px; }
 
 
 .identity {

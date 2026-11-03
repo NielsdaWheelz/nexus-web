@@ -1,10 +1,10 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // The phone's palette: a sheet that opens keyboard-down on the armed row and reads upward to its field.
 // Rank 1 touches the field; continuations, places and the account sit farthest. Pages render in the
 // same sheet with their headers.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent } from "react";
-import { X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
 import { NexusQuerySpinner, NexusNotices, NexusRowBody, nexusRowAlias, nexusRowName, nexusRowVerbs } from "@/components/nexus/NexusRow";
@@ -174,7 +174,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               <Button iconOnly data-nexus-control={`ClosePane:${item.secondary.paneId}`} aria-label={`close ${paneRowName(controller, item)}`}
                 onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
                 onClick={event => { event.currentTarget.focus({ preventScroll: true }); if (item.secondary?.kind === "ClosePane") controller.closePane(item.secondary.paneId); }}
-                icon={<X size={16} aria-hidden="true" />} />
+                icon={<Icon.Dismiss aria-hidden="true" />} />
             ) : item.secondary?.kind === "TargetMenu" ? (
               <OverflowMenuButton data-nexus-control={`Rail:${item.key}`} aria-label={`more actions for ${item.label}`}
                 aria-expanded={verbs !== null} aria-controls={verbs !== null ? RAIL_ID : undefined}
@@ -287,7 +287,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
           }
         }}
       />
-      {controller.query ? <Button iconOnly icon={<X size={16} aria-hidden="true" />} className={styles.clear} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : <span />}
+      {controller.query ? <Button iconOnly icon={<Icon.Dismiss aria-hidden="true" />} className={styles.clear} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : <span />}
     </div>
     {excerpt ? <ExcerptDialog item={excerpt} onClose={() => setExcerpt(null)} returnFocusTo={() => controller.armed === null ? headingRef.current : control(controller.armed)} /> : null}
   </>;

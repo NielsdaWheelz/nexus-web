@@ -44,11 +44,6 @@
 
 .chevron {
   flex: 0 0 auto;
-  transition: transform var(--duration-fast) var(--ease-glide);
-}
-
-.trigger[aria-expanded="true"] .chevron {
-  transform: rotate(180deg);
 }
 
 .panel {
@@ -68,8 +63,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .trigger,
-  .chevron {
+  .trigger {
     transition: none;
   }
 }
