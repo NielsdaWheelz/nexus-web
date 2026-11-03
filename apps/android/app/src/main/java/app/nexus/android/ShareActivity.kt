@@ -4,11 +4,13 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -18,10 +20,15 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.InputStream
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
@@ -35,7 +42,7 @@ internal fun isHandledShareCallback(uri: Uri): Boolean =
  * checks never replay capture commands, renew browser documents or own Main's
  * foreground renewal flag; fixed credential effects belong to DeviceSession.
  * One activity attempt retains its account, note id and calendar date through
- * recreation; another ACTION_SEND creates another activity attempt.
+ * recreation; another share intent creates another activity attempt.
  */
 class ShareActivity : AppCompatActivity() {
     private val device by lazy { DeviceSession.get(this) }
@@ -43,6 +50,7 @@ class ShareActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
     private lateinit var shareUrl: Uri
     private lateinit var sharedText: String
+    private lateinit var sharedFiles: List<Uri>
     private lateinit var captureId: String
     private var captureAccount: UUID? = null
     private var captureDate: String? = null
@@ -54,10 +62,14 @@ class ShareActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val text = intent?.takeIf { it.action == Intent.ACTION_SEND }
-            ?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim()
-        if (text.isNullOrEmpty()) { finish(); return }
-        sharedText = text
+        val incoming = intent
+        if (incoming == null) { finish(); return }
+        sharedFiles = when (incoming.action) {
+            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(incoming, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(incoming, Intent.EXTRA_STREAM, Uri::class.java) ?: emptyList()
+            else -> { finish(); return }
+        }
+        sharedText = incoming.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         captureId = savedInstanceState?.getString("capture_id") ?: UUID.randomUUID().toString()
         captureAccount = savedInstanceState?.getString("capture_account_id")?.let(UUID::fromString)
         captureDate = savedInstanceState?.getString("capture_date")
@@ -72,7 +84,7 @@ class ShareActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { requestExit { finish() } }
         })
-        showStatus("opening capture…", "", checking = true)
+        showStatus("opening nexus…", "", checking = true)
     }
 
     override fun onResume() {
@@ -85,7 +97,7 @@ class ShareActivity : AppCompatActivity() {
 
     private fun admit() {
         val generation = ++resumeGeneration
-        if (webView == null) showStatus("opening capture…", "", checking = true)
+        if (webView == null) showStatus("opening nexus…", "", checking = true)
         lifecycleScope.launch {
             try {
                 device.initialize()
@@ -96,7 +108,7 @@ class ShareActivity : AppCompatActivity() {
                     return@launch
                 }
                 val account = device.accountId()
-                if (account == null) { showAdmission("SignInRequired"); return@launch }
+                if (account == null) { showStatus("sign in to continue.", ""); return@launch }
                 if (captureAccount != null && captureAccount != account) { finish(); return@launch }
                 if (webView == null) {
                     if (captureAccount == null) {
@@ -109,6 +121,7 @@ class ShareActivity : AppCompatActivity() {
                     }
                     shareUrl = Uri.parse(BuildConfig.NEXUS_BASE_URL).buildUpon().appendEncodedPath("share")
                         .appendQueryParameter("text", sharedText).appendQueryParameter("capture_id", captureId)
+                        .appendQueryParameter("files", sharedFiles.size.toString())
                         .appendQueryParameter("capture_account_id", captureAccount.toString())
                         .appendQueryParameter("capture_date", checkNotNull(captureDate)).build()
                     documentAccount = account
@@ -130,6 +143,7 @@ class ShareActivity : AppCompatActivity() {
 
     private fun createWebView(): WebView = WebView(this).apply {
         NexusWebView.configure(this)
+        webChromeClient = WebChromeClient()
         authored = app.nexus.android.authored.AuthoredBridge(this, device).also { if (!it.install()) throw LocalStateError("E_AUTHORED_UNAVAILABLE", "update Android System WebView to save notes on this device"); it.setForeground(true) }
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -152,8 +166,8 @@ class ShareActivity : AppCompatActivity() {
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 if (request == null) return null
-                if (request.isForMainFrame && !(request.method == "GET" && isCapture(request.url))) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(ByteArray(0)))
-                return router.intercept(request)
+                if (request.isForMainFrame && !(request.method == "GET" && isCapture(request.url))) return sharedResponse(404, "Not Found")
+                return interceptShared(request) ?: router.intercept(request)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -170,17 +184,66 @@ class ShareActivity : AppCompatActivity() {
         }
     }
 
+    private fun interceptShared(request: WebResourceRequest): WebResourceResponse? {
+        val path = request.url.path ?: return null
+        if (!router.isOwned(request.url) || !path.startsWith("/_nexus/shared/")) return null
+        if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {
+            return sharedResponse(426, "Upgrade Required", "application/json", ByteArrayInputStream(
+                "{\"error\":{\"code\":\"E_WIRE_MISMATCH\",\"message\":\"update nexus\"}}".toByteArray(Charsets.UTF_8)))
+        }
+        if (request.method != "GET") return sharedResponse(405, "Method Not Allowed")
+        if (path == "/_nexus/shared/manifest") {
+            val entries = sharedFiles.mapIndexed { index, uri ->
+                if (uri.scheme != "content") return@mapIndexed JSONObject().put("index", index)
+                    .put("name", JSONObject.NULL).put("size", JSONObject.NULL).put("type", JSONObject.NULL)
+                var name: String? = null
+                var size: Long? = null
+                // Missing metadata does not establish whether the stream is readable.
+                try {
+                    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (nameColumn >= 0 && !cursor.isNull(nameColumn)) name = cursor.getString(nameColumn)
+                            if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn).takeIf { it >= 0 }
+                        }
+                    }
+                } catch (_: SecurityException) {
+                } catch (_: FileNotFoundException) {
+                }
+                val type = try { contentResolver.getType(uri) }
+                    catch (_: SecurityException) { null }
+                    catch (_: FileNotFoundException) { null }
+                JSONObject().put("index", index).put("name", name ?: JSONObject.NULL)
+                    .put("size", size ?: JSONObject.NULL).put("type", type ?: JSONObject.NULL)
+            }
+            return sharedResponse(200, "OK", "application/json", ByteArrayInputStream(JSONArray(entries).toString().toByteArray(Charsets.UTF_8)))
+        }
+        val index = path.removePrefix("/_nexus/shared/").toIntOrNull()
+        val uri = index?.let(sharedFiles::getOrNull) ?: return sharedResponse(404, "Not Found")
+        if (uri.scheme != "content") return sharedResponse(404, "Not Found")
+        val stream = try { contentResolver.openInputStream(uri) }
+            catch (_: SecurityException) { null }
+            catch (_: FileNotFoundException) { null }
+            ?: return sharedResponse(404, "Not Found")
+        return sharedResponse(200, "OK", "application/octet-stream", stream)
+    }
+
+    private fun sharedResponse(status: Int, reason: String, mime: String = "text/plain", body: InputStream = ByteArrayInputStream(ByteArray(0))) =
+        WebResourceResponse(mime, if (mime == "application/json") "utf-8" else null, status, reason,
+            mapOf("Cache-Control" to "private, no-store", "X-Content-Type-Options" to "nosniff"), body)
+
     private fun requestExit(exit: () -> Unit) {
         val view = webView ?: return exit()
         val generation = resumeGeneration
         val failed = {
-            AlertDialog.Builder(this).setTitle("couldn’t check unsaved writing")
-                .setMessage("keep this capture open. retry saving or copy any unfinished text before leaving.")
+            AlertDialog.Builder(this).setTitle("couldn’t check work in progress")
+                .setMessage("leaving now may lose it.")
                 .setNegativeButton("keep open", null).show()
         }
         try {
             view.evaluateJavascript("(function(){try{var escape=new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});document.dispatchEvent(escape);if(escape.defaultPrevented)return true;var event=new Event('nexus:request-exit',{cancelable:true});document.dispatchEvent(event);return event.defaultPrevented;}catch(error){return null;}})()") { blocked ->
-                if (generation != resumeGeneration || isFinishing || isDestroyed) return@evaluateJavascript
+                if (generation != resumeGeneration || view !== webView || isFinishing || isDestroyed) return@evaluateJavascript
                 when (blocked) { "false" -> exit(); "true" -> Unit; else -> failed() }
             }
         } catch (_: RuntimeException) { failed() }
@@ -213,14 +276,6 @@ class ShareActivity : AppCompatActivity() {
         documentAccount = null
     }
 
-    private fun showAdmission(admission: String) {
-        when (admission) {
-            "SignInRequired" -> showStatus("sign in to save this", "open nexus, sign in, then return to this share.")
-            "UpdateRequired" -> showStatus("update nexus to reconnect", "install the current nexus apk, then reopen the app.")
-            else -> showStatus("this capture needs a connection", "connect and try again.")
-        }
-    }
-
     private fun showStatus(title: String, message: String, checking: Boolean = false) {
         root.removeAllViews()
         root.addView(LinearLayout(this).apply {
@@ -234,7 +289,7 @@ class ShareActivity : AppCompatActivity() {
                 textSize = 18f
             })
             if (!checking) {
-                addView(Button(this@ShareActivity).apply { text = "try again"; setOnClickListener { admit() } })
+                addView(Button(this@ShareActivity).apply { text = "retry"; setOnClickListener { admit() } })
                 addView(Button(this@ShareActivity).apply {
                     text = "open nexus"
                     setOnClickListener { openMain(Uri.parse(BuildConfig.NEXUS_BASE_URL)) }

@@ -1,55 +1,55 @@
 # inbound capture sharing
 
-this module owns android system shares and the `/share` web surface.
-[resource sharing](resource-sharing.md) owns grants and anonymous reading.
+this module owns android system shares and the standalone `/share` surface.
+[resource sharing](resource-sharing.md) owns grants and anonymous reading;
+[imports](imports.md) owns intake commands, line states and recovery.
 
-## boundaries
+## native payload
 
-`ShareActivity.kt` receives `ACTION_SEND` text, trims it, finishes empty native
-shares and loads `/share?text=...`. it consumes only `nexus-share://open`, `done`
-and `dismiss`. the shell calls no capture, library or auth api directly.
+`ShareActivity.kt` receives text and ordered `EXTRA_STREAM` uris from `ACTION_SEND`
+or `ACTION_SEND_MULTIPLE`. `ClipData` carries grants, not another copy of the file
+list. pdf and epub shares use the file filters; plain text uses single send.
+an empty recognized share reaches the web empty state.
 
-`apps/web/src/app/share/*` owns the compact web capture card outside the
-app shell. an empty browser share shows its empty state. url capture starts only
-on save; cancel admits nothing. `DestinationField` and `DestinationChooser`
-reuse the ordinary named-library catalog and creation owner. zero named
-destinations is valid; all is never an organizational choice.
+the activity retains its capture id, account, date and uri list. its owned
+`GET /_nexus/shared/manifest` returns indexed name, size and mime metadata, including
+an empty array for text-only shares. absent metadata is explicit null. each
+`GET /_nexus/shared/{index}` transfers a content-resolver stream to the webview;
+the web intake creates the file and owns upload and confirmation. these routes
+require the current wire and never cache. main and hosted browsers answer404.
 
-## url admission
+only `content:` uris are read. other schemes retain their index with null metadata
+and answer404 at the stream route. denied, missing or unavailable streams likewise
+answer404; failure after a stream starts remains a transport failure. metadata
+failure does not remove an entry or establish stream readability. the activity
+copies no file, takes no persistent grant and owns no uploader.
 
-the destination read returns `{removal_revision,destinations:[{id,name}]}`. original
-save freezes the removal revision before provider work and sends a client-minted
-attempt `id`, `url`, `expected_removal_revision` and `destinations:[library_id]`.
-multi-url shares freeze one removal snapshot and preserve each url's own command.
-retry only unresolved targets, retaining their exact id and guard.
+rotation retains the activity, webview and intake. task/process death does not
+retain an upload command or extend a receiver grant; a later resend may create
+another file import. capture identity/date retain their existing restoration
+contract for authored plain text.
 
-the source owner compares the removal fence and destination authority before
-acquiring personal retention and named placements atomically; it compares no library
-order, so every url of one share lands in the same library. default/system ids,
-duplicates, inaccessible and member-only destinations are refused. a stale fence
-requires fresh explicit review; recovery never silently substitutes a newer one.
+## admission and exits
 
-an existing source receipt returns its historical identity without acquiring or
-filing again. the client rereads current availability and placements before
-claiming current saving. after normal receipt teardown, stale original removal
-guards still prevent acquisition replay. a new save is new explicit intent.
-[libraries](library.md) owns membership, revisions and capabilities;
-[ingest](ingest.md) owns receipts and publication.
+`ShareCapture.tsx` mounts the ordinary intake without host truth, menus or slips.
+manifest200 alone authorizes automatic admission into all. main/browser404 keeps
+an explicit import press; visiting a share link admits nothing. named-library
+selection and a separate capture queue are absent. each command retains the
+ordinary acquisition/removal-fence contract and its own uncertainty.
 
-## text and uploads
+files disable plain-text capture. urls in accompanying text remain import inputs;
+other prose is discarded. unreadable entries stay as refused lines. only an
+all-accepted set closes the actual share activity; failed or unknown lines stay.
+browser/main completion uses its ordinary done state.
 
-non-url text reads `/me`, freezes one account-local date and sends the dated
-daily-capture command. retry keeps that date across midnight. profile failure
-admits nothing. this note flow has no media destination picker.
+without files or urls, plain text uses the existing authored daily-capture command.
+actual shares retain their native capture id and account-local date. browser/main
+require `add to today`; retries retain the original command and date. profile
+failure admits nothing. this flow has no media destination picker.
 
-file upload and extension capture use the shared guarded confirmation contract.
-final confirmation owns destinations; stale choices refuse all publication and
-filing. a live request owner can review and confirm the same uploaded generation
-before expiry. unknown confirmation retries its frozen body; reload or owner loss
-requires existing re-upload or recapture. acquisition identity and confirmation
-state remain in memory; ordinary note writing keeps its separate journal contract.
-
-## scope
-
-no android `ACTION_SEND_MULTIPLE`/`EXTRA_STREAM`, native product client, non-url
-library picker or separate post-save filing path.
+`nexus-share://open`, `done` and `dismiss` belong only to the actual share activity.
+finishing asks the existing work guard; the native chrome client supplies real
+javascript confirmations. asynchronous exit replies belong to the same live view
+and resume generation. sign-in opens main through its existing auth owner and
+retains the card; account replacement retires the old document. main/browser
+manual cards use ordinary workspace destinations, not activity callbacks.
