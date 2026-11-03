@@ -786,7 +786,7 @@ async function menuClick(
         if (reply.kind !== "bound") {
           return setDraft(
             null,
-            "The clicked link is no longer on the page. Right-click it again.",
+            "that link is gone. right-click it again.",
           );
         }
         const source: DocumentSource = {
