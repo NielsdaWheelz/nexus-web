@@ -1,8 +1,8 @@
 // The capture popup: one compact form over the background's capture. It renders
 // the ViewState pushed on its port (Firefox does not order a sendMessage reply
 // against port messages, so the push is the only state) and sends Commands,
-// reading replies only for a catalog or a failure. Selection and Save share the
-// port; the popup overlays only the posted edits its pushes have not acknowledged.
+// reading replies only for a catalog or a failure. selection, save and recovery
+// share the ordered port; the popup overlays only the posted edits its pushes have not acknowledged.
 //
 // Import order is load order: the token owner and packaged fonts precede every
 // component module, so popup.module.css is emitted last and owns the overrides.
@@ -86,7 +86,9 @@ const patternHost = (pattern: string) =>
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
   const [notice, setNotice] = useState<Line | null>(null);
-  const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
+  const [retryFailure, setRetryFailure] = useState<{
+    draftId: string; accountId: string; phase: Extract<CapturePhase, { kind: "failed" }>;
+  } | null>(null);
   const frame = useRef<HTMLElement>(null);
   useActionFocusRecovery(frame, () => frame.current);
   const [pending, setPending] = useState<ViewCommand[]>([]);
@@ -99,7 +101,7 @@ function Popup() {
 
   const send = (sent: Command) => {
     setNotice(null);
-    setRetryFailure((sent.kind === "retry" || sent.kind === "review") && state?.draft?.phase.kind === "failed" ? state.draft.phase : null);
+    setRetryFailure(null);
     void command(sent).then((result) => {
       const failed = replyNotice(result);
       if (failed !== null) {
@@ -121,8 +123,8 @@ function Popup() {
       current.pending = current.pending.filter(edit => edit.sequence > message.acknowledged);
       setPending(current.pending);
       setState(message.state);
-      const phase = message.state.draft?.phase.kind;
-      if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
+      const awaitingRetry = current.pending.some(edit => edit.kind === "retry" || edit.kind === "review");
+      if (!awaitingRetry && !message.state.working) setRetryFailure(null);
       if (message.failure !== null) setNotice(failureLine(message.failure));
     });
     port.onDisconnect.addListener(() => {
@@ -144,15 +146,18 @@ function Popup() {
     };
   }, []);
 
-  const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null } | { kind: "save" }): boolean => {
+  const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null } | { kind: "save" | "retry" | "review" }): boolean => {
     const current = connection.current;
     if (current === null || state === null || state.draft === null || state.account === null) return false;
     const sent: ViewCommand = { ...action, sequence: ++current.sequence, draftId: state.draft.id, accountId: state.account.userId };
+    setRetryFailure((action.kind === "retry" || action.kind === "review") && state.draft.phase.kind === "failed"
+      ? { draftId: state.draft.id, accountId: state.account.userId, phase: state.draft.phase } : null);
     try {
       current.port.postMessage(sent);
     } catch (error) {
       console.error("the extension's port is lost:", error);
       setNotice(NOT_ANSWERING);
+      setRetryFailure(null);
       return false;
     }
     current.pending = [...current.pending, sent];
@@ -164,10 +169,10 @@ function Popup() {
   // Firefox grants optional origins only inside the click, and its doorhanger may
   // close this popup, so the command goes first and the background waits for the
   // grant (permissions.onAdded); a denial fires nothing there, so this is its notice.
-  const sendWithOrigins = (sent: Command | { kind: "save" }) => {
+  const sendWithOrigins = (sent: Command | { kind: "save" } | { kind: "retry" } | { kind: "review" }) => {
     if (state === null) return;
     const origins = state.requiredOrigins;
-    if (sent.kind === "save") {
+    if (sent.kind === "save" || sent.kind === "retry" || sent.kind === "review") {
       if (!post(sent)) return;
     } else send(sent);
     if (origins.length === 0) return;
@@ -200,7 +205,8 @@ function Popup() {
   const selectingRecovery = pending.some(edit => edit.kind === "set_recovery_target" && edit.draftId === draft?.id && edit.accountId === account?.userId);
   const phase = draft?.phase ?? null;
   const openUrl = phase?.kind === "saved" ? phase.openUrl : null;
-  const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
+  const retained = retryFailure?.draftId === draft?.id && retryFailure?.accountId === account?.userId ? retryFailure : null;
+  const captureFailure = phase?.kind === "failed" ? phase : retained?.phase ?? null;
   const purpose = draft?.target.kind === "article" ? draft.target.purpose : { kind: "New" } as const;
   const replacement = purpose.kind === "Replacement" ? purpose : null;
   const recovery = purpose.kind === "Recovery" ? purpose : null;
@@ -208,7 +214,7 @@ function Popup() {
   // a draft's purpose cannot change while it sends, so neither does its press
   const pressCaption = replacement !== null ? "replace article" : recovery !== null ? "finish import" : "import";
   const recaptureFailure = draft?.needsRecapture || captureFailure?.recovery === "Recapture";
-  const retrying = retryFailure !== null;
+  const retrying = retained !== null;
   const kindLabel =
     draft === null
       ? ""
@@ -350,7 +356,7 @@ function Popup() {
           </p>
           <Button
             emphasis="strong" className={styles.primary}
-            disabled={account === null || !connected || saving || selectingRecovery || (draft.target.kind === "article" && draft.target.webMatch === "Ambiguous" && recovery === null) || (phase.kind !== "draft" && phase.kind !== "review")}
+            disabled={account === null || !connected || state.working || saving || selectingRecovery || (draft.target.kind === "article" && draft.target.webMatch === "Ambiguous" && recovery === null) || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
             aria-busy={phase.kind !== "draft" && phase.kind !== "review"}
           >

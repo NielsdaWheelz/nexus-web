@@ -67,6 +67,8 @@ export type CapturePhase =
   | { kind: "failed"; failure: CaptureFailure; recovery: "Retry" | "Check" | "Review" | "Recapture" | "Discard" };
 
 export interface ViewState {
+  /** the background owns one running command, including a wait for origins */
+  working: boolean;
   account: {
     userId: string;
     email: string | null;
@@ -100,8 +102,6 @@ export type Command =
   | { kind: "retry_checking" }
   | { kind: "stop_checking" }
   | { kind: "login" }
-  | { kind: "retry" }
-  | { kind: "review" }
   | { kind: "discard" }
   | { kind: "capture_again" }
   | { kind: "disconnect" };
@@ -112,7 +112,7 @@ export type CommandResult =
   | { kind: "recovery_targets"; page: Schema<"RecoveryCandidatePage"> }
   | { kind: "failure"; failure: CaptureFailure };
 
-/** Selection and its save barrier share this port's ordered message stream. */
+/** selection, save and recovery share this port's ordered command stream. */
 export type ViewCommand = {
   sequence: number;
   draftId: string;
@@ -120,7 +120,7 @@ export type ViewCommand = {
 } & (
   | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null }
   | { kind: "set_destination"; destination: LibraryDestination; included: boolean }
-  | { kind: "save" }
+  | { kind: "save" | "retry" | "review" }
 );
 
 export interface ViewMessage {

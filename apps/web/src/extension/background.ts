@@ -201,7 +201,7 @@ browser.runtime.onConnect.addListener((port) => {
       } else {
         // exclusive claims its slot synchronously: every earlier delta is now
         // applied, and every later one is refused before save's first await.
-        void exclusive(save, true).catch(async error => pushState(port, await describe(error)));
+        void exclusive(sent.kind === "review" ? review : save, true).catch(async error => pushState(port, await describe(error)));
         pushState();
       }
     });
@@ -253,12 +253,6 @@ async function handle(sent: Command): Promise<CommandResult> {
       case "login":
         await login();
         break;
-      case "retry":
-        await exclusive(save, true);
-        break;
-      case "review":
-        await exclusive(review, true);
-        break;
       case "discard":
         await interrupt();
         discard();
@@ -285,13 +279,21 @@ async function exclusive(
   run: (signal: AbortSignal) => Promise<void>,
   takesOverGrantWait = false,
 ): Promise<void> {
-  if (active !== null && awaitingGrant && takesOverGrantWait) await interrupt();
-  // Another takeover may have claimed the slot while this one awaited release.
-  if (active !== null) {
+  const previous = active;
+  if (previous !== null && !(awaitingGrant && takesOverGrantWait)) {
     throw failure("E_CAPTURE_BUSY", "nexus is still working on this.");
   }
   const controller = new AbortController();
-  const done = Promise.resolve().then(() => run(controller.signal)).catch((error: unknown) => {
+  // claim the replacement before its predecessor finishes: every view sees an
+  // active owner throughout a permission-wait takeover.
+  const done = Promise.resolve().then(async () => {
+    if (previous !== null) {
+      previous.controller.abort();
+      await previous.done.catch(() => undefined);
+      markInterrupted();
+    }
+    await run(controller.signal);
+  }).catch((error: unknown) => {
     if (!isAbortError(error)) throw error;
   });
   active = { controller, done };
@@ -314,6 +316,11 @@ async function interrupt(): Promise<void> {
   await current.done.catch(() => undefined);
   if (active === current) active = null;
   if (active !== null) return;
+  markInterrupted();
+}
+
+/** the interrupted owner has settled; preserve any unanswered publication. */
+function markInterrupted(): void {
   const phase = draft?.phase.kind;
   if (
     phase === "acquiring" ||
@@ -336,6 +343,7 @@ async function viewState(): Promise<ViewState> {
     draft.target.kind === "article" && (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id || draft.captureTarget.accountEpoch !== accountEpoch)
   );
   const state = {
+    working: active !== null,
     account:
       session === null
         ? null
