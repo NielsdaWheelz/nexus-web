@@ -385,7 +385,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     }
     // A failure and an unpublished empty answer need no surface, so neither waits for a sheet's admission.
     if (prepared?.kind === "Failed" && active.attempt) {
-      fail(active.attempt, "error" in prepared ? prepared.error : null);
+      fail(active.attempt, prepared.error);
       return;
     }
     if (active.meaning === null && content !== null && !hasOptions) {

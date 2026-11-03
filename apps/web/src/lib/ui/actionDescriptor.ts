@@ -1,6 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
 import { flushSync } from "react-dom";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
 
@@ -180,14 +179,12 @@ export type MenuContent = {
 };
 
 /** A result belongs only to the exact request signal created by its presenter. A failure carries
- * its error: the menu says it, in the transport's words. Until L7, components/player still sets
- * `feedback` instead, which the menu tells as a failure of no known cause. */
+ * its error: the menu says it, in the transport's words. */
 export type PreparationState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly content: MenuContent }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error: unknown }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error: unknown };
 
 /**
  * Facts that settle after a prepared snapshot is published, for the same request. They
