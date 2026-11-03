@@ -601,7 +601,7 @@ async function disconnect(signal: AbortSignal): Promise<void> {
       !writeRefused({ sent: true, status: error.status, code: error.failure.code });
     const shown = await describe(error, credential);
     if (token !== credential) return;
-    revocationFailure = { kind: unknown ? "Unknown" : "Refused", failure: shown };
+    revocationFailure = { kind: unknown ? "Unknown" : "Refused", failure: shown, attempt: (revocationFailure?.attempt ?? 0) + 1 };
     session = null;
     pushState();
     return;

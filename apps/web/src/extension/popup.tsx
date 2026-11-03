@@ -233,7 +233,7 @@ function Popup() {
 
       {state.revocationFailure !== null ? (
         // Revocation keeps the credential until nexus confirms it.
-        <Hold id="capture-revocation" line={state.revocationFailure.kind === "Unknown" ? { fact: "not sure disconnection finished.", reason: UNKNOWN_OUTCOME_REASON } : { fact: "couldn’t disconnect from nexus." }}
+        <Hold id="capture-revocation" attempt={state.revocationFailure.attempt} line={state.revocationFailure.kind === "Unknown" ? { fact: "not sure disconnection finished.", reason: UNKNOWN_OUTCOME_REASON } : { fact: "couldn’t disconnect from nexus." }}
           verbs={[{ label: "retry", commandKey: "RetryDisconnect", run: () => sendWithOrigins({ kind: "disconnect" }) }]} />
       ) : null}
       {account === null ? (

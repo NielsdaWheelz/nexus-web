@@ -73,7 +73,7 @@ export interface ViewState {
     displayName: string | null;
   } | null;
   /** a disconnect nexus did not confirm: the credential is kept, Retry offered */
-  revocationFailure: { kind: "Refused" | "Unknown"; failure: CaptureFailure } | null;
+  revocationFailure: { kind: "Refused" | "Unknown"; failure: CaptureFailure; attempt: number } | null;
   /** origins Firefox must grant before login or save; granted ones omitted */
   requiredOrigins: string[];
   draft: {
