@@ -17,7 +17,6 @@ import type { CollectionRowView } from "@/lib/collections/types";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, projectPodcastLibrariesAction, projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -474,7 +473,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               ariaLabel="Episodes"
               collectionBusy={busy}
               anchorKey={text}
-              notice={<MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />}
               empty={<Fact line={{ fact: emptyTitle }} />}
             />
             </PaneSection>

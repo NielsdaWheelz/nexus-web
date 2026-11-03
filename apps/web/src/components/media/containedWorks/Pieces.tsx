@@ -17,7 +17,7 @@ import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { Hold, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { isAbortError } from "@/lib/errors";
@@ -46,8 +46,9 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   const returnedPart = useRef<string | null>(null);
   const capturedLink = useRef<HTMLElement | null>(null);
   const outcome = useOutcome();
-  const commands = useResourceDraft<{ request: Command | null; busy: boolean }>(`contents-commands:${source}`,
-    () => ({ request: null, busy: false }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
+  const resendFeedback = useResendFeedback();
+  const commands = useResourceDraft<{ request: Command | null; busy: boolean; attempt: number }>(`contents-commands:${source}`,
+    () => ({ request: null, busy: false, attempt: 0 }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   const mounted = useReaderState(reader, state => state.document);
   const viewport = useReaderState(reader, state => state.viewport);
   const shown = navigation !== null && navigation.media_id === source && mounted.status === "ready" && mounted.doc.kind === "text" ? mounted.doc.generation : null;
@@ -115,17 +116,17 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   const saved = async (id: string | null) => { returnedPart.current = id; await refresh(); };
   const run = async (request: Command, retry = false) => {
     if (commands.read().busy || commands.read().request !== null && !retry) return;
-    commands.set({ request, busy: true });
+    commands.set(value => ({ ...value, request, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
       if (request.kind === "discover") await discoverParts(source, request.body);
       else await decidePart(source, request.candidate, request.body);
     } catch (error) {
       const said = partFailure(outcome, error, request.kind === "discover" ? "couldn’t start extraction." : "couldn’t change this suggestion.") === "Said";
-      commands.set({ request: said ? null : request, busy: false });
+      commands.set(value => ({ request: said && !retry ? null : request, busy: false, attempt: value.attempt + 1 }));
       contents.revalidate();
       return;
     }
-      commands.set({ request: null, busy: false });
+      commands.set({ request: null, busy: false, attempt: 0 });
       await refresh();
       if (request.kind === "restore" && request.body.part_id !== null) {
         const id = request.body.part_id;
@@ -198,7 +199,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
         if (!blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
       }}>{operation?.status === "dead" || operation?.outcome === "superseded" ? "retry" : "extract independent works"}</Button> : null}
       {/* a job's progress stays quiet; its death speaks, once per line. */}
-      {operationText ? <Fact key={operationText} line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
+      {operationText ? <Fact line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
         {/* the contents stay inert until the reader shows their version; a load that ended behind it says so */}
         {behind && mounted.status === "ready" && !mounted.refreshing && acted.current === pair
@@ -213,9 +214,9 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
         {snapshot.nodes.length === 0 && works.length === 0 && page.candidates.length === 0 ? <p>no sections available</p> : null}
       </> : null}
     </> : null}
-    {commands.value.request !== null && !commands.value.busy ? <Hold id={`contents-command:${source}`}
-      line={commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE}
-      verbs={[{ label: "retry", commandKey: "RetryContentsCommand", run: () => void run(commands.value.request!, true) }]} /> : null}
+    {commands.value.request !== null && commands.value.attempt > 0 ? <Hold id={`contents-command:${source}`} attempt={commands.value.attempt}
+      {...resendFeedback({ line: commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE,
+        resend: { label: "retry", commandKey: "RetryContentsCommand", busy: commands.value.busy, run: () => void run(commands.value.request!, true) } })} /> : null}
     {intent?.kind === "manual" ? <PartEditor key={`manual:${source}:${intent.section}`} source={source} initialSection={intent.section} initialTitle={intent.title} initialSelection={intent.selection} page={page} definition={null}
       onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} onRefresh={refresh} readError={contents.status === "failed" ? contents.error : null} readPending={contents.status === "ready" && contents.refreshing} returnFocusTo={focusTarget} /> : null}
     {intent?.kind === "review" ? <CandidateReview key={`${source}:${intent.candidate}`} source={source} candidate={intent.candidate} onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} returnFocusTo={focusTarget}

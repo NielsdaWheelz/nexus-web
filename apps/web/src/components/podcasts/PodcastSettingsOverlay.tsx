@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useTransportVerbs } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import { transportVerbs, type Line } from "@/components/feedback/stage";
+import { type Line } from "@/components/feedback/stage";
 import { PlaybackRateEditor, SkipSilenceField } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -57,7 +58,8 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
   const reloadRequired = readError !== null && !missing && transportOf(readError) === "Update";
   const live = useRef(false);
   useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-  const factRegion = useRef<HTMLDivElement>(null);
+  const gateId = useId();
+  const transportVerbs = useTransportVerbs();
   const save = usePodcastSettingsSave(podcastId, source.podcast.title, `${accountId}:${podcastId}`, () => live.current);
   const operation = save.state;
   useEffect(() => {if (operation?.kind === "Accepted") onClose();}, [operation, onClose]);
@@ -105,12 +107,9 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
     : absent ? { fact: "this podcast isn’t available." }
     : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "these defaults changed elsewhere." : "the saved defaults differ from this change." }
     : unread ? { fact: "these defaults changed elsewhere.", reason: "couldn’t load the current ones." }
+    : needsCheck ? { fact: "check the saved defaults before saving again." }
     : null;
-  // `check` reads, and the Fact it stands in leaves with the press, so focus it held moves to the dialog.
-  const check = { label: "check", commandKey: `check podcast defaults ${podcastId}`, run: () => {
-    if (factRegion.current?.contains(document.activeElement)) factRegion.current.closest<HTMLElement>('[role="dialog"]')?.focus();
-    save.check();
-  } };
+  const check = { label: "check", commandKey: `check podcast defaults ${podcastId}`, run: save.check };
   return <Dialog open onClose={onClose} title="playback defaults"
     onDismissRequest={() => requestDismiss() ? "accepted" : "blocked"}
     initialFocus={card => card.querySelector<HTMLElement>('input[type="range"]')}>
@@ -123,14 +122,14 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
         <SkipSilenceField checked={pause_shortening_mode === "Natural"} label="skip silence on android"
           onChange={checked => draft.set(value => ({ ...value, pause_shortening_mode: checked ? "Natural" : "Off" }))} />
       </fieldset>
-      {fact ? <div ref={factRegion}><Fact line={fact}
-        verbs={reloadRequired ? transportVerbs("Update", { signIn: null }) ?? undefined : unread ? [check] : undefined} /></div> : null}
+      {fact ? <div id={gateId}><Fact line={fact}
+        verbs={reloadRequired ? transportVerbs("Update") ?? undefined : needsCheck ? [check] : undefined} /></div> : null}
       {reviewed && !replaced && !absent && operation?.kind === "Review" ? <div className={styles.comparison}>
         <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
         <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
       </div> : null}
       <div className={styles.actions}>
-        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-busy={save.busy || undefined} aria-label="save playback defaults" onClick={() => void submit()}>
+        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-busy={save.busy || undefined} aria-describedby={fact ? gateId : undefined} aria-label="save playback defaults" onClick={() => void submit()}>
           save
         </Button> : null}
         <Button size="comfortable" aria-label="close playback defaults" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>

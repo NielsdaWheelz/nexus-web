@@ -1,6 +1,6 @@
 "use client";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
-import type { Line, Verb, Verbs } from "@/components/feedback/stage";
+import type { CommandVerb, Line, Verb, Verbs } from "@/components/feedback/stage";
 import type { ExcerptBody } from "@nexus/authored/excerpt";
 
 // The reader primitive. A host builds a source (and optionally a progress
@@ -24,6 +24,7 @@ import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import { targetOfLocator, type HighlightColor, type PdfQuad, type ReaderDocument, type TextUnit } from "./model";
 import PdfSurface from "./pdf/PdfSurface";
 import {
@@ -159,9 +160,10 @@ export interface DocumentReaderViewProps {
   /** The host's own words for its publication's failed read, which only it can classify; null,
    * or absent, and the reader says it couldn't open the document. */
   readonly failure?: (error: unknown, retry: { readonly run: () => void; readonly busy: boolean }) => ReactNode;
-  /** The host's words for a failed position save, which only its port can classify; absent, the
-   * reader says the position isn't saving. `retry` is the reader's own. */
-  readonly saveFailure?: (failure: SaveFailure, retry: Verb) => { readonly line: Line; readonly verbs: Verbs | null };
+  /** The port's read failure, including its transport-specific remedy. */
+  readonly loadFailure?: (error: unknown, retry: CommandVerb) => { readonly line: Line; readonly verbs: Verbs | null };
+  /** The port's save failure. The reader owns the explicit retry and keeps later movement. */
+  readonly saveFailure?: (failure: SaveFailure, retry: CommandVerb) => { readonly line: Line; readonly verbs: Verbs | null };
   /** The host's durable facts about this reading, in the reader's status lane beside its own.
    * The reader re-anchors when the lane changes height, so the text under the eye stays put. */
   readonly lane?: ReactNode;
@@ -179,6 +181,12 @@ export function useDocumentReader(
     current.current = { key, runtime: createReaderRuntime(options) };
   }
   const { runtime } = current.current;
+  const publication = useReaderState(runtime, state => state.document);
+  const progress = useReaderState(runtime, state => state.progress);
+  useFailedReadRepair(enabled && (publication.status === "failed" || publication.status === "ready" && publication.refreshFailed),
+    publication.status === "loading" || (publication.status === "failed" ? publication.retrying : publication.refreshing), runtime.retryLoad);
+  useFailedReadRepair(enabled && (progress?.kind === "LoadFailed" || progress?.kind === "Ready" && progress.observation !== null),
+    progress?.kind === "Loading" || !!progress && (progress.kind === "LoadFailed" || progress.kind === "Ready") && progress.retrying, runtime.revalidate);
   useEffect(() => {
     if (!enabled) return;
     const unmount = runtime.mount();
@@ -285,7 +293,7 @@ export default function DocumentReaderView(
       data-hyphenation={props.profile.hyphenation}
     >
       <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
-        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} returnFocus={returnFocus} /> : null}
+        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} loadFailure={props.loadFailure} returnFocus={returnFocus} /> : null}
         {props.lane}
       </div>
       {body}
@@ -320,10 +328,11 @@ function originLabel(state: ReaderState): string | null {
 }
 
 /** The reading position's lane: at most one fact per condition, each with the verbs that settle it. */
-function StatusStrip({ reader, speak, saveFailure, returnFocus }: {
+function StatusStrip({ reader, speak, saveFailure, loadFailure, returnFocus }: {
   readonly reader: Reader;
   readonly speak: boolean;
   readonly saveFailure: DocumentReaderViewProps["saveFailure"];
+  readonly loadFailure: DocumentReaderViewProps["loadFailure"];
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const navigation = useReaderState(reader, (state) => state.navigation);
@@ -335,13 +344,18 @@ function StatusStrip({ reader, speak, saveFailure, returnFocus }: {
   const exploring = navigation.mode === "Exploring";
   const ready = progress?.kind === "Ready" ? progress : null;
   const unresolved = ready ? unresolvedPosition(ready.view) : null;
-  const handoff = unresolved ? null : ready?.handoff ?? null;
+  const handoff = unresolved || ready?.observation ? null : ready?.handoff ?? null;
+  const unknown = ready?.observation?.acceptance === "Unknown";
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
-  if (!unresolved && !exploring && !handoff && !ready?.saveFailure && !unavailable && !loadFailed) return null;
+  if (!unresolved && !exploring && !handoff && !ready?.saveFailure && !unavailable && !loadFailed && !unknown && !ready?.movementPaused) return null;
   const readFromHere = (busy: boolean): Verb => ({ label: "read from here", commandKey: "ReadFromHere", run: reader.continueHere, busy });
-  const retrySave: Verb = { label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: !!ready && (ready.saving || ready.retrying) };
+  const retrySave: CommandVerb = { label: "retry", commandKey: "RetryPositionSave", run: reader.retrySave, busy: !!ready && (ready.saving || ready.retrying) };
   const saveFailed = ready?.saveFailure ? saveFailure?.(ready.saveFailure, retrySave)
     ?? { line: { fact: "your reading position isn’t saving.", reason: "this tab still holds it." }, verbs: [retrySave] } : null;
+  const positionLoad: { readonly line: Line; readonly verbs: Verbs | null } | null = loadFailed?.recovery === "RetryPosition" ? loadFailure?.(loadFailed.error,
+    { label: "retry", commandKey: "RetryPositionLoad", run: reader.revalidate, busy: loadFailed.retrying || documentRefreshing })
+    ?? { line: { fact: "couldn’t load your reading position.", reason: "it won’t save until it loads." },
+      verbs: [{ label: "retry", commandKey: "RetryPositionLoad", run: reader.revalidate, busy: loadFailed.retrying || documentRefreshing }] } : null;
   return (
     <div className={styles.status} role="group" aria-label="reading position">
       {unresolved ? <>
@@ -362,13 +376,16 @@ function StatusStrip({ reader, speak, saveFailure, returnFocus }: {
           { label: "stay here", commandKey: "KeepDevicePosition", run: () => void reader.resolveHandoff("Device"), busy: !!ready?.saving },
         ]} />
       ) : null}
-      {saveFailed ? <Fact key={`${saveFailed.line.fact}${saveFailed.line.reason ?? ""}`} line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
+      {saveFailed ? <Fact line={saveFailed.line} speak={speak} verbs={saveFailed.verbs ?? undefined} /> : null}
       {unavailable && !exploring && !unresolved ? (
         <Fact line={{ fact: "your saved reading position no longer matches this version." }} speak={speak} />
       ) : null}
+      {ready?.movementPaused && !unknown ? <Fact line={{ fact: "your reading position isn’t saving.", reason: "this tab still holds it." }} speak={speak}
+        verbs={[retrySave]} /> : null}
+      {unknown ? <Fact line={{ fact: "not sure your reading position saved.", reason: "this tab still holds it." }} speak={speak}
+        verbs={[{ label: "check", commandKey: "CheckPosition", run: reader.revalidate, busy: ready?.retrying }]} /> : null}
       {loadFailed ? loadFailed.recovery === "RetryPosition"
-        ? <Fact line={{ fact: "couldn’t load your reading position.", reason: "it won’t save until it loads." }} speak={speak}
-          verbs={[{ label: "retry", commandKey: "RetryPositionLoad", run: reader.revalidate, busy: loadFailed.retrying || documentRefreshing }]} />
+        ? positionLoad && <Fact line={positionLoad.line} verbs={positionLoad.verbs ?? undefined} speak={speak} />
         : <Fact line={{ fact: "your reading position isn’t saving." }} speak={speak}
           verbs={[{ label: "reload document", commandKey: "ReloadDocument", run: reader.retryLoad, busy: loadFailed.retrying || documentRefreshing }]} />
         : null}

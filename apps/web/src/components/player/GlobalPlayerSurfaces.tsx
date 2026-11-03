@@ -13,9 +13,9 @@ import {
   type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
+import { type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
@@ -24,6 +24,7 @@ import PickerSurface from "@/components/ui/PickerSurface";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -314,8 +315,28 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   currentSurface.current = { sheetShown, playbackSubject, desktopVisible: presentation.visible, panelOpen };
   const save = usePodcastSettingsSave(podcastId, loaded?.source.kind === "Episode" ? loaded.source.descriptor.subtitle ?? "this podcast" : "this podcast",
     playbackSubject === null ? null : `${accountId}:${playbackSubject}`, () => currentSurface.current.panelOpen);
-  const panelFact = useRef<HTMLDivElement>(null);
-  const suppressed = isMobile ? sheetShown || (textEntryFocused && nativeKeyboard !== false) : !presentation.visible;
+  const keyboardSuppressed = textEntryFocused && nativeKeyboard !== false;
+  const keyboardSuppressedRef = useRef(keyboardSuppressed);
+  keyboardSuppressedRef.current = keyboardSuppressed;
+  const [keyboardPress, setKeyboardPress] = useState(false);
+  // Returning the player changes the workspace height. Keep it suppressed through the click
+  // that leaves a typing field, so its target stays under the pointer until activation finishes.
+  useEffect(() => {
+    if (!isMobile) return;
+    let release = 0;
+    const down = () => { if (keyboardSuppressedRef.current) setKeyboardPress(true); };
+    const up = () => { cancelAnimationFrame(release); release = requestAnimationFrame(() => setKeyboardPress(false)); };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    return () => {
+      cancelAnimationFrame(release);
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+    };
+  }, [isMobile]);
+  const suppressed = isMobile ? sheetShown || keyboardSuppressed || keyboardPress : !presentation.visible;
   const setFooter = useCallback((element: HTMLElement | null) => {
     footerRef.current = element;
     presentation.regionRef.current = isMobile ? null : element;
@@ -520,11 +541,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
             {!missing && !replaced ? <Button size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
               {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
-            {fact ? <div ref={panelFact}><Fact line={fact} verbs={unread ? [{ label: "check", commandKey: `check podcast defaults ${podcastId}`, run: () => {
-              // `check` reads, and its Fact leaves with the press, so focus it held moves to the panel's frame.
-              if (panelFact.current?.contains(document.activeElement)) panelFact.current.closest<HTMLElement>('[role="dialog"]')?.focus();
-              save.check();
-            } }] : undefined} /></div> : null}
+            {fact ? <Fact line={fact} verbs={unread ? [{ label: "check", commandKey: `check podcast defaults ${podcastId}`, run: save.check }] : undefined} /> : null}
             {reviewed && !replaced ? <div className={styles.comparison}>
               <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
               <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
@@ -681,7 +698,8 @@ function PlayerOutcomes() {
   const commands = Player.usePlayerCommands();
   const { say } = useOutcome();
   const androidShell = useAndroidShell();
-  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const resendFeedback = useResendFeedback();
   const admitted = remoteAttemptAllowed();
   const loaded = state.kind === "Loaded" ? state : null;
   const title = loaded?.source.descriptor.title ?? null;
@@ -705,9 +723,10 @@ function PlayerOutcomes() {
     {place?.kind === "Unsaved" && admitted && episode !== null && title !== null ? <Hold id={`place:${episode}`} attempt={place.attempt}
       line={{ fact: `couldn’t save your place in “${title}”.` }} verbs={[{ label: "retry", commandKey: "retry place", run: commands.retry }]} /> : null}
     {queue.unanswered > 0 ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} attempt={queue.unanswered}
-      line={{ fact: "not sure the queue saved.", reason: "it may have gone through." }}
-      verbs={!androidShell && admission === "UpdateRequired" ? transportVerbs("Update", { signIn: null }) ?? undefined
-        : [{ label: androidShell ? "check" : "retry", commandKey: androidShell ? "check queue" : "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" }]} /> : null}
+      {...androidShell ? { line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
+        verbs: [{ label: "check", commandKey: "check queue", run: commands.checkQueue, busy: queue.phase === "Saving" }] as const }
+        : resendFeedback({ line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" } })} /> : null}
   </>;
 }
 
