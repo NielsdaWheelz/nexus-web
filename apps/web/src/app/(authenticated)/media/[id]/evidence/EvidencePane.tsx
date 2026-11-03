@@ -371,8 +371,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         const was = current[i];
         same = was.kind === "placed" && was.key === next[i].key && was.offset === next[i].offset && was.height === next[i].height;
       }
-      if (!same) flushSync(() => setPlacements(next));
+      // Child layout effects must see the new base together with the new row offsets.
       scope.style.transform = `translateY(${stack.base + lift}px)`;
+      if (!same) flushSync(() => setPlacements(next));
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     placeMargin.current = schedule;
