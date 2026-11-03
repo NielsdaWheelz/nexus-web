@@ -220,7 +220,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     scheme: "library",
     handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
-      members: members ? <LibraryMembers state={members} /> : undefined,
+      members: members.shown ? <LibraryMembers state={members.shown} /> : undefined,
       linkedItems: useMemo(
         () => <ConnectionsSurface resourceRef={{ scheme: "library", id }} />,
         [id],
@@ -348,12 +348,14 @@ function LibraryPane({ id }: { readonly id: string }) {
   if (missing) {
     return <>
       {readFeedback.announcement}
+      {members.held}
       <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
     </>;
   }
   if (invalidView) {
     return <>
       {readFeedback.announcement}
+      {members.held}
       <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => {
         filterRows.clearQuery();
         router.replace(`/libraries/${id}`);
@@ -364,6 +366,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   if (library === null) {
     return <>
       {readFeedback.announcement}
+      {members.held}
       {detail.status === "failed" ? <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
     </>;
   }
@@ -373,7 +376,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     <>
       {readFeedback.announcement}
       <PaneSurface>
-        {members?.held}
+        {members.held}
         <LibraryPodcastsSection library={library} active={active} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"

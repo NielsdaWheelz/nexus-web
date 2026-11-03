@@ -145,7 +145,7 @@ export function projectLecternAction({
     ? "retry"
     : disconnected ? "Lectern"
     : collectionPending !== null ? state.label
-    : retry ? "Retry checking Lectern"
+    : retry ? "retry checking lectern"
     : needsRead && blocked === null ? "Checking Lectern" : state.label;
   let disabledReason: string | undefined;
   let waiting = false;
@@ -741,14 +741,14 @@ export function projectResourceActions(
     if (isStaleBuild(pending.error)) {
       const reload = ctx.remedy === "Reload";
       return make(actionId, null, () => { if (reload) window.location.reload(); }, {
-        state: { label: reload ? "Reload" : "Update Nexus", icon: null },
+        state: { label: reload ? "reload" : "update nexus", icon: null },
         disabledReason: reload ? undefined : staleBuild(),
         tracked: false,
       });
     }
     const sending = pending.kind === "sending";
     return make(actionId, null, () => ctx.admissions.retry(pending.key), {
-      state: { label: "Retry", icon: Icon.Again },
+      state: { label: "retry", icon: Icon.Again },
       tracked: false,
       disabledReason: sending ? "already sending." : !ctx.online ? admissionReason() : undefined,
       waiting: sending,
@@ -1014,7 +1014,7 @@ export function projectDownloadActions(input: {
         throw new ResourceActionUnknown({ fact: `not sure the download change for “${title}” saved.`, reason: UNKNOWN_OUTCOME_REASON });
       }
       const code = error instanceof Error ? error.message : "";
-      throw new ResourceActionFailure(code === "Storage" ? { fact: `couldn’t download “${title}”.`, reason: "this device is out of storage." }
+      throw new ResourceActionFailure(code === "Storage" ? { fact: `couldn’t download “${title}”.`, reason: "couldn’t save to device storage." }
         : { fact: `couldn’t change the download of “${title}”.`, reason: code === "Unsupported" ? "this item can’t be downloaded."
           : code === "Scheduler" ? "android couldn’t schedule it." : undefined });
     }

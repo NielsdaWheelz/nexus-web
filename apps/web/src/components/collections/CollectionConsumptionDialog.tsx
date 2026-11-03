@@ -65,7 +65,7 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           <p>{podcast ? "includes known episodes beyond this page. new episodes found later are unchanged." : "this includes accessible items beyond the loaded page. sort, text and view filters do not narrow it."}</p>
           {selection.kind === "Podcast" && selection.state !== "all" ? <p>this state selection ignores text filters and sort.</p> : null}
           <p>positions, observed history and lectern membership stay. progress is saved before changing state.</p>
-          <p>undo stays available until you reload or sign out.</p>
+          <p>undo is available until items change, you reload, or sign out.</p>
           {source.data.items.length === 0 ? <Fact line={{ fact: `no items to mark ${verb}.` }} /> : null}
         </>}
       {pending?.failed ? <Hold id={pending.commandKey} attempt={pending.attempt}

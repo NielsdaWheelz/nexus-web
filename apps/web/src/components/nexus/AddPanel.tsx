@@ -230,7 +230,7 @@ export default function AddPanel({
     void readSaved(results, (locations) => {
       if (locations.some((location) => !location.settled)) {
         setSavedFeedback({ fact: "source is still processing",
-          reason: "your chosen libraries are already saved. change them here after processing finishes." });
+          reason: "your libraries are saved; change them after processing." });
         return;
       }
       const ids = [...new Set(locations.map((location) => location.mediaId))];
