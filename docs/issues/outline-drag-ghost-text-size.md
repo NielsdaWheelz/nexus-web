@@ -1,5 +1,7 @@
 # the drag ghost's text is larger than the outline's
 
+priority: deferred visual polish; address with later drag presentation work if the mismatch is bothersome.
+
 problem: the drag ghost (`OutlineDrag.module.css`, `.ghost`) sets `font: inherit`,
 and it renders in the overlay container, outside the outline host, so it inherits
 the page's 16px text instead of the outline's 14px.

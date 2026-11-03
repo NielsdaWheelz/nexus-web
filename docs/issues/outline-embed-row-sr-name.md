@@ -1,5 +1,7 @@
 # an embed-only outline row is named by its raw ref
 
+priority: deferred presentation/accessibility follow-up; prioritize before relying on spoken navigation or when revisiting embed labels.
+
 problem: a note whose whole body is an unlabelled embed gets its accessible name
 from `OutlineController.label`, which takes the first line of
 `clipboardPlainText` (`apps/web/src/lib/notes/clipboard.ts`); that serialises an

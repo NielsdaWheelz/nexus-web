@@ -129,6 +129,9 @@ export class OutlineController {
     if (!this.active || this.requests.get(request.parent_id) !== request) return () => {};
     const token = {};
     this.reads.set(request.parent_id, {request, token, value});
+    if (value.error !== null && this.placing?.destination.parent_id === request.parent_id) {
+      this.placing = null; this.announce("drop cancelled; the branch could not open");
+    }
     this.notify();
     return () => {if (this.reads.get(request.parent_id)?.token === token) {this.reads.delete(request.parent_id); if (this.active) this.notify();}};
   }
@@ -256,6 +259,7 @@ export class OutlineController {
       this.selectionRow = row_id; this.selection = at;
     }
     this.focused = this.view?.hasFocus() ?? false; this.syncMetadata(); this.notify(); if (this.deferred) this.refresh(); else this.project();
+    this.tryFocus();
   };
   private changed(reason: ProjectionReason = "projection"): void {this.rebuild(reason); this.notify();}
   refresh(): void {
@@ -683,6 +687,9 @@ export class OutlineController {
       if (this.active && request && this.requests.get(parent_id) === request && this.versions.get(parent_id) === version) {
         const previous = this.admissionFailures.get(parent_id);
         this.admissionFailures.set(parent_id, {request, error, occurrence: previous?.request === request ? previous.occurrence : {}});
+        if (this.placing?.destination.parent_id === parent_id) {
+          this.placing = null; this.announce("drop cancelled; the branch could not open");
+        }
         this.notify();
       }
     }).finally(() => {
@@ -966,8 +973,8 @@ export class OutlineController {
   }
   keys = (row_id: string): StructuralKeys | null => {
     const row = this.rows.get(row_id); if (!row || row.root || row.gap || this.filter.trim() || this.blockedRows.has(row_id)) return null;
-    const idle = () => this.pending.busy() ? this.pending.idle() : null;
-    const arrangement: StructuralKeys = row.tail ? {idle} : {idle, indent: () => this.runRange("indent", row_id), outdent: () => this.runRange("outdent", row_id),
+    const arranging = () => this.pending.busy();
+    const arrangement: StructuralKeys = row.tail ? {arranging} : {arranging, indent: () => this.runRange("indent", row_id), outdent: () => this.runRange("outdent", row_id),
       move: direction => this.runRange(direction === "up" ? "move_up" : "move_down", row_id), selectBlock: () => this.selectPrepared(row_id),
       collapse: open => {if (this.hasChildren(row)) this.toggle(row_id, open);}, extendBlock: direction => this.extendBlock(row_id, direction)};
     if (row.kind === "reference") return arrangement;
@@ -977,7 +984,7 @@ export class OutlineController {
       const size = docFromBody(this.binding.body(row_id)).firstChild!.content.size;
       const from = displayed?.from ?? docFromBody(left).firstChild!.content.size, to = displayed?.to ?? size - docFromBody(right).firstChild!.content.size;
       // Flat order: the text keeps its identity. A caret at the start births an empty item above and stays; one at the end births after.
-      if (from === 0 && to === 0 && size > 0) {this.born(row.parent_id!, row.parent_ref, null, row_id, true); return;}
+      if (from === 0 && to === 0 && size > 0) {this.born(row.parent_id!, row.parent_ref, null, {before: row_id, stays: true, beside: row_id}); return;}
       if (from === to && to === size) {void this.appendAfter(row); return;}
       const successor = this.pending.split(row_id, left, right, from, to, this.captureField(row));
       this.changed("semantic"); void this.focus(successor, {anchor: 1, head: 1});
@@ -987,9 +994,10 @@ export class OutlineController {
     },
       emptyDelete: direction => {this.removeEmpty(row_id, direction);}, join: direction => {this.join(row_id, direction);}};
   };
-  private born(parent_id: string, parent_ref: string, after_id: string | null, before_id?: string, stays = false): string {
+  private born(parent_id: string, parent_ref: string, after_id: string | null, options: {before?: string; stays?: boolean; beside?: string} = {}): string {
     const id = crypto.randomUUID();
-    this.pending.create({row_id: id, parent_id, parent_ref, after_id, before_id, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, pending: true, origin: this.origin(id)}, this.capture(), stays);
+    this.pending.create({row_id: id, parent_id, parent_ref, after_id, before_id: options.before, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, pending: true, origin: this.origin(id)},
+      {before: this.capture(), stays: options.stays, beside: options.beside});
     this.changed("semantic");
     return id;
   }
@@ -998,10 +1006,11 @@ export class OutlineController {
     if (!this.admitNew()) return;
     let id: string;
     if (row.open && this.windows.has(row.row_id)) {
+      if (this.pending.busy()) {this.refuse("finish moving the items before adding a child"); return;}
       if (this.windows.get(row.row_id)!.beforeEdge) {this.refuse(rangeReasonMessage("gap")); return;}
       const first = [...this.rows.values()].find(child => child.parent_id === row.row_id && !child.gap && !child.tail);
-      id = this.born(row.row_id, row.ref!, null, first?.row_id);
-    } else id = this.born(row.parent_id!, row.parent_ref, row.row_id);
+      id = this.born(row.row_id, row.ref!, null, {before: first?.row_id});
+    } else id = this.born(row.parent_id!, row.parent_ref, row.row_id, {beside: row.row_id});
     await this.focus(id, {anchor: 1, head: 1});
   }
   /** Proven children: a window proof, shown rows in its window, or a pending field under it; an open request alone proves nothing. */

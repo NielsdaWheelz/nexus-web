@@ -110,8 +110,8 @@ export interface NoteInspection {
 /** Editor-owned structural intents run after native reconciliation and before
  * the consumed event releases its packet. External refresh stays fenced. */
 export interface StructuralKeys {
-  /** Non-null while an earlier structural gesture is in flight: the shown rows trail it, so a birth or join waits and replays. */
-  idle?(): Promise<void> | null;
+  /** The shown neighbours may trail an unsettled arrangement. Boundary deletion must refuse rather than replay later. */
+  arranging?(): boolean;
   enter?(): void;
   split?(left: NoteBody, right: NoteBody, displayed: import("@/lib/notes/editorTypes").DisplayedSplit | null): void;
   emptyDelete?(direction: "backward" | "forward"): void;
@@ -739,6 +739,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     bindingRef.current = binding;
     nativeInputOpen.current = false;
     let nativePacket = 0;
+    let deletionKey: string | null = null;
+    let keylessDeletion: {row_id: string; backward: boolean} | null = null;
     let reconciling = false;
     const reconcile = (current: EditorView) => {
       if (reconciling || current.isDestroyed || current.composing || compositionBase.current !== null) return;
@@ -822,10 +824,9 @@ function NoteEditorContent(props: NoteEditorProps) {
       const returning = inputType === "insertParagraph" || inputType === "insertLineBreak" && field.kind === "title";
       const deletingBoundary = (inputType === "deleteContentBackward" && selection.empty && selection.from === field.from ||
         inputType === "deleteContentForward" && selection.empty && selection.to === field.to) && (keys?.join || keys?.emptyDelete);
-      if (returning || deletingBoundary) {
-        // A birth or join anchors on the shown neighbours, which trail a gesture still in flight; it replays once that settles.
-        const idle = keys?.idle?.();
-        if (idle) { void idle.then(() => { if (!current.isDestroyed) structuralInput(current, inputType); }); return true; }
+      if (deletingBoundary && keys?.arranging?.()) {
+        warn("finish moving the items before deleting across them", "your writing is kept.");
+        return true;
       }
       if (referenceRef.current.getState() !== null && (deletingBoundary || returning &&
         (field.kind === "title" && keys?.enter || body.attrs.presentation !== "code" && keys?.split))) {
@@ -1048,6 +1049,11 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       },
       handleDOMEvents: {
+        pointerdown(current, event) {
+          const field = event.target instanceof Element ? event.target.closest("[data-outline-field]") : null;
+          if (field?.closest(".ProseMirror") === current.dom) {deletionKey = null; keylessDeletion = null;}
+          return false;
+        },
         keydown(current, event) {
           if (
             event.target instanceof HTMLElement &&
@@ -1056,6 +1062,8 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return true;
           if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
+          if ((event.key === "Backspace" || event.key === "Delete") && !current.composing && !event.isComposing && event.keyCode !== 229) deletionKey = event.key;
+          else if (!event.isComposing && event.keyCode !== 229 && event.key !== "Unidentified") {deletionKey = null; keylessDeletion = null;}
           beginNativeInput(current, event);
           // Returning true leaves the browser event alone while stopping PM's
           // keymap/capture fallback from turning composition into a newline.
@@ -1091,7 +1099,10 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current) return true;
           return false;
         },
-        keyup(current) { releaseNativeInput(current); return false; },
+        keyup(current, event) {
+          if (event.key === deletionKey) {deletionKey = null; keylessDeletion = null;}
+          releaseNativeInput(current); return false;
+        },
         input(current, event) {
           if (event.target === current.dom) releaseNativeInput(current);
           return false;
@@ -1101,6 +1112,20 @@ function NoteEditorContent(props: NoteEditorProps) {
           beginNativeInput(current, event);
           if (!current.composing && !event.isComposing)
             commandSelection(current, event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward");
+          const deleting = event.inputType.startsWith("delete") && /(?:Backward|Forward)$/u.test(event.inputType);
+          if (!deleting) keylessDeletion = null;
+          if (deleting && deletionKey === null && event.cancelable && !event.isComposing && !current.composing) {
+            const field = editingField(current.state), keys = structuralKeys(current.state), selection = current.state.selection;
+            if (field && field.row_id !== null && (keys?.join || keys?.emptyDelete)) {
+              const backward = event.inputType.endsWith("Backward");
+              // Keyless keyboards expose no release or repeat identity. Keep the stream in its first field until explicit input re-arms it.
+              if (keylessDeletion?.backward === backward && (keylessDeletion.row_id !== field.row_id ||
+                selection.empty && (backward ? selection.from === field.from : selection.to === field.to))) {
+                event.preventDefault(); return true;
+              }
+              keylessDeletion = {row_id: field.row_id, backward};
+            }
+          }
           const redo = event.inputType === "historyRedo";
           if (!redo && event.inputType !== "historyUndo") {
             if (!event.cancelable || event.isComposing) return false;
@@ -1124,6 +1149,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return false;
         },
         blur(current) {
+          deletionKey = null;
           releaseNativeInput(current);
           if (current.isDestroyed) return false;
           if (!current.composing && compositionBase.current === null) syncNativeSelection(current);
@@ -1353,6 +1379,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
     });
     viewRef.current = view;
+    const releaseDeletionKey = () => {deletionKey = null;};
+    window.addEventListener("blur", releaseDeletionKey);
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
@@ -1433,6 +1461,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     latest.current.projection?.onViewReady(view);
     latest.current.onEditorReady?.(handle);
     return () => {
+      window.removeEventListener("blur", releaseDeletionKey);
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;

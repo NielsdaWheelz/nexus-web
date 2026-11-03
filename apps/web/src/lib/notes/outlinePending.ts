@@ -4,9 +4,10 @@
 import * as Y from "yjs";
 import {readBody} from "@nexus/authored/documents";
 import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
+import {isVisible} from "@nexus/authored/merge";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {NoteEdit, FocusSelection} from "./editorTypes";
-import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
+import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
 import {LocalCommitError, type LocalCommit, type WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
@@ -21,6 +22,7 @@ export interface PendingOutlineField {
   receiptOwner?: object; revision?: number;
 }
 interface RangeState {placement: Placement | null; link: LinkState | null}
+interface BirthLocation {placement: Omit<Placement, "row_id" | "ref">; source: RangeState}
 interface BoundField {
   document: WritingDocument | null; link: LinkState | Promise<LinkState> | null;
   release(): void; settled: boolean; captureBytes: number; reservations?: number; next?: {state: Promise<RangeState>; link: Promise<LinkState>};
@@ -47,7 +49,6 @@ export class OutlinePendingInput {
   private inflight = 0;
   private finishing = false;
   private resumeAgain = false;
-  private idlers: (() => void)[] = [];
   error: unknown | null = null;
   connect(owner: InputOwner): () => void {
     if (this.owner?.history !== owner.history)
@@ -99,7 +100,8 @@ export class OutlinePendingInput {
     void Promise.resolve(link).then(value => {
       const field = this.fields.get(row_id);
       if (this.bound.get(row_id) !== retained || retained.link !== link || !field ||
-        field.ref !== row.ref || field.parent_ref !== row.parent_ref || field.parent_id !== row.parent_id) return;
+        field.ref !== row.ref || !(value.endpoint_a === field.ref && value.endpoint_b === field.parent_ref ||
+          value.endpoint_b === field.ref && value.endpoint_a === field.parent_ref)) return;
       retained.link = value;
       const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);
     }).catch(error => {this.error = error; this.notify();});
@@ -163,15 +165,57 @@ export class OutlinePendingInput {
     owner.history.editor(document, row.origin).record(edit, undefined, this.bookmark(row, edit.selectionAfter) ?? undefined);
     owner.notify(); this.resume();
   }
-  /** `before` is the caret the gesture started from; `stays` keeps it there afterwards (a birth above), else the newborn's end takes it. */
-  create(row: PendingOutlineField, before: InputBookmark = null, stays = false): void {
+  /** Pin the neighbour's preceding gesture now, never a later command on that occurrence. */
+  private birthLocation(row: PendingOutlineField, beside?: string): Promise<BirthLocation> | null {
+    const predecessor = beside ? this.bound.get(beside)?.next?.state : null;
+    if (!predecessor) return null;
+    return predecessor.then(source => {
+      if (!source.placement) throw new Error("the new item's neighbour was removed");
+      return {source, placement: {parent_id: source.placement.parent_id, parent_ref: source.placement.parent_ref,
+        after_id: row.after_id, before_id: row.before_id ?? null}};
+    });
+  }
+  private resolveBirth(row: PendingOutlineField, beside: PendingOutlineField, location: Promise<BirthLocation>, split: boolean): NonNullable<OutlineBirthChange["resolvePlacement"]> {
+    return async document => {
+      const {placement, source} = await location;
+      const after: OccurrenceBookmark = {row_id: row.row_id, ref: document.ref, placement: {...placement, row_id: row.row_id, ref: document.ref}, link: null};
+      const before: OccurrenceBookmark = {row_id: beside.row_id, ref: beside.ref!, placement: source.placement, link: source.link};
+      // Early undo may already have hidden the newborn or restored source text. Only its location follows the preceding gesture.
+      for (const target of split ? [before, after] : [after]) {
+        const current = this.fields.get(target.row_id), at = target.placement;
+        if (current && at) this.fields.set(target.row_id, {...current, parent_id: at.parent_id, parent_ref: at.parent_ref,
+          after_id: at.after_id, before_id: at.before_id ?? undefined});
+      }
+      this.owner?.notify();
+      return {placement: {parent_ref: placement.parent_ref, parent: null,
+        after_ref: row.after_id === beside.row_id ? beside.ref : null,
+        before_ref: row.before_id === beside.row_id ? beside.ref : null},
+        placements_before: split ? [before] : [], placements_after: [after]};
+    };
+  }
+  private followBirth(row: PendingOutlineField, admitted: AdmittedLink, location: Promise<BirthLocation> | null): void {
+    if (!location) return;
+    const bound = this.bound.get(row.row_id)!;
+    const state = Promise.all([location, admitted.link]).then(([settled, link]) => ({placement: {...settled.placement, row_id: row.row_id, ref: row.ref!}, link}));
+    const next = {state, link: admitted.link}; bound.next = next;
+    void state.then(() => {
+      if (bound.next === next) bound.next = undefined;
+      this.resume(); this.notify();
+    }).catch(error => {this.error = error; this.notify();});
+  }
+  /** A birth binds its canonical document immediately; only the graph placement may await a preceding arrangement. */
+  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string} = {}): void {
     const owner = this.current();
+    const before = options.before ?? null, location = this.birthLocation(row, options.beside);
     const placement = this.placement(row.parent_id, row.parent_ref, row.after_id, row.before_id);
-    const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => stays ? before : this.bookmark({...row, ref: document.ref}, "end"), placements_after: document => [this.placementBookmark({...row, ref: document.ref})!]}});
+    const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => options.stays ? before : this.bookmark({...row, ref: document.ref}, "end"),
+      placements_after: document => [this.placementBookmark({...row, ref: document.ref})!],
+      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location, false) : undefined}});
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
     this.place(row.row_id, row.after_id, row.before_id ?? null);
     this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.followBirth(field, admitted, location);
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }
@@ -182,12 +226,15 @@ export class OutlinePendingInput {
     const target: PendingOutlineField = {...row, row_id: successor, after_id: row_id, before_id: undefined,
       ref: null, link: null, resource: null, kind: "body", body: right, hidden: false, pending: true, origin: owner.history.typingOrigin(),
       relocating: undefined, previousParent: undefined, previousParentRef: undefined, settledRevision: undefined, receiptOwner: undefined};
+    const location = this.birthLocation(target, row_id);
     const admitted = owner.history.split({source: bound.document, displayed: {body_state: displayed.body_state, from, to},
       placement: this.placement(target.parent_id, target.parent_ref, target.after_id),
-      change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), placements_before: [this.placementBookmark(row)!], after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1}), placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!]}});
+      change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), placements_before: [this.placementBookmark(row)!], after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1}),
+        placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!], resolvePlacement: location ? this.resolveBirth(target, {...row}, location, true) : undefined}});
     this.fields.set(row_id, {...row, body: left});
     const field = {...target, ref: admitted.document.ref}; this.fields.set(successor, field);
     this.bound.set(successor, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.followBirth(field, admitted, location);
     const at = this.order.indexOf(row_id); this.order = [...this.order.slice(0, at + 1), successor, ...this.order.slice(at + 1)];
     owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
     this.watch([row_id, successor], admitted, new Map([[successor, admitted.link]])); return successor;
@@ -208,9 +255,6 @@ export class OutlinePendingInput {
   rangeHeld(row_id: string): boolean {return (this.bound.get(row_id)?.reservations ?? 0) > 0;}
   /** A range gesture is still held or unsettled: the shown order may trail it. */
   busy(): boolean {return [...this.bound.values()].some(bound => (bound.reservations ?? 0) > 0 || bound.next !== undefined);}
-  /** Resolves once no range gesture is in flight. A birth or join reads the shown rows, which trail a gesture; it waits here. */
-  idle(): Promise<void> {return this.busy() ? new Promise(resolve => this.idlers.push(resolve)) : Promise.resolve();}
-  private settleIdle(): void {if (!this.busy()) for (const resolve of this.idlers.splice(0)) resolve();}
   range(plan: RangePlan, callbacks: {refused(reason: RangeReason): void}): void {
     const owner = this.current(), snapshot = owner.rangeSnapshot();
     // The selection charges the gesture; every row the plan changes (an adopted sibling too) is captured and bound.
@@ -288,7 +332,7 @@ export class OutlinePendingInput {
           bound.reservations = (bound.reservations ?? 0) - 1;
           if (!bound.captureBytes && !bound.reservations && !bound.next && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
         }
-        this.resume(); this.notify(); this.settleIdle();
+        this.resume(); this.notify();
       };
       const settle = (id: string, state: Promise<RangeState>) => {
         const successor = successors.get(id); if (!successor) return;
@@ -299,7 +343,6 @@ export class OutlinePendingInput {
             bound.next = undefined; bound.link = value.link;
             if (!bound.captureBytes && !bound.reservations && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
           }
-          this.settleIdle();
         }).catch(error => {this.error = error; this.notify();});
       };
       return {
@@ -361,7 +404,7 @@ export class OutlinePendingInput {
       };
     };
     const publication = reserve(initial, snapshot, null);
-    const prepare = async () => {
+    const prepare = async (readLinks: (link_ids: readonly string[]) => Promise<readonly LinkState[]>) => {
       const predecessors = new Map<string, RangeState>();
       try {for (const [id, future] of initial.states) predecessors.set(id, await future);}
       finally {initial.states.clear();}
@@ -371,27 +414,28 @@ export class OutlinePendingInput {
       });
       const byId = new Map(rows.map(row => [row.row_id, row])), children = new Map<string | null, typeof rows>();
       for (const row of rows) {const siblings = children.get(row.parent_id) ?? []; siblings.push(row); children.set(row.parent_id, siblings);}
-      // Every relocated row leaves its sibling list first; each re-enters once its after anchor is present (placements are
-      // two-sided: a null after with a before means first, null on both sides means last, as rebuild and storage read it),
-      // so a run moved past one neighbour resolves as a chain at a fixpoint.
-      const relocated = [...predecessors].flatMap(([id, state]) => {
-        const row = byId.get(id), placement = state.placement, original = originalPlacement(id);
-        return !row || !placement || original && placement.parent_id === original.parent_id && placement.parent_ref === original.parent_ref &&
-          placement.after_id === original.after_id && placement.before_id === original.before_id ? [] : [{row, placement}];
-      });
-      for (const {row} of relocated) {const siblings = children.get(row.parent_id)!; siblings.splice(siblings.indexOf(row), 1);}
-      let waiting = relocated;
-      while (waiting.length) {
-        const deferred: typeof waiting = [];
-        for (const item of waiting) {
-          const siblings = children.get(item.row.parent_id)!, {after_id, before_id} = item.placement;
-          const after = after_id === null ? -1 : siblings.findIndex(peer => peer.row_id === after_id);
-          if (after_id !== null && after < 0) {deferred.push(item); continue;}
-          const before = before_id === null ? -1 : siblings.findIndex(peer => peer.row_id === before_id);
-          siblings.splice(after_id !== null ? after + 1 : before_id !== null ? Math.max(before, 0) : siblings.length, 0, item.row);
-        }
-        if (deferred.length === waiting.length) {for (const item of deferred) children.get(item.row.parent_id)!.push(item.row); break;}
-        waiting = deferred;
+      const reparented = new Set(rows.flatMap((row, index) => row.parent_id === snapshot.rows[index]!.parent_id && row.parent_ref === snapshot.rows[index]!.parent_ref
+        ? [] : [row.parent_id, snapshot.rows[index]!.parent_id]));
+      if ([...children].some(([parent, siblings]) => reparented.has(parent) && siblings.some(row => row.gap)))
+        return {kind: "refusal" as const, reason: "gap" as const};
+      const items = rows.filter(row => row.selectable && (!predecessors.has(row.row_id) || predecessors.get(row.row_id)!.placement !== null));
+      const links = new Map((await readLinks([...new Set(items.flatMap(row => row.link_id ? [row.link_id] : []))])).map(link => [link.link_id, link]));
+      const positions = new Map<string, string>();
+      for (const row of items) {
+        const link = row.link_id ? links.get(row.link_id) : null;
+        const position = link?.endpoint_a === row.parent_ref && link.endpoint_b === row.ref ? link.position_a
+          : link?.endpoint_b === row.parent_ref && link.endpoint_a === row.ref ? link.position_b : null;
+        if (!link || !isVisible(link.add_vv, link.remove_vv) || !position) return {kind: "refusal" as const, reason: "changed" as const};
+        positions.set(row.row_id, position.value);
+      }
+      // One leased graph head owns order. Captured links below still own observed membership; a fresh position read does not extend it.
+      for (const [parent, siblings] of children) {
+        const sorted = siblings.filter(row => positions.has(row.row_id)).sort((a, b) => {
+          const x = positions.get(a.row_id)!, y = positions.get(b.row_id)!;
+          return x < y ? -1 : x > y ? 1 : a.link_id! < b.link_id! ? -1 : a.link_id! > b.link_id! ? 1 : 0;
+        });
+        let at = 0;
+        children.set(parent, siblings.map(row => positions.has(row.row_id) ? sorted[at++]! : row));
       }
       const ordered: typeof rows = [], visited = new Set<string>();
       const append = (row: typeof rows[number]) => {
@@ -451,7 +495,7 @@ export class OutlinePendingInput {
     void committed.then(async receipt => {
       await link;
       const field = this.fields.get(row_id);
-      if (field?.receiptOwner !== owner || this.bound.get(row_id) !== retained || field.ref !== row.ref || field.parent_id !== row.parent_id || field.parent_ref !== row.parent_ref) return;
+      if (field?.receiptOwner !== owner || this.bound.get(row_id) !== retained || field.ref !== row.ref) return;
       this.fields.set(row_id, {...field, settledRevision: receipt.store_revision});
       const bound = this.bound.get(row_id); if (bound) bound.settled = true;
       else this.fields.set(row_id, {...this.fields.get(row_id)!, pending: false});

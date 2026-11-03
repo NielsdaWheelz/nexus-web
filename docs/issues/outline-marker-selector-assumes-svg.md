@@ -1,5 +1,7 @@
 # the note dot's selector assumes glyph markers render an svg
 
+priority: deferred maintenance; no current impact. revisit if the glyph owner changes rendering or this row code is otherwise edited.
+
 problem: `OutlineEditorRow.module.css` tells the note dot from a glyph marker with
 `.bullet:not(:has(svg))` (the dot, its transparent text, the hover and
 forced-colour rules). that the scheme glyph and the terminal arrow render an

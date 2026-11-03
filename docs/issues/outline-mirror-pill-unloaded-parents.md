@@ -1,5 +1,7 @@
 # the mirror pill counts only loaded parents
 
+priority: deferred complete-count query. qualify the count as loaded occurrences when next changing the label; do not add an incidence query solely for prototype completeness.
+
 problem: the pill that says an item appears under several parents counts the
 item's links in the outline's loaded windows plus pending fields
 (`OutlineController.mirrors`, the per-rebuild `incidence` map). an item linked

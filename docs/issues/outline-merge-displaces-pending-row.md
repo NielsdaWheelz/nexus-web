@@ -1,5 +1,7 @@
 # a merge displaces the existing link's former row while it holds writing
 
+priority: deferred rare interaction: pending writing remains owned, but focus or a duplicate presentation may be wrong. prioritize a reproduction if encountered or when changing merge/pending-row ownership.
+
 problem: a drop that merges (the destination parent already links the item, so
 that link takes the drop's place and the source link goes) hands the existing link
 to the placed row and retires the former occurrence's row at `rebuild`. while that
