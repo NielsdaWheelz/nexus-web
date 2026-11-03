@@ -106,7 +106,7 @@ export function useFactRemovals(scopeName: string) {
     remove(key: string, command: FactRemovalCommand, settled: (untouched: boolean) => void) {
       if (!ownsVisit() || writing === null) return;
       const existing = owner.read().get(key);
-      if (existing?.running || existing && existing.unknown > 0) { void run(existing); return; }
+      if (existing?.running || existing && existing.unknown > 0) return;
       if (existing) forget(existing);
       const removal: Removal = {key, command, settled, running: false, unknown: 0, report: null};
       owner.set(current => new Map(current).set(key, removal));

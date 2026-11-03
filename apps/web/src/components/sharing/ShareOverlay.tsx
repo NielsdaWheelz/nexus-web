@@ -320,7 +320,7 @@ function GrantEditor(props: {
           emphasis="strong"
           tone={consequence === "Destructive" ? "danger" : undefined}
           aria-busy={busy === key || commands.pending?.key === key && commands.pending.running || undefined}
-          disabled={busy !== null || commands.pending !== null && (commands.pending.key !== key || commands.pending.running)}
+          disabled={blocked}
           onClick={onYes}
         >
           {yes}
@@ -338,7 +338,7 @@ function GrantEditor(props: {
   ) =>
     guarded(
       id,
-      <Button tone="danger" disabled={busy !== null || commands.pending !== null && (commands.pending.key !== id || commands.pending.running)} onClick={() => setConfirm(id)}>
+      <Button tone="danger" disabled={blocked} onClick={() => setConfirm(id)}>
         {copy.label}
       </Button>,
       copy.prompt,
@@ -484,7 +484,7 @@ function GrantEditor(props: {
         ) : linkAvailability.kind === "Available" ? (
           <Button
             aria-busy={commands.pending?.key === "new-link" && commands.pending.running || undefined}
-            disabled={busy !== null || commands.pending !== null && (commands.pending.key !== "new-link" || commands.pending.running)}
+            disabled={blocked}
             onClick={() =>
               void create(
                 { kind: "Link" },

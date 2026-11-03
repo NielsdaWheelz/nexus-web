@@ -355,7 +355,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
     label: `Unlink from ${incoming.parentLabel}`, icon: <Icon.Remove size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
   if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Icon.Remove size={16} aria-hidden="true" />,
-    disabled: busy, busy, disabledReason: busy ? "removing" : undefined,
+    disabled: unsettled, busy, disabledReason: busy ? "removing" : undefined,
     restoreFocusOnClose: false, onSelect: removeFact});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
   if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
