@@ -7,15 +7,14 @@ import Link from "next/link";
 import { useId, useRef, useState, type ReactNode } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
 import AuthSurface from "@/components/auth/AuthSurface";
-import { Announcement } from "@/components/feedback/Feedback";
 import { Field } from "@/components/feedback/Fact";
-import { sentence, type Line } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { beginBrowserSignIn } from "@/lib/authored/binding";
-import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import {
   DEFAULT_RETURN_TARGET,
@@ -35,7 +34,6 @@ const INITIAL: Record<LoginError, Line> = {
 };
 const SIGN_IN_FAILED = "couldn’t sign in.";
 /** L1 owns this copy; until it is a `Line`, its title and message are one. */
-const WRONG_ADDRESS_LINE: Line = { fact: WRONG_ADDRESS.title, reason: WRONG_ADDRESS.message };
 
 function GitHubMark() {
   return (
@@ -121,10 +119,7 @@ function ProviderButton({
     >
       {`Continue with ${PROVIDER_NAMES[provider]}`}
     </Button>
-    {localFailure ? <>
-      <Field id={failureId} line={{ fact: "couldn’t prepare sign-in on this device." }} />
-      <Announcement text="couldn’t prepare sign-in on this device." level="Polite" occurrence={localFailure} />
-    </> : null}
+    {localFailure ? <Field id={failureId} line={{ fact: "couldn’t prepare sign-in on this device." }} /> : null}
   </>;
 }
 
@@ -169,13 +164,6 @@ export default function LoginPageClient({
   const [passwordError, setPasswordError] = useState<Line | null>(null);
   const initialOutcome = initial && initial !== "session_ended" ? INITIAL[initial] : null;
   const [outcome, setOutcome] = useState<Line | null>(initialOutcome);
-  // Focus moving onto an input reads the lines that describe it; focus already there reads
-  // nothing, and an outcome the page opened with has no focus to ride, so those lines speak.
-  const [spoken, setSpoken] = useState<{ line: Line } | null>(() => initialOutcome && { line: initialOutcome });
-  const show = (input: HTMLInputElement | null, line: Line) => {
-    setSpoken(document.activeElement === input ? { line } : null);
-    input?.focus();
-  };
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -194,7 +182,7 @@ export default function LoginPageClient({
     setOutcome(line);
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
-    show(passwordRef.current, line);
+    passwordRef.current?.focus();
   });
   const completedTarget = target.kind === "Ready" ? target.target : null;
   const controlsPending = pending || completedTarget === null;
@@ -213,8 +201,8 @@ export default function LoginPageClient({
       : { fact: "enter your password." };
     setEmailError(nextEmailError);
     setPasswordError(nextPasswordError);
-    if (nextEmailError) show(email, nextEmailError);
-    else if (nextPasswordError) show(password, nextPasswordError);
+    if (nextEmailError) email.focus();
+    else if (nextPasswordError) password.focus();
     return !nextEmailError && !nextPasswordError;
   }
 
@@ -236,8 +224,6 @@ export default function LoginPageClient({
             <Field id="password-sign-in-outcome" line={outcome} />
           </div>
         ) : null}
-        {spoken !== null && (spoken.line === outcome || spoken.line === emailError || spoken.line === passwordError)
-          ? <Announcement text={sentence(spoken.line)} level="Polite" occurrence={spoken} /> : null}
 
         <ProviderButton
           provider="google"

@@ -436,7 +436,9 @@ authored outline rows instead size their controls to the line, in 25px rows with
 a fine pointer and 32px rows with any coarse pointer, where the 28px bullet spans
 its row and no disclose slot is drawn. their type remains 14px fine / 16px coarse
 at 1.5 line height, including inside a companion. an embedded resource row keeps
-its controls inline at the far end of the authored row.
+its controls inline at the far end of the authored row. its existing control
+minima may make that row taller than a plain authored row; usable controls take
+precedence over equal row heights.
 note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without

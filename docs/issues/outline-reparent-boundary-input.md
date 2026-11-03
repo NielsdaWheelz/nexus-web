@@ -1,5 +1,7 @@
 # arrangement boundary-input qualification limit
 
+priority: deferred narrow probe. exercise the concrete schedules affected by correctness fixes; do not reconstruct an exhaustive acceptance matrix.
+
 the old mounted-field handoff and temporary input bridge are removed. the flat
 controller retains one editing host and occurrence; ordered pending input and
 indexed neighbors own structural commands. ordinary joins, immediate writing,

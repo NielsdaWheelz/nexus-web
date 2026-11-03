@@ -15,17 +15,16 @@ export interface CaptureFailure {
   code: string;
   message: string;
   requestId: string | null;
+  status: number | null;
+  offline: boolean;
 }
 
 export class CaptureFailureError extends Error {
-  constructor(
-    readonly failure: CaptureFailure,
-    /** nexus's HTTP status when it answered, else null */
-    readonly status: number | null = null,
-  ) {
+  constructor(readonly failure: CaptureFailure) {
     super(failure.message);
     this.name = "CaptureFailureError";
   }
+  get status(): number | null { return this.failure.status; }
 }
 
 export function failure(
@@ -33,8 +32,9 @@ export function failure(
   message: string,
   requestId: string | null = null,
   status: number | null = null,
+  offline = false,
 ): CaptureFailureError {
-  return new CaptureFailureError({ code, message, requestId }, status);
+  return new CaptureFailureError({ code, message, requestId, status, offline });
 }
 
 export type TargetView =
@@ -238,7 +238,7 @@ function classify(chunks: Uint8Array<ArrayBuffer>[]): DocumentKind | null {
 }
 
 function readFailure(code: string, message: string): DocumentRead {
-  return { kind: "failed", failure: { code, message, requestId: null } };
+  return { kind: "failed", failure: { code, message, requestId: null, status: null, offline: false } };
 }
 
 const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "this link isn’t a PDF or EPUB.");

@@ -15,7 +15,7 @@ export default function ErrorBoundary({ error }: { error: Error & { digest?: str
   return (
     <div id="entry-failure" ref={surface} role="alert" tabIndex={-1}>
       <EntryFailure
-        title="something went wrong"
+        title="nexus stopped unexpectedly."
         description="nexus needs a fix before this can continue."
       >
         {null}

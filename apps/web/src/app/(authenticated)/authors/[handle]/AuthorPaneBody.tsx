@@ -5,6 +5,8 @@
 // validates it; the text filter stays local. The filter and count cover the
 // complete finite index; the local filter sees every visible kind.
 
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
@@ -266,10 +268,14 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const { refetch: refetchDetail } = detail;
   const { refetch: refetchWorks } = works;
   const refresh = useCallback(async () => {
-    try {
-      await Promise.all([refetchDetail(), refetchWorks()]);
-      return { kind: "Complete" as const, announcement: "author refreshed" };
-    } catch { return { kind: "Failed" as const, announcement: "couldn’t refresh author" }; }
+    const results = await Promise.allSettled([refetchDetail(), refetchWorks()]);
+    for (const result of results) {
+      if (result.status === "fulfilled") continue;
+      const error: unknown = result.reason;
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: each displayed read owns its failure and demand-driven repair.
+    }
+    return null;
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
     query: queryControls,

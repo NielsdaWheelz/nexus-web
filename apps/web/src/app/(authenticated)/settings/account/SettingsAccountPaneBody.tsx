@@ -1,9 +1,10 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { sentence, type Line } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import { Check, Copy } from "lucide-react";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
@@ -38,7 +39,7 @@ type Outcome =
   | { readonly kind: "Unknown" }
   | { readonly kind: "Told" };
 
-const UNKNOWN: Line = { fact: "not sure that saved. it may have gone through." };
+const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 const VISIT = definePaneVisitDataKey<Visit<Profile>>("Settings.Account");
 // the server owns the bound (python schemas/user.py DISPLAY_NAME_MAX_LENGTH)
 const NAME_MAX = 100;
@@ -103,7 +104,7 @@ function ProfileForm(props: {
           />
         </label>
         {/* a save never moves focus to its input, so its refusal speaks */}
-        {outcome?.kind === "Refused" ? <><Field id={lineId} line={outcome.line} /><Announcement text={sentence(outcome.line)} level="Polite" occurrence={outcome} /></> : null}
+        {outcome?.kind === "Refused" ? <Field id={lineId} line={outcome.line} /> : null}
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
         <Button
           type="submit"
@@ -133,7 +134,7 @@ export default function SettingsAccountPaneBody() {
   /** A refusal of the input is the field's; an unknown outcome holds; the rest is a slip. */
   const failed = (error: unknown, title: string, invalid?: Line): Outcome => {
     if (invalid && isApiError(error) && error.code === "E_INVALID_REQUEST") return { kind: "Refused", line: invalid };
-    if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") return { kind: "Unknown" };
+    if (outcomeUnknown(error)) return { kind: "Unknown" };
     fail(error, title);
     return { kind: "Told" };
   };

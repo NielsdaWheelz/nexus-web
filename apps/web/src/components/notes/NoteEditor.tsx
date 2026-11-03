@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 
 // One editing engine for a standalone body or a flat outline projection. Rich
@@ -73,9 +74,9 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { sentence, type CommandVerb, type Line } from "@/components/feedback/stage";
+import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
@@ -112,8 +113,8 @@ export interface NoteInspection {
 /** Editor-owned structural intents run after native reconciliation and before
  * the consumed event releases its packet. External refresh stays fenced. */
 export interface StructuralKeys {
-  /** Non-null while an earlier structural gesture is in flight: the shown rows trail it, so a birth or join waits and replays. */
-  idle?(): Promise<void> | null;
+  /** The shown neighbours may trail an unsettled arrangement. Boundary deletion must refuse rather than replay later. */
+  arranging?(): boolean;
   enter?(): void;
   split?(left: NoteBody, right: NoteBody, displayed: import("@/lib/notes/editorTypes").DisplayedSplit | null): void;
   emptyDelete?(direction: "backward" | "forward"): void;
@@ -194,6 +195,7 @@ export interface NoteEditorProps {
   occurrenceKey?: string;
   /** A failed commit holds this editor's words: its caret turns `--danger`, never the sole signal. */
   wordsAtRisk?: boolean;
+  "aria-describedby"?: string;
   /** The acknowledged note identity; drafts supply null. */
   containingNoteRef: string | null;
   body: NoteBody;
@@ -267,13 +269,15 @@ const ACROSS_FIELDS: Line = { fact: "couldn’t change text across fields.", rea
 const LINK_OPEN: Line = { fact: "couldn’t do that while a link is open.", reason: "your writing is kept." };
 const NOT_ATTACHED = "couldn’t attach this file.";
 const NOT_ADDED = "couldn’t add this attachment.";
-const UNKNOWN: Line = { fact: "not sure that saved. it may have gone through." };
+const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 
 export default function NoteEditor(props: NoteEditorProps) {
   const supplied = useOptionalNoteEditorHost();
   return supplied ? <NoteEditorContent {...props} /> : <WorkspaceNoteEditorHost><NoteEditorContent {...props} /></WorkspaceNoteEditorHost>;
 }
 function NoteEditorContent(props: NoteEditorProps) {
+  const describedBy = props["aria-describedby"];
+  const resendFeedback = useResendFeedback();
   const editorHost = useNoteEditorHost();
   const schema = props.projection?.schema ?? canonicalSchema;
   const bindingRef = useRef<EditorBinding | null>(null);
@@ -667,7 +671,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         // Unresolved holds and its retry replays the same attempt: an unknown outcome, or bytes
         // that never landed. Review: a resend re-reads the guard. A final refusal clears, saying
         // its upload outcome's reason, else the transport's. A malformed intent is a defect.
-        if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") hold(UNKNOWN);
+        if (outcomeUnknown(error)) hold(UNKNOWN);
         else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
@@ -713,7 +717,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (view) notifySelection(view.state);
     if (!props.editable) setLinkVisible(false);
-  }, [props.editable, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
+  }, [props.editable, describedBy, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -755,6 +759,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     bindingRef.current = binding;
     nativeInputOpen.current = false;
     let nativePacket = 0;
+    let deletionKey: string | null = null;
+    let keylessDeletion: {row_id: string; backward: boolean} | null = null;
     let reconciling = false;
     const reconcile = (current: EditorView) => {
       if (reconciling || current.isDestroyed || current.composing || compositionBase.current !== null) return;
@@ -838,10 +844,9 @@ function NoteEditorContent(props: NoteEditorProps) {
       const returning = inputType === "insertParagraph" || inputType === "insertLineBreak" && field.kind === "title";
       const deletingBoundary = (inputType === "deleteContentBackward" && selection.empty && selection.from === field.from ||
         inputType === "deleteContentForward" && selection.empty && selection.to === field.to) && (keys?.join || keys?.emptyDelete);
-      if (returning || deletingBoundary) {
-        // A birth or join anchors on the shown neighbours, which trail a gesture still in flight; it replays once that settles.
-        const idle = keys?.idle?.();
-        if (idle) { void idle.then(() => { if (!current.isDestroyed) structuralInput(current, inputType); }); return true; }
+      if (deletingBoundary && keys?.arranging?.()) {
+        warn({fact: "finish moving the items before deleting across them.", reason: "your writing is kept."});
+        return true;
       }
       if (referenceRef.current.getState() !== null && (deletingBoundary || returning &&
         (field.kind === "title" && keys?.enter || body.attrs.presentation !== "code" && keys?.split))) {
@@ -979,6 +984,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
           "aria-label": latest.current.label,
+          "aria-describedby": latest.current["aria-describedby"] ?? "",
           "aria-multiline": "true",
           "data-placeholder":
             latest.current.placeholder ??
@@ -1061,6 +1067,11 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       },
       handleDOMEvents: {
+        pointerdown(current, event) {
+          const field = event.target instanceof Element ? event.target.closest("[data-outline-field]") : null;
+          if (field?.closest(".ProseMirror") === current.dom) {deletionKey = null; keylessDeletion = null;}
+          return false;
+        },
         keydown(current, event) {
           if (
             event.target instanceof HTMLElement &&
@@ -1069,6 +1080,8 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return true;
           if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
+          if ((event.key === "Backspace" || event.key === "Delete") && !current.composing && !event.isComposing && event.keyCode !== 229) deletionKey = event.key;
+          else if (!event.isComposing && event.keyCode !== 229 && event.key !== "Unidentified") {deletionKey = null; keylessDeletion = null;}
           beginNativeInput(current, event);
           // Returning true leaves the browser event alone while stopping PM's
           // keymap/capture fallback from turning composition into a newline.
@@ -1104,7 +1117,10 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current) return true;
           return false;
         },
-        keyup(current) { releaseNativeInput(current); return false; },
+        keyup(current, event) {
+          if (event.key === deletionKey) {deletionKey = null; keylessDeletion = null;}
+          releaseNativeInput(current); return false;
+        },
         input(current, event) {
           if (event.target === current.dom) releaseNativeInput(current);
           return false;
@@ -1114,6 +1130,20 @@ function NoteEditorContent(props: NoteEditorProps) {
           beginNativeInput(current, event);
           if (!current.composing && !event.isComposing)
             commandSelection(current, event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward");
+          const deleting = event.inputType.startsWith("delete") && /(?:Backward|Forward)$/u.test(event.inputType);
+          if (!deleting) keylessDeletion = null;
+          if (deleting && deletionKey === null && event.cancelable && !event.isComposing && !current.composing) {
+            const field = editingField(current.state), keys = structuralKeys(current.state), selection = current.state.selection;
+            if (field && field.row_id !== null && (keys?.join || keys?.emptyDelete)) {
+              const backward = event.inputType.endsWith("Backward");
+              // Keyless keyboards expose no release or repeat identity. Keep the stream in its first field until explicit input re-arms it.
+              if (keylessDeletion?.backward === backward && (keylessDeletion.row_id !== field.row_id ||
+                selection.empty && (backward ? selection.from === field.from : selection.to === field.to))) {
+                event.preventDefault(); return true;
+              }
+              keylessDeletion = {row_id: field.row_id, backward};
+            }
+          }
           const redo = event.inputType === "historyRedo";
           if (!redo && event.inputType !== "historyUndo") {
             if (!event.cancelable || event.isComposing) return false;
@@ -1137,6 +1167,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return false;
         },
         blur(current) {
+          deletionKey = null;
           releaseNativeInput(current);
           if (current.isDestroyed) return false;
           if (!current.composing && compositionBase.current === null) syncNativeSelection(current);
@@ -1366,6 +1397,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
     });
     viewRef.current = view;
+    const releaseDeletionKey = () => {deletionKey = null;};
+    window.addEventListener("blur", releaseDeletionKey);
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
@@ -1446,6 +1479,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     latest.current.projection?.onViewReady(view);
     latest.current.onEditorReady?.(handle);
     return () => {
+      window.removeEventListener("blur", releaseDeletionKey);
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;
@@ -1553,11 +1587,11 @@ function NoteEditorContent(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} line={attachmentValue.unconfirmed}
-        verbs={[{ label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
+      {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} {...resendFeedback({ line: attachmentValue.unconfirmed,
+          resend: { label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
           const task = readAttachment(), view = viewRef.current;
           if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
-        } }, discardVerb]} /> : null}
+        } }, secondary: discardVerb })} /> : null}
       {attachmentValue?.body && attachmentValue.body === declined ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
         label: "insert", commandKey: "InsertAttachment", run: () => {
           const task = readAttachment(), view = viewRef.current;
@@ -1683,7 +1717,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             </Button>
           </div>
           {/* focus is already in the address input, so its description is not read again: the refusal speaks */}
-          {link.error ? <><Field id={linkErrorId} line={link.error} /><Announcement text={sentence(link.error)} level="Polite" occurrence={link.error} /></> : null}
+          {link.error ? <Field id={linkErrorId} line={link.error} /> : null}
         </div>
       ) : null}
     </div>

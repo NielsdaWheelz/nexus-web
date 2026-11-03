@@ -30,6 +30,7 @@ import {
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { announceListeningRevision, listeningSourceReconnected, setObservationTransport } from "@/lib/consumption/listening";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest } from "@/lib/player/queue";
@@ -347,7 +348,7 @@ export function createNativeEngine(
       if (error.message === "NotConnected")
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player isn’t connected.");
       if (error.message === "NotResponding" || error.message === "Unavailable")
-        throw new ApiError(0, "E_PLAYBACK_UNCONFIRMED", "it may have gone through.");
+        throw new ApiError(0, "E_PLAYBACK_UNCONFIRMED", UNKNOWN_OUTCOME_REASON);
       throw error;
     }
   };
@@ -432,17 +433,10 @@ export function createNativeEngine(
     unanswered = 0;
     return state.queue;
   };
-  /** A sent change the service did not answer may have landed: it is unanswered until a read
-   * reconciles it, tried once here. The service runs queue frames in order under one lock, so the
-   * read's snapshot follows the change, and `landed` tells from it whether the change is in force:
-   * then the change resolves with that header, else it is refused. A change that moves nothing
-   * reads as refused; the reconcile's pause has retired its playback anyway. */
-  const settle = async (error: Error, landed: (header: QueueHeader) => boolean): Promise<QueueHeader> => {
-    unanswered = 1;
-    try { await readQueue(); } catch { throw queueError(error, false); }
-    const reconciled = state.queue;
-    if (reconciled !== null && landed(reconciled)) return reconciled;
-    throw new QueueCommandError("Refused");
+  /** A timeout cannot establish whether a change ran. Only an explicit check reconciles it. */
+  const unansweredChange = (): never => {
+    unanswered += 1;
+    throw new QueueCommandError("Unsettled");
   };
   const queue: NativeQueueOwner = {
     known: () => snapshotId > 0,
@@ -481,7 +475,7 @@ export function createNativeEngine(
         committed = true;
         return header(await call("queue_commit", { queue_id: next.queue_id }, { timeoutMs: LOAD_TIMEOUT_MS }));
       } catch (error) {
-        if (committed && nativeUnavailable(error)) return await settle(error, reconciled => reconciled.queue_id === next.queue_id);
+        if (committed && nativeUnavailable(error) && error.message !== "NotConnected") return unansweredChange();
         await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
         throw queueError(error, false);
       }
@@ -490,9 +484,8 @@ export function createNativeEngine(
       if (unanswered > 0) throw new QueueCommandError("Unsettled");
       try { return header(await call("queue_command", { ...input }, { timeoutMs: LOAD_TIMEOUT_MS })); }
       catch (error) {
-        if (!nativeUnavailable(error)) throw queueError(error, false);
-        return await settle(error, reconciled => reconciled.queue_id !== input.queue_id || reconciled.revision !== input.expected_revision ||
-          input.command.kind === "stop" && state.source === null);
+        if (!nativeUnavailable(error) || error.message === "NotConnected") throw queueError(error, false);
+        return unansweredChange();
       }
     },
   };

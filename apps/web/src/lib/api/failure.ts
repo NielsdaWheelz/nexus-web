@@ -3,7 +3,7 @@
 // lines and verb, so a caller cannot fall through to a line of its own. Domain codes are
 // translated ahead of it. A same-system defect is outside it and rethrows: `Failed`
 // meets that in render and reaches the boundary; `fail` tests first and throws later.
-import { updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
+import { remoteAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import type { RemoteAdmission } from "@/lib/native/contracts";
 import { admissionError, isSameSystemApiDefect, type ApiError } from "./client";
 
@@ -32,6 +32,12 @@ export function transportOf(error: ApiError): Transport {
  * while nothing refuses it: admitted, or still checking. */
 export function admissionTransport(admission: RemoteAdmission): Transport | null {
   return admission === "Checking" || admission === "Ready" ? null : transportOf(admissionError(admission));
+}
+
+/** The current admission gate's reason; ready and checking have no refusal to explain. */
+export function admissionReason(): string | null {
+  const transport = admissionTransport(remoteAdmission());
+  return transport === null ? null : TRANSPORT_LINES[transport].command("").reason ?? null;
 }
 
 /** `Update` reloads only where `updateRemedy` says reload can work; otherwise it has no verb. */

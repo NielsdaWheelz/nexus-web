@@ -1,5 +1,7 @@
 # historical removal scroll-anchor qualification limit
 
+priority: historical probe, not a current reproduction. leave alone unless current use shows the scroll jump; no separate qualification campaign is planned.
+
 the old outline surface could focus its whole section again whenever rows
 changed under block selection. that surface and its server reread owner are
 removed. its historical 1,270 px jump is not a reproduction on the flat editor.

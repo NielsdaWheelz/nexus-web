@@ -76,7 +76,7 @@ const TERMINAL = new Set([
 const INTERRUPTED: CaptureFailure = {
   code: "E_CAPTURE_INTERRUPTED",
   message: "this capture was interrupted.",
-  requestId: null,
+  requestId: null, status: null, offline: false,
 };
 
 type DocumentSource =
@@ -460,7 +460,7 @@ async function describe(error: unknown, credential = token): Promise<CaptureFail
   return {
     code: "E_CAPTURE_DEFECT",
     message: "nexus capture stopped unexpectedly.",
-    requestId: null,
+    requestId: null, status: null, offline: false,
   };
 }
 
@@ -472,7 +472,7 @@ function outsideContract(detail: string): CaptureFailureError {
 
 function requireSession(): NonNullable<typeof session> {
   if (session === null)
-    throw failure("E_CAPTURE_SIGNED_OUT", "sign in to nexus first.");
+    throw failure("E_UNAUTHENTICATED", "sign in to nexus first.");
   return session;
 }
 

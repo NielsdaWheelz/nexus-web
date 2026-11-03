@@ -6,7 +6,7 @@ import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands
 import type { SelectionEditor } from "@/lib/chat/selection";
 import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
-import type { Line, Verbs } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
 
 export type NoteEdit = Parameters<NoteEditorProps["onEdit"]>[0];
@@ -32,7 +32,8 @@ export type DraftIssue =
   | { kind: "Source" | "Capture" | "Capacity"; line: Line }
   /** Preparation retries its retained gesture and says so in the composer. Commit retries its
    * frozen account command; its one home is the writing runtime's risk slip. */
-  | { kind: "Failed"; phase: "Preparation" | "Commit"; retry: () => void };
+  | { kind: "Failed"; phase: "Preparation"; attempt: number; retry: () => void }
+  | { kind: "Failed"; phase: "Commit"; retry: () => void };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" }
@@ -45,8 +46,8 @@ export type ReaderChatIssue = (
   | { kind: "Model" | "Catalog"; line: Line; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Recall"; state: "Pending" | "Failed"; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Pending"; line: Line }
-  /** Verbs only where the refusal's transport offers its own (sign in, reload); send is the retry. */
-  | { kind: "Failed"; line: Line; verbs?: Verbs }
+  | { kind: "Transport"; error: ApiError; fact: string }
+  | { kind: "Failed"; line: Line }
 ) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
 
 type ChatAttempt =

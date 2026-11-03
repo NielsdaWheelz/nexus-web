@@ -6,7 +6,8 @@ import { Check, ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, S
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Field } from "@/components/feedback/Fact";
-import { transportVerbs, type Retract, type Verb, type Verbs } from "@/components/feedback/stage";
+import { useTransportVerbs } from "@/components/feedback/Feedback";
+import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import NoteEditor from "@/components/notes/NoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -292,6 +293,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   readonly returnFocus: () => HTMLElement | null;
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
+  const transportVerbs = useTransportVerbs();
   const { composer, menu } = verbs;
   const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
@@ -366,7 +368,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const openChat: Verb = { label: "open chat", commandKey: "OpenDraftChat", run: composer.openChat };
     const openInChat: Verb = { label: "open in chat", commandKey: "OpenModelInChat", run: composer.recoverModel };
     const check: Verb = { label: "check", commandKey: "CheckDraftChat", run: composer.refreshChat };
-    const chatField = chatFieldOf(composer, chatIssue, blockedChat, destination, { selectAgain, copyText, openChat, openInChat, check }, selected !== null);
+    const chatField = chatFieldOf(composer, chatIssue, blockedChat, destination, { selectAgain, copyText, openChat, openInChat, check }, selected !== null, transportVerbs);
     const copyAction = command("CopyPassage", "Copy passage", copying.copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); },
       composer.copyUnavailable);
     // sharing a new passage first commits its highlight; an existing one shares as it is.
@@ -395,7 +397,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     // the passage's one refusal, beneath the input; the save action it blocks or retries reads it.
     const passageField = refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={[selectAgain, copyText]} />
       : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={[selectAgain, copyText]} />
-      : failed?.phase === "Preparation" && !hasNote ? <Field id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} />
+      : failed?.phase === "Preparation" && !hasNote ? <Field key={failed.attempt} id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} />
       : null;
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
       {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
@@ -440,7 +442,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         </div>
         {passageField}
         {failed?.phase === "Preparation" && hasNote
-          ? <Hold id={`preparation:${draft.id}`} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
+          ? <Hold id={`preparation:${draft.id}`} attempt={failed.attempt} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
         {copying.notice}
         {canQuote && chatField ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
           <Field id={chatFieldId} line={chatField.line} verbs={chatField.verbs} />
@@ -495,9 +497,13 @@ const retrySave = (retry: () => void, busy: boolean): Verb => ({ label: "retry",
 /** The chat half's one refusal, beneath the input; send is the retry. */
 function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionComposer["draft"]>["chatIssue"], blocked: string | null,
   destination: NonNullable<SelectionComposer["draft"]>["destination"],
-  verbs: Record<"selectAgain" | "copyText" | "openChat" | "openInChat" | "check", Verb>, selected: boolean): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
+  verbs: Record<"selectAgain" | "copyText" | "openChat" | "openInChat" | "check", Verb>, selected: boolean, transportVerbs: ReturnType<typeof useTransportVerbs>): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
   if (issue?.kind === "Recall") return composer.recallFailed
     ? { line: { fact: "couldn’t load your last model." }, verbs: [{ label: "retry", commandKey: "RetryModelRecall", run: composer.retryRecall, busy: composer.recallPending }, verbs.openInChat] } : null;
+  if (issue?.kind === "Transport") {
+    const transport = transportOf(issue.error);
+    return { line: TRANSPORT_LINES[transport].command(issue.fact), verbs: transportVerbs(transport) ?? undefined };
+  }
   if (issue) {
     const line = issue.highlightSaved ? HIGHLIGHT_SAVED : issue.line;
     switch (issue.kind) {
@@ -507,7 +513,7 @@ function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionCo
       case "Missing": return { line, verbs: [{ label: "choose chat", commandKey: "ChooseDraftChat", run: composer.chooseChat }] };
       case "Changed": return { line, verbs: [verbs.check, verbs.openChat] };
       case "Pending": return { line, verbs: selected ? [verbs.openChat] : undefined };
-      case "Failed": return { line, verbs: issue.verbs };
+      case "Failed": return { line };
     }
   }
   if (blocked !== null) return { line: { fact: blocked }, verbs: [destination.kind === "Selected" && destination.snapshot.kind === "Failed"
@@ -515,7 +521,7 @@ function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionCo
   if (destination.kind === "LookupFailed") {
     const transport = transportOf(destination.error);
     return { line: TRANSPORT_LINES[transport].read("recent chats"),
-      verbs: transportVerbs(transport, { retry: { label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault }, signIn: null }) ?? undefined };
+      verbs: transportVerbs(transport, { retry: { label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault } }) ?? undefined };
   }
   return null;
 }
@@ -530,5 +536,5 @@ function HiddenPreparationFailure({ failure, copy }: {
   const { issue, text, busy } = failure;
   useEffect(() => text === null ? say({ fact: "couldn’t save the highlight." }, [retrySave(issue.retry, false)]) : undefined, [issue, say, text]);
   return text === null ? null
-    : <Hold id={`preparation:${failure.id}`} risk line={UNSAVED} verbs={[retrySave(issue.retry, busy), { label: "copy text", commandKey: "CopyUnsavedText", run: () => copy(text) }]} />;
+    : <Hold id={`preparation:${failure.id}`} attempt={issue.attempt} risk line={UNSAVED} verbs={[retrySave(issue.retry, busy), { label: "copy text", commandKey: "CopyUnsavedText", run: () => copy(text) }]} />;
 }

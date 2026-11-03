@@ -255,9 +255,11 @@ synchronously before selection observation; pointer and later keyboard intent
 revoke it, and explicit focus replaces it. the same selection notifications retry
 an entry held by input ownership; its row, ref, field kind and lease must still
 match. native tab still chooses its target.
-flat structural moves and return execute once per press; held backward/forward text
-deletion retains the native repeat path. local writes already sequence through
-the same runtime tail, without an additional keyboard queue.
+flat structural moves and return execute once per press; held backward/forward
+deletion repeats inside the current field and stops at its boundary. hardware
+keyup re-arms deletion. a keyboard without release identity requires a caret tap
+or another editing action to re-arm boundary deletion; elapsed time never does.
+local writes sequence through the same runtime tail, without a keyboard queue.
 
 the outer projection replaces complete changed rows at row boundaries. isolating
 row wrappers never enter the inline input fitter; binding owns inline diffs.
@@ -277,6 +279,8 @@ start joins the item into the previous visible row; forward deletion at the end
 pulls in the next sibling; deleting an empty item unlinks its occurrence. an item
 with proven children (a window proof, shown rows or pending writing beneath)
 refuses both, with `remove its children first` or `join its children first`.
+while an arrangement is unresolved, boundary deletion and first-child insertion
+refuse immediately; they never replay against later typing.
 in a body with no such intent, deleting in an empty code body returns it to
 prose, one format edit with history boundaries on both sides. it leaves no empty
 code body, so a held key stops there. code return remains an in-note break. its native DOM parser preserves literal
@@ -310,13 +314,22 @@ metadata afterward. following typing, return and undo use those same documents
 and their real undo managers; no receipt-time body replay or inverse snapshot
 restore is involved. deferred graph preparation waits for a predecessor's
 eventual receipt, while its first failure remains visible through the original
-error owner. exact immutable retry stays with the runtime.
+error owner. a birth beside an arranging occurrence captures that predecessor's
+placement future, while admitting its canonical text and history synchronously.
+typing and focus enter the new field before later input; graph preparation uses
+the predecessor's resolved parent and anchors. relationship receipts publish only
+while they still own the field's link and match its actual endpoint pair. exact
+immutable retry stays with the runtime.
 
 range history separates input bookmarks from occurrence placement/proof data.
 each gesture pins its selection and predecessor proofs, reserves the existing
 runtime tail, and prepares one complete graph batch under its account lease.
 canonical metadata checks hidden destination collisions and position allocation
-at one revision. expected refusal publishes no placements, consumes no sequence,
+at one revision. queued gestures order their captured, shown siblings by current
+stored positions under that command lease; old neighbor bookmarks do not reorder
+later births. captured relationship witnesses still own membership changes. a
+pending reparent across an unloaded sibling gap refuses instead of guessing.
+expected refusal publishes no placements, consumes no sequence,
 and never enters the save-failure lane. exact byte/retention limits refuse the
 whole command; both stored replay directions must fit the atomic command limit.
 replay also reserves within the existing total editing budget before moving its
@@ -333,6 +346,12 @@ an independently surviving incoming relationship remains visible. semantic
 projection repairs a newer selection's missing endpoints without taking focus.
 newer meaningful input revokes delayed focus; inert block input does not.
 session undo is not persisted.
+
+full roam or obsidian parity is outside this editor's target. excluded behaviors
+are cross-pane drag, selection or expand-all beyond one loaded window, synced
+fold state, non-contiguous selection, branch paste by value, a separate zoom mode
+or zoom chords, an in-document title, and `⌘K` inside the editor. the bullet opens
+an ordinary pane; those omissions do not require further implementation.
 
 receipt adoption acknowledges only its admission. it never overwrites later
 writing, placement or the editing host. canonical settlement also clears the

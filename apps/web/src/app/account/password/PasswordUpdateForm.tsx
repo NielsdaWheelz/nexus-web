@@ -1,15 +1,15 @@
 "use client";
 // at least 15 characters (the provider's own minimum). an answer that never
 // arrived asks for the same password again.
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { Eye, EyeOff } from "lucide-react";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
-import { Announcement } from "@/components/feedback/Feedback";
 import { Fact, Field } from "@/components/feedback/Fact";
-import { sentence, type Line } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
 import {
   DEFAULT_RETURN_TARGET,
   expectedAccountPath,
@@ -32,15 +32,12 @@ export default function PasswordUpdateForm({
 }) {
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<Line | null>(null);
-  // focus moving onto the password reads its line; focus already there reads nothing, so it speaks.
-  const [spoken, setSpoken] = useState<{ line: Line } | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   function fail(line: Line) {
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
     setError(line);
-    setSpoken(document.activeElement === passwordRef.current ? { line } : null);
     passwordRef.current?.focus();
   }
 
@@ -53,9 +50,8 @@ export default function PasswordUpdateForm({
     else if (kind === "PolicyRejected") fail(TOO_SHORT);
     else if (kind === "RateLimited") fail({ fact: "too many attempts.", reason: "wait a while, then try again." });
     // Send is the retry.
-    else if (kind === "ServiceUnavailable" || kind === "Unreachable") fail({ fact: "not sure that saved. it may have gone through." });
-    // L1 owns this copy; until it is a `Line`, its title and message are one.
-    else if (kind === "Forbidden") fail({ fact: WRONG_ADDRESS.title, reason: WRONG_ADDRESS.message });
+    else if (kind === "ServiceUnavailable" || kind === "Unreachable") fail({ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON });
+    else if (kind === "Forbidden") fail(WRONG_ADDRESS_LINE);
     else throw new Error(`Unexpected password-update outcome ${kind}`);
   });
 
@@ -133,7 +129,6 @@ export default function PasswordUpdateForm({
             Use at least 15 characters.
           </p>
           {error ? <Field id="password-update-error" line={error} /> : null}
-          {error !== null && spoken?.line === error ? <Announcement text={sentence(error)} level="Polite" occurrence={spoken} /> : null}
         </div>
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           Save password

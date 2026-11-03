@@ -13,8 +13,7 @@ import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -406,7 +405,7 @@ export function useSelectionComposer(input: {
         return null;
       }
       if (isAuthoredStorageFailure(error)) {
-        failed = recovery?.phase === "Preparation" ? recovery : {kind: "Failed", phase: "Preparation", retry: () => {
+        failed = {kind: "Failed", phase: "Preparation", attempt: (recovery?.phase === "Preparation" ? recovery.attempt : 0) + 1, retry: () => {
           const value = get(entry.id);
           if (!value || value.issue !== failed || value.operation) return;
           void submit({command, opened, recovery: failed});
@@ -568,8 +567,7 @@ export function useSelectionComposer(input: {
         const issue: ReaderChatIssue = !isApiError(error) ? unsent("local notes aren’t responding.")
           : error.code === "E_SYNC_REFUSED" ? unsent("notes can’t sync.")
           : error.code === "E_NETWORK" ? unsent(navigator.onLine === false ? "you’re offline." : "the highlight hasn’t synced yet.")
-          : { kind: "Failed", line: TRANSPORT_LINES[transportOf(error)].command("question not sent."),
-            verbs: transportVerbs(transportOf(error), { signIn: null }) ?? undefined };
+          : { kind: "Transport", error, fact: "question not sent." };
         store.update(entry.id, value => ({ ...value, operation: null, chatIssue: issue }));
         return null;
       }

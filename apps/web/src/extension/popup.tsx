@@ -11,8 +11,8 @@ import "@/app/packagedFonts.css";
 
 import { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Announcement, FeedbackProvider, Hold, useFeedbackOccurrence, useOutcome } from "@/components/feedback/Feedback";
-import { Fact } from "@/components/feedback/Fact";
+import { Announcement, FeedbackProvider, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { sentence, type CommandVerb, type Line, type Shell, type Verbs } from "@/components/feedback/stage";
@@ -20,6 +20,8 @@ import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
 import ChoicePicker from "@/components/ui/ChoicePicker";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
@@ -48,7 +50,7 @@ async function command(sent: Command): Promise<CommandResult> {
     const message = "nexus capture isn’t answering. reopen this popup.";
     return {
       kind: "failure",
-      failure: { code: "E_CAPTURE_POPUP", message, requestId: null },
+      failure: { code: "E_CAPTURE_POPUP", message, requestId: null, status: null, offline: false },
     };
   }
 }
@@ -60,7 +62,7 @@ const signIn = { current: () => {} };
 const SIGN_IN: CommandVerb = { label: "sign in", commandKey: "CaptureSignIn", run: () => signIn.current() };
 const SHELL: Shell = { signIn: SIGN_IN };
 /** Refusals that a sign-in answers carry it. */
-const SIGN_IN_CODES = new Set(["E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
+const SIGN_IN_CODES = new Set(["E_UNAUTHENTICATED", "E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
 
 /** Why a save asks for a new capture, by the code that asked. A superseded upload has no truer fact
  * than the save's own. */
@@ -410,7 +412,6 @@ function Destinations({
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [retry, setRetry] = useState(0);
-  const occurrence = useFeedbackOccurrence(failure !== null || loading, context);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
@@ -431,7 +432,10 @@ function Destinations({
         setCatalog(result.snapshot.destinations);
         setFailure(null);
       }
-      else if (result.kind === "failure") setFailure(result.failure);
+      else if (result.kind === "failure") {
+        if (result.failure.code === "E_CAPTURE_DEFECT") setDefect({ error: new Error("Capture background stopped unexpectedly") });
+        else setFailure(result.failure);
+      }
       else setDefect({ error: new Error(`libraries answered ${result.kind}, not a catalog`) });
     });
     return () => { disposed = true; };
@@ -468,7 +472,7 @@ function Destinations({
       {open ? <div id={regionId} ref={regionRef} className={styles.chooser} data-collection-body>
         <LibraryChooser context={context} membershipKind="Chosen" rows={rows} loading={loading} create={null}
           summary={null}
-          error={failure === null ? null : { occurrence, content: { tone: "Warning", title: "couldn’t load libraries.", message: failure.message }, retry: () => setRetry(value => value + 1), busy: loading }}
+          failure={failure === null ? null : <Failed error={new ApiError(failure.status ?? 0, failure.code, failure.message, { requestId: failure.requestId ?? undefined, offline: failure.offline })} noun="libraries" retry={{ run: () => setRetry(value => value + 1), busy: loading }} />}
           empty="no libraries you can add to"
           onToggle={({ id, included }) => {
             const destination = all.get(id);
@@ -491,7 +495,7 @@ function CaptureFailureFact({ failure, onset, account, recapture, retrying, send
   const discard = verb("discard", () => send({ kind: "discard" }));
   if (failure.recovery === "Check") {
     const forget = verb("forget", () => send({ kind: "stop_checking" }));
-    return <Hold id="capture-unconfirmed" attempt={onset.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
+    return <Hold id="capture-unconfirmed" attempt={onset.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
       verbs={account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), forget] : [forget]} />;
   }
   const said = (line: Line, verbs: Verbs) => <>
@@ -501,7 +505,7 @@ function CaptureFailureFact({ failure, onset, account, recapture, retrying, send
   // `needsRecapture` without a recapture code is the account's change.
   if (recapture && account) return said({ fact: failure.recovery === "Recapture" ? RECAPTURE[failure.failure.code] ?? "couldn’t save this capture." : "the account changed since this capture.",
     reason: "capture the page again." }, [verb("capture again", () => send({ kind: "capture_again" })), discard]);
-  if (failure.recovery === "Review" && account) return said({ fact: "couldn’t save.", reason: "libraries changed since you chose them." },
+  if (failure.recovery === "Review" && account) return said({ fact: "couldn’t save.", reason: "your save needs review." },
     [verb("review", () => sendWithOrigins({ kind: "review" }), retrying), discard]);
   return said({ fact: "couldn’t save this capture.", reason: failure.failure.message },
     failure.recovery === "Retry" && account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), discard] : [discard]);

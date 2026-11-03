@@ -30,3 +30,20 @@ checkout or ports; never kill a saved pid blindly. automatic prevention would
 require separately scoped admission recovery. resolved when supervisor loss
 cannot admit replacement work against occupied capacity, and recovery leaves
 an unrelated lab intact.
+
+observed 2026-11-02 during feedback phase two: p2-l2a runs
+`20261102-202853-8c27d8c72349` and `20261102-203021-b5b77046da3a`
+claimed slot 4, then exited 125 before the driver with
+`lab slot 4 port 31030 unavailable; inspect the port owner`.
+read-only lsof identified docker desktop pid 6340 listening at
+`127.0.0.1:31030`; the original runtime owner was not established.
+one controlled retry was exhausted. no runtime, daemon, slot or process
+was changed. this confirms occupied capacity after admission, not the
+supervisor-loss cause above. normal admission and scoped cleanup must succeed
+before the pending reader qualification can claim green.
+
+root traced that listener to l4's recorded orphaned
+`20261102-201924-92036acadcdd-postgres-1` and performed its exact scoped recovery.
+normal admission and cleanup then succeeded for reader run
+`20261102-203346-4f6ba6330105`. this restores qualification capacity; it does not
+prove or repair the supervisor-loss cause.

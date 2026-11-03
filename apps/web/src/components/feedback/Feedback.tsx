@@ -18,10 +18,9 @@ import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
+import { admissionTransport, staleBuild, TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import { useThrowLater } from "@/lib/api/serverState";
 import { isAbortError } from "@/lib/errors";
-import type { RemoteAdmission } from "@/lib/native/contracts";
 import { remoteAdmission, remoteAttemptAllowed, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -162,7 +161,7 @@ const NO_SHELL: Shell = { signIn: null };
 
 /** One account's presentation, above every owner that speaks. The geometry provider is above
  * this. `shell` is the host's: the workspace signs in, shelf and capture open the workspace. Its
- * verb stays one value across renders, because `fail` is stable only while it does. */
+ * sign-in command stays one value across renders; its separate busy state updates in-flow verbs. */
 export function FeedbackProvider({ shell = NO_SHELL, children }: { shell?: Shell; children: ReactNode }) {
   const [session] = useState(createFeedbackSession);
   const [stage] = useState(createStage);
@@ -224,38 +223,30 @@ export function useOutcome(): Outcome {
  * and the function changes whenever its output would, with the shell or the remedy, so a
  * callback, a list or a memo may hold it. */
 export function useTransportVerbs(): (transport: Transport, options?: { retry?: Verb }) => Verbs | null {
-  const { signIn } = useContext(ShellContext);
+  const { signIn, signInBusy } = useContext(ShellContext);
+  const verb = useMemo(() => signIn !== null && signInBusy ? { ...signIn, busy: true } : signIn, [signIn, signInBusy]);
   const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
-  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => transportVerbs(transport, { retry, signIn, remedy }), [signIn, remedy]);
+  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => transportVerbs(transport, { retry, signIn: verb, remedy }), [verb, remedy]);
 }
 
-/** What admission refuses remote work for now. F2's mapping in lib/api replaces this. */
-function admissionTransport(admission: RemoteAdmission): Transport | null {
-  switch (admission) {
-    case "Ready":
-    case "Checking": return null;
-    case "SignInRequired": return "SignIn";
-    case "UpdateRequired": return "Update";
-    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
-  }
-}
-
-/** A held write's verb as admission stood at its owner's render: a stale build offers reload
- * alone, where reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself,
- * busy while admission checks, and disabled with admission's reason while the press would stay
- * unsent: offline, or refused by `sends`, its owner's own gate, by default whether a fetch may
- * leave. One verb, so an owner may set its own beside it. Its owner renders again as admission
- * moves, and the function changes with admission, as `useTransportVerbs`'s does with the shell. */
-export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) => readonly [Verb] {
+/** A held remote write's presentation at its owner's render. An update preserves the owned
+ * fact and offers its current remedy alone; sign-in comes from the shell. Otherwise the exact
+ * resend stays busy while checking, or disabled with the reason its send would remain local.
+ * A null resend leaves only the owner's secondary action. The function changes whenever its
+ * admission or shell remedy changes, so a memo may retain it. */
+export function useResendFeedback(): (input: { line: Line; resend: CommandVerb | null; sends?: () => boolean; secondary?: Verb }) => { line: Line; verbs: Verbs | null } {
   const verbsFor = useTransportVerbs();
   const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
-  return useCallback((resend: CommandVerb, sends: () => boolean = remoteAttemptAllowed): readonly [Verb] => {
+  return useCallback(({ line, resend, sends = remoteAttemptAllowed, secondary }) => {
     const transport = admissionTransport(admission);
-    const [instead] = transport === "SignIn" || transport === "Update" ? verbsFor(transport) ?? [] : [];
-    if (instead) return [instead];
+    if (transport === "Update") return { line: { ...line, reason: staleBuild() }, verbs: verbsFor(transport) };
+    const signIn = transport === "SignIn" ? verbsFor(transport)?.[0] ?? null : null;
     const unsent = transport !== null && (transport === "Offline" || !sends());
-    return [{ ...resend, busy: resend.busy || admission === "Checking",
-      disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason }];
+    const primary = signIn ?? (resend === null ? null : { ...resend, busy: resend.busy || admission === "Checking",
+      disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason });
+    const verbs: Verbs | null = primary === null ? secondary ? [secondary] : null
+      : secondary ? [primary, secondary] : [primary];
+    return { line, verbs };
   }, [verbsFor, admission]);
 }
 
@@ -264,7 +255,7 @@ export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) =
  * and stands it where it now renders; two owners of one id share one row, standing where the
  * earlier renders; an owner whose id changes lets the old row go at once. `attempt` keys speech,
  * so a failed retry speaks again. */
-export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
+export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs | null; risk?: boolean }) {
   const stage = useStage();
   const address = useAddress();
   const frame = useContext(OverlayContext);

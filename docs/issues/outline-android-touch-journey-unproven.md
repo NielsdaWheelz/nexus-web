@@ -1,5 +1,7 @@
 # outline android touch journey is unproven
 
+priority: deferred to the next android apk: one focused touch/typing/back journey remains required before regular phone editing; no broad device matrix is required for this prototype.
+
 problem: the outline's emulator journey has never run green. on the owned api 34
 avd it must sign in through the real handoff, then: hold a bullet 250 ms to lift
 the row (`data-dragging`), move to drag, release below another row to reorder;

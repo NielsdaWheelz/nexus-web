@@ -5,10 +5,9 @@
 // invitation or immediate-sharing owner. Query, admission and keyed suggestion
 // belong to this field; a selected person displays until the viewer types again.
 // The hint, the count and an empty result speak as they change. A retry that heals withdraws its
-// control, so focus that rode it returns to the input.
+// control, so focus that rode it returns to the nearest home.
 
-import { useId, useLayoutEffect, useRef, useState } from "react";
-import { Announcement } from "@/components/feedback/Feedback";
+import { useId, useRef, useState } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Input from "@/components/ui/Input";
@@ -88,22 +87,11 @@ export default function PeopleSearch({
   const status = selected !== null || q === "" ? null
     : q.length < 3 ? "enter at least 3 characters."
       : !admitted || results.length === 0 ? null
-        : `${results.length} ${results.length === 1 ? "result" : "results"}`;
+        : `${results.length} ${results.length === 1 ? "result" : "results"}.`;
   const empty = selected === null && q.length >= 3 && admitted && results.length === 0;
-  const root = useRef<HTMLDivElement>(null);
-  const failure = useRef<HTMLDivElement>(null);
-  const refocus = useRef(false);
-  const failing = failed !== null;
-  useLayoutEffect(() => {
-    if (failing || !refocus.current) return;
-    refocus.current = false;
-    // focus fell with the control: to the body, or to a container holding this field.
-    const fallen = document.activeElement;
-    if (fallen === null || fallen === document.body || fallen.contains(root.current)) input.current?.focus();
-  }, [failing]);
 
   return (
-    <div ref={root} className={styles.root}>
+    <div tabIndex={-1} className={styles.root}>
       <Input
         ref={input}
         type="search"
@@ -139,12 +127,8 @@ export default function PeopleSearch({
       {description ? <span id={`${id}-description`} className={collection.detail}>{description}</span> : null}
       {status ? <Field id={`${id}-status`} line={{fact: status}}/> : null}
       {waiting ? <Ruling/> : null}
-      {failed ? <div ref={failure}><Failed error={failed.error} noun="people" retry={{busy: failed.retrying, run: () => {
-        refocus.current = failure.current?.contains(document.activeElement) ?? false;
-        failed.refetch();
-      }}}/></div> : null}
-      {empty ? <Fact line={{fact: "no nexus users match."}}/> : null}
-      <Announcement text={empty ? "no nexus users match." : status ?? ""} level="Polite"/>
+      {failed ? <Failed error={failed.error} noun="people" retry={{busy: failed.retrying, run: failed.refetch}}/> : null}
+      {empty ? <Fact line={{fact: "no nexus users match."}} speak/> : null}
       {expanded ? <ul ref={navigation.listRef} {...navigation.listProps}
         aria-busy={!admitted || undefined} className={`${collection.surface} ${collection.compactViewport}`}>
         {results.map(person => <li key={person.user_id} {...navigation.optionProps(person.user_id)} className={collection.row}>

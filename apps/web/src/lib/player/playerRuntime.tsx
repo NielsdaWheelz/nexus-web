@@ -28,14 +28,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { TRANSPORT_LINES, UNKNOWN_OUTCOME_REASON, transportOf } from "@/lib/api/failure";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { useThrowLater } from "@/lib/api/serverState";
+import { useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { holdProgress } from "@/lib/consumption/state";
-import { subscribeRepair } from "@/lib/native/admission";
 import { publishChange } from "@/lib/api/changes";
 import { createBrowserSession, type QueueSavePhase, type QueueTerminal } from "@/lib/player/browserSession";
 import { BROWSER_COORDINATION_BOUND_MS, createBrowserOwnership, type BrowserPlayerCommand } from "@/lib/player/browserOwnership";
@@ -229,7 +229,7 @@ export function queueBlock(queue: PlayerQueue, state: PlayerState, scope: "Queue
     case "Unavailable": return QUEUE_BLOCKS.Unsupported;
     case "Uncertain": return QUEUE_BLOCKS.Unconfirmed;
     case "Saving": return QUEUE_BLOCKS.Saving;
-    case "Preparing": return QUEUE_BLOCKS.Loading;
+    case "Preparing": return QUEUE_BLOCKS.Saving;
     case "Ready": break;
   }
   const index = queue.index;
@@ -343,6 +343,11 @@ export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
 }
 
 /** The browser engine's current descriptor within the existing load deadline. */
+/** A known descriptor survives a transport read failure; a domain refusal or defect does not. */
+function descriptorUnavailable(error: unknown): boolean {
+  return isAbortError(error) || isApiError(error) && !isSameSystemApiDefect(error) && transportOf(error) !== "Refused";
+}
+
 async function freshDescriptor(
   mediaId: string,
   signal: AbortSignal | null,
@@ -558,7 +563,7 @@ export function GlobalPlayerProvider({
         })
       : createBrowserEngine({
           terminal: input => navigation.current?.terminal(input) ?? Promise.resolve(),
-          fresh: mediaId => freshDescriptor(mediaId, null).catch(error => { if (isAbortError(error) || outcomeUnknown(error)) return null; throw error; }),
+          fresh: mediaId => freshDescriptor(mediaId, null).catch(error => { if (descriptorUnavailable(error)) return null; throw error; }),
           deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
           commands: () => navigation.current,
           onFailure: error => navigation.current?.failure(error),
@@ -754,7 +759,7 @@ export function GlobalPlayerProvider({
     catch (error) {
       if (mine !== latest.current || target !== engineRef.current) return;
       if (!isApiError(error) && !isAbortError(error) || isSameSystemApiDefect(error)) throw error;
-      if (positionMs !== null || known === null || !(isAbortError(error) || outcomeUnknown(error))) {
+      if (positionMs !== null || known === null || !(descriptorUnavailable(error))) {
         publishQueue({ ...queueViewRef.current, error: { kind: "Episode", entry_id: entry.id, title: known?.title ?? null } });
         // `retry` plays from the saved place, so a timed play offers none; its time stays pressable.
         outcome.fail(error, known === null ? "couldn’t play this episode." : `couldn’t play “${known.title}”.`, positionMs !== null ? undefined
@@ -779,7 +784,7 @@ export function GlobalPlayerProvider({
 
   /** The player says every press it refused, once; its callers say nothing. The unanswered
    * queue's held line is its own. A defect goes to the boundary. */
-  const report = useCallback((error: unknown) => {
+  const report = useCallback((error: unknown, fact = "couldn’t change playback.", replay = false) => {
     if (handleUnauthenticatedApiError(error)) return;
     const failure = modeled(error);
     if (failure === null) { throwLater({ error }); return; }
@@ -790,13 +795,18 @@ export function GlobalPlayerProvider({
     switch (failure.code) {
       // Any routed command can time out on android, a pause as well as a play.
       case "E_PLAYBACK_UNCONFIRMED":
-        outcome.say({ fact: "not sure playback changed.", reason: "it may have gone through." });
+        outcome.say({ fact: "not sure playback changed.", reason: UNKNOWN_OUTCOME_REASON });
         return;
       case "E_PLAYBACK_REFUSED":
       case "E_PLAYBACK_STALE":
         outcome.say({ fact: "couldn’t change playback.", reason: failure.message || undefined });
         return;
-      default: outcome.fail(failure, "couldn’t change playback.");
+      default: {
+        if (replay) {
+          const line = TRANSPORT_LINES[transportOf(failure)].command("");
+          if (line.reason) outcome.say({ fact: line.reason });
+        } else outcome.fail(failure, fact);
+      }
     }
   }, [outcome, throwLater]);
   /** The native queue's save state once a change or check settles. */
@@ -918,7 +928,9 @@ export function GlobalPlayerProvider({
         if (target !== engineRef.current) return;
         void nativeRefresh(target, header);
         if (mine !== latest.current || target !== engineRef.current || header.current_entry_id === null) return;
-        await target.queue.command({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play, position_ms: positionMs } });
+        try {
+          await target.queue.command({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: "select", entry_id: header.current_entry_id, play, position_ms: positionMs } });
+        } finally { settleNative(target); }
         return;
       }
       if (!(await ownership.current?.acquire(true, null)) || mine !== latest.current) return;
@@ -961,7 +973,7 @@ export function GlobalPlayerProvider({
       return "Applied";
     } catch (error) {
       if (target !== engineRef.current) return "Superseded";
-      report(error);
+      report(error, "couldn’t change the queue.");
       return "Refused";
     }
   }, [enqueueQueueEdit, nativeRefresh, publishQueue, report, settleNative]);
@@ -1017,7 +1029,7 @@ export function GlobalPlayerProvider({
       return "Applied";
     } catch (error) {
       if (target !== engineRef.current) return "Superseded";
-      report(error);
+      report(error, "couldn’t change the queue.");
       return "Refused";
     }
   }, [enqueueQueueEdit, nativeRefresh, publishQueue, report, retireIntent, retirePending, settleNative]);
@@ -1032,7 +1044,7 @@ export function GlobalPlayerProvider({
       try { return await freshDescriptor(mediaId, request.signal); }
       catch (error) {
         if (mine !== latest.current || isAbortError(error)) throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
-        if (!outcomeUnknown(error) || positionMs !== null || knownDescriptor === null) throw error;
+        if (!descriptorUnavailable(error) || positionMs !== null || knownDescriptor === null) throw error;
         return knownDescriptor;
       } finally { if (descriptorRead.current === request) descriptorRead.current = null; }
     };
@@ -1067,8 +1079,12 @@ export function GlobalPlayerProvider({
           else await owner.play(knownDescriptor ?? undefined);
         } else if (owner.queue !== null) {
           const saved = queueViewRef.current.header!;
-          void nativeRefresh(owner, await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
-            command: { kind: "select", entry_id: current.id, play: true, position_ms: null } }));
+          let selected: QueueHeader;
+          try {
+            selected = await owner.queue.command({ queue_id: saved.queue_id, expected_revision: saved.revision,
+              command: { kind: "select", entry_id: current.id, play: true, position_ms: null } });
+          } finally { settleNative(owner); }
+          void nativeRefresh(owner, selected);
         } else await activate(current, true, mine, knownDescriptor, null);
       }, { kind: "Episode", mediaId });
     }
@@ -1284,9 +1300,11 @@ export function GlobalPlayerProvider({
         if (command.kind === "check") { await readNativeQueue(target); return; }
       }
       await ownership.current?.command(command);
-    } catch (error) { report(error); }
+    } catch (error) { report(error, "couldn’t change playback.", command.kind === "check" && queueViewRef.current.unanswered > 0); }
   }, [enqueue, enqueueQueueEdit, queueCommand, readNativeQueue, report, requestPreferences, retainCurrent, retirePending]);
 
+  const queueIndexRepair = useRef(false);
+  const [repairingQueueIndex, setRepairingQueueIndex] = useState(false);
   const commands = useMemo<PlayerCommands>(() => {
     const live = () => engineRef.current;
     const seekTo: PlayerCommands["seekTo"] = input => {
@@ -1307,19 +1325,26 @@ export function GlobalPlayerProvider({
         return queueCommand(request);
       },
       retryQueueIndex: async () => {
+        if (queueIndexRepair.current) return;
         const target = live();
-        if (target?.queue != null) await readNativeQueue(target, true);
-        else {
-          try {
-            if (ownership.current?.owner()) await browser.current?.read();
-            else await ownership.current?.command({ kind: "check" });
-          } catch (error) {
-            if (handleUnauthenticatedApiError(error)) return;
-            const failure = modeled(error);
-            if (failure === null) { throwLater({ error }); return; }
-            publishQueue({ ...queueViewRef.current, index: { kind: "Failed", previous: null, error: failure } });
+        const index = queueViewRef.current.index;
+        queueIndexRepair.current = true;
+        setRepairingQueueIndex(true);
+        try {
+          if (target?.queue != null) await readNativeQueue(target, true);
+          else {
+            try {
+              if (ownership.current?.owner()) await browser.current?.read();
+              else await ownership.current?.command({ kind: "check" });
+            } catch (error) {
+              if (target !== live() || queueViewRef.current.index !== index || handleUnauthenticatedApiError(error)) return;
+              const failure = modeled(error);
+              if (failure === null) { throwLater({ error }); return; }
+              if (failure instanceof QueueCommandError && failure.refusal === "Superseded") return;
+              publishQueue({ ...queueViewRef.current, index: { kind: "Failed", previous: index.kind === "Ready" ? index.snapshot : index.previous, error: failure } });
+            }
           }
-        }
+        } finally { queueIndexRepair.current = false; setRepairingQueueIndex(false); }
       },
       stop: () => { void route({ kind: "stop" }); },
       checkQueue: () => { void route({ kind: "check" }); },
@@ -1453,7 +1478,8 @@ export function GlobalPlayerProvider({
 
   // A failed queue read heals as any failed read does: on reconnect and on focus.
   const unreadIndex = queueView.index.kind === "Failed";
-  useEffect(() => unreadIndex ? subscribeRepair(() => void navigation.current?.retryQueueIndex()) : undefined, [unreadIndex]);
+  useFailedReadRepair(unreadIndex && queueView.unanswered === 0, repairingQueueIndex || queueView.index.kind === "Loading",
+    () => void navigation.current?.retryQueueIndex());
 
   // Unread, reset and undo of the loaded episode: its unsaved sample settles first, the server's
   // position after.

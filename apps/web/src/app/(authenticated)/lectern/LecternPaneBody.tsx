@@ -93,8 +93,7 @@ export default function LecternPaneBody() {
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const outcome = await refreshSuggestionFeed(signal);
     switch (outcome) {
-      case "Refreshed": case "Finding": return { kind: "Complete", announcement: "" };
-      case "Repair": case "Failed": return { kind: "Failed", announcement: "" };
+      case "Refreshed": case "Finding": case "Repair": case "Failed": return null;
       // justify-defect: the lectern has no authority or applicability gate.
       case "NotApplicable": throw new Error("lectern suggestions cannot be inapplicable");
       default: return assertNever(outcome);

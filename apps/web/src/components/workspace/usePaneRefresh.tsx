@@ -5,13 +5,18 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
+  useId,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import { useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import type { Retract } from "@/components/feedback/stage";
+import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import {
   PANE_COMMAND_RESOLVING_REASON,
@@ -51,8 +56,8 @@ function label(state: State): string | null {
  * The pane's one refresh operation, shared by the More command, the mobile
  * pull gesture on the scrollport and the indicator. An execution belongs to
  * the fence (route and source) that started it: a new fence aborts it, so its
- * result never lands on another route or source. Success has no home; anything
- * short of it is a plain slip in the producer's words.
+ * result never lands on another route or source. Reads are quiet; a refused command
+ * is a plain slip, and an unknown command stays held through any refused resend.
  */
 export function usePaneRefresh(input: {
   readonly refresh: PaneRefresh | undefined;
@@ -66,6 +71,7 @@ export function usePaneRefresh(input: {
 } {
   const { refresh, pull, scrollportRef } = input;
   const fence = `${input.routeKey}|${refresh?.kind === "Refreshable" ? refresh.sourceKey : ""}`;
+  const owner = useMemo(() => ({ fence, active: false }), [fence]);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const [state, setStateValue] = useState<State>({ kind: "Idle" });
@@ -76,9 +82,14 @@ export function usePaneRefresh(input: {
   }, []);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const execution = useRef<AbortController | null>(null);
-  const { say } = useOutcome();
+  const { fail } = useOutcome();
+  const heldId = useId();
+  const [held, setHeld] = useState<{ fact: string; attempt: number; fence: string; retry: () => void } | null>(null);
+  const refusal = useRef<Retract | null>(null);
+  const resendFeedback = useResendFeedback();
 
   const start = useCallback(() => {
+    if (!owner.active) return;
     const current = refreshRef.current;
     if (current?.kind !== "Refreshable" || execution.current) return;
     const controller = new AbortController();
@@ -97,7 +108,18 @@ export function usePaneRefresh(input: {
           if (!mine()) return;
           execution.current = null;
           setState({ kind: "Idle" });
-          if (result.kind !== "Complete") say({ fact: result.announcement });
+          refusal.current?.();
+          refusal.current = null;
+          if (result === null) { setHeld(null); return; }
+          switch (result.kind) {
+            case "Refused":
+              refusal.current = fail(result.error, result.fact, { label: "retry", commandKey: "Pane.Refresh", run: start });
+              return;
+            case "Unknown":
+              setHeld(previous => ({ fact: result.fact, attempt: (previous?.attempt ?? 0) + 1, fence: owner.fence, retry: start }));
+              return;
+            default: return assertNever(result);
+          }
         },
         (error: unknown) => {
           if (!mine()) return;
@@ -106,20 +128,25 @@ export function usePaneRefresh(input: {
           if (!isAbortError(error)) setDefect({ error });
         },
       );
-  }, [setState, say]);
+  }, [setState, fail, owner]);
 
   // a new route or source aborts the running refresh and drops what it showed.
   useLayoutEffect(() => {
     const abort = () => {
+      owner.active = false;
       execution.current?.abort(
         new DOMException("Pane refresh target changed.", "AbortError"),
       );
       execution.current = null;
+      refusal.current?.();
+      refusal.current = null;
     };
     abort();
+    owner.active = true;
     setState({ kind: "Idle" });
+    setHeld(null);
     return abort;
-  }, [fence, setState]);
+  }, [owner, setState]);
 
   useEffect(() => {
     const port = scrollportRef.current;
@@ -211,6 +238,7 @@ export function usePaneRefresh(input: {
         }
       : null,
     indicator: (
+      <>
       <div
         className={styles.refreshIndicator}
         data-refresh-state={state.kind}
@@ -231,6 +259,10 @@ export function usePaneRefresh(input: {
           {text}
         </span>
       </div>
+      {held && <Hold id={`${heldId}:${held.fence}`} attempt={held.attempt}
+        {...resendFeedback({ line: { fact: held.fact, reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: "Pane.Refresh", run: held.retry, busy: refreshing !== null } })} />}
+      </>
     ),
   };
 }

@@ -93,6 +93,7 @@ export default function PodcastStopDialog(props: StopProps) {
 function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, cleanup }: StopProps & { readonly onSaved: () => void; readonly cleanup: boolean }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
+  const waitingId = useId();
   const live = useRef(false);
   useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const stamp = useChangeStamp("Libraries", "Podcasts", "Entries");
@@ -134,9 +135,10 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, c
     {preview.blocked.length > 0 ? <Fact line={{ fact: `only a library admin can change ${preview.blocked.map(item => item.name).join(", ")}.` }} /> : null}
     {source.error !== null ? <Fact line={{ fact: "couldn’t refresh affected libraries.", reason: "they may be out of date." }}
       verbs={[{ label: "retry", commandKey: "retry affected libraries", run: source.refetch }]} /> : null}
+    {source.refreshing ? <span id={waitingId} className="sr-only">checking affected libraries</span> : null}
     <CommandRefusal subject={subject} reread={source.refetch} />
     <div className={styles.actions}>
-      <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
+      <Button emphasis="strong" aria-describedby={source.refreshing ? waitingId : undefined} tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
         {cleanup ? `remove ${count} episodes` : episodes === "remove" ? "unsubscribe and remove episodes" : "unsubscribe"}
       </Button>
       <Button onClick={onClose}>cancel</Button>

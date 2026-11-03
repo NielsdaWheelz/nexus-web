@@ -143,7 +143,7 @@ async function call<T>(
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
-    throw failure("E_NETWORK", navigator.onLine === false ? "you’re offline." : "nexus isn’t answering.");
+    throw failure("E_NETWORK", navigator.onLine === false ? "you’re offline." : "nexus isn’t answering.", null, null, navigator.onLine === false);
   }
   if (response.status === 426) {
     const message = "nexus updated. update this extension to keep capturing.";
