@@ -28,7 +28,6 @@ import {
   type SafeFailureCode,
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
-import type { AcceptedIngest } from "@/lib/imports/ingest";
 import {
   METADATA_FAILURE_COPY,
   metadataOperationName,
@@ -1102,12 +1101,10 @@ export function uploadCommandFeedback(
   return { tone: "Danger", title, message: COMMAND_REFUSAL[code] };
 }
 
-export type CaptureOperation = "SaveSource" | "AddAttachment";
-
 const UNSUPPORTED_FILE = "This file type isn’t supported. Use a PDF or EPUB.";
 
 /**
- * Capture and attachments hold one file and no session row, so each outcome is
+ * Attachments hold one file and no session row, so each outcome is
  * one sentence and, where Imports holds the obligation, a pointer to it.
  */
 const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
@@ -1140,15 +1137,11 @@ export const CAPTURE_REFUSAL = {
 } as const;
 
 /**
- * A failed capture or attachment. Anything this does not model, a programming
+ * A failed attachment. Anything this does not model, a programming
  * error included, is rethrown for the screen boundary.
  */
-export function captureErrorFeedback(
-  error: unknown,
-  operation: CaptureOperation,
-): FeedbackContent {
-  const title =
-    operation === "SaveSource" ? "Couldn’t save" : "Attachment wasn’t added";
+export function captureErrorFeedback(error: unknown): FeedbackContent {
+  const title = "Attachment wasn’t added";
   if (error instanceof UploadSessionError) {
     return {
       tone: "Danger",
@@ -1165,8 +1158,4 @@ export function captureErrorFeedback(
   return { tone: "Danger", title, message: CAPTURE_REFUSAL[code as keyof typeof CAPTURE_REFUSAL], requestId };
 }
 
-/** Acceptance records a saved source, independently of processing success. */
-export function captureStatusLine(result: AcceptedIngest): string {
-  return !result.available ? "this item was saved, then removed" : result.processing === "failed" ? "saved · processing failed" : "saved";
-}
 

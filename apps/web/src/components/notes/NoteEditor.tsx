@@ -629,7 +629,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "attachment unconfirmed", message: "retry the same upload to check its result." } });
         if (handleUnauthenticated(error)) return;
         try {
-          setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error, "AddAttachment") });
+          setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error) });
         } catch (unmodeled) {
           setDefect({ error: unmodeled });
         }

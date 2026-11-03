@@ -1,5 +1,14 @@
 # share capture submitted work guard
 
-`app/share/ShareCapture.tsx` registers failed/uncommitted local plain-text writing with workguard, but URL acquisition `saving` and `useDestinationCreation(...).readUnconfirmed()` are not registered. the native share back/exit guard can therefore close while these submitted server operations remain unacknowledged.
+status: source repaired; native exit verification pending.
 
-register these actual attempts in the existing share owner. resolved when exiting during an in-flight or uncertain URL/destination save offers the existing stay/discard decision, and acknowledged operations no longer block exit.
+the old card's separate url/destination acquisition could outlive an unguarded
+exit. `app/share/ShareCapture.tsx` now mounts the existing `ImportIntakeProvider`
+under `WorkProvider`, with no destination creator or independent send queue.
+`lib/imports/intake.tsx` registers sending, verifying, unknown and browser work;
+the plain capture retains its separate submitted-work guard and authored owner.
+
+resolved when an actual native card exit during in-flight and uncertain imports
+offers the existing stay/leave decision, honours both choices, and stops blocking
+after acknowledgement. accepted server work must survive a confirmed exit.
+source composition and a static gate alone do not establish this device boundary.

@@ -111,13 +111,15 @@ every attempted source or metadata admission wakes imports, including an unknown
 
 ## intake
 
-`lib/imports/intake.tsx` holds one account's lines: each one thing coming in, one identity
+`lib/imports/intake.tsx` holds one document's lines: each one thing coming in, one identity
 from enter until it is readable, behind every door. `lib/imports/lineView.ts` words a line
 for every surface and for the intake's slips. nothing survives a reload.
 
 - **provider.** `ImportIntakeProvider`, above the workspace boundary and keyed on the
-  account (share mounts it alone), owns the store, the send queue and one account work
-  owner. it publishes a defect and throws nothing.
+  nullable account, owns the store, the send queue, creation and one document-local
+  `import-intake` work owner. a real account change retires that whole lifetime; share
+  passes null for its document without provisioning notes or inventing an identity.
+  it publishes a defect and throws nothing.
 - **host.** `ImportIntakeHost`, inside `ImportsProvider`, throws that defect in render, owns
   the one `useDestinationCreation` for `into`, reads truth, opens armed lines and raises
   slips. share has no host, so no truth: its accepted lines read `sent`.
@@ -235,6 +237,39 @@ destination through the same navigation intent.
   accepted lines not yet readable, failed or removed. the work owner stops browser work while
   `running` is positive and is unconfirmed while a line sends, verifies or is unknown.
 - **I14** with no lines the intake sends nothing and holds no timer or observer.
+
+## standalone share
+
+`app/share/ShareCapture.tsx` reads `/_nexus/shared/manifest` before offering admission.
+only the actual share activity answers 200 with its indexed file metadata; hosted
+documents and the main activity answer 404. the manifest owns automatic admission,
+native `capture_*` metadata and `nexus-share` exits. a bridge or route supplies none
+of that authority. main's standalone document initializes its existing native hello
+and subscription; the manifest never changes remote admission.
+
+manual cards require a press for links and plain text. links and named files admit
+through the same intake into implicit all, without a host, destination picker or
+slips. a native stream's 404 is an unreadable null-file line; it never acquires.
+files exclude plain capture and the empty-share state; accompanying prose is ignored
+while links remain. each stream has a bounded read, cancelled with its document;
+failed reads use the existing failed-read repair owner.
+absent native name, size or mime type stays null in the manifest. the File boundary
+uses its standard empty name/type, and actual readable bytes supply File.size.
+unreadable entries retain unknown size; no zero or filename is invented. the existing
+admission order groups links, readable files and unreadable entries, preserving order
+within each group rather than across a mixed manifest.
+
+only a nonempty admitted set whose every retained line is accepted closes the native
+card. refusal and uncertainty remain; ordinary browser/main acceptance keeps the
+card until done. without a truth host, accepted neighbors read `sent` and no current
+share line can offer `see why` or `open original`. real ambiguous and auth refusals
+retain their import and sign-in routes. exits use ordinary workspace paths unless
+the manifest established the actual share activity.
+
+plain text keeps its authored command, first-send date/id and exact retry handle;
+actual sharing retains its native capture identity. its standalone authored provider
+receives an explicit workspace return action for recovery. ordinary done/cancel go
+home; authored recovery opens downloads, whose workspace owns sign-in and setup.
 
 ## acquisition recovery
 

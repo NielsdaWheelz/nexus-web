@@ -85,6 +85,14 @@ never regenerated from the current helper.
 
 ## content and identity
 
+standalone plain-text sharing uses the same `captureToday` command and local store.
+its date and note identity freeze on the first explicit press, or come from the
+actual native share's capture metadata; retry retains those bytes and the local
+commit handle. the share-host `AuthoredProvider` requires an `openWorkspace` action
+for sign-in and setup recovery. that action belongs to the document's host, not
+the store: actual share activities open main, ordinary share documents open the
+workspace. the workspace retains ownership of account retirement and setup cleanup.
+
 one note has one permanent body element and one permanent inline yjs text. its
 prosemirror shape is `body{presentation:prose|code}` with text, hard breaks, images
 and typed resource embeds. formatting changes attributes and marks, not the outer

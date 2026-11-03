@@ -116,7 +116,7 @@ export function useConnectionAttachments(selfRef: string) {
       }
       if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
       if (handleUnauthenticatedApiError(error)) return;
-      try { task.failure = task.mediaId === null ? captureErrorFeedback(error, "AddAttachment")
+      try { task.failure = task.mediaId === null ? captureErrorFeedback(error)
         : { tone: "Warning", title: "file saved; link not made", message: "check your connection, then link it again." }; }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {

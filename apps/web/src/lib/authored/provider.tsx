@@ -42,7 +42,11 @@ export function useAuthoredStatus(): SyncStatus {
   if (writing.saving || status === "saving") return "saving";
   return status;
 }
-export function AuthoredProvider({ accountId, children, host = "workspace" }: { accountId: string; children: React.ReactNode; host?: "workspace" | "shelf" | "share" }) {
+export function AuthoredProvider(props: { accountId: string; children: React.ReactNode } & (
+  | { host: "share"; openWorkspace: () => void }
+  | { host?: "workspace" | "shelf"; openWorkspace?: never }
+)) {
+  const { accountId, children, host = "workspace" } = props;
   const [store, setStore] = useState<AuthoredStore | null>(null);
   const [status, setStatus] = useState<SyncStatus>("preparing");
   const [ready, setReady] = useState(false);
@@ -70,7 +74,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const signIn = () => {
     if (signInRunning.current || !ready && opening) return;
     if (host === "shelf") { void localCall("open_hosted", { path: "/downloads" }).catch(reportError); return; }
-    if (host === "share") { window.location.assign("nexus-share://open?path=%2Fdownloads"); return; }
+    if (props.host === "share") { props.openWorkspace(); return; }
     if (!installedApp) { window.location.assign(ready ? loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)) : "/login?switch_account=1"); return; }
     signInRunning.current = true; setSigningIn(true); setSignInResult(null);
     void sessionSignIn().then(result => {
@@ -126,7 +130,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   if (failure) {
     const leave = () => {
       if (host === "shelf") void localCall("open_hosted", { path: "/downloads" }).catch(error => fail(error));
-      else if (host === "share") window.location.assign("nexus-share://open?path=%2Fdownloads");
+      else if (props.host === "share") props.openWorkspace();
       else void discardFailedAuthoredSetup(accountId).catch(error => fail(error));
     };
     return <SetupFeedback content={failure} subject={accountId} waiting={false} announcement="Polite" actions={[{ label: "retry", onClick: retrySetup, busy: opening }, { label: host === "workspace" ? "sign out on this device" : "open workspace", onClick: leave }]} />;

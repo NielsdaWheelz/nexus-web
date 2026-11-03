@@ -155,7 +155,7 @@ export function lineView(line: IntakeLine): LineView {
     case "Sending": return running("sending…", null);
     case "Verifying": return running("checking the file…", null);
     case "Uploading": {
-      const fraction = line.source.kind === "File" && line.source.sizeBytes > 0 ? stage.sentBytes / line.source.sizeBytes : 0;
+      const fraction = line.source.kind === "File" && line.source.sizeBytes !== null && line.source.sizeBytes > 0 ? stage.sentBytes / line.source.sizeBytes : 0;
       const percent = Math.floor(fraction * 100);
       return { one, two: armed ? `uploading · ${percent}% · opens when sent` : `uploading · ${percent}%`,
         tone: "Neutral", verb: { kind: "Arm" }, rule: fraction, dismiss: "Stop", menu: null };

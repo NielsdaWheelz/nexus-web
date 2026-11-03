@@ -1,5 +1,4 @@
-/* The whole page, not a layer: no z-index, so the library chooser and its
-   sheet (overlay stack) paint above it. */
+/* The whole document, beneath its ordinary feedback surfaces. */
 .backdrop {
   position: fixed;
   inset: 0;
@@ -58,19 +57,19 @@
   gap: var(--space-2);
 }
 
-.resultItem {
+.line {
+  --text-edge: calc(2 * var(--space-2));
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
 }
 
-.resultLabel {
+.pointer {
   overflow: hidden;
-  color: var(--ink);
+  color: var(--ink-machine);
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -101,17 +100,6 @@
 .action:hover {
   background: var(--surface-hover);
   color: var(--ink);
-}
-
-.actionPrimary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--ink-on-accent);
-}
-
-.actionPrimary:hover {
-  background: var(--accent-hover);
-  color: var(--ink-on-accent);
 }
 
 .capture { position: relative; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; padding-inline-end: calc(var(--size-xl) + var(--space-2)); }
