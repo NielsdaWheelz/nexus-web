@@ -278,7 +278,7 @@ count. with no lines and an empty field, `choose a file…` is selected. a line 
 | --- | --- |
 | ⏎ in root on a query of links | sends them, opens the page with the line selected; ⏎ again opens it, armed until accepted |
 | ⇧⏎ | sends, arms the first new line to open beside on acceptance |
-| ⏎ on the page | the field while it holds text and no arrow moved the selection since the last edit, else the selected row's verb |
+| ⏎ on the page | the field while it holds text and no arrow was pressed since the last edit, else the selected row's verb; a clamped arrow still hands enter to the row |
 | the field's ⏎ | takes the links, leaves the rest with `not a link`; over 100, `100 at a time. this has {n}.` and nothing sent |
 | a link already listed | adds no line; the selection moves to it |
 | ⏎ on an unaccepted line | arms its open; failure, a moved selection, input and leaving the page disarm |
@@ -298,7 +298,8 @@ it prompts: sent work belongs to the intake, which leaving never loses.
 the origin is the palette's mode, control and query. restored means the query, the mode,
 the `import` row selected and focus in the combobox; a phone has no row selection, so from
 search focus lands in the search input and from the overview on the `import` row. a query
-is never restored after a send, or ⏎ would send it again. an open picker takes esc first.
+is never restored after a send, or ⏎ would send it again. a field's parse or cap message
+and an open picker each take esc before the page's back table.
 root's `import` row reads `import · {n} importing` (`import · {n}` on a phone) while the
 intake has unsettled lines.
 

@@ -18,6 +18,7 @@ import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { apiTransportFeedback, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useImportIntake, type Admission } from "@/lib/imports/intake";
+import { spokenCount } from "@/lib/imports/lineView";
 import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
@@ -668,7 +669,7 @@ export function useNexusController() {
     const listed = new Set(intake.lines.flatMap(line => line.source.kind === "Link" ? [line.source.url] : []));
     const links = admission.links.filter(link => !listed.has(new URL(link).href)).length;
     const files = admission.files.length;
-    if (links + files >= 2) setAnnouncement(files === 0 ? `importing ${links} links.` : links === 0 ? `importing ${files} files.` : `importing ${links + files}.`);
+    if (links + files >= 2) setAnnouncement(files === 0 ? `importing ${spokenCount(links)} links.` : links === 0 ? `importing ${spokenCount(files)} files.` : `importing ${spokenCount(links + files)}.`);
     intake.admit(admission);
   }
 

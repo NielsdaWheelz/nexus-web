@@ -194,7 +194,7 @@ function outcome(stage: LineStage): Outcome {
   throw new Error("an unsettled line has no outcome yet");
 }
 
-const spell = (count: number) => count < 10 ? ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"][count]! : String(count);
+export const spokenCount = (count: number) => count < 10 ? ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"][count]! : String(count);
 
 /** A settled batch's ledger line, dated when everything imported. Three named parts at
  * most, the rest summed as `other`, so it keeps to fourteen words. */
@@ -202,10 +202,10 @@ function ledger(lines: readonly IntakeLine[], day: string | null): string {
   const parts = OUTCOMES.map(([kind, phrase]) => ({ count: lines.filter(line => outcome(line.stage) === kind).length, phrase }))
     .filter(part => part.count > 0);
   if (parts.length === 1 && parts[0]!.phrase === "imported")
-    return day === null ? `${spell(parts[0]!.count)} imported.` : `${spell(parts[0]!.count)} imported, ${day}.`;
+    return day === null ? `${spokenCount(parts[0]!.count)} imported.` : `${spokenCount(parts[0]!.count)} imported, ${day}.`;
   const other = parts.slice(3).reduce((sum, part) => sum + part.count, 0);
-  const named = parts.slice(0, 3).map(part => `${spell(part.count)} ${part.phrase}`);
-  return `${(other > 0 ? [...named, `${spell(other)} other`] : named).join(", ")}.`;
+  const named = parts.slice(0, 3).map(part => `${spokenCount(part.count)} ${part.phrase}`);
+  return `${(other > 0 ? [...named, `${spokenCount(other)} other`] : named).join(", ")}.`;
 }
 
 /** The page's close of a settled batch of two or more, null before then. The day is the

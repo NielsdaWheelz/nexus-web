@@ -130,16 +130,18 @@ for every surface and for the intake's slips. nothing survives a reload.
   its visit never sets the next one's, and one retried in a later visit files for that one.
 - **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
   revision and its libraries. a failed read is `no start`, or `offline`, and so is a send
-  the shell's admission holds at its start, since nothing left. a confirm it holds at its
-  turn reads `couldn’t check the file.` with the transport's reason: the bytes are up and
-  nexus was asked nothing. links go one at a time and file puts two at a time; a link's
-  accept and an upload's confirm, both serializable under the viewer lock, take one slot
-  between them. every send answers within 30 s, the put within its upload window.
+  the shell's admission holds at its start, when no earlier send went unanswered. a held
+  replay stays unknown: that attempt never left, but an earlier one may have landed.
+  a held first confirm reads `couldn’t check the file.` with the transport's reason: the
+  bytes are up and nexus was asked nothing. links go one at a time and file puts two at a
+  time; a link's accept and an upload's confirm, both serializable under the viewer lock,
+  take one slot between them. every send answers within 30 s, the put within its upload window.
   acceptance drops a file's `File`: nothing sends it again.
 - **answers.** a line is unknown only where an answer was lost after the server could act:
   a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
-  stopped`. 401 and 426 answer before any route: handoff. a storage failure at a first
-  confirm published nothing: `couldn’t check the file`; after an unanswered confirm it is
+  stopped`. 401 and 426 answer before any route: handoff on a first send, still unknown
+  after an earlier unanswered send. a storage failure at a first confirm published nothing:
+  `couldn’t check the file`; after an unanswered confirm it is
   unknown. a refused create forgets the attempt's guard; a fence or library refusal at
   confirm opens it to review. an undeclared refusal reads `couldn’t import this.` and warns
   its request id.
@@ -175,7 +177,8 @@ for every surface and for the intake's slips. nothing survives a reload.
 - **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
 - **I12** a line once unknown keeps its frozen id, guard and confirmation until a retry of
   `changed` or `library gone`, or a reselect, re-freezes it: every retry before then, a held
-  send's included, replays them, never a fresh read.
+  send's included, replays them, never a fresh read. an unsent or pre-route-refused retry
+  preserves that uncertainty and its dismiss confirmation.
 - **I13** `running` counts waiting, sending, uploading and verifying lines; `unsettled` adds
   accepted lines not yet readable, failed or removed. the work owner stops browser work while
   `running` is positive and is unconfirmed while a line sends, verifies or is unknown.

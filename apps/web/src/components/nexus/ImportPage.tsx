@@ -90,7 +90,7 @@ export default function ImportPage({ controller, page, mobile }: {
   const [choosing, setChoosing] = useState(false);
   const [fieldLine, setFieldLine] = useState<Line | null>(null);
   const [focused, setFocused] = useState(false);
-  // `moved`: an arrow moved the selection since the field's last edit, handing enter to the row
+  // `moved`: an arrow handed enter to the row since the field's last edit, even if it clamped
   const [selection, setSelection] = useState(() => {
     const url = page.select === null ? null : new URL(page.select).href;
     const line = intake.lines.find(line => line.source.kind === "Link" && line.source.url === url);
@@ -160,7 +160,6 @@ export default function ImportPage({ controller, page, mobile }: {
     for (const line of intake.lines) if (line.openOnAccept !== null && lineKey(line) !== except) intake.disarm(line.id);
   }
   function select(key: string) {
-    if (key === active) return;
     disarm(key);
     setSelection({ key, moved: true });
   }
@@ -294,7 +293,10 @@ export default function ImportPage({ controller, page, mobile }: {
                 return;
               }
               const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-              if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
+              if (event.key === "Escape" && fieldLine !== null) {
+                event.preventDefault();
+                setFieldLine(null);
+              } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
                 const next = nextRovingIndexForKey({ key: event.key, currentIndex: active === null ? -1 : keys.indexOf(active),
                   itemCount: keys.length, orientation: "vertical", homeEnd: false });
                 if (next === null) return;

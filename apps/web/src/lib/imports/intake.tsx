@@ -247,6 +247,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     update(id, line => ({ ...line, stage, openOnAccept: null }));
   const refuse = (id: string, refusal: LineRefusal) => settle(id, { kind: "Refused", refusal });
 
+  /** This attempt never ran; that cannot answer an earlier unanswered send. */
+  function didNotRun(line: Entry, refusal: LineRefusal) {
+    if (line.replay || line.confirmUnanswered) settle(line.id, { kind: "Unknown" });
+    else refuse(line.id, refusal);
+  }
+
   function publishDefect(error: unknown) {
     defect ??= { error };
     publish();
@@ -313,7 +319,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         const line = get(id);
         if (!alive(scope) || line === null || line.stage.kind !== "Waiting" || line.guard === null || line.source.kind !== "Link") return;
         const holding = held();
-        if (holding !== null) return refuse(id, notSent(holding));
+        if (holding !== null) return didNotRun(line, notSent(holding));
         const { source: { url }, guard, attemptId } = line;
         update(id, current => ({ ...current, stage: { kind: "Sending" } }));
         try {
@@ -340,7 +346,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const file = line === null ? null : fileOf(line);
       if (!alive(scope) || line === null || file === null || line.upload === null || line.guard === null) return;
       const holding = held();
-      if (holding !== null) return refuse(id, notSent(holding));
+      if (holding !== null) return didNotRun(line, notSent(holding));
       const at = (stage: LineStage) => { if (alive(scope) && !stop.signal.aborted) update(id, current => ({ ...current, stage })); };
       at({ kind: "Sending" });
       try {
@@ -386,7 +392,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   async function fail(id: string, error: unknown, scope: AbortController) {
     const line = get(id);
     if (line === null || isAbortError(error)) return;
-    if (error instanceof ConfirmHeld) return refuse(id, { kind: "CheckHeld", transport: error.transport });
+    if (error instanceof ConfirmHeld) return didNotRun(line, { kind: "CheckHeld", transport: error.transport });
     const confirming = line.stage.kind === "Verifying";
     if (error instanceof UploadSessionError) return uploadFail(line, error.outcome, confirming, scope);
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
@@ -394,7 +400,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       return publishDefect(error);
     }
     const transport = transportOf(error);
-    if (transport === "SignIn" || transport === "Update") return refuse(id, { kind: "Handoff", transport });
+    if (transport === "SignIn" || transport === "Update") return didNotRun(line, { kind: "Handoff", transport });
     if (!isRefusal(error)) {
       // unanswered: before confirm a file published nothing
       if (line.source.kind === "File" && !confirming) return refuse(id, { kind: "BytesLost" });
