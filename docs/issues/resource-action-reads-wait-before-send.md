@@ -5,8 +5,10 @@ origin: 2026-10-14 session entry qualification (main #607/#616), carried by the 
 reauthor's main replay
 area: resource actions / web transport
 
-every More menu reads `GET /resource-items/{ref}/actions` when it opens and shows
-"Loading actions…" until the read lands. principal-actions removes the direct-add
+resource action preparation reads `GET /resource-items/{ref}/actions` on demand.
+the trigger owns its wait; hidden preparation waits to open, while a menu with
+local rows can publish them before remote actions arrive. there is no
+`Loading actions…` row. principal-actions removes the direct-add
 controls' per-row preflight; quick reads and transcript adds now use the shared
 lectern owner. the old snapshot cache's ticket
 (`resource-menu-opens-with-actions-blocked.md`, deleted: menus no longer open blocked)

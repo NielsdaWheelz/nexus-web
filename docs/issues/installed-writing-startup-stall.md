@@ -22,12 +22,16 @@ that successful observation does not explain or resolve the intermittent stall.
 evidence: offline-catalog qualification run
 `20261023-154104-f67133a1d363`, `artifacts/native-failure.json` and the zphone
 playwright trace; source `2559e5f57` plus the frozen offline-catalog integration.
-owners: `AuthenticatedShell.WritingRuntime`, `lib/notes/journal.ts:852`,
-and `WorkspaceHost`'s writing-ready gate. installed initialization waits on local
-runtime/web locks and indexeddb, not a native writing bridge or server request.
+those observations predate the retired `lib/notes/journal.ts` runtime. they do
+not establish a failure in the current store. at `11a5fb880`, startup passes
+through `lib/native/DeviceWorkspace.tsx`, `lib/authored/provider.tsx` and
+`lib/authored/client.ts`; android opens `openNativeAuthoredStore` in
+`lib/authored/native.ts`, whose `hello` reads the native sqlite replica. the
+provider publishes readiness after `provisioning_complete` becomes true.
 
-next failing reproduction must capture visibility/focus,
-`navigator.locks.query()`, `indexedDB.databases()` and browser errors before
-cleanup, without reloading or extending the deadline to mask the failure.
-resolve by identifying the pending operation or proving hidden-driver state,
-then verifying foreground startup and ordinary offline cold startup.
+next failing reproduction must identify the active startup owner and capture
+visibility/focus, bridge delivery, replica provisioning state and browser errors
+before cleanup, without reloading or extending the deadline. inspect web locks
+only if the pending operation actually uses one. resolve by locating the stalled
+operation or retiring this historical symptom with current foreground handoff
+and ordinary offline cold-start evidence.
