@@ -7,8 +7,9 @@ copy and deliberate guarded abandonment survive; exact rename recovery does not.
 
 source atd7d96c573 (also present at57f76e33):
 `apps/web/src/components/LibrarySettingsDialog.tsx:144-146,165-167,189,203-211,235-252`.
-rename success also clears unknown; the reverse delete-unknown to rename path
-needs the same single-command ownership audit. delete204 can acknowledge masked
+the reverse direction also admits Save after unknown delete; its accepted rename
+clears unknown and makes draft equal baseline, losing both delete recovery and
+the unconfirmed guard. both directions are source-proved reachable. delete204 can acknowledge masked
 invisible absence (`python/nexus/services/libraries.py:337-339`), so it cannot
 prove that a different earlier rename settled.
 
