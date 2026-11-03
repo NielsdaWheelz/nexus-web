@@ -20,22 +20,19 @@
 }
 
 .panel {
-  /* Lift above the keyboard (iOS shim; ~0 where the platform resized the layout). */
+  /* Only remaining safe-area padding reads the keyboard inset; the room owns positioning. */
   --keyboard-inset: var(--mobile-overlay-keyboard-inset, 0px);
   position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
-  bottom: var(--keyboard-inset);
-  /* Height budget: ALWAYS clamped by the visible viewport minus the keyboard so
-     the top edge never overflows. dvh does not react to the keyboard on iOS —
-     the calc() term is what carries it there. No transition on bottom or
-     max-height: visualViewport resize fires after the keyboard animation
-     settles; animating the catch-up fights later geometry events. */
+  bottom: 0;
+  /* The room projects the unobscured viewport once. The panel's height follows it without
+     animating viewport catch-up or subtracting the keyboard a second time. */
   max-height: min(
     85dvh,
     720px,
-    calc(100dvh - var(--keyboard-inset) - var(--space-6))
+    calc(100% - var(--space-6))
   );
   border-top: 1px solid var(--edge-subtle);
   border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;

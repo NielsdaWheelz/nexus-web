@@ -77,7 +77,7 @@ export default function MobileSheet({
       id={panelId}
       scope={panelId}
       backdropClassName={[scrim === "soft" ? styles.softBackdrop : styles.backdrop, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
-      backdropStyle={heightLimit === "available" ? { top: visualViewportTopPx, bottom: keyboardBottomInsetPx } : undefined}
+      backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
       className={[styles.panel, heightLimit === "available" && styles.available, flushBottom && styles.flushBottom].filter(Boolean).join(" ")}
     >
       {(requestDismiss) => (

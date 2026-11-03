@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, type ReactNode } from "react";
+import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { X } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
@@ -21,6 +22,7 @@ export default function Dialog({
   readonly children: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null);
+  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   useCollectionLayout(body, modal.open);
   return (
     <ModalFrame
@@ -29,6 +31,7 @@ export default function Dialog({
       onDismiss={onClose}
       label={title}
       backdropClassName={styles.backdrop}
+      backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
       className={cx(styles.dialog, className)}
     >
       {(requestDismiss) => (

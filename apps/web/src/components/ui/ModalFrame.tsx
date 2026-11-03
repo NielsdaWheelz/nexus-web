@@ -112,12 +112,12 @@ export default function ModalFrame({
     const frame = requestAnimationFrame(() => {
       focused.current = { key: focusKey };
       const active = document.activeElement;
-      if (!changingKey && active instanceof HTMLElement && panel.contains(active)
+      if (!changingKey && active instanceof HTMLElement && layer.element?.contains(active)
         && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return;
       (select.current?.(panel) ?? focusableElements(panel)[0] ?? panel).focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [panel, open, topmost, focusKey]);
+  }, [layer, panel, open, topmost, focusKey]);
 
   const opened = useRef(false);
   opened.current ||= open;
