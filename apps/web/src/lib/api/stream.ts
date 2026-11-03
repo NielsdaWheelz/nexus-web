@@ -156,11 +156,11 @@ export function openStream<E, P = unknown>(
       });
     } catch (error) {
       if (error instanceof TypeError) {
-        throw new ApiError(0, "E_NETWORK", "Stream lost", requestId);
+        throw new ApiError(0, "E_NETWORK", "Stream lost", { requestId });
       }
       throw error;
     }
-    return delivered ? null : new ApiError(0, "E_NETWORK", "Stream lost", requestId);
+    return delivered ? null : new ApiError(0, "E_NETWORK", "Stream lost", { requestId });
   };
 
   const run = async (): Promise<void> => {

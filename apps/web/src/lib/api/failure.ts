@@ -4,10 +4,13 @@
 // translated ahead of it. A same-system defect is outside it and rethrows: `Failed`
 // meets that in render and reaches the boundary; `fail` tests first and throws later.
 import { updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
+import type { RemoteAdmission } from "@/lib/native/contracts";
 import { isSameSystemApiDefect, type ApiError } from "./client";
 
 export type Transport = "Offline" | "SignIn" | "Update" | "Busy" | "Unavailable" | "Refused";
 
+/** A status-0 failure is `Offline` if the browser was offline when it was observed, so a failure
+ * seen offline reads offline until its owner's repair read replaces it. */
 export function transportOf(error: ApiError): Transport {
   if (isSameSystemApiDefect(error)) throw error;
   switch (error.code) {
@@ -21,8 +24,21 @@ export function transportOf(error: ApiError): Transport {
     case "E_AUTH_UNAVAILABLE":
       return "Busy";
   }
-  if (error.status === 0) return navigator.onLine === false ? "Offline" : "Unavailable";
+  if (error.status === 0) return error.offline ? "Offline" : "Unavailable";
   return error.status >= 400 && error.status < 500 ? "Refused" : "Unavailable";
+}
+
+/** Why admission holds remote work back now, as a transport. Null while nothing refuses it:
+ * admitted, or still checking. Offline is the device's state now: admission is current. */
+export function admissionTransport(admission: RemoteAdmission): Transport | null {
+  switch (admission) {
+    case "SignInRequired": return "SignIn";
+    case "UpdateRequired": return "Update";
+    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
+    case "Checking":
+    case "Ready":
+      return null;
+  }
 }
 
 /** `Update` reloads only where `updateRemedy` says reload can work; otherwise it has no verb. */
@@ -38,6 +54,8 @@ const STALE_BUILD: Readonly<Record<UpdateRemedy, string>> = {
 };
 /** The one sentence for a stale build, whoever says it: a read, a command or the account. */
 export const staleBuild = () => STALE_BUILD[updateRemedy()];
+/** The one reason for a write whose outcome is unknown (`outcomeUnknown`), whoever holds it. */
+export const UNKNOWN_OUTCOME_REASON = "it may have gone through.";
 
 /** `read` is a read's whole line, for a plural noun. `command` runs the reason in after a
  * command's own fact; `Refused` has none, leaving it to the owner's domain line. */

@@ -139,7 +139,7 @@ export function sessionCheck(): Promise<void> {
   checking = call("session_check").then(reply => { publishAdmission(readAdmission(reply.remote_admission)); }).finally(() => { checking = null; });
   return checking;
 }
-bindSessionCheck(() => sessionCheck().catch(() => publishAdmission("Unavailable")));
+if (port) bindSessionCheck(() => sessionCheck().catch(() => publishAdmission("Unavailable")));
 /** The first check drains any pre-edit native foreground/job check; the second
  * starts after the confirmed edit and acknowledges its durable local settings. */
 export async function refreshDeviceSettings(): Promise<void> {

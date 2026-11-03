@@ -3,7 +3,8 @@
 // browser http cache, and answers the parsed json or throws ApiError. A request
 // sealed under another revision is refused here, never rewritten. A 426 means
 // this tab was built for another wire: it reloads unless writing holds it.
-import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession } from "@/lib/native/admission";
+import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession, whenChecked } from "@/lib/native/admission";
+import type { RemoteAdmission } from "@/lib/native/contracts";
 import { androidShellDocument } from "@/lib/androidShell";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
@@ -26,20 +27,37 @@ export const isCurrentApiAccount = (binding: ReturnType<typeof captureApiAccount
 const RELOADED_FOR = "nexus.reloaded-for-wire";
 
 export class ApiError extends Error {
+  readonly requestId?: string;
+  readonly details?: Record<string, unknown>;
+  readonly retryAfterMs?: number;
+  /** False only for a request refused before it left this client: nothing ran. */
+  readonly sent: boolean;
+  /** A status-0 failure the browser saw while offline: observed at construction, or carried from
+   * where it was observed. Fixed, so its transport reads as it was seen, not as the connection
+   * stands when it renders. */
+  readonly offline: boolean;
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
-    readonly requestId?: string,
-    readonly details?: Record<string, unknown>,
-    readonly retryAfterMs?: number,
+    { requestId, details, retryAfterMs, sent = true, offline = status === 0 && typeof navigator !== "undefined" && navigator.onLine === false }:
+      { requestId?: string; details?: Record<string, unknown>; retryAfterMs?: number; sent?: boolean; offline?: boolean } = {},
   ) {
     super(message);
     this.name = "ApiError";
+    this.requestId = requestId;
+    this.details = details;
+    this.retryAfterMs = retryAfterMs;
+    this.sent = sent;
+    this.offline = offline;
   }
 }
 
-/** The budget encloses the complete operation, including response bodies and retries. */
+/** Abort reasons `requestWithDeadline` raised, so an owner can tell its deadline from a caller's abort. */
+const deadlines = new WeakSet<object>();
+
+/** The budget encloses the complete operation, including response bodies and retries. A deadline
+ * after the send is an unknown outcome; a request admission refused unsent stays refused. */
 export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
   request: (signal: AbortSignal) => Promise<T>;
   signal: AbortSignal;
@@ -53,12 +71,14 @@ export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
   const timer = setTimeout(() => {
     if (controller.signal.aborted) return;
     timedOut = true;
-    controller.abort(new DOMException("request deadline", "AbortError"));
+    const reason = new DOMException("request deadline", "AbortError");
+    deadlines.add(reason);
+    controller.abort(reason);
   }, timeoutMs);
   try {
     return await request(controller.signal);
   } catch (error) {
-    if (timedOut) throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
+    if (timedOut && !(error instanceof ApiError && !error.sent)) throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -94,30 +114,32 @@ export function isSameSystemApiDefect(
   );
 }
 
+declare const writeOutcome: unique symbol;
+/** A write's modeled failure where nothing ran. */
+export type Refusal = ApiError & { readonly [writeOutcome]: "Refused" };
+/** A write's modeled failure that may have run. */
+export type UnknownOutcome = ApiError & { readonly [writeOutcome]: "Unknown" };
+
 /**
- * A write the server answered and refused, so nothing changed: a modeled 4xx
- * other than a lapsed session (426 included: a stale build's write never
- * landed). Anything else a sent write meets leaves its outcome unknown.
+ * A write's modeled failure is exactly one of `isRefusal` and `outcomeUnknown`; a same-system
+ * defect is neither and throws. Refused, nothing ran: it never left this client (admission, a
+ * sealed revision, a stalled upload), or the server answered 4xx, a lapsed session's 401 and a
+ * stale build's 426 included. Unknown, it may have run: it was sent and no answer came, a deadline
+ * passed after the send, or the server answered 5xx. No 5xx proves a rollback: 502 and 504 come
+ * from past the answerer; `E_DATABASE_BUSY` is a pool checkout a handler may make after its own
+ * commit (python/nexus/api/edge.py, services/extension_sessions.py commits and then refreshes);
+ * `E_AUTH_UNAVAILABLE` may end a provider write that got no answer (lib/account/settings.server.ts).
  */
-export function isRefusal(error: unknown): error is ApiError {
-  return (
-    isApiError(error) &&
-    !isSameSystemApiDefect(error) &&
-    error.status >= 400 &&
-    error.status < 500 &&
-    error.status !== 401
-  );
+export function isRefusal(error: unknown): error is Refusal {
+  return isApiError(error) && !isSameSystemApiDefect(error) && (!error.sent || error.status >= 400 && error.status < 500);
 }
 
-/** An uncertain answer or lapsed session keeps the same write intent for its owner to retry. */
-export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" | "E_DATABASE_BUSY" | "E_UNAUTHENTICATED" } {
-  return (
-    isApiError(error) &&
-    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT" || error.code === "E_DATABASE_BUSY" || isUnauthenticatedApiError(error))
-  );
+/** The other half of `isRefusal`'s partition: its owner holds the write until a press settles it. */
+export function outcomeUnknown(error: unknown): error is UnknownOutcome {
+  return isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error);
 }
 
-export function isUnauthenticatedApiError(error: unknown): error is ApiError {
+export function isUnauthenticatedApiError(error: unknown): error is ApiError & { readonly status: 401; readonly code: "E_UNAUTHENTICATED" } {
   return (
     isApiError(error) &&
     error.status === 401 &&
@@ -219,23 +241,26 @@ function retryAfterMs(value: string | null): number | undefined {
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
-/**
- * The failure of a request admission refuses unsent: it names what admission waits on,
- * so a caller's verb can be true. Demand on an installed client asks native authority
- * to recheck reachability.
- */
-export function admissionRefusal(): ApiError {
-  const admission = remoteAdmission();
-  if (installedApp && admission === "Unavailable") checkSession();
+/** The failure of a request `admission` refuses unsent. It names what admission waits on, so a
+ * caller's verb can be true. Pure: a render may read it. */
+export function admissionError(admission: RemoteAdmission): ApiError {
   const message = "remote work is unavailable";
   switch (admission) {
-    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", message);
-    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", message);
+    case "SignInRequired": return new ApiError(401, "E_UNAUTHENTICATED", message, { sent: false });
+    case "UpdateRequired": return new ApiError(426, "E_WIRE_MISMATCH", message, { sent: false });
     case "Checking":
     case "Unavailable":
     case "Ready":
-      return new ApiError(0, "E_NETWORK", message);
+      return new ApiError(0, "E_NETWORK", message, { sent: false });
   }
+}
+
+/** Refuses an attempted request unsent. The attempt is demand: an installed client whose
+ * admission is `Unavailable` asks native authority to recheck. */
+export function admissionRefusal(): ApiError {
+  const admission = remoteAdmission();
+  if (installedApp && admission === "Unavailable") checkSession();
+  return admissionError(admission);
 }
 
 /** Decode an answer. Its request owner publishes admission failures. */
@@ -248,7 +273,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     // an incomplete body is transport, whatever the status (#604)
-    throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
+    throw new ApiError(0, "E_NETWORK", "Network request failed", { requestId: answerId });
   }
   if (ok) {
     if (text === "") return undefined as T;
@@ -256,7 +281,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
       return JSON.parse(text) as T;
     } catch {
       const message = "API returned non-JSON";
-      throw new ApiError(status, "E_INVALID_RESPONSE", message, answerId);
+      throw new ApiError(status, "E_INVALID_RESPONSE", message, { requestId: answerId });
     }
   }
   let body: unknown = null;
@@ -266,17 +291,18 @@ export async function readResponse<T>(response: Response): Promise<T> {
     // not the envelope: the status speaks alone
   }
   const error = isRecord(body) && isRecord(body.error) ? body.error : {};
-  const failure = new ApiError(
+  throw new ApiError(
     status,
     typeof error.code === "string" ? error.code : "E_UNKNOWN",
     typeof error.message === "string"
       ? error.message
       : `Request failed with status ${status}`,
-    typeof error.request_id === "string" ? error.request_id : answerId,
-    isRecord(error.details) ? error.details : undefined,
-    retryAfterMs(response.headers.get("retry-after")),
+    {
+      requestId: typeof error.request_id === "string" ? error.request_id : answerId,
+      details: isRecord(error.details) ? error.details : undefined,
+      retryAfterMs: retryAfterMs(response.headers.get("retry-after")),
+    },
   );
-  throw failure;
 }
 
 /** A retired response cannot change the next account's admission. */
@@ -286,23 +312,33 @@ export function observeApiFailure(error: unknown, binding: ReturnType<typeof cap
   if (error.status === 426 && !installedApp && !androidShellDocument) reloadForNewBuild();
 }
 
+/** How long an installed client's command waits on a session check before admission refuses it. */
+const CHECK_WAIT_MS = 30_000;
+
 /**
  * One api call. A string body is json; status 0 E_NETWORK is a transport
  * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
  * A caller naming another wire revision (a sealed write) is refused unsent.
+ * On an installed client a command (any method but GET and HEAD) meeting a
+ * session check waits for it, then runs or is refused by what it settled.
  */
 export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
   const binding = captureApiAccount();
+  const command = init.method !== undefined && init.method !== "GET" && init.method !== "HEAD";
+  if (installedApp && command && remoteAdmission() === "Checking") {
+    try { await whenChecked(CHECK_WAIT_MS, init.signal); }
+    catch (reason) { throw deadlines.has(reason as object) ? admissionRefusal() : reason; }
+  }
   // Unavailable pauses background owners; an explicit browser attempt may prove
   // reachability. Native session admission remains owned by the installed host.
   if (!remoteAttemptAllowed()) throw admissionRefusal();
   const headers = new Headers(init.headers);
   const sealed = headers.get(WIRE_HEADER);
   if (sealed !== null && sealed !== String(WIRE_REVISION))
-    throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
+    throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision", { sent: false });
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
   if (binding) headers.set("X-Nexus-Account", binding.accountId);
   const requestId = headers.get("X-Request-ID") ?? createRandomId();
@@ -331,19 +367,16 @@ export async function apiFetch<T>(
     return body;
   } catch (error) {
     if (!isCurrentApiAccount(binding)) throw new DOMException("api account changed", "AbortError");
-    const reason = init.signal?.reason;
     let cause = "error";
-    if (init.signal?.aborted) {
-      cause = reason instanceof DOMException && reason.name === "AbortError" && reason.message === "request deadline"
-        ? "read_deadline" : "caller_abort";
-    } else if (isAbortError(error)) cause = "transport_abort";
+    if (init.signal?.aborted) cause = deadlines.has(init.signal.reason) ? "read_deadline" : "caller_abort";
+    else if (isAbortError(error)) cause = "transport_abort";
     mark("failed", {
       at: response === undefined ? "fetch" : "body", cause,
       error_type: error instanceof Error ? error.name : typeof error,
       error_code: error instanceof ApiError ? error.code : null,
     });
     if (isAbortError(error)) throw error;
-    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed", requestId) : error;
+    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed", { requestId }) : error;
     if (failure instanceof ApiError) console.warn(JSON.stringify({ event: "api_request_failed", request_id: requestId, path: url.pathname, status: failure.status, code: failure.code }));
     observeApiFailure(failure, binding);
     throw failure;

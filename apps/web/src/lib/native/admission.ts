@@ -32,6 +32,20 @@ export function subscribeAdmission(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+/** Resolves once admission is not `Checking`, or after `ms` whatever it is; rejects with the
+ * signal's reason if it aborts first. A command's wait for a session check to settle. */
+export function whenChecked(ms: number, signal: AbortSignal | null | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    if (admission !== "Checking") { resolve(); return; }
+    const settle = (finish: () => void) => { clearTimeout(timer); listeners.delete(checked); signal?.removeEventListener("abort", aborted); finish(); };
+    const checked = () => { if (admission !== "Checking") settle(resolve); };
+    const aborted = () => settle(() => reject(signal!.reason));
+    const timer = setTimeout(() => settle(resolve), ms);
+    listeners.add(checked);
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
+}
 export const repairGeneration = () => repairs;
 export const demandGeneration = () => demands;
 function repair(demanded: boolean): void {
@@ -79,7 +93,9 @@ function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
   if (reachable) repair(wakeReads);
 }
 export function publishAdmission(next: RemoteAdmission): void { setAdmission(next, true); }
+/** The native bridge binds the one session check; a browser binds none, so it has no check. */
 export function bindSessionCheck(run: () => Promise<unknown>): void { check = run; }
+/** Asks native authority to recheck the session. Nothing where no bridge can answer. */
 export function checkSession(): void { void check?.(); }
 /** A current-account successful request is another browser reachability witness. */
 export function observeRemoteSuccess(): void {
