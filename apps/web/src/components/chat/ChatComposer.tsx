@@ -99,11 +99,18 @@ export default function ChatComposer(props: {
   const waitsId = useId();
   /** A send's refusal, until what it refused changes. */
   const [refusal, setRefusal] = useState<Refusal | null>(null);
-  const [stopping, setStopping] = useState(false);
   const stopRequested = Boolean(run?.execution?.cancel_requested || props.liveExecution?.cancel_requested);
-  const stopped = useResourceDraft<{ runId: string; attempt: number } | null>("Chat.Stop", () => null,
-    value => ({ changed: false, unconfirmed: value !== null && value.runId === run?.runId && !stopRequested, stopsBrowserWork: false }));
-  const stopUnknown = stopped.value;
+  const stopped = useResourceDraft<{ runId: string; attempt: number; busy: boolean } | null>("Chat.Stop", () => null,
+    value => ({ changed: false, unconfirmed: value !== null, stopsBrowserWork: false }));
+  const { set: setStopped } = stopped;
+  const stopAttempt = stopped.value;
+  const stopping = stopAttempt?.busy ?? false;
+  const stopUnknown = stopAttempt !== null && stopAttempt.attempt > 0 ? stopAttempt : null;
+  useEffect(() => {
+    if (stopAttempt === null) return;
+    const answer = [...store.getState().messages.values()].find(message => message.trust_trail?.run.run_id === stopAttempt.runId);
+    if ((run?.runId === stopAttempt.runId && stopRequested) || (answer && (answer.status !== "pending" || answer.trust_trail?.run.execution?.cancel_requested))) setStopped(null);
+  }, [props.view, run, stopRequested, stopAttempt, store, setStopped]);
   useEffect(() => {
     mounted.current = true;
     setReady(true);
@@ -155,14 +162,14 @@ export default function ChatComposer(props: {
   // cancel intent is monotonic, so saved or live saying so is exact
   // stop intent is idempotent: a press after any failure is safe
   const cancel = (runId: string) => {
-    setStopping(true);
+    const previous = stopped.read();
+    if (previous !== null && (previous.busy || previous.runId !== runId)) return;
+    stopped.set({ runId, attempt: previous?.attempt ?? 0, busy: true });
     void store.cancel(runId).then((failure) => {
-      if (!mounted.current) return;
-      setStopping(false);
-      const prior = stopped.read();
-      const unsettled = failure?.kind === "Unknown" || (failure?.kind === "Refused" && prior?.runId === runId);
-      stopped.set(unsettled ? { runId, attempt: prior?.runId === runId ? prior.attempt + 1 : 1 } : null);
-      if ((!unsettled && failure?.kind === "Refused") || failure?.kind === "Defect")
+      if (stopped.read()?.runId !== runId) return;
+      const unsettled = failure?.kind === "Unknown" || (failure?.kind === "Refused" && (previous?.attempt ?? 0) > 0);
+      stopped.set(unsettled ? { runId, attempt: (previous?.attempt ?? 0) + 1, busy: false } : failure?.kind === "Defect" ? { runId, attempt: previous?.attempt ?? 0, busy: false } : null);
+      if (mounted.current && ((!unsettled && failure?.kind === "Refused") || failure?.kind === "Defect"))
         fail(failure.error, "couldn’t stop this answer.", { label: "retry", commandKey: `stop ${runId}`, run: () => cancel(runId) });
     });
   };
@@ -197,7 +204,7 @@ export default function ChatComposer(props: {
   const replayBlocked = held !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
   const discardOffered = held?.verbs?.some(verb => "commandKey" in verb && verb.commandKey === `discard ${own ? commandKey(own.command) : ""}`) ?? false;
   const stopKey = stopUnknown ? `stop ${stopUnknown.runId}` : "";
-  const stopRecovery = stopUnknown && run?.runId === stopUnknown.runId && !stopRequested ? resendFeedback({
+  const stopRecovery = stopUnknown ? resendFeedback({
     line: { fact: "not sure the answer stopped.", reason: UNKNOWN_OUTCOME_REASON },
     resend: { label: "retry", commandKey: stopKey, busy: stopping, run: () => cancel(stopUnknown.runId) },
   }) : null;
@@ -205,7 +212,9 @@ export default function ChatComposer(props: {
   const stopReplay = stopPrimary && "commandKey" in stopPrimary && stopPrimary.commandKey === stopKey ? stopPrimary : null;
   const stopWaits = stopRecovery !== null && (stopReplay === null || stopReplay.busy || stopReplay.disabledReason !== undefined);
   const blocked = target.kind === "Blocked" ? target.reason : null;
-  const sendWaits = stopWaits ? stopReplay?.disabledReason ?? admissionReason() ?? stopRecovery?.line.reason ?? null
+  const otherStop = run !== null && stopAttempt !== null && stopAttempt.runId !== run.runId;
+  const sendWaits = otherStop ? "another stop isn’t finished."
+    : stopWaits ? stopReplay?.disabledReason ?? admissionReason() ?? stopRecovery?.line.reason ?? null
     : blocked !== null && blocked !== "ReplyTargetUnavailable" ? BLOCKED[blocked]
     : replayBlocked ? replay?.disabledReason ?? admissionReason() ?? held?.line.reason ?? null
     : quote?.kind === "Loading" || (quote?.kind === "Failed" && quote.retrying) ? "the quote is still loading."
@@ -310,7 +319,7 @@ export default function ChatComposer(props: {
             emphasis={recovery || run ? undefined : "strong"}
             iconOnly
             className={styles.send}
-            disabled={sending || (recovery ? replayBlocked : run ? stopRequested || stopWaits : !canSend)}
+            disabled={sending || (recovery ? replayBlocked : run ? stopRequested || stopWaits || otherStop : !canSend)}
             onClick={run && !recovery ? () => cancel(run.runId) : activateSend}
             onKeyDown={activateSend}
             aria-label={sendLabel.current}

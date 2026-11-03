@@ -2,12 +2,13 @@
 
 import Button from "@/components/ui/Button";
 
-import { useState } from "react";
+import { useEffect, useId } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { isRefusal, outcomeUnknown } from "@/lib/api/client";
 import { undoAssistantWrite, UNDO_REFUSED } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { MessageAction } from "@/lib/chat/runTail";
 import styles from "./ChatSurface.module.css";
 
@@ -19,15 +20,25 @@ const KICKERS: Record<string, string> = {
   queue: "Queued",
 };
 
-/** Completed writes stay visible; only a saved authorship can authorize undo. An undo whose answer
- * never came is held until the next undo answers; undo is idempotent, so its retry resends. */
-export default function AssistantTrust({ actions, undone, onUndone }: {
+/** Saved authorship authorizes undo. Its exact target belongs to the visit through dispatch and
+ * uncertainty; acceptance or an observed reversion settles it. Undo is idempotent. */
+export default function AssistantTrust({ messageId, actions, undone, onUndone }: {
+  messageId: string;
   actions: readonly MessageAction[];
   undone: ReadonlySet<string>;
   onUndone(id: string): void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
+  const draft = useResourceDraft<{ id: string; attempt: number; busy: boolean } | null>(`Chat.Undo:${messageId}`, () => null,
+    value => ({ changed: false, unconfirmed: value !== null, stopsBrowserWork: false }));
+  const { set: setPending } = draft;
+  const pending = draft.value;
+  const busy = pending?.busy ?? false;
+  const unknown = pending !== null && pending.attempt > 0 ? pending : null;
+  const waitsId = useId();
+  const otherId = useId();
+  useEffect(() => {
+    if (pending && actions.some(tool => tool.id === pending.id && tool.reverted_at !== null)) setPending(null);
+  }, [pending, actions, setPending]);
   const { fail } = useOutcome();
   const resendFeedback = useResendFeedback();
   const writes = actions.filter(
@@ -35,30 +46,40 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
       (tool.status === "complete" || (tool.canonical_tool_id === "memory.save_note" && tool.status !== "running" &&
         !["InvalidInput", "BudgetExceeded", "ToolUnavailable"].includes(tool.error_type ?? ""))),
   );
-  if (!writes.length) return null;
+  if (!writes.length && pending === null) return null;
   const retry = (id: string) => ({ label: "retry", commandKey: `undo ${id}`, busy, run: () => void undo(id) });
   const undo = async (id: string) => {
-    setBusy(true);
+    const previous = draft.read();
+    if (previous !== null && (previous.busy || previous.id !== id)) return;
+    draft.set({ id, attempt: previous?.attempt ?? 0, busy: true });
     try {
       await undoAssistantWrite(id);
+      if (draft.read()?.id !== id) return;
       onUndone(id);
-      setUnknown(null);
+      draft.set(null);
     } catch (error) {
-      if (handleUnauthenticatedApiError(error)) {
-        // the document is leaving for sign-in
-      } else if (outcomeUnknown(error) || (isRefusal(error) && unknown?.id === id)) {
-        setUnknown((current) => ({ id, attempt: (current?.id === id ? current.attempt : 0) + 1 }));
-      } else {
-        setUnknown(null);
+      if (draft.read()?.id !== id) return;
+      if (handleUnauthenticatedApiError(error)) return;
+      if (outcomeUnknown(error) || (isRefusal(error) && (previous?.attempt ?? 0) > 0))
+        draft.set({ id, attempt: (previous?.attempt ?? 0) + 1, busy: false });
+      else {
+        if (isRefusal(error)) draft.set(null);
         fail(error, UNDO_REFUSED, retry(id));
       }
+    } finally {
+      const current = draft.read();
+      if (current?.id === id && current.busy) draft.set({ ...current, busy: false });
     }
-    setBusy(false);
   };
+  const recovery = unknown ? resendFeedback({ line: { fact: "not sure that was undone.", reason: UNKNOWN_OUTCOME_REASON }, resend: { ...retry(unknown.id), run: () => { const current = draft.read(); if (current?.id === unknown.id && current.attempt > 0) void undo(unknown.id); } } }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === `undo ${unknown?.id}` ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
   return <div role="list" aria-label="Assistant actions">
-    {unknown ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} {...resendFeedback({
-      line: { fact: "not sure that was undone.", reason: UNKNOWN_OUTCOME_REASON }, resend: retry(unknown.id),
-    })} /> : null}
+    {unknown && recovery ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} {...recovery} /> : null}
+    {waits ? <span id={waitsId} className="sr-only" aria-live="off">{waitReason}</span> : null}
+    {pending ? <span id={otherId} className="sr-only" aria-live="off">another undo isn’t finished.</span> : null}
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
@@ -73,7 +94,8 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
         </span> : null}
         {reverted ? <span className={styles.kicker}>undone</span>
           : tool.undo_allowed && tool.id !== null ? <Button
-            disabled={busy || (unknown !== null && tool.id !== unknown.id)} aria-busy={busy}
+            disabled={busy || (pending !== null && tool.id !== pending.id) || (unknown?.id === tool.id && waits)} aria-busy={busy || (unknown?.id === tool.id && replay?.busy)}
+            aria-describedby={pending !== null && tool.id !== pending.id ? otherId : unknown?.id === tool.id && waits ? waitsId : undefined}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
             aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>older filings can’t be undone.</span> : null}
       </div>;

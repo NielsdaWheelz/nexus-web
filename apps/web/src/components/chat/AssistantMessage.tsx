@@ -204,7 +204,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
         fact: "couldn’t attach citations.",
         reason: run.support_id == null ? "the answer is complete." : `the answer is complete. support id ${run.support_id}.`,
       }} /> : null}
-      <AssistantTrust actions={actions} undone={undone} onUndone={markUndone} />
+      <AssistantTrust messageId={id} actions={actions} undone={undone} onUndone={markUndone} />
       {passage ? (
         <FloatingActionSurface
           open
