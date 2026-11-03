@@ -14,6 +14,7 @@ import { barClock, barMode, barSubjectId, liveKeys, miniKeys } from "@/lib/playe
 import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
 import * as Icon from "@/lib/ui/icons";
+import { focusableElements } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useNativeKeyboardVisibility } from "@/lib/ui/useKeyboardInset";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -149,7 +150,11 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     focusedControl.current = null;
     const active = document.activeElement;
     if (active !== document.body && active !== findActivePaneLandmarkFocusTarget() && active !== departed) return;
-    const target = sheetShown ? sheetContentRef.current?.querySelector<HTMLButtonElement>('[data-player-play="true"]') : returnFocus([])?.element;
+    // the sheet portals beyond the bar's container, so a mode without a disc keeps it there unseen:
+    // focus falls to the sheet's first shown control, then the sheet.
+    const sheet = sheetContentRef.current;
+    const target = !sheetShown ? returnFocus([])?.element : sheet === null ? null
+      : [sheet.querySelector<HTMLElement>('[data-player-play="true"]'), ...focusableElements(sheet)].find(shown) ?? sheet.closest<HTMLElement>('[role="dialog"]');
     target?.focus({ preventScroll: true });
   }, [sheetShown, returnFocus]);
   useLayoutEffect(() => recoverFocus(), [recoverFocus, state, isMobile, preferences, presentation.visible, mode.kind]);
