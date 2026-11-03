@@ -190,12 +190,18 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const copied = useCopyFeedback(writing.error_occurrence);
   const commitFailed = useRef(false);
-  useLayoutEffect(() => { commitFailed.current = writing.error !== null; });
+  const conditionSlip = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    commitFailed.current = writing.error !== null;
+    if (commitFailed.current && condition === "Refused") conditionSlip.current?.();
+  }, [writing.error, condition]);
   const restart = useMemo<CommandVerb>(() => ({ label: "restart nexus", commandKey: "RestartNexus", run: () => { if (guard.confirmDocumentExit()) window.location.reload(); } }), [guard]);
   useEffect(() => {
     if (condition !== "SyncLocal" && condition !== "Update" && condition !== "SignIn" && condition !== "Refused") return;
     const verbs = condition === "SyncLocal" ? [restart] as const : condition === "Update" ? updateVerb === null ? null : [updateVerb] as const : condition === "SignIn" ? [signIn] as const : null;
-    return say(conditionLine(condition, commitFailed.current), verbs ?? undefined);
+    const retract = say(conditionLine(condition, commitFailed.current), verbs ?? undefined);
+    conditionSlip.current = retract;
+    return () => { retract(); if (conditionSlip.current === retract) conditionSlip.current = null; };
   }, [say, restart, signIn, condition, updateRemedyKey, updateVerb]);
   if (defect) throw defect.error;
   if (writing.error === null) return null;
