@@ -1,15 +1,7 @@
-.speed {
-  position: relative;
-  min-width: 56px;
-  padding: 0 var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-}
-
-.marker {
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-}
+.speed { position: relative; min-width: 56px; padding: 0 var(--space-1); font-size: var(--text-sm); }
+.face { display: inline-flex; align-items: center; gap: var(--space-2); }
+.face svg { display: block; }
+.absent { visibility: hidden; pointer-events: none; }
+.marker { position: absolute; top: 4px; right: 4px; width: 4px; height: 4px; border-radius: var(--radius-full); background: currentColor; }
+.failed { color: var(--danger-ink); }
+@media (forced-colors: active) { .marker { forced-color-adjust: none; background: CanvasText; } }

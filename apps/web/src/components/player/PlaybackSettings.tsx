@@ -117,6 +117,7 @@ export function PlaybackPanel({ loaded, preferences, supportsSilenceSkipping, se
       <p className={styles.podcastName}>{podcast}</p>
     </div>
     <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />
+    <Reckoning loaded={loaded} ready={preferences.application.kind === "Ready"} />
     {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
       : <p className={styles.eyebrow}>skip silence · android app only</p>}
     <SavedSilence />
@@ -136,6 +137,21 @@ export function PlaybackPanel({ loaded, preferences, supportsSilenceSkipping, se
       {!missing && ((read.status === "failed") || (read.status === "ready" && read.error)) ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={podcastErrorMessage(read.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: read.refetch }]} /> : null}
     </div> : null}
   </section>;
+}
+
+/** This explicitly open panel is attended; only its detail leaves subscribe to the clock. */
+function Reckoning({ loaded, ready }: { readonly loaded: Loaded; readonly ready: boolean }) {
+  const { positionMs, durationMs } = Player.usePlayerTimeline();
+  const duration = durationMs > 0 ? durationMs : loaded.source.descriptor.duration_ms ?? 0;
+  const remaining = (duration - positionMs) / loaded.rate;
+  if (!ready || duration <= 0 || remaining <= 0) return null;
+  let arrival = "";
+  if (loaded.phase === "Playing" && !loaded.shortenPauses && !loaded.playbackFailed && loaded.error === null) {
+    const finish = new Date(Date.now() + remaining);
+    const hour = finish.getHours();
+    arrival = `, done about ${hour % 12 || 12}:${String(finish.getMinutes()).padStart(2, "0")} ${hour < 12 ? "am" : "pm"}`;
+  }
+  return <p className={styles.eyebrow}>{loaded.shortenPauses ? "≈ " : ""}{formatClock(remaining / 1000)} left{arrival}</p>;
 }
 
 /** Only this line reads the clock, so the panel stays still while the estimate grows. */

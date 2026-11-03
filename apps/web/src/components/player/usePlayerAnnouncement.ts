@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { assertNever } from "@/lib/assertNever";
 import type { BarMode } from "@/lib/player/barModel";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
 import { unavailableMessages } from "./PlayerFailures";
 
@@ -14,7 +15,7 @@ type Phase = Extract<Player.PlayerState, { kind: "Loaded" }>["phase"];
  * queue already reports stays unsaid. `announce` lets the queue and the sheet speak through it.
  */
 export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: string | null; readonly announce: (message: string | null) => void } {
-  const { state, queue } = Player.usePlayerSession();
+  const { state, queue, preferences, playbackSubject } = Player.usePlayerSession();
   const [announcement, announce] = useState<string | null>(null);
   const announced = useRef<{ source: string | null; phase: Phase | null; unavailable: string | null; stopped: string | null }>({ source: null, phase: null, unavailable: null, stopped: null });
   const loaded = state.kind === "Loaded" ? state : null;
@@ -58,6 +59,16 @@ export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: s
       default: assertNever(state);
     }
   }, [state, mode.kind, identity, title, unavailable, queuePlaybackFailure]);
+
+  const readyRate = useRef<{ subject: string | null; label: string | null }>({ subject: null, label: null });
+  useEffect(() => {
+    if (readyRate.current.subject !== playbackSubject) readyRate.current = { subject: playbackSubject, label: null };
+    if (playbackSubject === null || state.kind !== "Loaded" || preferences?.application.kind !== "Ready") return;
+    const label = formatPlaybackRate(state.rate);
+    const previous = readyRate.current.label;
+    readyRate.current.label = label;
+    if (previous !== null && previous !== label) announce(`speed ${label}`);
+  }, [playbackSubject, state, preferences]);
 
   return { announcement, announce };
 }
