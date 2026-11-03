@@ -28,7 +28,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { transportOf } from "@/lib/api/failure";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -343,6 +344,11 @@ export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
 }
 
 /** The browser engine's current descriptor within the existing load deadline. */
+/** A known descriptor survives a transport read failure; a domain refusal or defect does not. */
+function descriptorUnavailable(error: unknown): boolean {
+  return isAbortError(error) || isApiError(error) && !isSameSystemApiDefect(error) && transportOf(error) !== "Refused";
+}
+
 async function freshDescriptor(
   mediaId: string,
   signal: AbortSignal | null,
@@ -558,7 +564,7 @@ export function GlobalPlayerProvider({
         })
       : createBrowserEngine({
           terminal: input => navigation.current?.terminal(input) ?? Promise.resolve(),
-          fresh: mediaId => freshDescriptor(mediaId, null).catch(error => { if (isAbortError(error) || outcomeUnknown(error)) return null; throw error; }),
+          fresh: mediaId => freshDescriptor(mediaId, null).catch(error => { if (descriptorUnavailable(error)) return null; throw error; }),
           deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
           commands: () => navigation.current,
           onFailure: error => navigation.current?.failure(error),
@@ -754,7 +760,7 @@ export function GlobalPlayerProvider({
     catch (error) {
       if (mine !== latest.current || target !== engineRef.current) return;
       if (!isApiError(error) && !isAbortError(error) || isSameSystemApiDefect(error)) throw error;
-      if (positionMs !== null || known === null || !(isAbortError(error) || outcomeUnknown(error))) {
+      if (positionMs !== null || known === null || !(descriptorUnavailable(error))) {
         publishQueue({ ...queueViewRef.current, error: { kind: "Episode", entry_id: entry.id, title: known?.title ?? null } });
         // `retry` plays from the saved place, so a timed play offers none; its time stays pressable.
         outcome.fail(error, known === null ? "couldn’t play this episode." : `couldn’t play “${known.title}”.`, positionMs !== null ? undefined
@@ -1032,7 +1038,7 @@ export function GlobalPlayerProvider({
       try { return await freshDescriptor(mediaId, request.signal); }
       catch (error) {
         if (mine !== latest.current || isAbortError(error)) throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
-        if (!outcomeUnknown(error) || positionMs !== null || knownDescriptor === null) throw error;
+        if (!descriptorUnavailable(error) || positionMs !== null || knownDescriptor === null) throw error;
         return knownDescriptor;
       } finally { if (descriptorRead.current === request) descriptorRead.current = null; }
     };
