@@ -133,23 +133,23 @@ export function useEvidenceWindow(input: {
     }
   }, [port, root]);
   /** C3: the anchor moves only with the scroll. Any other move is absorbed relatively, because the compositor may be ahead. */
-  const hold = useCallback(() => {
+  const hold = useCallback((reselect: boolean) => {
     const {aligned, demand} = latest.current;
     const list = root.current, scroll = port.current, outside = outer.current;
     let kept = anchor.current;
     if (aligned || demand !== null || !list || !scroll || !outside || !kept) return;
     const origin = list.getBoundingClientRect().top, before = committed.current;
-    if (before.scope === latest.current.scope && before.slots.length === latest.current.slots.length &&
-      before.slots.every((slot, index) => slot.key === latest.current.slots[index].key) &&
+    if (reselect && before.scope === latest.current.scope &&
       (scroll.scrollTop !== seen.current.port || outside.scrollTop !== seen.current.outer)) {
       // Input may have passed the old anchor before a resize lands. Choose in the prior layout,
       // otherwise growth inside that row (or the next) is accepted before it can be compensated.
       const key = kept.key, index = before.slots.findIndex(slot => slot.key === key);
       if (index !== -1) {
+        const available = new Set(latest.current.slots.map(slot => slot.key));
         const box = scroll.getBoundingClientRect(), bounds = outside.getBoundingClientRect(), y = kept.y;
         const next = firstVisible(before.slots.entries(), Math.max(box.top, bounds.top), Math.min(box.bottom, bounds.bottom), ([at, slot]) => {
           const row = rows.current.get(slot.key);
-          if (!row || row.hidden) return null;
+          if (!available.has(slot.key) || !row || row.hidden) return null;
           const top = origin + y + before.offsets[at] - before.offsets[index];
           return {top, bottom: top + before.offsets[at + 1] - before.offsets[at]};
         });
@@ -189,6 +189,7 @@ export function useEvidenceWindow(input: {
   // Every commit: an anchor survives a membership change, and whatever moved it lands back before paint.
   useLayoutEffect(() => {
     latest.current = input;
+    const previous = anchor.current;
     if (committed.current.scope !== scope || aligned) anchor.current = null;
     else if (committed.current.slots !== slots) anchor.current = survivor(anchor.current, committed.current.slots, slots);
     // A release lands here, under this commit's `aligned`: a row's layout effect runs before this one.
@@ -201,7 +202,8 @@ export function useEvidenceWindow(input: {
       }
       released.current = null;
     }
-    hold();
+    // A removed filter anchor already handed its position to its successor.
+    hold(anchor.current?.key === previous?.key);
     committed.current = {scope, slots, offsets, range};
     measure();
     publishExtent();
@@ -222,7 +224,7 @@ export function useEvidenceWindow(input: {
         if (key === undefined || height <= 0 || height === known || clock.current.kind !== "still" && known !== undefined && height < known) continue;
         memory.current.heights.set(key, height);
       }
-      hold();
+      hold(true);
       measure();
       // Never flushSync here: a commit inside a resize broadcast loops.
       frames.current?.request();
@@ -256,7 +258,7 @@ export function useEvidenceWindow(input: {
       const scrolled = scroll.scrollTop !== seen.current.port || outside.scrollTop !== seen.current.outer;
       if (scrolled) {
         // Absorb what moved the old anchor before measuring anything: its write moves every box.
-        hold();
+        hold(true);
         seen.current = {port: scroll.scrollTop, outer: outside.scrollTop};
         restart();
       } else if (clock.current.kind === "due") {
@@ -278,7 +280,7 @@ export function useEvidenceWindow(input: {
       if (!same) setRevision(revision => revision + 1);
     };
     // The reader's pointer or key ends a released anchor before its own effect lands: the policy chooses again.
-    const act = () => {hold(); measure(); publishExtent(); capture(band());};
+    const act = () => {hold(true); measure(); publishExtent(); capture(band());};
     outside.addEventListener("pointerdown", act, true);
     outside.addEventListener("keydown", act, true);
     for (const node of [scroll, outside, list, ...rows.current.values()]) resize.observe(node);
