@@ -7,7 +7,7 @@
 // while preserving the local locator and the owner’s save/conflict recovery.
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import type { CursorSnapshot, Locator } from "./model";
-import type { ProgressView, ReaderProgressPort } from "./ports";
+import type { ProgressUnobserved, ProgressView, ReaderProgressPort } from "./ports";
 
 export const SAVE_IDLE_MS = 500;
 export const SAVE_MAX_WAIT_MS = 5_000;
@@ -21,7 +21,6 @@ export type Handoff =
       readonly canonical: CursorSnapshot;
       readonly device: Locator;
     };
-/** `offline`: the device was offline when it failed, so nothing left it. */
 export type SaveFailure = { readonly error: unknown; readonly offline: boolean };
 export type ProgressState =
   | { readonly kind: "Loading" }
@@ -39,6 +38,8 @@ export type ProgressState =
       /** A save that failed twice running, or a failed resolution; a landed save, a newer read or a
        * new binding clears it. Movement does not: the position still isn't saved. */
       readonly saveFailure: SaveFailure | null;
+      /** The write is never replayed while its authoritative view is unread. */
+      readonly observation: ProgressUnobserved | null;
       readonly handoff: Handoff | null;
     };
 
@@ -116,6 +117,7 @@ export function createProgressSync(
    * clears it restarts the count, so the next lost save has its resend too. */
   let failure: { readonly kind: "Resending" } | ({ readonly kind: "Said" } & SaveFailure) | null = null;
   const said = (error: unknown) => ({ kind: "Said" as const, error, offline: navigator.onLine === false });
+  let observation: { readonly result: ProgressUnobserved; readonly locator: Locator | null; readonly resolution: "Canonical" | "Device" | null } | null = null;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
   let inFlight: Promise<void> | null = null;
@@ -153,6 +155,7 @@ export function createProgressSync(
             saving: inFlight !== null,
             retrying: revalidating,
             saveFailure: failure?.kind === "Said" ? failure : null,
+            observation: observation?.result ?? null,
             handoff,
           };
     hooks.changed();
@@ -179,6 +182,7 @@ export function createProgressSync(
     window.clearTimeout(timer);
     if (
       unsaved === null ||
+      observation !== null ||
       inFlight !== null ||
       handoff?.kind === "Newer" ||
       view === null ||
@@ -195,7 +199,7 @@ export function createProgressSync(
   function save(keepalive: boolean): Promise<void> {
     window.clearTimeout(timer);
     const locator = unsaved;
-    if (inFlight !== null || locator === null || view === null)
+    if (inFlight !== null || locator === null || view === null || observation !== null)
       return inFlight ?? Promise.resolve();
     // A save the leaving page cut off (or a keepalive one, which outlives it)
     // has an unobservable outcome: the locator stays unsaved, no retry here.
@@ -208,8 +212,18 @@ export function createProgressSync(
           expectedReaderGeneration: hooks.generation(),
           adoptUnresolved: adopting,
         });
-        failure = null;
         if (needsSourceBinding()) return;
+        failure = null;
+        if (result.kind === "Unobserved") {
+          observation = { result, locator, resolution: null };
+          generation += 1;
+          if (result.acceptance === "Accepted") {
+            activitySaved = true;
+            adopting = false;
+            if (unsaved === locator) unsaved = null;
+          }
+          return;
+        }
         if (result.kind === "ContentChanged") {
           unsaved = null;
           requireSourceReload();
@@ -275,9 +289,25 @@ export function createProgressSync(
     publish();
     const mine = generation;
     const candidate = unsaved;
+    const pending = observation;
     try {
       const next = await port.load();
       if (mine !== generation) return;
+      if (pending !== null && observation === pending) {
+        adopt(next);
+        handoff = next.kind === "Conflict" ? handoff : null;
+        failure = null;
+        const located = savedLocator(next);
+        if (pending.result.acceptance === "Accepted") {
+          observation = null;
+          if (pending.resolution === "Canonical" && unsaved === null && next.kind === "Canonical")
+            hooks.remote(next.snapshot, true);
+        } else if (located !== null && pending.locator !== null && sameLocator(located, pending.locator)) {
+          if (unsaved === pending.locator) unsaved = null;
+          observation = null;
+        }
+        return;
+      }
       if (next.kind !== "Canonical") {
         adopt(next);
       } else if (view.kind !== "Canonical" && unsaved === null &&
@@ -323,6 +353,7 @@ export function createProgressSync(
     } finally {
       revalidating = false;
       publish();
+      if (pending !== null && observation === null) schedule();
     }
   }
 
@@ -366,6 +397,7 @@ export function createProgressSync(
       unsaved = null;
       adopting = false;
       failure = null;
+      observation = null;
       handoff = null;
       state = state.kind === "LoadFailed"
         ? { ...state, recovery: "ReloadDocument", retrying: true }
@@ -420,6 +452,7 @@ export function createProgressSync(
     },
     revalidate,
     async prepareFence() {
+      if (observation !== null) throw new ProgressPreparationError();
       if (needsSourceBinding()) requireSourceReload();
       fenced = true;
       generation += 1;
@@ -454,10 +487,11 @@ export function createProgressSync(
       adopting = false;
       failure = null;
       activitySaved = false;
+      observation = null;
       publish();
     },
     async resolve(choice) {
-      if (fenced) return;
+      if (fenced || observation !== null) return;
       const open = handoff;
       if (open === null) return;
       if (open.kind === "Newer") {
@@ -482,17 +516,20 @@ export function createProgressSync(
       const current = handoff;
       if (current?.kind !== "Conflict") return;
       const device = unsaved ?? current.device;
+      const submitted = unsaved;
       const run = async () => {
         try {
-          adopt(
-            await port.resolve(choice, {
-              canonical: current.canonical,
-              device,
-            }),
-          );
-          if (choice === "Canonical" || unsaved === device) unsaved = null;
+          const result = await port.resolve(choice, { canonical: current.canonical, device });
           failure = null;
-          if (choice === "Canonical") hooks.remote(current.canonical, true);
+          if (result.kind === "Unobserved") {
+            observation = { result, locator: choice === "Device" ? device : null, resolution: choice };
+            generation += 1;
+            if (result.acceptance === "Accepted" && (choice === "Canonical" ? unsaved === submitted : unsaved === device)) unsaved = null;
+            return;
+          }
+          adopt(result);
+          if (choice === "Canonical" ? unsaved === submitted : unsaved === device) unsaved = null;
+          if (choice === "Canonical" && unsaved === null) hooks.remote(current.canonical, true);
         } catch (error) {
           console.error("reader_cursor_resolve_failed", error);
           failure = said(error);
@@ -507,6 +544,7 @@ export function createProgressSync(
       await inFlight;
     },
     retry() {
+      if (observation !== null) { void revalidate(); return; }
       if (fenced) {
         if (failure?.kind === "Said") void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
         return;
