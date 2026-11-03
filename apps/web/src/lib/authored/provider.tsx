@@ -18,10 +18,10 @@ import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthor
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { discardFailedAuthoredSetup } from "./signOut";
 import { AuthoredSetupError, openAuthoredStore } from "./client";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useTransportVerbs } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 import { sessionSignIn } from "@/lib/native/client";
@@ -76,6 +76,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const [attempt, retry] = useState(0);
   const guard = useWorkGuard();
   const { say } = useOutcome();
+  const transportVerbs = useTransportVerbs();
   const online = useConnectivity() === "Online";
   const lagging = useLagging(sync.failure);
   useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
@@ -152,7 +153,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   } };
   const recover: Verbs = [retryVerb, leaveVerb];
   const signInVerbs: Verbs = host === "workspace" ? [{ ...signInVerb, busy: signingIn || opening }, leaveVerb] : [signInVerb];
-  const updateVerbs = transportVerbs("Update", { signIn: null }) ?? undefined;
+  const updateVerbs = transportVerbs("Update") ?? undefined;
   const transport = failure !== null && isApiError(failure) ? transportOf(failure) : null;
   const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
   return <section className={styles.setup}>{
@@ -179,6 +180,7 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   const runtime = useMemo(() => getWritingRuntime(accountId), [accountId]);
   const writing = useSyncExternalStore(runtime.subscribe, runtime.snapshot, runtime.snapshot);
   const condition = useCondition();
+  const updateVerb = useTransportVerbs()("Update")?.[0] ?? null;
   // `Update`'s line and verb follow the remedy; under any other condition a remedy change is no onset.
   const updateRemedyKey = useSyncExternalStore(subscribeAdmission, () => condition === "Update" ? updateRemedy() : null, () => null);
   const [incident, setIncident] = useState<{ occurrence: object | null; serial: number; attempt: number }>({ occurrence: null, serial: 0, attempt: 0 });
@@ -192,9 +194,9 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   const restart = useMemo<CommandVerb>(() => ({ label: "restart nexus", commandKey: "RestartNexus", run: () => { if (guard.confirmDocumentExit()) window.location.reload(); } }), [guard]);
   useEffect(() => {
     if (condition !== "SyncLocal" && condition !== "Update" && condition !== "SignIn" && condition !== "Refused") return;
-    const verbs = condition === "SyncLocal" ? [restart] as const : condition === "Update" ? transportVerbs("Update", { signIn: null }) : condition === "SignIn" ? [signIn] as const : null;
+    const verbs = condition === "SyncLocal" ? [restart] as const : condition === "Update" ? updateVerb === null ? null : [updateVerb] as const : condition === "SignIn" ? [signIn] as const : null;
     return say(conditionLine(condition, commitFailed.current), verbs ?? undefined);
-  }, [say, restart, signIn, condition, updateRemedyKey]);
+  }, [say, restart, signIn, condition, updateRemedyKey, updateVerb]);
   if (defect) throw defect.error;
   if (writing.error === null) return null;
   const stopped = condition === "Stopped";

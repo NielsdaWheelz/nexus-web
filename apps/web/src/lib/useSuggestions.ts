@@ -357,7 +357,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           const state = current.current.state;
           const publicationChanged = state?.latest != null && (latestAtAdmission == null || state.latest.id !== latestAtAdmission.id);
           // Observation can confirm admission before its HTTP receipt is lost.
-          if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED" &&
+          if (outcomeUnknown(error) &&
               (state?.work != null || publicationChanged)) {
             commit((value) => ({ ...value, admissionError: null }));
             return true;

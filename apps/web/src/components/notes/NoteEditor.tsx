@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 
 // One editing engine for a standalone body or a flat outline projection. Rich
@@ -73,9 +74,9 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { sentence, type CommandVerb, type Line } from "@/components/feedback/stage";
+import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
@@ -194,6 +195,7 @@ export interface NoteEditorProps {
   occurrenceKey?: string;
   /** A failed commit holds this editor's words: its caret turns `--danger`, never the sole signal. */
   wordsAtRisk?: boolean;
+  "aria-describedby"?: string;
   /** The acknowledged note identity; drafts supply null. */
   containingNoteRef: string | null;
   body: NoteBody;
@@ -267,13 +269,15 @@ const ACROSS_FIELDS: Line = { fact: "couldn’t change text across fields.", rea
 const LINK_OPEN: Line = { fact: "couldn’t do that while a link is open.", reason: "your writing is kept." };
 const NOT_ATTACHED = "couldn’t attach this file.";
 const NOT_ADDED = "couldn’t add this attachment.";
-const UNKNOWN: Line = { fact: "not sure that saved. it may have gone through." };
+const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 
 export default function NoteEditor(props: NoteEditorProps) {
   const supplied = useOptionalNoteEditorHost();
   return supplied ? <NoteEditorContent {...props} /> : <WorkspaceNoteEditorHost><NoteEditorContent {...props} /></WorkspaceNoteEditorHost>;
 }
 function NoteEditorContent(props: NoteEditorProps) {
+  const describedBy = props["aria-describedby"];
+  const resendVerbs = useResendVerbs();
   const editorHost = useNoteEditorHost();
   const schema = props.projection?.schema ?? canonicalSchema;
   const bindingRef = useRef<EditorBinding | null>(null);
@@ -667,7 +671,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         // Unresolved holds and its retry replays the same attempt: an unknown outcome, or bytes
         // that never landed. Review: a resend re-reads the guard. A final refusal clears, saying
         // its upload outcome's reason, else the transport's. A malformed intent is a defect.
-        if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") hold(UNKNOWN);
+        if (outcomeUnknown(error)) hold(UNKNOWN);
         else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
@@ -713,7 +717,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (view) notifySelection(view.state);
     if (!props.editable) setLinkVisible(false);
-  }, [props.editable, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
+  }, [props.editable, describedBy, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -979,6 +983,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
           "aria-label": latest.current.label,
+          "aria-describedby": latest.current["aria-describedby"] ?? "",
           "aria-multiline": "true",
           "data-placeholder":
             latest.current.placeholder ??
@@ -1554,10 +1559,10 @@ function NoteEditorContent(props: NoteEditorProps) {
     >
       <div ref={host} className={styles.host} />
       {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} line={attachmentValue.unconfirmed}
-        verbs={[{ label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
+        verbs={[...resendVerbs({ label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
           const task = readAttachment(), view = viewRef.current;
           if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
-        } }, discardVerb]} /> : null}
+        } }), discardVerb]} /> : null}
       {attachmentValue?.body && attachmentValue.body === declined ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
         label: "insert", commandKey: "InsertAttachment", run: () => {
           const task = readAttachment(), view = viewRef.current;
@@ -1683,7 +1688,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             </Button>
           </div>
           {/* focus is already in the address input, so its description is not read again: the refusal speaks */}
-          {link.error ? <><Field id={linkErrorId} line={link.error} /><Announcement text={sentence(link.error)} level="Polite" occurrence={link.error} /></> : null}
+          {link.error ? <Field id={linkErrorId} line={link.error} /> : null}
         </div>
       ) : null}
     </div>

@@ -3,29 +3,25 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
-import { Announcement } from "@/components/feedback/Feedback";
 import { Fact, Field } from "@/components/feedback/Fact";
-import { sentence, type Line } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
 
 const NOT_SENT = "couldn’t send a reset link.";
 
 export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
   const [emailError, setEmailError] = useState<Line | null>(null);
   const [outcome, setOutcome] = useState<Line | null>(null);
-  // focus already in the email reads nothing, so a refusal it would carry speaks.
-  const [spoken, setSpoken] = useState<{ line: Line } | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const { pending, submit } = useAuthForm<"RateLimited" | "ServiceUnavailable">(
     (kind) => {
       if (kind === "RateLimited") setOutcome({ fact: "too many reset requests.", reason: "wait a while, then try again." });
       else if (kind === "ServiceUnavailable") setOutcome(TRANSPORT_LINES.Busy.command(NOT_SENT));
       else if (kind === "Unreachable") setOutcome(TRANSPORT_LINES.Unavailable.command(NOT_SENT));
-      // L1 owns this copy; until it is a `Line`, its title and message are one.
-      else if (kind === "Forbidden") setOutcome({ fact: WRONG_ADDRESS.title, reason: WRONG_ADDRESS.message });
+      else if (kind === "Forbidden") setOutcome(WRONG_ADDRESS_LINE);
       else {
         throw new Error(`Unexpected password-recovery outcome ${kind}`);
       }
@@ -42,7 +38,7 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
         : null;
     setEmailError(error);
     setOutcome(null);
-    if (error) { setSpoken(document.activeElement === email ? { line: error } : null); email.focus(); }
+    if (error) { email.focus(); }
     return !error;
   }
 
@@ -94,12 +90,8 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
           />
           {emailError ? <Field id="password-recovery-email-error" line={emailError} /> : null}
         </label>
-        {emailError !== null && spoken?.line === emailError ? <Announcement text={sentence(emailError)} level="Polite" occurrence={spoken} /> : null}
         {/* outside the label, which names the input. focus stays where the submit left it, so each outcome speaks once */}
-        {outcome ? <>
-          <Field id="password-recovery-outcome" line={outcome} />
-          <Announcement text={sentence(outcome)} level="Polite" occurrence={outcome} />
-        </> : null}
+        {outcome ? <Field id="password-recovery-outcome" line={outcome} /> : null}
         <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           Send reset link
         </Button>
