@@ -7,6 +7,7 @@
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import { isAbortError } from "@/lib/errors";
 import {
   expectArray,
@@ -122,25 +123,22 @@ function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
   }, "recovery candidates"), next_cursor: value.next_cursor === null ? null : expectString(value.next_cursor, "next cursor") };
 }
 
-/** Words for a code these routes answer with. The web app's import copy
-    (`lib/imports/copy.ts`) owns the spellings of the conditions it shares; they are
-    repeated, not imported, because its dependencies would put React in this
-    background page. Any other code reads as a refusal, or as nexus not answering
-    when the status says nexus failed. */
+/** The fixed reasons this extension's routes can answer with; a generic request
+    refusal cannot identify an address or upload kind as its cause. */
 function words(code: string, status: number): string {
   switch (code) {
     case "E_RESOURCE_CONFLICT":
-      return "something changed while this was sending.";
+      return IMPORT_WORDS.changed;
     case "E_MEDIA_DELETING":
-      return "this is being removed.";
+      return `${IMPORT_WORDS.deleting}.`;
     case "E_INVALID_REQUEST":
-      return "nexus can’t import from this address.";
+      return `${IMPORT_WORDS.refused}.`;
     case "E_FILE_TOO_LARGE":
-      return "the file is too big.";
+      return `${IMPORT_WORDS.tooBig}.`;
     case "E_INVALID_FILE_TYPE":
-      return "its contents aren’t pdf or epub.";
+      return "nexus refused what arrived.";
     case "E_SOURCE_INTEGRITY":
-      return "what arrived doesn’t match the file.";
+      return `${IMPORT_WORDS.integrity}.`;
     case "E_CAPTURE_TOO_LARGE":
       return "this page is too large to import.";
     case "E_LIBRARY_NOT_FOUND":
@@ -150,19 +148,24 @@ function words(code: string, status: number): string {
     case "E_CAPTURE_TARGET_CHANGED":
       return "the imported copy changed since this was read.";
     case "E_UPLOAD_CAPABILITY_EXPIRED":
-      return "upload timed out.";
+      return `${IMPORT_WORDS.timedOut}.`;
+    case "E_SIGN_UPLOAD_FAILED":
+      return `${IMPORT_WORDS.notPrepared}.`;
+    case "E_STORAGE_ERROR":
+      return `${IMPORT_WORDS.notChecked}.`;
     case "E_STORAGE_MISSING":
-      return "upload stopped.";
+      return `${IMPORT_WORDS.stopped}.`;
     case "E_UPLOAD_SESSION_NOT_FOUND":
-    case "E_UPLOAD_GENERATION_STALE":
       return "removed since.";
+    case "E_UPLOAD_GENERATION_STALE":
+      return "this upload was replaced.";
     case "E_UNAUTHENTICATED":
       return "sign in to continue.";
     case "E_DATABASE_BUSY":
     case "E_AUTH_UNAVAILABLE":
       return "nexus is busy.";
   }
-  return status >= 500 ? "nexus isn’t answering." : "nexus refused it.";
+  return status >= 500 ? "nexus isn’t answering." : `${IMPORT_WORDS.refused}.`;
 }
 
 async function call<T>(
@@ -253,7 +256,7 @@ export async function putBytes(
 ): Promise<void> {
   const remaining = Date.parse(upload.expires_at) - Date.now();
   if (remaining <= 0) {
-    throw failure("E_UPLOAD_EXPIRED", "upload timed out.");
+    throw failure("E_UPLOAD_EXPIRED", `${IMPORT_WORDS.timedOut}.`);
   }
   let response: Response;
   try {
@@ -266,7 +269,7 @@ export async function putBytes(
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw failure("E_UPLOAD_TRANSPORT", "upload stopped.");
+    throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
   }
-  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", "upload stopped.");
+  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
 }

@@ -57,12 +57,13 @@ declare const __NEXUS_STORAGE_ORIGIN__: string;
 
 const MENU_ID = "nexus-capture-link";
 const CREDENTIAL_KEY = "nexusCaptureCredential";
-/** Codes after which the same request can never succeed: no Retry. */
+/** these confirm refusals are recorded on the session. */
+const VERIFICATION_REJECTIONS = new Set([
+  "E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE", "E_CAPTURE_TOO_LARGE",
+]);
+/** codes after which the same request can never succeed: no retry. */
 const TERMINAL = new Set([
-  "E_SOURCE_INTEGRITY",
-  "E_INVALID_FILE_TYPE",
-  "E_FILE_TOO_LARGE",
-  "E_CAPTURE_TOO_LARGE",
+  ...VERIFICATION_REJECTIONS,
   "E_INVALID_REQUEST",
   "E_UPLOAD_INTENT_MISMATCH",
   "E_RESOURCE_CONFLICT",
@@ -1007,27 +1008,39 @@ async function save(signal: AbortSignal): Promise<void> {
     if (isAbortError(error)) throw error;
     // a 401 forgets the credential; Retry returns with the account
     const shown = await describe(error);
-    const current = requireDraft();
-    const confirming = (current.submission?.confirmation ?? null) !== null;
+    const submission = requireDraft().submission;
+    const confirming = (submission?.confirmation ?? null) !== null;
+    const creating = submission?.createUncertain === true;
+    if (submission !== null) submission.createUncertain = false;
     let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
-    if (current.submission?.confirmationUncertain || current.submission?.createOutcomeUnknown) {
+    // a recorded rejection or a generation advanced under the publication lock
+    // fences this confirmation. expiry's unlocked read cannot settle an overlap.
+    if (submission !== null && confirming && error instanceof CaptureFailureError && error.status !== null &&
+        (VERIFICATION_REJECTIONS.has(shown.code) || shown.code === "E_UPLOAD_GENERATION_STALE")) {
+      submission.confirmationUncertain = false;
+      submission.createOutcomeUnknown = false;
+      recovery = shown.code === "E_UPLOAD_GENERATION_STALE" ? "Recapture" : "Discard";
+    } else if (submission?.confirmationUncertain || submission?.createOutcomeUnknown) {
       recovery = "Check";
+    } else if (error instanceof CaptureFailureError && (error.status === 401 ||
+               shown.code === "E_SIGN_UPLOAD_FAILED" || shown.code === "E_STORAGE_ERROR")) {
+      recovery = "Retry";
     } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
-      if (current.submission === null) throw new Error("Refused confirmation has no owner.");
-      current.submission.confirmation = null;
+      if (submission === null) throw new Error("Refused confirmation has no owner.");
+      submission.confirmation = null;
       recovery = "Review";
     } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
                shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED" ||
                shown.code === "E_WIRE_MISMATCH") {
       recovery = "Recapture";
-    } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
+    } else if ((confirming || creating) && (!(error instanceof CaptureFailureError) || error.status === null || error.status >= 500 || shown.code === "E_UNKNOWN")) {
       recovery = "Check";
     } else {
       recovery = TERMINAL.has(shown.code) ? "Discard" : "Retry";
     }
-    if (recovery === "Check" && current.submission !== null) {
-      if (confirming) current.submission.confirmationUncertain = true;
-      if (current.submission.createUncertain) current.submission.createOutcomeUnknown = true;
+    if (recovery === "Check" && submission !== null) {
+      if (confirming) submission.confirmationUncertain = true;
+      if (creating) submission.createOutcomeUnknown = true;
     }
     setPhase({ kind: "failed", failure: shown, recovery });
   }

@@ -9,23 +9,18 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  FeedbackNotice,
-  FeedbackProvider,
-  FeedbackRecoveryControl,
-  FeedbackStatus,
-  useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { Announcement, FeedbackProvider } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { sentence, type Line } from "@/components/feedback/stage";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import ChoicePicker from "@/components/ui/ChoicePicker";
 import type { Schema } from "@/lib/api/wire";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
@@ -57,22 +52,20 @@ async function command(sent: Command): Promise<Reply> {
 }
 
 /** A lost background or port; opening the popup again reconnects it. */
-const NOT_ANSWERING: FeedbackContent = { tone: "Danger", title: "the extension isn’t answering.", message: "reopening this popup retries." };
+const NOT_ANSWERING: Line = { fact: "the extension isn’t answering.", reason: "reopening this popup retries." };
 
 /** The notice for a command that did not run, else null. */
-function replyNotice(reply: Reply): FeedbackContent | null {
-  return reply.kind === "failure" ? failureContent(reply.failure) : reply.kind === "unreachable" ? NOT_ANSWERING : null;
+function replyNotice(reply: Reply): Line | null {
+  return reply.kind === "failure" ? failureLine(reply.failure) : reply.kind === "unreachable" ? NOT_ANSWERING : null;
 }
 
-function failureContent(
+function failureLine(
   failure: CaptureFailure,
   title?: string,
-): FeedbackContent {
+): Line {
   return {
-    tone: "Danger",
-    title: title ?? failure.message,
-    message: title === undefined ? undefined : failure.message,
-    requestId: failure.requestId ?? undefined,
+    fact: title ?? failure.message,
+    reason: title === undefined ? undefined : failure.message,
   };
 }
 
@@ -92,11 +85,10 @@ const patternHost = (pattern: string) =>
 
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [notice, setNotice] = useState<Line | null>(null);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const frame = useRef<HTMLElement>(null);
-  const [bounds, setBounds] = useState<HTMLElement | null>(null);
-  const bindFrame = useCallback((element: HTMLElement | null) => { frame.current = element; setBounds(element); }, []);
+  useActionFocusRecovery(frame, () => frame.current);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
   const connection = useRef<{
@@ -131,7 +123,7 @@ function Popup() {
       setState(message.state);
       const phase = message.state.draft?.phase.kind;
       if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
-      if (message.failure !== null) setNotice(failureContent(message.failure));
+      if (message.failure !== null) setNotice(failureLine(message.failure));
     });
     port.onDisconnect.addListener(() => {
       if (connection.current !== current) return;
@@ -183,30 +175,22 @@ function Popup() {
       (granted) => {
         if (granted) return;
         setRetryFailure(null);
-        setNotice({ tone: "Warning", title: `firefox didn’t allow access to ${origins.map(patternHost).join(", ")}.`, message: "nothing was sent." });
+        setNotice({ fact: `firefox didn’t allow access to ${origins.map(patternHost).join(", ")}.`, reason: "nothing was sent." });
       },
       (error: unknown) => {
         console.error("the access request failed:", error);
         setRetryFailure(null);
-        setNotice({ tone: "Warning", title: "couldn’t ask firefox for access.", message: "nothing was sent." });
+        setNotice({ fact: "couldn’t ask firefox for access.", reason: "nothing was sent." });
       },
     );
   };
 
   if (state === null) {
-    return (
-      <main className={styles.popup} ref={bindFrame} aria-busy="true">
-        <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-          protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
-          <FeedbackRecoveryControl className={styles.recovery} />
-        {notice ? (
-          <FeedbackNotice content={notice} announcement="Assertive" />
-        ) : (
-          <FeedbackStatus content={{ tone: "Neutral", title: "opening…" }} announcement="Polite" />
-        )}
-      </FeedbackSurface>
-      </main>
-    );
+    const line = notice ?? { fact: "opening…" };
+    return <main className={styles.popup} ref={frame} tabIndex={-1} aria-busy="true">
+      <Fact line={line} />
+      <Announcement text={sentence(line)} level="Polite" />
+    </main>;
   }
 
   const { account, draft } = state;
@@ -234,50 +218,39 @@ function Popup() {
           ? "document"
           : draft.target.documentKind;
 
+  const sourceLine: Line | null = draft !== null ? null : state.unsupported === null
+    ? { fact: "nothing here to import." }
+    : { fact: state.checkingFailed ? "couldn’t check this page." : "this page can’t be imported.", reason: state.unsupported };
+  const revocationLine = state.revocationFailure === null ? null
+    : failureLine(state.revocationFailure, "couldn’t disconnect from nexus.");
+  const captureLine: Line | null = captureFailure === null ? null
+    : captureFailure.recovery === "Check"
+      ? { fact: "not sure that imported.", reason: "it may have gone through." }
+      : failureLine(captureFailure.failure, captureFailure.recovery === "Review" ? undefined : "couldn’t import this.");
+  const statusLine = phase === null || STATUS[phase.kind] === "" ? null
+    : { fact: phase.kind === "saved" && phase.openUrl === null ? "removed since" : STATUS[phase.kind] };
+  const accountLine = draft?.needsRecapture && account !== null && phase?.kind !== "failed"
+    ? { fact: "the account changed since this page was read." } : null;
+  const replacementLine = replacement !== null && phase?.kind !== "saved"
+    ? { fact: "this replaces the imported article.", reason: replacement.title ?? undefined } : null;
+  // one popup speaker; the fact controls stay mounted when their sentence changes.
+  const spoken = notice ?? revocationLine ?? captureLine ?? accountLine ?? statusLine ?? sourceLine ?? replacementLine;
+
   return (
-    <main className={styles.popup} ref={bindFrame} tabIndex={-1}>
-      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
-        <FeedbackRecoveryControl className={styles.recovery} />
+    <main className={styles.popup} ref={frame} tabIndex={-1}>
+      <Announcement text={spoken === null ? "" : sentence(spoken)} level="Polite" />
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
           <h1 className={styles.title}>{draft.target.title}</h1>
           <span className={styles.host}>{draft.target.host}</span>
         </header>
-      ) : (
-        <FeedbackNotice
-          content={
-            state.unsupported !== null
-              ? {
-                  tone: "Neutral",
-                  title: state.checkingFailed ? "couldn’t check this page." : "this page can’t be imported.",
-                  message: state.unsupported,
-                }
-              : {
-                  tone: "Neutral",
-                  title: "nothing here to import.",
-                }
-          }
-          announcement="Polite"
-          actions={state.checkingFailed ? [{ label: "retry", onClick: () => sendWithOrigins({ kind: "retry_checking" }) }] : undefined}
-        />
-      )}
+      ) : sourceLine !== null ? (
+        <Fact line={sourceLine} verbs={state.checkingFailed ? [{ label: "retry", commandKey: "check page", run: () => sendWithOrigins({ kind: "retry_checking" }) }] : undefined} />
+      ) : null}
 
-      {state.revocationFailure !== null ? (
-        <FeedbackNotice
-          content={failureContent(
-            state.revocationFailure,
-            "couldn’t disconnect from nexus.",
-          )}
-          announcement="Assertive"
-          actions={[
-            {
-              label: "retry",
-              onClick: () => sendWithOrigins({ kind: "disconnect" }),
-            },
-          ]}
-        />
+      {revocationLine !== null ? (
+        <Fact line={revocationLine} verbs={[{ label: "retry", commandKey: "disconnect", run: () => sendWithOrigins({ kind: "disconnect" }) }]} />
       ) : account === null ? (
         <div className={styles.account}>
           <span>not signed in</span>
@@ -318,64 +291,36 @@ function Popup() {
         </details>
       ) : null}
 
-      {replacement !== null && phase?.kind !== "saved" ? (
-        <FeedbackNotice content={{ tone: "Neutral", title: "this replaces the imported article.",
-          message: replacement.title ?? undefined }} announcement="Polite" />
-      ) : null}
+      {replacementLine !== null ? <Fact line={replacementLine} /> : null}
 
       {recovery !== null && phase?.kind !== "saved" ? <section className={styles.destinations}>
         <p>finish “{recovery.candidate.summary.title}”</p>
         <p>{recovery.candidate.summary.source_label} · {new Date(recovery.candidate.summary.accepted_at).toLocaleDateString()}</p>
         {recovery.candidate.binding.source_relation === "AlternativeCopy" ? <p>this page has a different address; its text will finish “{recovery.candidate.summary.title}”.</p> : null}
       </section> : null}
-      {notice !== null ? (
-        <FeedbackNotice
-          content={notice}
-          announcement="Assertive"
-          actions={[{ label: "dismiss", onClick: () => setNotice(null) }]}
-        />
+      {notice !== null ? <Fact line={notice} verbs={[{ label: "dismiss", commandKey: "dismiss notice", run: () => setNotice(null) }]} /> : null}
+
+      {captureFailure && captureLine ? (
+        <Fact line={captureLine} verbs={
+          captureFailure.recovery === "Check"
+            ? account !== null && !draft?.needsRecapture
+              ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
+                  { label: "discard", commandKey: `stop checking:${draft?.id}`, run: () => send({ kind: "stop_checking" }), disabledReason: retrying ? "a retry is running" : undefined }]
+              : [{ label: "discard", commandKey: `stop checking:${draft?.id}`, run: () => send({ kind: "stop_checking" }) }]
+            : recaptureFailure && account !== null
+            ? [{ label: "start over", commandKey: `recapture:${draft?.id}`, run: () => send({ kind: "capture_again" }) },
+                { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }) }]
+            : captureFailure.recovery === "Review" && account !== null
+            ? [{ label: "review", commandKey: `review:${draft?.id}`, run: () => sendWithOrigins({ kind: "review" }), busy: retrying },
+                { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }), disabledReason: retrying ? "a review is running" : undefined }]
+            : captureFailure.recovery === "Retry" && account !== null
+            ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
+                { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }), disabledReason: retrying ? "a retry is running" : undefined }]
+            : [{ label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }) }]
+        } />
       ) : null}
 
-      {captureFailure ? (
-        <FeedbackNotice
-          content={captureFailure.recovery === "Check"
-            ? { tone: "Danger", title: "not sure that imported.", message: "it may have gone through.", requestId: captureFailure.failure.requestId ?? undefined }
-            : captureFailure.recovery === "Review" ? failureContent(captureFailure.failure)
-            : failureContent(captureFailure.failure, "couldn’t import this.")}
-          announcement="Assertive"
-          returnFocus={() => frame.current}
-          actions={
-            captureFailure.recovery === "Check"
-              ? account !== null && !draft?.needsRecapture
-                ? [{ label: "retry", onClick: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
-                    { label: "discard", onClick: () => send({ kind: "stop_checking" }), disabledReason: retrying ? "a retry is running" : undefined }]
-                : [{ label: "discard", onClick: () => send({ kind: "stop_checking" }) }]
-              : recaptureFailure && account !== null
-              ? [{ label: "start over", onClick: () => send({ kind: "capture_again" }) },
-                  { label: "discard", onClick: () => send({ kind: "discard" }) }]
-              : captureFailure.recovery === "Review" && account !== null
-              ? [{ label: "review", onClick: () => sendWithOrigins({ kind: "review" }), busy: retrying },
-                  { label: "discard", onClick: () => send({ kind: "discard" }), disabledReason: retrying ? "a review is running" : undefined }]
-              : captureFailure.recovery === "Retry" && account !== null
-              ? [
-                  {
-                    label: "retry",
-                    onClick: () => sendWithOrigins({ kind: "retry" }),
-                    busy: retrying,
-                  },
-                  {
-                    label: "discard",
-                    onClick: () => send({ kind: "discard" }),
-                    disabledReason: retrying ? "a retry is running" : undefined,
-                  },
-                ]
-              : [{ label: "discard", onClick: () => send({ kind: "discard" }) }]
-          }
-        />
-      ) : null}
-
-      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral",
-        title: phase.kind === "saved" && phase.openUrl === null ? "removed since" : STATUS[phase.kind] }} announcement="Polite" /> : null}
+      {statusLine !== null ? <Fact line={statusLine} /> : null}
 
       {draft === null ||
       phase === null ||
@@ -388,9 +333,9 @@ function Popup() {
             start over
           </Button>
         </>
-      ) : draft.needsRecapture && account !== null ? (
+      ) : accountLine !== null ? (
         <>
-          <FeedbackNotice content={{ tone: "Neutral", title: "the account changed since this page was read." }} announcement="Polite" />
+          <Fact line={accountLine} />
           <Button emphasis="strong" className={styles.primary} onClick={() => send({ kind: "capture_again" })}>start over</Button>
         </>
       ) : (
@@ -432,8 +377,7 @@ function Popup() {
           ) : null}
         </div>
       ) : null}
-    </FeedbackSurface>
-      </main>
+    </main>
   );
 }
 
@@ -500,9 +444,8 @@ function Destinations({
   useCollectionLayout(regionRef, open);
   const [catalog, setCatalog] = useState<LibraryDestination[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [failure, setFailure] = useState<Line | null>(null);
   const [retry, setRetry] = useState(0);
-  const occurrence = useFeedbackOccurrence(failure !== null || loading, context);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
@@ -524,7 +467,7 @@ function Destinations({
         setFailure(null);
       } else {
         const reason = replyNotice(result);
-        setFailure({ tone: "Danger", title: "couldn’t load libraries.", message: reason?.title, requestId: reason?.requestId });
+        setFailure({ fact: "couldn’t load libraries.", reason: reason?.fact });
       }
     });
     return () => { disposed = true; };
@@ -558,10 +501,11 @@ function Destinations({
         chosen={chosen} expanded={open} disabled={!enabled} onToggle={() => setOpen(!open)}
         controls={{ kind: "region", id: regionId }} />
       {open ? <div id={regionId} ref={regionRef} className={styles.chooser} data-collection-body>
+        {failure !== null ? <Fact line={failure} speak verbs={[{ label: "retry", commandKey: `libraries:${context}`, run: () => setRetry(value => value + 1), busy: loading }]} /> : null}
         <LibraryChooser context={context} membershipKind="Chosen" rows={rows} loading={loading} create={null}
           summary={null}
-          error={failure === null ? null : { occurrence, content: failure, retry: () => setRetry(value => value + 1), busy: loading }}
-          empty="no libraries you can file to"
+          error={null}
+          empty={failure === null ? "no libraries you can file to" : ""}
           onToggle={({ id, included }) => {
             const destination = all.get(id);
             return destination !== undefined && enabled && onSet(destination, included);
