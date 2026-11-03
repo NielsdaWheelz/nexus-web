@@ -493,6 +493,11 @@ function CaptureFailureFact({ failure, onset, account, recapture, retrying, send
 }) {
   const verb = (label: string, run: () => void, busy = false): CommandVerb => ({ label, commandKey: `Capture.${label}`, run, busy });
   const discard = verb("discard", () => send({ kind: "discard" }));
+  if (failure.failure.code === "E_WIRE_MISMATCH") {
+    if (failure.recovery === "Check") return <Hold id="capture-unconfirmed" attempt={onset.attempt}
+      line={{ fact: "not sure that saved.", reason: failure.failure.message }} />;
+    return <Fact line={{ fact: failure.failure.message }} speak />;
+  }
   if (failure.recovery === "Check") {
     const forget = verb("forget", () => send({ kind: "stop_checking" }));
     return <Hold id="capture-unconfirmed" attempt={onset.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
