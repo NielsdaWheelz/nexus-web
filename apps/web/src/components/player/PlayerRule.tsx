@@ -73,6 +73,11 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   const scrub = useRef<{ readonly pointerId: number; readonly subject: string } | null>(null);
   const dwell = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bubbleLeft = useRef(-Infinity);
+  const modifiedKey = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endKey = () => {
+    if (modifiedKey.current !== null) clearTimeout(modifiedKey.current);
+    modifiedKey.current = null;
+  };
 
   useLayoutEffect(() => {
     const element = rail.current;
@@ -81,7 +86,10 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => () => { if (dwell.current !== null) clearTimeout(dwell.current); }, []);
+  useEffect(() => () => {
+    if (dwell.current !== null) clearTimeout(dwell.current);
+    if (modifiedKey.current !== null) clearTimeout(modifiedKey.current);
+  }, []);
 
   // A cut is a 2px gap at a chapter start, drawn only if it clears the last drawn one by 6px; only
   // drawn starts are detents.
@@ -192,6 +200,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     }}
     onPointerLeave={() => { if (scrub.current === null) leave(); }}
     onPointerDown={event => {
+      endKey();
       if (scrub.current !== null || !seekable || playbackSubject === null || !event.isPrimary || event.button !== 0 || onMark(event)) return;
       event.preventDefault();
       leave();
@@ -233,15 +242,24 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     {seekable ? <input type="range" className={styles.input} min={0} max={durationMs} step={1000} value={shown}
       aria-label="seek playback position" aria-valuetext={current === null ? valuetext : `${valuetext}, ${current.title}`}
       onKeyDown={event => {
-        // the rail takes only bare keys; a modified key goes on, unprevented, to the page and PlayerKeys.
-        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        endKey();
+        // A browser-owned key may still cause a native range input in this event task.
+        // Leave its command unprevented; reject only that input, not a later pointer or AT edit.
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+          if (keyTarget(event.key, shown, durationMs, chapters) !== undefined) modifiedKey.current = setTimeout(endKey, 0);
+          return;
+        }
         const target = keyTarget(event.key, shown, durationMs, chapters);
         if (target === undefined) return;
         event.preventDefault();
         if (target !== null) origin.seek(Math.min(durationMs, Math.max(0, target)));
       }}
-      onChange={event => origin.seek(Number(event.currentTarget.value))} /> : null}
-    {seekable && mark !== null ? <Tooltip text={mark.label} renderTrigger={help =>
+      onKeyUp={endKey} onBlur={endKey}
+      onChange={event => {
+        if (modifiedKey.current !== null) { event.currentTarget.value = String(shown); return; }
+        origin.seek(Number(event.currentTarget.value));
+      }} /> : null}
+    {seekable && mark !== null ? <Tooltip text={`${mark.label} · '`} renderTrigger={help =>
       <button {...help} type="button" className={styles.mark} style={{ left: mark.left }} aria-label={mark.label} onClick={origin.returnToOrigin} />} /> : null}
   </div>;
   if (variant === "Bar") return band;

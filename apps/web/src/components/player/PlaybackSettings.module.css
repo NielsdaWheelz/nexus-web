@@ -35,6 +35,13 @@
   font-size: var(--text-xs);
 }
 
+.reckoning {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: italic 400 var(--text-base) / 1.3 var(--font-serif);
+}
+
 .panelRow {
   display: grid;
   min-width: 0;

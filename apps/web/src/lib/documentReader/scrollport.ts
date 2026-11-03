@@ -7,6 +7,14 @@ import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { ReaderRuntime } from "./runtime";
 
 const SCROLL_INDICATOR_IDLE_MS = 400;
+const readerPorts = new WeakSet<HTMLElement>();
+
+/** Text and pdf share input ownership through their actual mounted scrollports. */
+export function readerScrollport(target: EventTarget | null): HTMLElement | null {
+  for (let node = target instanceof Element ? target : null; node !== null; node = node.parentElement)
+    if (node instanceof HTMLElement && readerPorts.has(node)) return node;
+  return null;
+}
 
 /** One snapshot separates visible obstruction from the stable navigation line. */
 export function readScrollport(port: HTMLElement | null): { bounds: DOMRect; readingLine: number } | null {
@@ -48,6 +56,7 @@ export function useScrollport(
   useLayoutEffect(() => {
     const port = ref.current;
     if (!port) return;
+    readerPorts.add(port);
     // justify-type-assertion: DocumentReader mounts its indicator before surface effects run.
     const indicator = indicatorRef.current!;
     let frame = 0;
@@ -268,6 +277,7 @@ export function useScrollport(
       port.removeEventListener("pointerdown", pointerDown);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
+      readerPorts.delete(port);
       release?.();
       invalidate.current = () => {};
       retire.current = () => {};

@@ -41,7 +41,7 @@ export default function PlayerTransport({ variant, mode, keys, discRef, previous
       className={cx(styles.key, options.className, state === undefined && styles.absent)} />;
   };
   const disc = key("disc", offerPause ? "pause media player" : "play media player", <Icon.PlayPause playing={offerPause} />,
-    offerPause ? commands.pause : commands.resume, { ref: discRef, tooltip: offerPause ? "pause" : "play", className: styles.disc, busy });
+    offerPause ? commands.pause : commands.resume, { ref: discRef, tooltip: offerPause ? "pause · k" : "play · k", className: styles.disc, busy });
   if (variant === "Mini") return disc;
   return <div className={cx(styles.transport, variant === "Sheet" && styles.sheet, tiered && styles.tiered)} role="group" aria-label="media player controls">
     {key("previous", "previous", <Icon.Previous />, commands.previous, { ref: previousRef, className: styles.outer })}

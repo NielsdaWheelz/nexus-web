@@ -180,7 +180,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     if (handled === "handled-default" || handled === "handled-new-pane") opened();
   };
   const speedKey = (variant: "Bar" | "Sheet") => <SpeedKey ref={rateRef} variant={variant} expanded={shownPicker === "Playback"} controls={playbackId}
-    status={settings.status} failed={settings.failed} busy={settings.save.busy} onToggle={() => toggle("Playback")} />;
+    availability={keys.get("speed") ?? null} status={settings.status} failed={settings.failed} busy={settings.save.busy} onToggle={() => toggle("Playback")} />;
   const chaptersKey = { chaptersExpanded: shownPicker === "Chapters", chaptersId, chaptersRef, onToggleChapters: () => toggle("Chapters") };
   const upNext = <Button ref={queueRef} size="comfortable" iconOnly icon={<Icon.UpNext />} aria-label="up next" className={styles.key}
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen} aria-disabled={keys.get("upNext") === "Disabled" || undefined}
