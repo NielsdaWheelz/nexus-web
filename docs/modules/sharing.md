@@ -82,3 +82,17 @@ retain it; a newer request or changed history makes the old reply inert. an
 acknowledgement during a back check can therefore require another press. history
 traversal keeps its native owner; a later veto does not restore an old pending
 request or trigger an automatic retry.
+
+## main file chooser
+
+main opens the system chooser with `ACTION_GET_CONTENT`, `CATEGORY_OPENABLE` and
+type `*/*`. it splits and trims web accept entries, retaining mime types for
+`EXTRA_MIME_TYPES`; extension suffixes are omitted. an empty mime list leaves that
+extra absent, preserving the unrestricted connections picker. only
+`MODE_OPEN_MULTIPLE` sets `EXTRA_ALLOW_MULTIPLE`.
+
+the existing result callback returns every actual `clipData` uri in order, or
+the single `data` uri when no clip data exists. cancellation returns null. a new
+chooser request, unavailable activity or activity destruction retires the pending
+callback with null. the web input and ordinary intake retain file admission;
+native code neither reads nor uploads selected files.

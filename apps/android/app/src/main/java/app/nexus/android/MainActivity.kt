@@ -101,7 +101,11 @@ class MainActivity : AppCompatActivity() {
             fileChooserCallback = null
             callback.onReceiveValue(
                 if (result.resultCode == Activity.RESULT_OK) {
-                    WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                    val data = result.data
+                    val clips = data?.clipData
+                    if (clips != null) {
+                        (0 until clips.itemCount).mapNotNull { clips.getItemAt(it).uri }.toTypedArray()
+                    } else data?.data?.let { arrayOf(it) }
                 } else {
                     null
                 }
@@ -288,12 +292,18 @@ class MainActivity : AppCompatActivity() {
                 this@MainActivity.fileChooserCallback?.onReceiveValue(null)
                 this@MainActivity.fileChooserCallback = filePathCallback
 
-                val chooserIntent =
-                    fileChooserParams?.createIntent()
-                        ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                        }
+                val mimeTypes = fileChooserParams?.acceptTypes.orEmpty()
+                    .flatMap { it.split(',') }
+                    .map { it.trim() }
+                    .filter { '/' in it }
+                val chooserIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+                    if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
+                }
 
                 return try {
                     fileChooserLauncher.launch(chooserIntent)
