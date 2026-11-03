@@ -5,8 +5,8 @@ capture card. a held slip covers Save and Cancel even though the viewport has
 ample room below the card. this is a page-root placement defect; no semantic
 modal was open, so the modal-backdrop rule alone does not describe it.
 
-evidence: integration72cf9db84; `apps/web/src/app/share/ShareCapture.tsx:74-78`
-mounts Root inside `.capture`; `share.module.css:123` makes that compact wrapper
+evidence: integration72cf9db84; `apps/web/src/app/share/ShareCapture.tsx:68-72`
+mounts Root inside `.capture`; `share.module.css:117` makes that compact wrapper
 positioned. actual canonical chromium run20261103-030012-71ffc79b7949 at1280x720
 shows the overlap in `artifacts/capture-repair/accepted-read-loss-chromium.png`
 and the matching whole aria snapshot. the page's `.card` is centered by `.backdrop`.
