@@ -352,16 +352,22 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         reading = read();
       }
       const stack = stackMargin(reading.stacked, marginFrame.current, Math.max(port.getBoundingClientRect().top, bounds.top + bounds.height / 3));
-      marginFrame.current = stack.frame;
       if (stack.moved) moved();
       const next = reading.ring.map(({ key, height, holds }) => ({ key, kind: "placed" as const, height: Math.ceil(height),
         offset: holds === null ? stack.offsets.get(key)! : Math.round(holds - stack.base) }));
-      // a pin pushes collisions outward, one sweep each way. the base stays on the slew, so release is continuous.
+      // A pin pushes collisions outward, one sweep each way.
       const pinnedAt = next.findIndex(place => place.key === reading.pinnedKey);
       if (pinnedAt >= 0) {
         for (let i = pinnedAt + 1; i < next.length; i++) next[i].offset = Math.max(next[i].offset, next[i - 1].offset + next[i - 1].height + MARGIN_GAP);
         for (let i = pinnedAt - 1; i >= 0; i--) next[i].offset = Math.min(next[i].offset, next[i + 1].offset - next[i].height - MARGIN_GAP);
       }
+      // Continue from the layout actually published, retaining the pure stack's fractional residue.
+      const tops = new Map<string, number>();
+      for (const place of next) {
+        const top = stack.frame.tops.get(place.key);
+        if (top !== undefined) tops.set(place.key, top + place.offset - stack.offsets.get(place.key)!);
+      }
+      marginFrame.current = {y: stack.frame.y, tops};
       // the scope clips above its top: a held or pushed row above the stack's first lifts it.
       const lift = Math.min(0, ...next.map(place => place.offset));
       for (const place of next) place.offset -= lift;
