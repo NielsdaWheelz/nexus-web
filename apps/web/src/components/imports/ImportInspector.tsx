@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import MetadataResearchActions, {
   MetadataReviewButton,
@@ -13,7 +13,8 @@ import Button from "@/components/ui/Button";
 import { removeUploadSession } from "@/lib/imports/ingest";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
-import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, type ApiError } from "@/lib/api/client";
+import { outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -349,6 +350,7 @@ function PendingCapture({ capture, refresh }: {
   refresh: () => void;
 }) {
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const [busy, setBusy] = useState(false);
   // The guard is a ref: a slip's `retry` keeps the render it was raised in.
   const running = useRef(false);
@@ -367,12 +369,9 @@ function PendingCapture({ capture, refresh }: {
       setUnsure(null);
       refresh();
     } catch (error) {
-      // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
-      // have landed: a pool timeout answers 503 after a commit too.
-      if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error))
+      if (outcomeUnknown(error))
         setUnsure((attempt) => attempt === null ? 0 : attempt + 1);
       else {
-        setUnsure(null);
         outcome.fail(error, "couldn’t discard this capture.", retry);
       }
     } finally {
@@ -384,7 +383,7 @@ function PendingCapture({ capture, refresh }: {
     <p>{label} · <Moment value={capture.accepted_at} /></p>
     <Button aria-busy={busy || undefined} onClick={() => void discard()}>discard capture</Button>
     {unsure === null ? null : <Hold id={`discard ${capture.session_id}`} attempt={unsure}
-      line={{ fact: "not sure the capture was discarded.", reason: "it may have gone through." }} verbs={[retry]} />}
+      {...resendFeedback({ line: { fact: "not sure the capture was discarded.", reason: UNKNOWN_OUTCOME_REASON }, resend: retry })} />}
   </div>;
 }
 

@@ -21,10 +21,10 @@ import useCollectionReadFeedback from "@/components/collections/useCollectionRea
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { apiFetch, isApiError, outcomeUnknown, isSameSystemApiDefect } from "@/lib/api/client";
+import { transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   useServerValue,
@@ -822,6 +822,7 @@ export default function StatsPaneBody() {
     };
   }, []);
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const throwLater = useThrowLater();
   const timeZone = useHydratedBrowserTimeZone();
   const isActive = usePaneIsActive();
@@ -912,13 +913,10 @@ export default function StatsPaneBody() {
       if (!mounted.current) return;
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) return throwLater({ error });
-      // Refused, or signed out before the handler ran, nothing changed. Anything else may have
-      // landed: a pool timeout answers 503 after a commit too.
-      if (!isRefusal(error) && !isUnauthenticatedApiError(error)) {
+      if (outcomeUnknown(error)) {
         setUnconfirmed((held) => [...others(held), { ...correction, attempt: (held.find((item) => item.id === correction.id)?.attempt ?? -1) + 1 }]);
         return;
       }
-      setUnconfirmed(others);
       const fact = CORRECTION_FACT[correction.kind];
       if (transportOf(error) !== "Refused") {
         outcome.fail(error, fact, { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction) });
@@ -1022,8 +1020,8 @@ export default function StatsPaneBody() {
         <Failed error={stats.error} noun="statistics" retry={{ run: () => { void stats.refetch().catch(() => {}); }, busy: stats.retrying }} />
       ) : null}
       {unconfirmed.map((correction) => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
-        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-        verbs={[{ label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting }]} />)}
+        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting } })} />)}
       <div className={otherView ? styles.stale : undefined} inert={otherView || undefined}>
         {totals?.recorded_active_ms === 0 ? (
           <Fact line={{ fact: data!.activity.applied_filters.length > 1 ? "no activity matches these filters." : "no activity recorded in this period." }} />

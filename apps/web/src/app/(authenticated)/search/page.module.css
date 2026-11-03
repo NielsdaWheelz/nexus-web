@@ -6,7 +6,11 @@
 
 /* Old rows for a new key, until it lands. */
 .stale {
-  opacity: 0.6;
+  animation: stale-in var(--duration-fast) var(--ease-glide) 200ms forwards;
+}
+
+@keyframes stale-in {
+  to { opacity: 0.6; }
 }
 
 .section + .section {

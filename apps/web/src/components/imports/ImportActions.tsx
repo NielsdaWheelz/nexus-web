@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, type RefObject } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { CommandVerb } from "@/components/feedback/stage";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -10,7 +10,8 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
+import { outcomeUnknown } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
 import { UPLOAD_COMMAND_FACT, retryUploadRefusal, type UploadCommand } from "@/lib/imports/copy";
 import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
@@ -103,6 +104,7 @@ function RecoveryControl({ action }: { readonly action: Command }) {
 function useUploadActions(item: ImportItem) {
   const { run } = useActionRuntime();
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const [unsure, setUnsure] = useState<{ readonly command: UploadCommand; readonly attempt: number } | null>(null);
   const busy = useBusyActionIds(item.ref);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -124,20 +126,16 @@ function useUploadActions(item: ImportItem) {
         setUnsure(null);
       } catch (error) {
         if (error instanceof UploadSessionError) {
-          setUnsure(null);
           // Removal settles its one declared outcome itself (ingest.ts); any other is a defect.
           if (id === "RemoveUpload") throw error;
           const refusal = retryUploadRefusal(error);
           if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [again.RetryUpload] : undefined);
           return;
         }
-        // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
-        // have landed: a pool timeout answers 503 after a commit too.
-        if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error)) {
+        if (outcomeUnknown(error)) {
           setUnsure((current) => ({ command: id, attempt: current?.command === id ? current.attempt + 1 : 0 }));
           return;
         }
-        setUnsure(null);
         outcome.fail(error, UPLOAD_COMMAND_FACT[id], again[id]);
       }
     },
@@ -166,8 +164,8 @@ function useUploadActions(item: ImportItem) {
     }}
   />;
   const held = unsure === null ? null : <Hold id={`${item.ref} ${unsure.command}`} attempt={unsure.attempt}
-    line={{ fact: unsure.command === "RetryUpload" ? "not sure the upload finished." : "not sure this import was removed.", reason: "it may have gone through." }}
-    verbs={[again[unsure.command]]} />;
+    {...resendFeedback({ line: { fact: unsure.command === "RetryUpload" ? "not sure the upload finished." : "not sure this import was removed.", reason: UNKNOWN_OUTCOME_REASON },
+      resend: again[unsure.command] })} />;
   return { input, retry, remove, held };
 }
 
