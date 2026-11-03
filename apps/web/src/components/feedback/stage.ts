@@ -50,6 +50,8 @@ export type World = {
 };
 export type Retract = () => void;
 export type Shell = { signIn: Verb | null };
+/** A mounted holder of an id, where it renders now. */
+export type Owner = { address: Address };
 export type HoldKind = "Pointer" | "Focus" | "Press";
 export type Leaving = "Expired" | "Dismissed" | "Tucking";
 
@@ -145,8 +147,8 @@ export function createStage() {
   const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
   let speaker: Room | null = null;
   let view: StageView = { rooms: [], typing: false, speech };
-  /** Mounted owners per held id, and the dismissal that waits out a handoff once none is left. */
-  const owners = new Map<string, { count: number; leaving: ReturnType<typeof setTimeout> | null }>();
+  /** Mounted owners per held id, earliest first, and the dismissal that waits out a handoff once none is left. */
+  const owners = new Map<string, { mounted: Owner[]; leaving: ReturnType<typeof setTimeout> | null }>();
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
   const renewClock = (slip: Slip) => {
@@ -295,10 +297,12 @@ export function createStage() {
       return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
     },
     /** A mounted owner's row, keyed by its id, so tucking survives a new attempt and a new owner.
-     * It belongs to the topmost modal at raise, unless `frame`, the modal the owner renders inside,
-     * is mounting in the same commit and does not yet stand on the stack. Turning to risk presents
-     * and speaks whatever the row had settled into. */
-    hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "address" | "line" | "verbs" | "attempt"> & { key: string; frame: Layer | null; risk: boolean }): void {
+     * It stands at its earliest mounted owner's address, so owners of one id in two panes never
+     * trade it. It belongs to the topmost modal at raise, unless `frame`, the modal the owner
+     * renders inside, is mounting in the same commit and does not yet stand on the stack. Turning
+     * to risk presents and speaks whatever the row had settled into. */
+    hold({ key, owner, frame, risk, line, verbs, attempt }: Pick<Row, "line" | "verbs" | "attempt"> & { key: string; owner: Owner; frame: Layer | null; risk: boolean }): void {
+      const { address } = owners.get(key)?.mounted[0] ?? owner;
       const weight = risk ? "Risk" : "Held";
       const slip = slipOf(key) ?? raise({ key, address, modal: frame === null || onOverlayStack(frame) ? topModal() : frame, weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
@@ -316,18 +320,27 @@ export function createStage() {
       const slip = slipOf(key);
       if (slip) leave(slip, "Dismissed");
     },
-    /** A mounted owner of `id`. The row resolves once its last owner leaves and no other mounts
-     * within the handoff, so a holder moving between parents keeps its row, tuck and speech. */
-    own(id: string): Retract {
-      const owner = owners.get(id) ?? { count: 0, leaving: null };
-      owners.set(id, owner);
-      if (owner.leaving !== null) clearTimeout(owner.leaving);
-      owner.leaving = null;
-      owner.count += 1;
+    /** A mounted owner of `id`. Its row passes to the next owner when the earliest leaves, and
+     * resolves once its last owner leaves and no other mounts within the handoff, so a holder
+     * moving between parents keeps its row, tuck and speech. */
+    own(id: string, owner: Owner): Retract {
+      const entry = owners.get(id) ?? { mounted: [], leaving: null };
+      owners.set(id, entry);
+      if (entry.leaving !== null) clearTimeout(entry.leaving);
+      entry.leaving = null;
+      entry.mounted.push(owner);
       return () => {
-        owner.count -= 1;
-        if (owner.count > 0) return;
-        owner.leaving = setTimeout(() => {
+        entry.mounted.splice(entry.mounted.indexOf(owner), 1);
+        const [next] = entry.mounted;
+        if (next !== undefined) {
+          const slip = slipOf(id);
+          if (slip && !sameAddress(slip.row.address, next.address)) {
+            slip.row = { ...slip.row, address: next.address };
+            settle();
+          }
+          return;
+        }
+        entry.leaving = setTimeout(() => {
           owners.delete(id);
           const slip = slipOf(id);
           if (slip) leave(slip, "Dismissed");

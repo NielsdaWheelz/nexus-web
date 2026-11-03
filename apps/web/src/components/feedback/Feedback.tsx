@@ -30,7 +30,7 @@ import { hasActiveModal, OverlayContext, subscribeOverlayStack, topModal, useInt
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { Scope, Session, createFeedbackSet, createFeedbackSession, hostEligible, type FeedbackHost, type FeedbackScopeValue, type Failure } from "./scope";
 import Slips from "./Slips";
-import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type CommandVerb, type Line, type Retract, type Shell, type Verb, type Verbs } from "./stage";
+import { createStage, ShellContext, StageContext, transportVerbs, useStage, type Address, type CommandVerb, type Line, type Owner, type Retract, type Shell, type Verb, type Verbs } from "./stage";
 import styles from "./Feedback.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
@@ -259,14 +259,19 @@ export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) =
 }
 
 /** A fact that stands while its owner holds it: mounted is present, unmounted is resolved. `id`
- * keys the row, so an owner that moves between parents keeps its row, its tuck and its speech;
- * `attempt` keys speech, so a failed retry speaks again. */
+ * keys the row, so an owner that moves between parents keeps its row, its tuck and its speech,
+ * and two owners of one id share one row, standing where the earlier renders. `attempt` keys
+ * speech, so a failed retry speaks again. */
 export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
   const stage = useStage();
   const address = useAddress();
   const frame = useContext(OverlayContext);
-  useLayoutEffect(() => { stage.hold({ key: id, address, frame, risk, line, verbs: verbs ?? null, attempt }); });
-  useLayoutEffect(() => stage.own(id), [stage, id]);
+  const owner = useRef<Owner>({ address });
+  useLayoutEffect(() => {
+    owner.current.address = address;
+    stage.hold({ key: id, owner: owner.current, frame, risk, line, verbs: verbs ?? null, attempt });
+  });
+  useLayoutEffect(() => stage.own(id, owner.current), [stage, id]);
   return null;
 }
 
