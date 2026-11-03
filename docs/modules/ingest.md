@@ -138,8 +138,12 @@ their existing teardown. thereafter upload confirmation is 404; a url submission
 without a surviving receipt must pass its original frozen removal guard before any
 effect. no replay ledger or durable command journal is introduced. storage/provider i/o
 runs outside viewer/library-lock transactions. staged bytes may exist physically
-after expiry, but unpublished confirmation is valid only before
-`upload_url_expires_at`.
+after expiry, but unpublished confirmation is admitted only before
+`upload_url_expires_at`, using current database time under the session row lock.
+both the initial check and publication check hold that lock; verification i/o
+remains outside it. a publication already admitted can finish after expiry, and
+a concurrent confirmation waits for its outcome before answering. a published
+session always replays its receipt, including after expiry.
 
 recovery admissions require the media's creator (403 `E_OWNER_REQUIRED`; an unreadable media is 404).
 
